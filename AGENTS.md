@@ -148,7 +148,7 @@ Before committing, run the relevant build and tests.
 
 ## Project Management
 
-- Run clang-format 18 on changed C/C++ files before committing or pushing. The
+- Run clang-format 22 on changed C/C++ files before committing or pushing. The
   format script rejects other major versions to keep local and CI output equal.
 - Use `scripts/format.sh --check` and `scripts/run_clang_tidy.sh` for local
   quality checks; clang-tidy warnings are treated as errors.

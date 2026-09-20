@@ -38,8 +38,8 @@ int ToTimeoutMilliseconds(const struct timespec* const timeout_spec) {
   if (seconds > std::numeric_limits<int>::max() / kMillisecondsPerSecond) {
     return std::numeric_limits<int>::max();
   }
-  const int64_t milliseconds = seconds * kMillisecondsPerSecond +
-                               nanoseconds / kNanosecondsPerMillisecond;
+  const int64_t milliseconds = (seconds * kMillisecondsPerSecond) +
+                               (nanoseconds / kNanosecondsPerMillisecond);
   return milliseconds > std::numeric_limits<int>::max()
              ? std::numeric_limits<int>::max()
              : static_cast<int>(milliseconds);
@@ -68,7 +68,7 @@ int EpollPoller::AddEvent(int fd, int mask) {
   const int new_mask =
       existing_mask == masks_.end() ? mask : (existing_mask->second | mask);
 
-  struct epoll_event event {};
+  struct epoll_event event{};
   event.events = ToEpollEvents(new_mask);
   event.data.fd = fd;
   const int operation =
@@ -96,7 +96,7 @@ int EpollPoller::DeleteEvent(int fd, int mask) {
     return 0;
   }
 
-  struct epoll_event event {};
+  struct epoll_event event{};
   event.events = ToEpollEvents(remaining_mask);
   event.data.fd = fd;
   if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &event) < 0) {

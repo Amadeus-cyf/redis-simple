@@ -1,9 +1,10 @@
-# redis_simple
+# redis-simple
 
-`redis_simple` is a small Redis-inspired server implemented in modern C++17. It
-includes a TCP server, event loop, command handlers, in-memory data structures,
-optional append-only persistence, a simple CLI client, unit tests, integration
-tests, and memory benchmarks.
+`redis-simple` is a compact Redis-compatible server implemented in modern
+C++17. It includes a TCP server, event loop, command handlers, in-memory data
+structures, optional append-only persistence, a simple CLI client, unit tests,
+integration tests, and memory benchmarks. The executable remains
+`redis_simple`.
 
 The project is intentionally compact: implementation-level unit tests live next
 to the code they cover, while runnable end-to-end checks live under
@@ -272,7 +273,7 @@ database loading, and server lifecycle.
 Project management files are checked in:
 
 - `CMakePresets.json` for reproducible configure/build/test commands.
-- `.clang-format` for Google-style formatting with clang-format 18.
+- `.clang-format` for Google-style formatting with clang-format 22.
 - `.clang-tidy` for static-analysis defaults.
 - `.editorconfig` for editor consistency.
 - `.github/workflows/ci.yml` for CI on push and pull request.
@@ -284,10 +285,10 @@ Format project C++ files with:
 cmake --build --preset debug --target format
 ```
 
-Formatting is pinned to clang-format 18 so local and CI output remains stable.
-Install it with `brew install llvm@18` on macOS or `apt install clang-format-18`
+Formatting is pinned to clang-format 22 so local and CI output remains stable.
+Install it with `brew install llvm` on macOS or `apt install clang-format-22`
 on Ubuntu. `scripts/format.sh` discovers those installations and honors
-`CLANG_FORMAT_BIN` when it points to a clang-format 18 executable.
+`CLANG_FORMAT_BIN` when it points to a clang-format 22 executable.
 
 Check formatting without modifying files with:
 
@@ -348,11 +349,11 @@ CI runs for pull requests targeting `main` and for pushes to `main`. A new run
 for the same pull request or branch cancels any older run still in progress,
 avoiding duplicate branch-push runs and work on superseded commits.
 
-GitHub Actions runs debug, release, and ASan/UBSan matrices on macOS and Ubuntu,
-so both event-loop pollers are built and tested. macOS also runs Apple `leaks`;
-Ubuntu runs LeakSanitizer, clang-format 18, clang-tidy, and bounded libFuzzer
-smoke tests. A separate Ubuntu job compares supported behavior with a real
-Redis instance through `redis-cli`:
+GitHub Actions runs debug, release, and ASan/UBSan matrices on macOS and Ubuntu
+26.04, so both event-loop pollers are built and tested. macOS also runs Apple
+`leaks`; Ubuntu runs LeakSanitizer, clang-format 22, clang-tidy 22, and bounded
+libFuzzer smoke tests. A separate Ubuntu job compares supported behavior with a
+real Redis instance through `redis-cli`:
 
 ```sh
 cmake --preset debug

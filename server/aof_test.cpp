@@ -68,7 +68,7 @@ class TempFile {
   }
 
   [[nodiscard]] off_t Size() const {
-    struct stat info {};
+    struct stat info{};
     return stat(path_.c_str(), &info) == 0 ? info.st_size : -1;
   }
 

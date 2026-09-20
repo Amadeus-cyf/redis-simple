@@ -18,19 +18,22 @@ permissions:
 jobs:
   quality:
     name: Quality / Ubuntu
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: true
-      - name: Install LLVM tools
-        run: sudo apt-get update && sudo apt-get install -y clang-format-18 clang-tidy
       - name: Check clang-format
+        env:
+          CLANG_FORMAT_BIN: clang-format-22
         run: scripts/format.sh --check
       - name: Configure compile commands
         run: cmake --preset debug
       - name: Run clang-tidy
+        env:
+          CLANG_TIDY_BIN: clang-tidy-22
+          RUN_CLANG_TIDY_BIN: run-clang-tidy-22
         run: scripts/run_clang_tidy.sh
 
   build-and-test:
@@ -39,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-26.04]
 
     steps:
       - uses: actions/checkout@v7
@@ -63,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-26.04]
 
     steps:
       - uses: actions/checkout@v7
@@ -82,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-26.04]
 
     steps:
       - uses: actions/checkout@v7
@@ -101,7 +104,7 @@ jobs:
 
   redis-compatibility:
     name: Redis Compatibility / Ubuntu
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     services:
       redis:
         image: redis:7-alpine
@@ -128,7 +131,7 @@ jobs:
 
   fuzz:
     name: Fuzz Smoke / Ubuntu
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - uses: actions/checkout@v7

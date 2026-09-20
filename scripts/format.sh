@@ -4,7 +4,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mode="${1:-format}"
-readonly clang_format_major=18
+readonly clang_format_major=22
 
 if [[ "${mode}" != "format" && "${mode}" != "--check" ]]; then
   printf 'usage: %s [--check]\n' "$0" >&2
@@ -12,19 +12,23 @@ if [[ "${mode}" != "format" && "${mode}" != "--check" ]]; then
 fi
 
 clang_format_candidates=(
-  clang-format-18
-  /opt/homebrew/opt/llvm@18/bin/clang-format
-  /usr/local/opt/llvm@18/bin/clang-format
+  clang-format-22
+  /opt/homebrew/opt/llvm/bin/clang-format
+  /usr/local/opt/llvm/bin/clang-format
+  /opt/homebrew/opt/llvm@22/bin/clang-format
+  /usr/local/opt/llvm@22/bin/clang-format
   clang-format
 )
 if command -v brew >/dev/null 2>&1; then
-  llvm_prefix="$(brew --prefix llvm@18 2>/dev/null || true)"
-  if [[ -n "${llvm_prefix}" ]]; then
-    clang_format_candidates=(
-      "${llvm_prefix}/bin/clang-format"
-      "${clang_format_candidates[@]}"
-    )
-  fi
+  for formula in llvm llvm@22; do
+    llvm_prefix="$(brew --prefix "${formula}" 2>/dev/null || true)"
+    if [[ -n "${llvm_prefix}" ]]; then
+      clang_format_candidates=(
+        "${llvm_prefix}/bin/clang-format"
+        "${clang_format_candidates[@]}"
+      )
+    fi
+  done
 fi
 if [[ -n "${CLANG_FORMAT_BIN:-}" ]]; then
   clang_format_candidates=("${CLANG_FORMAT_BIN}")
@@ -44,7 +48,7 @@ for candidate in "${clang_format_candidates[@]}"; do
 done
 
 if [[ -z "${clang_format_bin}" ]]; then
-  printf 'clang-format %s is required. Install llvm@18 or set CLANG_FORMAT_BIN.\n' \
+  printf 'clang-format %s is required. Install llvm or set CLANG_FORMAT_BIN.\n' \
     "${clang_format_major}" >&2
   exit 1
 fi

@@ -19,7 +19,7 @@
 namespace redis_simple::event_loop {
 namespace {
 int UpdateFilter(int kqueue_fd, int fd, int16_t filter, uint16_t flags) {
-  struct kevent event {};
+  struct kevent event{};
   EV_SET(&event, fd, filter, flags, 0, 0, nullptr);
   return kevent(kqueue_fd, &event, 1, nullptr, 0, nullptr);
 }

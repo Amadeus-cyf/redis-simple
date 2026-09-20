@@ -511,7 +511,7 @@ std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
   if (fd < 0) {
     return nullptr;
   }
-  struct stat file_info {};
+  struct stat file_info{};
   if (fstat(fd, &file_info) < 0 || file_info.st_size < 0 ||
       static_cast<uintmax_t>(file_info.st_size) >
           std::numeric_limits<size_t>::max()) {
@@ -663,7 +663,7 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
   }
 #endif
 
-  struct stat file_info {};
+  struct stat file_info{};
   const mode_t mode = fstat(fd_, &file_info) == 0
                           ? static_cast<mode_t>(file_info.st_mode & 0777)
                           : static_cast<mode_t>(0644);
@@ -1095,7 +1095,7 @@ void Aof::RunRewrite(int rewrite_fd, const std::string& temp_path) {
       continue;
     }
 
-    struct stat file_info {};
+    struct stat file_info{};
     if (fstat(rewrite_fd, &file_info) < 0 || file_info.st_size < 0) {
       succeeded = false;
       error = AofError::kWrite;
