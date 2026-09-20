@@ -30,6 +30,14 @@ enum class TtlResolution {
   kMilliseconds,
 };
 
+enum class ExpireCondition {
+  kNone,
+  kIfNoExpiry,
+  kIfHasExpiry,
+  kGreaterThan,
+  kLessThan,
+};
+
 struct ExpireSampleResult {
   size_t sampled{};
   size_t expired{};
@@ -50,7 +58,8 @@ class RedisDb {
                   int flags);
   DbStatus DeleteKey(std::string_view key);
   DbStatus UnlinkKey(std::string_view key);
-  DbStatus ExpireKeyAt(std::string_view key, int64_t expire);
+  DbStatus ExpireKeyAt(std::string_view key, int64_t expire,
+                       ExpireCondition condition = ExpireCondition::kNone);
   DbStatus PersistKey(std::string_view key);
   DbStatus RenameKey(std::string_view old_key, std::string_view new_key);
   std::optional<int64_t> Expiration(std::string_view key) const;

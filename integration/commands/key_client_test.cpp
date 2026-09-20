@@ -147,6 +147,31 @@ int Run() {
       {"PERSIST expire_key\r\n", "1\n"},
       {"TTL expire_key\r\n", "-1\n"},
       {"PEXPIRE expire_key 5\r\n", "1\n"},
+      {"SET expireat_key value\r\n", "OK\n"},
+      {"EXPIREAT expireat_key 4102444800 NX\r\n", "1\n"},
+      {"GET expireat_key\r\n", "value\n"},
+      {"SET conditional_expire_key value\r\n", "OK\n"},
+      {"EXPIRE conditional_expire_key 60 NX\r\n", "1\n"},
+      {"EXPIRE conditional_expire_key 30 NX\r\n", "0\n"},
+      {"EXPIRE conditional_expire_key 120 GT\r\n", "1\n"},
+      {"PEXPIRE conditional_expire_key 240000 LT\r\n", "0\n"},
+      {"PEXPIRE conditional_expire_key 60000 LT\r\n", "1\n"},
+      {"PEXPIRE conditional_expire_key 120000 XX\r\n", "1\n"},
+      {"PERSIST conditional_expire_key\r\n", "1\n"},
+      {"PEXPIRE conditional_expire_key 60000 XX\r\n", "0\n"},
+      {"PEXPIRE conditional_expire_key 60000 GT\r\n", "0\n"},
+      {"PEXPIRE conditional_expire_key 60000 LT\r\n", "1\n"},
+      {"PERSIST conditional_expire_key\r\n", "1\n"},
+      {"PEXPIREAT conditional_expire_key 4102444800000 NX\r\n", "1\n"},
+      {"PEXPIREAT conditional_expire_key 4102444799000 XX\r\n", "1\n"},
+      {"EXPIREAT conditional_expire_key 4102444800 GT\r\n", "1\n"},
+      {"PEXPIREAT conditional_expire_key 4102444799000 LT\r\n", "1\n"},
+      {"EXPIRE conditional_expire_key invalid\r\n",
+       "ERR value is not an integer or out of range\n"},
+      {"EXPIRE conditional_expire_key 10 UNKNOWN\r\n", "ERR syntax error\n"},
+      {"EXPIRE conditional_expire_key 10 NX XX\r\n", "ERR syntax error\n"},
+      {"EXPIREAT conditional_expire_key 9223372036854775807\r\n",
+       "ERR invalid expire time\n"},
       {"SET absolute_expire_key value\r\n", "OK\n"},
       {"PEXPIREAT absolute_expire_key 1\r\n", "1\n"},
       {"GET absolute_expire_key\r\n", "(nil)\n"},
@@ -184,7 +209,7 @@ int Run() {
   if (!ExpectReply(&cli, {"GET expire_key\r\n", "(nil)\n"})) {
     return EXIT_FAILURE;
   }
-  if (!ExpectReply(&cli, {"DBSIZE\r\n", "1\n"})) {
+  if (!ExpectReply(&cli, {"DBSIZE\r\n", "3\n"})) {
     return EXIT_FAILURE;
   }
   if (!ExpectReply(&cli, {"FLUSHDB\r\n", "OK\n"})) {

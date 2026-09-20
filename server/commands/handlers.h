@@ -8,6 +8,7 @@ namespace redis_simple::command::key {
 void HandleDbSize(Client* client);
 void HandleDel(Client* client);
 void HandleExpire(Client* client);
+void HandleExpireAt(Client* client);
 void HandleExists(Client* client);
 void HandleFlushDb(Client* client);
 void HandlePersist(Client* client);

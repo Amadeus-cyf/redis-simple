@@ -175,6 +175,31 @@ TEST(AofTest, ReplaysCanonicalSetAndExpiration) {
   EXPECT_EQ(restored->Expiration("key"), expire);
 }
 
+TEST(AofTest, ReplaysCanonicalConditionalExpiration) {
+  TempFile file;
+  auto source = db::RedisDb::Create();
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+
+  auto writer = Aof::Open(Always(file), source.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  constexpr int64_t kExpire = 4'102'444'800'000;
+  ASSERT_EQ(
+      source->ExpireKeyAt("key", kExpire, db::ExpireCondition::kIfNoExpiry),
+      db::DbStatus::kOk);
+  ASSERT_TRUE(
+      writer->Append("EXPIREAT", {"key", "4102444800", "NX"}, source.get()));
+  writer.reset();
+
+  auto restored = db::RedisDb::Create();
+  auto reader = Aof::Open(Always(file), restored.get());
+  ASSERT_NE(reader, nullptr);
+  ASSERT_NE(restored->LookupKey("key"), nullptr);
+  EXPECT_EQ(restored->Expiration("key"), kExpire);
+}
+
 TEST(AofTest, DoesNotResurrectExpiredKeysDuringReplay) {
   TempFile file;
   std::string commands = Encode("SET", {"key", "value"});

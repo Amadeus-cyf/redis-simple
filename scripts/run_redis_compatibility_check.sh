@@ -90,6 +90,21 @@ if ((reference_pttl <= 0 || reference_pttl > 999 || actual_pttl <= 0 ||
   exit 1
 fi
 compare PERSIST ttl_key
+compare SET expire_options value
+compare EXPIRE expire_options 60 NX
+compare EXPIRE expire_options 30 NX
+compare EXPIRE expire_options 120 GT
+compare PEXPIRE expire_options 240000 LT
+compare PEXPIRE expire_options 60000 LT
+compare PERSIST expire_options
+compare PEXPIRE expire_options 60000 XX
+compare PEXPIRE expire_options 60000 GT
+compare PEXPIRE expire_options 60000 LT
+compare PERSIST expire_options
+compare EXPIREAT expire_options "${future_seconds}" NX
+compare PEXPIREAT expire_options "$((future_milliseconds - 1000))" XX
+compare PEXPIREAT expire_options "${future_milliseconds}" GT
+compare EXPIREAT expire_options "$((future_seconds - 2))" LT
 compare ZADD ordered 1 one 2 two 3 three
 compare ZRANGE ordered -10 -1
 compare ZRANGE ordered 0 -1 REV

@@ -21,6 +21,14 @@ struct KeyArgs {
 struct ExpireArgs {
   std::string_view key;
   int64_t ttl{0};
+  db::ExpireCondition condition{db::ExpireCondition::kNone};
+};
+
+enum class ParseExpireStatus : uint8_t {
+  kOk,
+  kWrongArity,
+  kInvalidInteger,
+  kSyntaxError,
 };
 
 struct RenameArgs {
@@ -36,12 +44,35 @@ int ParseKeyArgs(const CommandArgs& args, KeyArgs* key_args) {
   return 0;
 }
 
-int ParseExpireArgs(const CommandArgs& args, ExpireArgs* expire_args) {
-  if (args.size() != 2 || !utils::ToInt64(args[1], &expire_args->ttl)) {
-    return -1;
+ParseExpireStatus ParseExpireArgs(const CommandArgs& args,
+                                  ExpireArgs* expire_args) {
+  if (args.size() < 2) {
+    return ParseExpireStatus::kWrongArity;
+  }
+  if (!utils::ToInt64(args[1], &expire_args->ttl)) {
+    return ParseExpireStatus::kInvalidInteger;
   }
   expire_args->key = args[0];
-  return 0;
+  if (args.size() == 2) {
+    return ParseExpireStatus::kOk;
+  }
+  if (args.size() != 3) {
+    return ParseExpireStatus::kSyntaxError;
+  }
+
+  const std::string_view option = args[2];
+  if (utils::EqualsIgnoreCase(option, "NX")) {
+    expire_args->condition = db::ExpireCondition::kIfNoExpiry;
+  } else if (utils::EqualsIgnoreCase(option, "XX")) {
+    expire_args->condition = db::ExpireCondition::kIfHasExpiry;
+  } else if (utils::EqualsIgnoreCase(option, "GT")) {
+    expire_args->condition = db::ExpireCondition::kGreaterThan;
+  } else if (utils::EqualsIgnoreCase(option, "LT")) {
+    expire_args->condition = db::ExpireCondition::kLessThan;
+  } else {
+    return ParseExpireStatus::kSyntaxError;
+  }
+  return ParseExpireStatus::kOk;
 }
 
 int ParseRenameArgs(const CommandArgs& args, RenameArgs* rename_args) {
@@ -70,37 +101,50 @@ bool ExpireAtFromTtl(int64_t ttl, int64_t multiplier, int64_t now,
   return true;
 }
 
-void AddExpireReply(Client* const client, int64_t ttl_ms) {
+bool ScaleAbsoluteExpiration(int64_t expiration, int64_t multiplier,
+                             int64_t* scaled_expiration) {
+  if (expiration > std::numeric_limits<int64_t>::max() / multiplier ||
+      expiration < std::numeric_limits<int64_t>::min() / multiplier) {
+    return false;
+  }
+  *scaled_expiration = expiration * multiplier;
+  return true;
+}
+
+bool AddExpireParseError(Client* const client, ParseExpireStatus status) {
+  switch (status) {
+    case ParseExpireStatus::kOk:
+      return false;
+    case ParseExpireStatus::kWrongArity:
+      client->AddReply(reply::WrongNumberOfArguments());
+      return true;
+    case ParseExpireStatus::kInvalidInteger:
+      client->AddReply(
+          reply::FromError("ERR value is not an integer or out of range"));
+      return true;
+    case ParseExpireStatus::kSyntaxError:
+      client->AddReply(reply::SyntaxError());
+      return true;
+  }
+  return true;
+}
+
+void AddExpireReply(Client* const client, int64_t multiplier, bool absolute) {
   ExpireArgs args;
-  if (ParseExpireArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  if (AddExpireParseError(client, ParseExpireArgs(client->Args(), &args))) {
     return;
   }
   if (auto* redis_db = client->Db()) {
     int64_t expire = 0;
-    if (!ExpireAtFromTtl(args.ttl, ttl_ms, utils::NowInMilliseconds(),
-                         &expire)) {
+    const bool valid_expire =
+        absolute ? ScaleAbsoluteExpiration(args.ttl, multiplier, &expire)
+                 : ExpireAtFromTtl(args.ttl, multiplier,
+                                   utils::NowInMilliseconds(), &expire);
+    if (!valid_expire) {
       client->AddReply(reply::FromError("ERR invalid expire time"));
       return;
     }
-    const auto status = redis_db->ExpireKeyAt(args.key, expire);
-    if (status == db::DbStatus::kOk) {
-      client->MarkModified();
-    }
-    client->AddReply(reply::FromInt64(status == db::DbStatus::kOk ? 1 : 0));
-    return;
-  }
-  client->AddReply(reply::FromError("ERR db unavailable"));
-}
-
-void AddExpireAtReply(Client* const client) {
-  ExpireArgs args;
-  if (ParseExpireArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
-    return;
-  }
-  if (auto* redis_db = client->Db()) {
-    const auto status = redis_db->ExpireKeyAt(args.key, args.ttl);
+    const auto status = redis_db->ExpireKeyAt(args.key, expire, args.condition);
     if (status == db::DbStatus::kOk) {
       client->MarkModified();
     }
@@ -127,12 +171,17 @@ void AddTtlReply(Client* const client, db::TtlResolution resolution) {
 
 void HandleExpire(Client* const client) {
   constexpr int64_t kMillisecondsPerSecond = 1000;
-  AddExpireReply(client, kMillisecondsPerSecond);
+  AddExpireReply(client, kMillisecondsPerSecond, false);
 }
 
-void HandlePExpire(Client* const client) { AddExpireReply(client, 1); }
+void HandleExpireAt(Client* const client) {
+  constexpr int64_t kMillisecondsPerSecond = 1000;
+  AddExpireReply(client, kMillisecondsPerSecond, true);
+}
 
-void HandlePExpireAt(Client* const client) { AddExpireAtReply(client); }
+void HandlePExpire(Client* const client) { AddExpireReply(client, 1, false); }
+
+void HandlePExpireAt(Client* const client) { AddExpireReply(client, 1, true); }
 
 void HandleTtl(Client* const client) {
   AddTtlReply(client, db::TtlResolution::kSeconds);

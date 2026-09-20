@@ -111,6 +111,36 @@ TEST(RedisDbTest, ExpirePersistAndTtl) {
   EXPECT_EQ(redis_db->LookupKey("key"), nullptr);
 }
 
+TEST(RedisDbTest, AppliesConditionalExpirations) {
+  auto redis_db = RedisDb::Create();
+  const int64_t lower = utils::NowInMilliseconds() + 60'000;
+  const int64_t upper = lower + 60'000;
+  ASSERT_EQ(redis_db->SetKey("key", RedisObject::CreateWithString("value"), 0),
+            DbStatus::kOk);
+
+  EXPECT_EQ(redis_db->ExpireKeyAt("key", lower, ExpireCondition::kGreaterThan),
+            DbStatus::kError);
+  EXPECT_EQ(redis_db->ExpireKeyAt("key", lower, ExpireCondition::kIfHasExpiry),
+            DbStatus::kError);
+  EXPECT_EQ(redis_db->ExpireKeyAt("key", lower, ExpireCondition::kLessThan),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->ExpireKeyAt("key", upper, ExpireCondition::kIfNoExpiry),
+            DbStatus::kError);
+  EXPECT_EQ(redis_db->ExpireKeyAt("key", upper, ExpireCondition::kLessThan),
+            DbStatus::kError);
+  EXPECT_EQ(redis_db->ExpireKeyAt("key", upper, ExpireCondition::kGreaterThan),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->ExpireKeyAt("key", lower, ExpireCondition::kIfHasExpiry),
+            DbStatus::kOk);
+
+  ASSERT_EQ(redis_db->PersistKey("key"), DbStatus::kOk);
+  EXPECT_EQ(redis_db->ExpireKeyAt("key", upper, ExpireCondition::kIfNoExpiry),
+            DbStatus::kOk);
+  EXPECT_EQ(
+      redis_db->ExpireKeyAt("missing", upper, ExpireCondition::kIfNoExpiry),
+      DbStatus::kError);
+}
+
 TEST(RedisDbTest, TtlRoundsToNearestSecond) {
   auto redis_db = RedisDb::Create();
   const int64_t now = utils::NowInMilliseconds();

@@ -93,9 +93,9 @@ The server supports Redis-style RESP replies for the implemented command set,
 including protocol errors such as `ERR wrong number of arguments` and
 `WRONGTYPE`.
 
-- Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `EXPIRE`, `PEXPIRE`, `PEXPIREAT`,
-  `TTL`, `PTTL`, `PERSIST`, `RENAME`, `DBSIZE`, `FLUSHDB`, `SCAN` with `MATCH`
-  and `COUNT`
+- Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `EXPIRE`, `EXPIREAT`, `PEXPIRE`,
+  `PEXPIREAT` with `NX`, `XX`, `GT`, and `LT`, `TTL`, `PTTL`, `PERSIST`,
+  `RENAME`, `DBSIZE`, `FLUSHDB`, `SCAN` with `MATCH` and `COUNT`
 - Strings: `GET`, `SET` with `NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT`,
   and `KEEPTTL`, `INCR`, `INCRBY`, `DECR`, `DECRBY`, `APPEND`, `STRLEN`,
   `MGET`, `MSET`

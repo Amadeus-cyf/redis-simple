@@ -874,7 +874,8 @@ bool Aof::Encode(std::string_view command,
     reply::AppendBulkString(object->String(), output);
     return !expire.has_value() || AppendExpireAt(args[0], *expire, output);
   }
-  if (command == "EXPIRE" || command == "PEXPIRE" || command == "PEXPIREAT") {
+  if (command == "EXPIRE" || command == "EXPIREAT" || command == "PEXPIRE" ||
+      command == "PEXPIREAT") {
     if (args.empty()) {
       return false;
     }

@@ -86,8 +86,28 @@ DbStatus RedisDb::UnlinkKey(std::string_view key) {
                                                 : DbStatus::kError;
 }
 
-DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire) {
+DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
+                              ExpireCondition condition) {
   if (LookupKey(key) == nullptr) {
+    return DbStatus::kError;
+  }
+  const auto current_expire = Expiration(key);
+  const bool condition_met = [&] {
+    switch (condition) {
+      case ExpireCondition::kNone:
+        return true;
+      case ExpireCondition::kIfNoExpiry:
+        return !current_expire.has_value();
+      case ExpireCondition::kIfHasExpiry:
+        return current_expire.has_value();
+      case ExpireCondition::kGreaterThan:
+        return current_expire.has_value() && expire > *current_expire;
+      case ExpireCondition::kLessThan:
+        return !current_expire.has_value() || expire < *current_expire;
+    }
+    return false;
+  }();
+  if (!condition_met) {
     return DbStatus::kError;
   }
   if (!loading_ && expire <= utils::NowInMilliseconds()) {
