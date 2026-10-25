@@ -154,8 +154,8 @@ inline void VLogf(Level level, const char* file, int line, const char* fmt,
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((format(printf, 4, 5)))
 #endif
-inline void
-Logf(Level level, const char* file, int line, const char* fmt, ...) {
+inline void Logf(Level level, const char* file, int line, const char* fmt,
+                 ...) {
   va_list args;
   va_start(args, fmt);
   VLogf(level, file, line, fmt, args);
