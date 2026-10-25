@@ -26,8 +26,10 @@ class AsyncReclaimer {
   std::condition_variable work_available_;
   std::condition_variable idle_;
   std::deque<RedisObjectPtr> pending_;
-  std::thread worker_;
   size_t reclaiming_{};
   bool stopping_{};
+  // Declared last so every field the worker reads is initialized before the
+  // thread starts.
+  std::thread worker_;
 };
 }  // namespace redis_simple::db
