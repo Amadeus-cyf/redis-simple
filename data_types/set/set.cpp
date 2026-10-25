@@ -103,19 +103,6 @@ size_t Set::Size() const {
   }
 }
 
-enum Set::Encoding Set::Encoding() const {
-  switch (encoding_) {
-    case Encoding::kIntSet:
-      return Encoding::kIntSet;
-    case Encoding::kListPack:
-      return Encoding::kListPack;
-    case Encoding::kDict:
-      return Encoding::kDict;
-    default:
-      throw std::invalid_argument("unknown encoding type");
-  }
-}
-
 bool Set::IntSetAddAndMaybeConvert(std::string_view value) {
   int64_t int_val = 0;
   if (utils::ToCanonicalInt64(value, &int_val)) {
@@ -130,7 +117,7 @@ bool Set::IntSetAddAndMaybeConvert(std::string_view value) {
   }
   if (!MaybeConvertIntSetToListPack(value)) {
     ConvertIntSetToDict((intset_ ? intset_->Size() : 0) + 1);
-    dict_->Set(std::string(value), nullptr);
+    dict_->FindOrInsert(value);
   }
   return true;
 }
@@ -147,22 +134,14 @@ bool Set::ListPackAddAndMaybeConvert(std::string_view value) {
     return listpack_->Append(value);
   }
   ConvertListPackToDict(listpack_->Size() + 1);
-  if (dict_->FindValue(value) != nullptr) {
-    return false;
-  }
-  dict_->Set(std::string(value), nullptr);
-  return true;
+  return dict_->FindOrInsert(value).second;
 }
 
 bool Set::DictAdd(std::string_view value) {
   if (!dict_) {
     dict_ = in_memory::Dict<std::string, std::nullptr_t>::Create();
   }
-  if (dict_->FindValue(value) != nullptr) {
-    return false;
-  }
-  dict_->Set(std::string(value), nullptr);
-  return true;
+  return dict_->FindOrInsert(value).second;
 }
 
 void Set::MaybeConvertIntsetToDict() {

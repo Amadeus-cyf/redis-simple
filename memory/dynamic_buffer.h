@@ -19,6 +19,10 @@ class DynamicBuffer {
     processed_ += std::min(processed, UnreadSize());
   }
   void Append(const char* buffer, size_t n);
+  // Returns writable space for at least `n` bytes after Size(). Call Commit()
+  // with the number of bytes actually written there.
+  char* WritableTail(size_t n);
+  void Commit(size_t n);
   void Compact();
   std::optional<std::string_view> ReadLineView();
   std::string ReadLine();
@@ -31,8 +35,8 @@ class DynamicBuffer {
   ~DynamicBuffer() = default;
 
  private:
-  static constexpr size_t kResizeThreshold = 1024 * 32;
   size_t UnreadSize() const { return size_ - processed_; }
+  void Reserve(size_t n);
   void Resize(size_t n);
   std::unique_ptr<char[]> buf_;
   size_t capacity_;

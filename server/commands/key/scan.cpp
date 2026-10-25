@@ -21,7 +21,6 @@ constexpr size_t kMaxInitialKeyCapacity = 1024;
 
 enum class ParseStatus : uint8_t {
   kOk,
-  kWrongArgumentCount,
   kInvalidCursor,
   kInvalidCount,
   kSyntaxError,
@@ -40,10 +39,6 @@ bool FitsInSizeT(int64_t value) {
 }
 
 ParseStatus ParseScanArgs(const CommandArgs& args, ScanArgs* scan_args) {
-  if (args.empty()) {
-    return ParseStatus::kWrongArgumentCount;
-  }
-
   int64_t cursor = 0;
   if (!utils::ToInt64(args[0], &cursor) || !FitsInSizeT(cursor)) {
     return ParseStatus::kInvalidCursor;
@@ -74,9 +69,6 @@ ParseStatus ParseScanArgs(const CommandArgs& args, ScanArgs* scan_args) {
 
 void AddParseError(Client* const client, ParseStatus status) {
   switch (status) {
-    case ParseStatus::kWrongArgumentCount:
-      client->AddReply(reply::WrongNumberOfArguments());
-      return;
     case ParseStatus::kInvalidCursor:
       client->AddReply(reply::FromError("ERR invalid cursor"));
       return;
@@ -85,7 +77,7 @@ void AddParseError(Client* const client, ParseStatus status) {
           reply::FromError("ERR value is not an integer or out of range"));
       return;
     case ParseStatus::kSyntaxError:
-      client->AddReply(reply::SyntaxError());
+      client->AddReply(reply::kSyntaxError);
       return;
     case ParseStatus::kOk:
       return;
@@ -139,11 +131,7 @@ void HandleScan(Client* const client) {
     return;
   }
 
-  auto* const redis_db = client->Db();
-  if (redis_db == nullptr) {
-    client->AddReply(reply::FromError("ERR db unavailable"));
-    return;
-  }
+  db::RedisDb* const redis_db = client->Db();
 
   std::vector<std::string_view> keys;
   keys.reserve(

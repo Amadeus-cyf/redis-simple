@@ -47,14 +47,10 @@ void HandleBgRewriteAof(Client* const client) {
 
 void HandleInfo(Client* const client) {
   const auto& args = client->Args();
-  if (args.size() > 1) {
-    client->AddReply(reply::WrongNumberOfArguments());
-    return;
-  }
   if (!args.empty() && !utils::EqualsIgnoreCase(args[0], "persistence") &&
       !utils::EqualsIgnoreCase(args[0], "all") &&
       !utils::EqualsIgnoreCase(args[0], "default")) {
-    client->AddReply(reply::FromBulkString(""));
+    client->AddBulkReply("");
     return;
   }
 
@@ -68,7 +64,7 @@ void HandleInfo(Client* const client) {
     AppendField("aof_current_size", size_t{0}, &info);
     AppendField("aof_base_size", size_t{0}, &info);
     AppendField("aof_pending_bytes", size_t{0}, &info);
-    client->AddReply(reply::FromBulkString(info));
+    client->AddBulkReply(info);
     return;
   }
 
@@ -81,6 +77,6 @@ void HandleInfo(Client* const client) {
   AppendField("aof_current_size", state.current_size, &info);
   AppendField("aof_base_size", state.base_size, &info);
   AppendField("aof_pending_bytes", state.pending_bytes, &info);
-  client->AddReply(reply::FromBulkString(info));
+  client->AddBulkReply(info);
 }
 }  // namespace redis_simple::command::persistence

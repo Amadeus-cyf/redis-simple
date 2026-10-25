@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,6 +11,7 @@
 
 #include "server/client.h"
 #include "server/commands/handlers.h"
+#include "server/commands/lookup.h"
 #include "server/db/db.h"
 #include "server/reply.h"
 #include "utils/string_utils.h"
@@ -19,161 +19,58 @@
 namespace redis_simple::command::lists {
 namespace {
 using List = ::redis_simple::list::List;
+constexpr auto kList = db::RedisObject::ObjectType::kList;
+constexpr std::string_view kNotAnInteger =
+    "-ERR value is not an integer or out of range\r\n";
 
-enum class PushSide : std::uint8_t {
+enum class Side : std::uint8_t {
   kLeft,
   kRight,
 };
 
-enum class PopSide : std::uint8_t {
-  kLeft,
-  kRight,
-};
-
-enum class ListStatus : std::uint8_t {
-  kOk,
-  kMissing,
-  kWrongType,
-  kError,
-};
-
-struct KeyArgs {
-  std::string_view key;
-};
-
-struct RangeArgs {
-  std::string_view key;
-  int64_t start{0};
-  int64_t stop{0};
-};
-
-struct IndexArgs {
-  std::string_view key;
-  int64_t index{0};
-};
-
-struct SetArgs {
-  std::string_view key;
-  int64_t index{0};
-  std::string_view value;
-};
-
-struct RemoveArgs {
-  std::string_view key;
-  int64_t count{0};
-  std::string_view value;
-};
-
-struct ListResult {
-  List* list{nullptr};
-  ListStatus status{ListStatus::kMissing};
-};
-
-struct ConstListResult {
-  const List* list{nullptr};
-  ListStatus status{ListStatus::kMissing};
-};
-
-struct PopResult {
-  std::optional<std::string> value;
-  ListStatus status{ListStatus::kMissing};
-};
-
-int ParseKeyArgs(const CommandArgs& args, KeyArgs* key_args);
-int ParseRangeArgs(const CommandArgs& args, RangeArgs* range_args);
-int ParseIndexArgs(const CommandArgs& args, IndexArgs* index_args);
-int ParseSetArgs(const CommandArgs& args, SetArgs* set_args);
-int ParseRemoveArgs(const CommandArgs& args, RemoveArgs* remove_args);
-ConstListResult FindList(db::RedisDb* redis_db, std::string_view key);
-ListResult FindMutableList(db::RedisDb* redis_db, std::string_view key);
-ListResult FindOrCreateList(db::RedisDb* redis_db, std::string_view key);
-std::optional<size_t> NormalizeIndex(int64_t index, size_t size);
-std::optional<std::pair<size_t, size_t>> NormalizeRange(int64_t start,
-                                                        int64_t stop,
-                                                        size_t size);
-std::optional<int64_t> ToReplyInteger(size_t value);
-std::pair<size_t, List::RemoveDirection> NormalizeRemoveCount(int64_t count);
-std::optional<int64_t> Push(db::RedisDb* redis_db, const CommandArgs& args,
-                            PushSide side);
-PopResult Pop(db::RedisDb* redis_db, const KeyArgs* args, PopSide side);
-std::optional<int64_t> LLen(db::RedisDb* redis_db, const KeyArgs* args);
-std::optional<std::string> LRange(db::RedisDb* redis_db, const RangeArgs* args);
-PopResult LIndex(db::RedisDb* redis_db, const IndexArgs* args);
-ListStatus LSet(db::RedisDb* redis_db, const SetArgs* args);
-std::optional<int64_t> LRem(db::RedisDb* redis_db, const RemoveArgs* args);
-ListStatus LTrim(db::RedisDb* redis_db, const RangeArgs* args);
-
-int ParseKeyArgs(const CommandArgs& args, KeyArgs* const key_args) {
-  if (args.size() != 1) {
-    return -1;
+// Looks up the list at `key`, replying WRONGTYPE when another type is there.
+// Returns false when the command must stop.
+bool LookupList(Client* const client, std::string_view key,
+                const List** const list) {
+  const auto [object, wrong_type] = LookupTyped(client->Db(), key, kList);
+  if (wrong_type) {
+    client->AddReply(reply::kWrongTypeError);
+    return false;
   }
-  key_args->key = args[0];
-  return 0;
+  *list = object == nullptr ? nullptr : object->List();
+  return true;
 }
 
-int ParseRangeArgs(const CommandArgs& args, RangeArgs* const range_args) {
-  if (args.size() != 3) {
-    return -1;
+bool LookupMutableList(Client* const client, std::string_view key,
+                       List** const list) {
+  const auto [object, wrong_type] =
+      MutableLookupTyped(client->Db(), key, kList);
+  if (wrong_type) {
+    client->AddReply(reply::kWrongTypeError);
+    return false;
   }
-  range_args->key = args[0];
-  return utils::ToInt64(args[1], &range_args->start) &&
-                 utils::ToInt64(args[2], &range_args->stop)
-             ? 0
-             : -1;
+  *list = object == nullptr ? nullptr : object->List();
+  return true;
 }
 
-int ParseIndexArgs(const CommandArgs& args, IndexArgs* const index_args) {
-  if (args.size() != 2) {
-    return -1;
+// Redis deletes a list key once its last element is removed.
+void DeleteIfEmpty(Client* const client, std::string_view key,
+                   const List* const list) {
+  if (list->Size() == 0) {
+    client->Db()->DeleteKey(key);
   }
-  index_args->key = args[0];
-  return utils::ToInt64(args[1], &index_args->index) ? 0 : -1;
 }
 
-int ParseSetArgs(const CommandArgs& args, SetArgs* const set_args) {
-  if (args.size() != 3) {
-    return -1;
+bool ParseInteger(Client* const client, std::string_view text,
+                  int64_t* const value) {
+  if (!utils::ToInt64(text, value)) {
+    client->AddReply(kNotAnInteger);
+    return false;
   }
-  set_args->key = args[0];
-  set_args->value = args[2];
-  return utils::ToInt64(args[1], &set_args->index) ? 0 : -1;
-}
-
-int ParseRemoveArgs(const CommandArgs& args, RemoveArgs* const remove_args) {
-  if (args.size() != 3) {
-    return -1;
-  }
-  remove_args->key = args[0];
-  remove_args->value = args[2];
-  return utils::ToInt64(args[1], &remove_args->count) ? 0 : -1;
-}
-
-ConstListResult FindList(db::RedisDb* const redis_db, std::string_view key) {
-  const auto* obj = redis_db->LookupKey(key);
-  if (obj != nullptr && obj->Type() != db::RedisObject::ObjectType::kList) {
-    return {nullptr, ListStatus::kWrongType};
-  }
-  if (obj == nullptr) {
-    return {nullptr, ListStatus::kMissing};
-  }
-  return {obj->List(), ListStatus::kOk};
-}
-
-ListResult FindMutableList(db::RedisDb* const redis_db, std::string_view key) {
-  auto* obj = redis_db->MutableLookupKey(key);
-  if (obj != nullptr && obj->Type() != db::RedisObject::ObjectType::kList) {
-    return {nullptr, ListStatus::kWrongType};
-  }
-  if (obj == nullptr) {
-    return {nullptr, ListStatus::kMissing};
-  }
-  return {obj->List(), ListStatus::kOk};
+  return true;
 }
 
 std::optional<size_t> NormalizeIndex(int64_t index, size_t size) {
-  if (size == 0) {
-    return std::nullopt;
-  }
   const auto list_size = static_cast<int64_t>(size);
   if (index < 0) {
     index += list_size;
@@ -182,21 +79,6 @@ std::optional<size_t> NormalizeIndex(int64_t index, size_t size) {
     return std::nullopt;
   }
   return static_cast<size_t>(index);
-}
-
-ListResult FindOrCreateList(db::RedisDb* const redis_db, std::string_view key) {
-  ListResult result = FindMutableList(redis_db, key);
-  if (result.status != ListStatus::kMissing) {
-    return result;
-  }
-  // LLVM 18 cannot trace unique_ptr ownership through Dict::Set.
-  // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-  auto new_obj = db::RedisObject::CreateWithList(List::Create());
-  auto* obj = new_obj.get();
-  if (redis_db->SetKey(key, std::move(new_obj), 0) == db::DbStatus::kError) {
-    return {nullptr, ListStatus::kError};
-  }
-  return {obj->List(), ListStatus::kOk};
 }
 
 std::optional<std::pair<size_t, size_t>> NormalizeRange(int64_t start,
@@ -221,18 +103,8 @@ std::optional<std::pair<size_t, size_t>> NormalizeRange(int64_t start,
                                    static_cast<size_t>(stop));
 }
 
-std::optional<int64_t> ToReplyInteger(size_t value) {
-  if (value > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
-    return std::nullopt;
-  }
-  return static_cast<int64_t>(value);
-}
-
 std::pair<size_t, List::RemoveDirection> NormalizeRemoveCount(int64_t count) {
-  if (count == 0) {
-    return {0, List::RemoveDirection::kFromHead};
-  }
-  if (count > 0) {
+  if (count >= 0) {
     return {static_cast<size_t>(count), List::RemoveDirection::kFromHead};
   }
   if (count == std::numeric_limits<int64_t>::min()) {
@@ -242,311 +114,191 @@ std::pair<size_t, List::RemoveDirection> NormalizeRemoveCount(int64_t count) {
   return {static_cast<size_t>(-count), List::RemoveDirection::kFromTail};
 }
 
-std::optional<int64_t> Push(db::RedisDb* const redis_db,
-                            const CommandArgs& args, PushSide side) {
-  const ListResult result = FindOrCreateList(redis_db, args[0]);
-  if (result.status != ListStatus::kOk) {
-    return std::nullopt;
-  }
-  for (size_t i = 1; i < args.size(); ++i) {
-    const bool pushed = side == PushSide::kLeft ? result.list->LPush(args[i])
-                                                : result.list->RPush(args[i]);
-    if (!pushed) {
-      return std::nullopt;
-    }
-  }
-  return ToReplyInteger(result.list->Size());
-}
-
-PopResult Pop(db::RedisDb* const redis_db, const KeyArgs* const args,
-              PopSide side) {
-  const ListResult result = FindMutableList(redis_db, args->key);
-  if (result.status == ListStatus::kMissing) {
-    return {std::nullopt, ListStatus::kMissing};
-  }
-  if (result.status != ListStatus::kOk) {
-    return {std::nullopt, result.status};
-  }
-  auto value =
-      side == PopSide::kLeft ? result.list->LPop() : result.list->RPop();
-  if (result.list->Size() == 0) {
-    redis_db->DeleteKey(args->key);
-  }
-  return {value, ListStatus::kOk};
-}
-
-std::optional<int64_t> LLen(db::RedisDb* const redis_db,
-                            const KeyArgs* const args) {
-  const ConstListResult result = FindList(redis_db, args->key);
-  if (result.status == ListStatus::kMissing) {
-    return 0;
-  }
-  if (result.status != ListStatus::kOk) {
-    return std::nullopt;
-  }
-  return ToReplyInteger(result.list->Size());
-}
-
-std::optional<std::string> LRange(db::RedisDb* const redis_db,
-                                  const RangeArgs* const args) {
-  const ConstListResult result = FindList(redis_db, args->key);
-  if (result.status == ListStatus::kMissing) {
-    return reply::FromArrayHeader(0);
-  }
-  if (result.status != ListStatus::kOk) {
-    return std::nullopt;
-  }
-  const auto range =
-      NormalizeRange(args->start, args->stop, result.list->Size());
-  if (!range.has_value()) {
-    return reply::FromArrayHeader(0);
-  }
-  std::string encoded =
-      reply::FromArrayHeader(range->second - range->first + 1);
-  result.list->ForEach(range->first, range->second,
-                       [&encoded](std::string_view value) {
-                         reply::AppendBulkString(value, &encoded);
-                         return true;
-                       });
-  return encoded;
-}
-
-PopResult LIndex(db::RedisDb* const redis_db, const IndexArgs* const args) {
-  const ConstListResult result = FindList(redis_db, args->key);
-  if (result.status == ListStatus::kMissing) {
-    return {std::nullopt, ListStatus::kMissing};
-  }
-  if (result.status != ListStatus::kOk) {
-    return {std::nullopt, result.status};
-  }
-  const auto index = NormalizeIndex(args->index, result.list->Size());
-  return {index.has_value() ? result.list->At(*index) : std::nullopt,
-          ListStatus::kOk};
-}
-
-ListStatus LSet(db::RedisDb* const redis_db, const SetArgs* const args) {
-  const ListResult result = FindMutableList(redis_db, args->key);
-  if (result.status != ListStatus::kOk) {
-    return result.status;
-  }
-  const auto index = NormalizeIndex(args->index, result.list->Size());
-  if (!index.has_value()) {
-    return ListStatus::kError;
-  }
-  return result.list->Set(*index, args->value) ? ListStatus::kOk
-                                               : ListStatus::kError;
-}
-
-std::optional<int64_t> LRem(db::RedisDb* const redis_db,
-                            const RemoveArgs* const args) {
-  const ListResult result = FindMutableList(redis_db, args->key);
-  if (result.status == ListStatus::kMissing) {
-    return 0;
-  }
-  if (result.status != ListStatus::kOk) {
-    return std::nullopt;
-  }
-  const auto [limit, direction] = NormalizeRemoveCount(args->count);
-  const auto removed = result.list->Remove(args->value, limit, direction);
-  if (!removed.has_value()) {
-    return std::nullopt;
-  }
-  if (result.list->Size() == 0) {
-    redis_db->DeleteKey(args->key);
-  }
-  return ToReplyInteger(*removed);
-}
-
-ListStatus LTrim(db::RedisDb* const redis_db, const RangeArgs* const args) {
-  const ListResult result = FindMutableList(redis_db, args->key);
-  if (result.status == ListStatus::kMissing) {
-    return ListStatus::kOk;
-  }
-  if (result.status != ListStatus::kOk) {
-    return result.status;
-  }
-  const auto range =
-      NormalizeRange(args->start, args->stop, result.list->Size());
-  if (range.has_value()) {
-    if (!result.list->Trim(range->first, range->second)) {
-      return ListStatus::kError;
-    }
-  } else if (!result.list->Trim(1, 0)) {
-    return ListStatus::kError;
-  }
-  if (result.list->Size() == 0) {
-    redis_db->DeleteKey(args->key);
-  }
-  return ListStatus::kOk;
-}
-
-void HandlePush(Client* const client, PushSide side) {
+void HandlePush(Client* const client, Side side) {
   const auto& args = client->Args();
-  if (args.size() < 2) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  auto [object, wrong_type] = MutableLookupTyped(client->Db(), args[0], kList);
+  if (wrong_type) {
+    client->AddReply(reply::kWrongTypeError);
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    const auto result = Push(redis_db, args, side);
-    if (result.has_value()) {
-      client->MarkModified();
+  if (object == nullptr) {
+    // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
+    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
+    auto created = db::RedisObject::CreateWithList(List::Create());
+    object = created.get();
+    client->Db()->SetKey(args[0], std::move(created), 0);
+  }
+  List* const list = object->List();
+  for (size_t i = 1; i < args.size(); ++i) {
+    const bool pushed =
+        side == Side::kLeft ? list->LPush(args[i]) : list->RPush(args[i]);
+    if (!pushed) {
+      client->AddReply(reply::FromError("ERR list push failed"));
+      return;
     }
-    client->AddReply(result.has_value() ? reply::FromInt64(*result)
-                                        : reply::WrongTypeError());
-    return;
   }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  client->MarkModified();
+  client->AddReply(reply::FromInt64(static_cast<int64_t>(list->Size())));
 }
 
-void HandlePop(Client* const client, PopSide side) {
-  KeyArgs args;
-  if (ParseKeyArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+void HandlePop(Client* const client, Side side) {
+  const std::string_view key = client->Args()[0];
+  List* list = nullptr;
+  if (!LookupMutableList(client, key, &list)) {
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    const PopResult result = Pop(redis_db, &args, side);
-    if (result.status != ListStatus::kOk &&
-        result.status != ListStatus::kMissing) {
-      client->AddReply(reply::WrongTypeError());
-    } else if (result.value.has_value()) {
-      client->MarkModified();
-      client->AddReply(reply::FromBulkString(*result.value));
-    } else {
-      client->AddReply(reply::Null(client->Protocol()));
-    }
+  if (list == nullptr) {
+    client->AddReply(reply::NullView(client->Protocol()));
     return;
   }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  const std::optional<std::string> value =
+      side == Side::kLeft ? list->LPop() : list->RPop();
+  DeleteIfEmpty(client, key, list);
+  if (!value.has_value()) {
+    client->AddReply(reply::NullView(client->Protocol()));
+    return;
+  }
+  client->MarkModified();
+  client->AddBulkReply(*value);
 }
 }  // namespace
 
-void HandleLPush(Client* const client) { HandlePush(client, PushSide::kLeft); }
+void HandleLPush(Client* const client) { HandlePush(client, Side::kLeft); }
 
-void HandleRPush(Client* const client) { HandlePush(client, PushSide::kRight); }
+void HandleRPush(Client* const client) { HandlePush(client, Side::kRight); }
 
-void HandleLPop(Client* const client) { HandlePop(client, PopSide::kLeft); }
+void HandleLPop(Client* const client) { HandlePop(client, Side::kLeft); }
 
-void HandleRPop(Client* const client) { HandlePop(client, PopSide::kRight); }
+void HandleRPop(Client* const client) { HandlePop(client, Side::kRight); }
 
 void HandleLLen(Client* const client) {
-  KeyArgs args;
-  if (ParseKeyArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  const List* list = nullptr;
+  if (!LookupList(client, client->Args()[0], &list)) {
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    const auto length = LLen(redis_db, &args);
-    client->AddReply(length.has_value() ? reply::FromInt64(*length)
-                                        : reply::WrongTypeError());
-    return;
-  }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  const size_t size = list == nullptr ? 0 : list->Size();
+  client->AddReply(reply::FromInt64(static_cast<int64_t>(size)));
 }
 
 void HandleLRange(Client* const client) {
-  RangeArgs args;
-  if (ParseRangeArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  const auto& args = client->Args();
+  int64_t start = 0;
+  int64_t stop = 0;
+  if (!ParseInteger(client, args[1], &start) ||
+      !ParseInteger(client, args[2], &stop)) {
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    auto encoded = LRange(redis_db, &args);
-    if (!encoded.has_value()) {
-      client->AddReply(reply::WrongTypeError());
-      return;
-    }
-    client->AddReply(std::move(*encoded));
+  const List* list = nullptr;
+  if (!LookupList(client, args[0], &list)) {
     return;
   }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  const auto range = list == nullptr
+                         ? std::nullopt
+                         : NormalizeRange(start, stop, list->Size());
+  if (!range.has_value()) {
+    client->AddReply(reply::FromArrayHeader(0));
+    return;
+  }
+  std::string encoded =
+      reply::FromArrayHeader(range->second - range->first + 1);
+  list->ForEach(range->first, range->second,
+                [&encoded](std::string_view value) {
+                  reply::AppendBulkString(value, &encoded);
+                  return true;
+                });
+  client->AddReply(std::move(encoded));
 }
 
 void HandleLIndex(Client* const client) {
-  IndexArgs args;
-  if (ParseIndexArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  const auto& args = client->Args();
+  int64_t index = 0;
+  if (!ParseInteger(client, args[1], &index)) {
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    const PopResult result = LIndex(redis_db, &args);
-    if (result.status == ListStatus::kWrongType) {
-      client->AddReply(reply::WrongTypeError());
-    } else if (result.value.has_value()) {
-      client->AddReply(reply::FromBulkString(*result.value));
-    } else {
-      client->AddReply(reply::Null(client->Protocol()));
-    }
+  const List* list = nullptr;
+  if (!LookupList(client, args[0], &list)) {
     return;
   }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  const auto position =
+      list == nullptr ? std::nullopt : NormalizeIndex(index, list->Size());
+  const auto value = position.has_value() ? list->At(*position) : std::nullopt;
+  if (value.has_value()) {
+    client->AddBulkReply(*value);
+  } else {
+    client->AddReply(reply::NullView(client->Protocol()));
+  }
 }
 
 void HandleLSet(Client* const client) {
-  SetArgs args;
-  if (ParseSetArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  const auto& args = client->Args();
+  int64_t index = 0;
+  if (!ParseInteger(client, args[1], &index)) {
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    const ListStatus status = LSet(redis_db, &args);
-    if (status == ListStatus::kOk) {
-      client->MarkModified();
-      client->AddReply(reply::FromString("OK"));
-    } else if (status == ListStatus::kWrongType) {
-      client->AddReply(reply::WrongTypeError());
-    } else {
-      client->AddReply(reply::FromError("ERR index out of range"));
-    }
+  List* list = nullptr;
+  if (!LookupMutableList(client, args[0], &list)) {
     return;
   }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  if (list == nullptr) {
+    client->AddReply(reply::FromError("ERR no such key"));
+    return;
+  }
+  const auto position = NormalizeIndex(index, list->Size());
+  if (!position.has_value() || !list->Set(*position, args[2])) {
+    client->AddReply(reply::FromError("ERR index out of range"));
+    return;
+  }
+  client->MarkModified();
+  client->AddReply(reply::kOk);
 }
 
 void HandleLRem(Client* const client) {
-  RemoveArgs args;
-  if (ParseRemoveArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  const auto& args = client->Args();
+  int64_t count = 0;
+  if (!ParseInteger(client, args[1], &count)) {
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    const auto removed = LRem(redis_db, &args);
-    if (removed.has_value() && *removed > 0) {
-      client->MarkModified();
-    }
-    client->AddReply(removed.has_value() ? reply::FromInt64(*removed)
-                                         : reply::WrongTypeError());
+  List* list = nullptr;
+  if (!LookupMutableList(client, args[0], &list)) {
     return;
   }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  size_t removed = 0;
+  if (list != nullptr) {
+    const auto [limit, direction] = NormalizeRemoveCount(count);
+    removed = list->Remove(args[2], limit, direction).value_or(0);
+    DeleteIfEmpty(client, args[0], list);
+  }
+  if (removed > 0) {
+    client->MarkModified();
+  }
+  client->AddReply(reply::FromInt64(static_cast<int64_t>(removed)));
 }
 
 void HandleLTrim(Client* const client) {
-  RangeArgs args;
-  if (ParseRangeArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  const auto& args = client->Args();
+  int64_t start = 0;
+  int64_t stop = 0;
+  if (!ParseInteger(client, args[1], &start) ||
+      !ParseInteger(client, args[2], &stop)) {
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    const ListStatus status = LTrim(redis_db, &args);
-    if (status == ListStatus::kOk) {
-      client->MarkModified();
-      client->AddReply(reply::FromString("OK"));
-    } else if (status == ListStatus::kWrongType) {
-      client->AddReply(reply::WrongTypeError());
-    } else {
+  List* list = nullptr;
+  if (!LookupMutableList(client, args[0], &list)) {
+    return;
+  }
+  if (list != nullptr) {
+    const auto range = NormalizeRange(start, stop, list->Size());
+    // An empty range trims every element.
+    const bool trimmed = range.has_value()
+                             ? list->Trim(range->first, range->second)
+                             : list->Trim(1, 0);
+    if (!trimmed) {
       client->AddReply(reply::FromError("ERR list trim failed"));
+      return;
     }
-    return;
+    DeleteIfEmpty(client, args[0], list);
   }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  client->MarkModified();
+  client->AddReply(reply::kOk);
 }
 }  // namespace redis_simple::command::lists

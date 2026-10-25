@@ -555,26 +555,38 @@ Aof::Aof(int fd, const Options& options, size_t file_size)
 bool Aof::Append(std::string_view command,
                  const std::vector<std::string_view>& args,
                  db::RedisDb* const db) {
-  std::string encoded;
-  if (!Encode(command, args, db, &encoded)) {
+  const size_t batch_size = batch_.size();
+  if (!Encode(command, args, db, &batch_)) {
+    // Drop any partially encoded record so the batch stays replayable.
+    batch_.resize(batch_size);
     return false;
   }
-  if (encoded.empty()) {
-    return true;
-  }
+  return true;
+}
 
+bool Aof::Flush() {
+  if (batch_.empty()) {
+    return Healthy();
+  }
+  std::string batch;
+  batch.swap(batch_);
+  return Submit(std::move(batch));
+}
+
+bool Aof::Submit(std::string batch) {
   if (fsync_ == FsyncPolicy::kAlways) {
     const std::scoped_lock lock(mutex_);
     if (!healthy_ || stopping_) {
       return false;
     }
     std::shared_ptr<std::string> shared;
-    std::string_view data = encoded;
+    std::string_view data = batch;
     if (rewriting_ && !rewrite_failed_) {
-      shared = std::make_shared<std::string>(std::move(encoded));
+      shared = std::make_shared<std::string>(std::move(batch));
       data = *shared;
       BufferRewriteCommandLocked(shared);
     }
+    // One write and one fsync cover every mutation in the batch.
     if (!WriteAll(file_ops_.get(), fd_, data)) {
       FailLocked(AofError::kWrite);
       return false;
@@ -592,25 +604,31 @@ bool Aof::Append(std::string_view command,
   }
 
   {
-    const std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
+    // Apply backpressure instead of failing when the writer falls behind. An
+    // empty queue always admits one batch, so an oversized batch cannot wait
+    // forever.
+    space_available_.wait(lock, [this, &batch] {
+      return !healthy_ || stopping_ || pending_.empty() ||
+             (batch.size() <= limits_.max_pending_bytes &&
+              pending_bytes_ <= limits_.max_pending_bytes - batch.size() &&
+              pending_.size() < limits_.max_pending_commands);
+    });
     if (!healthy_ || stopping_) {
       return false;
     }
-    if (encoded.size() > limits_.max_pending_bytes ||
-        pending_bytes_ > limits_.max_pending_bytes - encoded.size() ||
-        pending_.size() >= limits_.max_pending_commands ||
-        current_size_ > std::numeric_limits<size_t>::max() - encoded.size()) {
-      FailLocked(AofError::kQueueFull);
+    if (current_size_ > std::numeric_limits<size_t>::max() - batch.size()) {
+      FailLocked(AofError::kWrite);
       return false;
     }
-    pending_bytes_ += encoded.size();
-    current_size_ += encoded.size();
+    pending_bytes_ += batch.size();
+    current_size_ += batch.size();
     if (rewriting_ && !rewrite_failed_) {
-      auto shared = std::make_shared<std::string>(std::move(encoded));
+      auto shared = std::make_shared<std::string>(std::move(batch));
       BufferRewriteCommandLocked(shared);
       pending_.emplace_back(std::move(shared));
     } else {
-      pending_.emplace_back(std::move(encoded));
+      pending_.emplace_back(std::move(batch));
     }
   }
   work_available_.notify_one();
@@ -618,6 +636,11 @@ bool Aof::Append(std::string_view command,
 }
 
 RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
+  // Mutations already applied to `db` belong in the current file; the
+  // snapshot covers them, so they must not land in the rewrite delta.
+  if (!Flush()) {
+    return RewriteResult::kError;
+  }
   std::thread completed_rewrite;
   {
     const std::scoped_lock lock(mutex_);
@@ -710,8 +733,9 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
 
 bool Aof::ShouldAutoRewrite() const {
   const std::scoped_lock lock(mutex_);
+  const size_t current_size = current_size_ + batch_.size();
   if (!healthy_ || stopping_ || rewriting_ || auto_rewrite_percentage_ == 0 ||
-      current_size_ == 0 || current_size_ < auto_rewrite_min_bytes_) {
+      current_size == 0 || current_size < auto_rewrite_min_bytes_) {
     return false;
   }
   if (rewrite_status_ == RewriteStatus::kFailed &&
@@ -722,7 +746,7 @@ bool Aof::ShouldAutoRewrite() const {
   if (base_size_ == 0) {
     return true;
   }
-  const size_t growth = current_size_ - std::min(current_size_, base_size_);
+  const size_t growth = current_size - std::min(current_size, base_size_);
   return static_cast<long double>(growth) * 100.0L >=
          static_cast<long double>(base_size_) *
              static_cast<long double>(auto_rewrite_percentage_);
@@ -730,8 +754,13 @@ bool Aof::ShouldAutoRewrite() const {
 
 AofState Aof::State() const {
   const std::scoped_lock lock(mutex_);
-  return {healthy_,      rewriting_, rewrite_status_, last_error_,
-          current_size_, base_size_, pending_bytes_};
+  return {healthy_,
+          rewriting_,
+          rewrite_status_,
+          last_error_,
+          current_size_ + batch_.size(),
+          base_size_,
+          pending_bytes_ + batch_.size()};
 }
 
 bool Aof::Healthy() const {
@@ -740,6 +769,7 @@ bool Aof::Healthy() const {
 }
 
 void Aof::WaitUntilIdle() {
+  Flush();
   if (fsync_ == FsyncPolicy::kAlways) {
     return;
   }
@@ -750,16 +780,19 @@ void Aof::WaitUntilIdle() {
 }
 
 void Aof::WaitUntilRewriteIdle() {
+  Flush();
   std::unique_lock<std::mutex> lock(mutex_);
   rewrite_state_changed_.wait(lock, [this] { return !rewriting_; });
 }
 
 Aof::~Aof() {
+  Flush();
   {
     const std::scoped_lock lock(mutex_);
     stopping_ = true;
   }
   work_available_.notify_all();
+  space_available_.notify_all();
   rewrite_state_changed_.notify_all();
   if (rewrite_worker_.joinable()) {
     rewrite_worker_.join();
@@ -997,6 +1030,7 @@ void Aof::Run() {
         batch.swap(pending_);
         pending_bytes_ = 0;
         writing_ = true;
+        space_available_.notify_all();
       } else if (dirty_ &&
                  (stopping_ || (fsync_ == FsyncPolicy::kEverySecond &&
                                 std::chrono::steady_clock::now() - last_sync_ >=
@@ -1215,6 +1249,7 @@ void Aof::FailLocked(AofError error) {
   syncing_ = false;
   dirty_ = false;
   idle_.notify_all();
+  space_available_.notify_all();
   rewrite_state_changed_.notify_all();
   RS_LOG_ERROR("AOF became unhealthy: %.*s\n",
                static_cast<int>(ErrorName(error).size()),

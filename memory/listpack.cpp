@@ -18,7 +18,8 @@
 namespace redis_simple::in_memory {
 ListPack::ListPack()
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
-    : lp_(std::make_unique<unsigned char[]>(kListPackHeaderSize + 1)) {
+    : lp_(std::make_unique<unsigned char[]>(kListPackHeaderSize + 1)),
+      capacity_(kListPackHeaderSize + 1) {
   SetTotalBytes(kListPackHeaderSize + 1);
   SetNumOfElements(0);
   lp_[kListPackHeaderSize] = kListPackEof;
@@ -139,17 +140,24 @@ bool ListPack::Replace(size_t idx, int64_t element_integer) {
 }
 
 bool ListPack::BatchAppend(const std::vector<ListPackEntry>& entries) {
-  uint32_t listpack_bytes = TotalBytes();
-  return BatchInsert(listpack_bytes - 1, Position::kInsertBefore, entries);
+  return BatchInsert(TotalBytes() - 1, Position::kInsertBefore, entries.data(),
+                     entries.size());
+}
+
+bool ListPack::BatchAppend(std::initializer_list<ListPackEntry> entries) {
+  return BatchInsert(TotalBytes() - 1, Position::kInsertBefore, entries.begin(),
+                     entries.size());
 }
 
 bool ListPack::BatchPrepend(const std::vector<ListPackEntry>& entries) {
-  return BatchInsert(kListPackHeaderSize, Position::kInsertBefore, entries);
+  return BatchInsert(kListPackHeaderSize, Position::kInsertBefore,
+                     entries.data(), entries.size());
 }
 
 bool ListPack::BatchInsert(size_t idx,
                            const std::vector<ListPackEntry>& entries) {
-  return BatchInsert(idx, Position::kInsertBefore, entries);
+  return BatchInsert(idx, Position::kInsertBefore, entries.data(),
+                     entries.size());
 }
 
 std::optional<size_t> ListPack::IndexAt(size_t index) const {
@@ -443,9 +451,38 @@ bool ListPack::Insert(size_t idx, ListPack::Position where,
   return true;
 }
 
+bool ListPack::PlanEntry(const ListPackEntry& entry, Encoding* const encoding) {
+  constexpr size_t kMaxStringEncodingOverhead = 10;
+  if (!entry.is_integer &&
+      entry.str.size() >
+          std::numeric_limits<uint32_t>::max() - kMaxStringEncodingOverhead) {
+    return false;
+  }
+  int64_t sval = entry.sval;
+  if (entry.is_integer || utils::ToCanonicalInt64(entry.str, &sval)) {
+    encoding->sval = sval;
+    encoding->encoding_type = EncodingGeneralType::kInteger;
+    encoding->backlen_bytes = BacklenBytes(EncodeInteger(nullptr, sval));
+  } else {
+    encoding->str = entry.str;
+    encoding->sval = 0;
+    encoding->encoding_type = EncodingGeneralType::kString;
+    encoding->backlen_bytes = BacklenBytes(EncodeString(nullptr, entry.str));
+  }
+  return true;
+}
+
+size_t ListPack::EncodedEntryBytes(const Encoding& encoding) {
+  const size_t backlen = encoding.encoding_type == EncodingGeneralType::kInteger
+                             ? EncodeInteger(nullptr, encoding.sval)
+                             : EncodeString(nullptr, encoding.str);
+  return backlen + encoding.backlen_bytes;
+}
+
 bool ListPack::BatchInsert(size_t idx, ListPack::Position where,
-                           const std::vector<ListPackEntry>& entries) {
-  if (entries.empty()) {
+                           const ListPackEntry* const entries,
+                           size_t entry_count) {
+  if (entry_count == 0) {
     return false;
   }
   uint32_t listpack_bytes = TotalBytes();
@@ -455,36 +492,15 @@ bool ListPack::BatchInsert(size_t idx, ListPack::Position where,
   if (where == Position::kInsertAfter) {
     idx = Skip(idx);
   }
-  std::vector<Encoding> encodings;
-  encodings.reserve(entries.size());
+  // Size every entry first so insertion needs one Realloc and one memmove;
+  // the second pass below re-plans each entry instead of storing plans.
   size_t inserted_bytes = 0;
-  // Precompute encodings before resizing so insertion can be one memmove.
-  for (const ListPackEntry& entry : entries) {
-    constexpr size_t kMaxStringEncodingOverhead = 10;
-    if (!entry.is_integer &&
-        entry.str.size() >
-            std::numeric_limits<uint32_t>::max() - kMaxStringEncodingOverhead) {
+  for (size_t i = 0; i < entry_count; ++i) {
+    Encoding encoding{};
+    if (!PlanEntry(entries[i], &encoding)) {
       return false;
     }
-    size_t backlen = 0;
-    int64_t sval = entry.sval;
-    if (entry.is_integer || utils::ToCanonicalInt64(entry.str, &sval)) {
-      backlen = EncodeInteger(nullptr, sval);
-      Encoding encoding{};
-      encoding.sval = sval;
-      encoding.encoding_type = EncodingGeneralType::kInteger;
-      encoding.backlen_bytes = BacklenBytes(backlen);
-      encodings.push_back(encoding);
-    } else {
-      backlen = EncodeString(nullptr, entry.str);
-      Encoding encoding{};
-      encoding.str = entry.str;
-      encoding.sval = 0;
-      encoding.encoding_type = EncodingGeneralType::kString;
-      encoding.backlen_bytes = BacklenBytes(backlen);
-      encodings.push_back(encoding);
-    }
-    const size_t entry_bytes = backlen + BacklenBytes(backlen);
+    const size_t entry_bytes = EncodedEntryBytes(encoding);
     if (entry_bytes > std::numeric_limits<size_t>::max() - inserted_bytes) {
       return false;
     }
@@ -508,16 +524,18 @@ bool ListPack::BatchInsert(size_t idx, ListPack::Position where,
                listpack_bytes - idx);
   // Update number of elements and total bytes.
   if (num_of_elements != kListPackNumEleUnknown) {
-    if (static_cast<int64_t>(encodings.size()) >
+    if (static_cast<int64_t>(entry_count) >
         kListPackNumEleUnknown - num_of_elements) {
       SetNumOfElements(kListPackNumEleUnknown);
     } else {
-      SetNumOfElements(num_of_elements + entries.size());
+      SetNumOfElements(num_of_elements + entry_count);
     }
   }
   SetTotalBytes(new_listpack_bytes);
   // Insert elements based on encoding types.
-  for (const Encoding& encoding : encodings) {
+  for (size_t i = 0; i < entry_count; ++i) {
+    Encoding encoding{};
+    PlanEntry(entries[i], &encoding);
     if (encoding.encoding_type == EncodingGeneralType::kInteger) {
       idx += EncodeInteger(lp_.get() + idx, encoding.sval);
     } else {
@@ -891,10 +909,23 @@ void ListPack::Realloc(size_t bytes) {
   if (bytes < kListPackHeaderSize + 1) {
     throw std::length_error("listpack allocation is smaller than its header");
   }
+  // Keep spare capacity so repeated inserts do not copy the whole listpack
+  // each time, but release memory once most of it is unused.
+  if (bytes <= capacity_ && bytes >= capacity_ / 4) {
+    return;
+  }
+  size_t new_capacity = bytes;
+  if (bytes > capacity_) {
+    new_capacity = std::max(bytes, capacity_ + (capacity_ / 2));
+  }
+  // Every byte up to TotalBytes() is copied, and the rest is written before
+  // it is read, so the new storage needs no zero-fill.
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
-  auto new_lp = std::make_unique<unsigned char[]>(bytes);
-  const size_t copy_bytes = std::min(static_cast<size_t>(TotalBytes()), bytes);
+  std::unique_ptr<unsigned char[]> new_lp(new unsigned char[new_capacity]);
+  const size_t copy_bytes =
+      std::min(static_cast<size_t>(TotalBytes()), new_capacity);
   std::memcpy(new_lp.get(), lp_.get(), copy_bytes);
   lp_ = std::move(new_lp);
+  capacity_ = new_capacity;
 }
 }  // namespace redis_simple::in_memory

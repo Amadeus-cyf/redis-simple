@@ -3,7 +3,9 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -106,6 +108,34 @@ TEST(DynamicBufferTest, Resize) {
   ASSERT_EQ(buffer->Capacity(), 9216);
   ASSERT_EQ(buffer->Size(), 9216);
   ASSERT_EQ(buffer->Consumed(), 0);
+}
+
+TEST(DynamicBufferTest, GrowsGeometricallyForLargePayloads) {
+  DynamicBuffer buffer;
+  const std::string chunk(16 * 1024, 'x');
+  size_t growths = 0;
+  size_t capacity = buffer.Capacity();
+  for (int i = 0; i < 512; ++i) {
+    buffer.Append(chunk.data(), chunk.size());
+    if (buffer.Capacity() != capacity) {
+      ++growths;
+      capacity = buffer.Capacity();
+    }
+  }
+  EXPECT_EQ(buffer.Size(), chunk.size() * 512);
+  // 8 MiB from a 4 KiB start takes about 11 doublings.
+  EXPECT_LE(growths, 12);
+}
+
+TEST(DynamicBufferTest, WritableTailCommitsWrittenBytes) {
+  DynamicBuffer buffer;
+  buffer.Append("ab", 2);
+  char* const tail = buffer.WritableTail(8192);
+  ASSERT_GE(buffer.Capacity() - buffer.Size(), 8192);
+  std::memcpy(tail, "cd", 2);
+  buffer.Commit(2);
+  EXPECT_EQ(buffer.View(), "abcd");
+  EXPECT_THROW(buffer.Commit(buffer.Capacity()), std::length_error);
 }
 
 TEST(DynamicBufferTest, ReusesConsumedCapacityBeforeGrowing) {

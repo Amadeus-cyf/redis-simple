@@ -277,10 +277,9 @@ timespec Loop::PollTimeout() const {
   if (!deferred_callbacks_.empty()) {
     timeout_ms = 0;
   } else {
-    const int64_t now = utils::NowInMilliseconds();
+    const int64_t now = utils::MonotonicMilliseconds();
     for (const auto& event : time_events_) {
-      if (event->Id() == ToInt(EventFlag::kDeleteEventId) ||
-          event->When() <= now) {
+      if (event->Deleted() || event->When() <= now) {
         timeout_ms = 0;
         break;
       }
@@ -289,35 +288,33 @@ timespec Loop::PollTimeout() const {
   }
 
   timespec timeout{};
-  timeout.tv_sec = timeout_ms / kMillisecondsPerSecond;
-  timeout.tv_nsec =
-      (timeout_ms % kMillisecondsPerSecond) * kNanosecondsPerMillisecond;
+  timeout.tv_sec = static_cast<time_t>(timeout_ms / kMillisecondsPerSecond);
+  timeout.tv_nsec = static_cast<long>((timeout_ms % kMillisecondsPerSecond) *
+                                      kNanosecondsPerMillisecond);
   return timeout;
 }
 
 void Loop::ProcessTimeEvents() {
+  const int64_t now = utils::MonotonicMilliseconds();
   for (auto it = time_events_.begin(); it != time_events_.end();) {
-    TimeEvent* time_event = it->get();
-    const auto id = static_cast<EventFlag>(time_event->Id());
-    if (id == EventFlag::kDeleteEventId) {
+    TimeEvent* const time_event = it->get();
+    if (time_event->Deleted()) {
       if (time_event->HasFinalizeCallback()) {
         time_event->CallFinalizeCallback();
       }
       it = time_events_.erase(it);
-    } else {
-      int64_t now = utils::NowInMilliseconds();
-      if (time_event->When() <= now) {
-        int ret = time_event->CallTimeCallback();
-        if (ret < 0) {
-          // Defer deletion so unlinking and finalization happen in one path.
-          time_event->SetId(ToInt(EventFlag::kDeleteEventId));
-        } else {
-          time_event->SetWhen(
-              now + (static_cast<int64_t>(ret) * kMillisecondsPerSecond));
-        }
-      }
-      ++it;
+      continue;
     }
+    if (time_event->When() <= now) {
+      const int64_t delay_ms = time_event->CallTimeCallback();
+      if (delay_ms < 0) {
+        // Defer deletion so unlinking and finalization happen in one path.
+        time_event->MarkDeleted();
+      } else {
+        time_event->SetWhen(utils::MonotonicMilliseconds() + delay_ms);
+      }
+    }
+    ++it;
   }
 }
 }  // namespace redis_simple::event_loop

@@ -97,8 +97,15 @@ class Aof {
   static std::unique_ptr<Aof> Open(const Options& options, db::RedisDb* db);
   Aof(const Aof&) = delete;
   Aof& operator=(const Aof&) = delete;
+  // Encodes a successful mutation into the pending batch. Nothing reaches the
+  // file until Flush(), which the server calls once per batch of commands
+  // read from a client, before any of their replies are sent.
   bool Append(std::string_view command,
               const std::vector<std::string_view>& args, db::RedisDb* db);
+  // Hands the pending batch to the writer: with `always` it is written and
+  // synced once; otherwise it is queued, waiting for space if the background
+  // writer is behind. Returns false once the AOF is unhealthy.
+  bool Flush();
   RewriteResult StartRewrite(db::RedisDb* db);
   bool ShouldAutoRewrite() const;
   AofState State() const;
@@ -127,6 +134,7 @@ class Aof {
   static bool Encode(std::string_view command,
                      const std::vector<std::string_view>& args, db::RedisDb* db,
                      std::string* output);
+  bool Submit(std::string batch);
   bool BuildSnapshot(db::RedisDb* db);
   bool QueueSnapshotBlock(std::string block);
   bool WriteBatch(int fd, RecordQueue& batch, std::vector<iovec>* blocks) const;
@@ -149,10 +157,13 @@ class Aof {
   mutable std::mutex mutex_;
   std::condition_variable work_available_;
   std::condition_variable idle_;
+  std::condition_variable space_available_;
   std::condition_variable rewrite_state_changed_;
   RecordQueue pending_;
   RecordQueue snapshot_pending_;
   RecordQueue rewrite_pending_;
+  // Encoded mutations not yet handed to the writer; event-loop thread only.
+  std::string batch_;
   std::thread worker_;
   std::thread rewrite_worker_;
   size_t pending_bytes_{};

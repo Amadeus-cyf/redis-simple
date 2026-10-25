@@ -37,7 +37,6 @@ enum class RangeStatus : std::uint8_t {
   kOk,
   kSyntaxError,
   kWrongType,
-  kDbUnavailable,
 };
 
 struct RangeOptions {
@@ -49,10 +48,6 @@ struct RangeOptions {
 
 bool ParseRangeOptions(const CommandArgs& args, RangeMode mode, bool reverse,
                        RangeOptions* const options) {
-  if (args.size() < 3 || options == nullptr) {
-    return false;
-  }
-
   RangeOptions parsed;
   parsed.by_score = mode == RangeMode::kScore;
   parsed.reverse = reverse;
@@ -113,40 +108,35 @@ bool ParseRangeOptions(const CommandArgs& args, RangeMode mode, bool reverse,
   return true;
 }
 
-int ParseRankRange(std::string_view start, std::string_view end,
-                   RangeByRankSpec* const spec) {
-  if (spec == nullptr || !utils::ToInt64(start, &spec->min) ||
-      !utils::ToInt64(end, &spec->max)) {
-    return -1;
-  }
-  return 0;
+bool ParseRankRange(std::string_view start, std::string_view end,
+                    RangeByRankSpec* const spec) {
+  return utils::ToInt64(start, &spec->min) && utils::ToInt64(end, &spec->max);
 }
 
-int ParseScoreTerm(std::string_view term, double* const value) {
-  if (term.empty() || value == nullptr) {
-    return -1;
+bool ParseScoreTerm(std::string_view term, double* const value) {
+  if (term.empty()) {
+    return false;
   }
   if (utils::EqualsIgnoreCase(term, kMinVal)) {
     *value = -std::numeric_limits<double>::infinity();
-    return 0;
+    return true;
   }
   if (utils::EqualsIgnoreCase(term, kMaxVal)) {
     *value = std::numeric_limits<double>::infinity();
-    return 0;
+    return true;
   }
   const auto number = term[0] == '(' ? term.substr(1) : term;
-  return utils::ToDouble(number, value) ? 0 : -1;
+  return utils::ToDouble(number, value);
 }
 
-int ParseScoreRange(std::string_view start, std::string_view end,
-                    RangeByScoreSpec* const spec) {
-  if (spec == nullptr || ParseScoreTerm(start, &spec->min) < 0 ||
-      ParseScoreTerm(end, &spec->max) < 0) {
-    return -1;
+bool ParseScoreRange(std::string_view start, std::string_view end,
+                     RangeByScoreSpec* const spec) {
+  if (!ParseScoreTerm(start, &spec->min) || !ParseScoreTerm(end, &spec->max)) {
+    return false;
   }
   spec->minex = start[0] == '(';
   spec->maxex = end[0] == '(';
-  return 0;
+  return true;
 }
 
 template <typename Spec>
@@ -161,16 +151,12 @@ RangeStatus RangeByRank(Client* const client, const CommandArgs& args,
                         const RangeOptions& options,
                         ZSetEntryList* const result) {
   RangeByRankSpec spec;
-  if (ParseRankRange(args[1], args[2], &spec) < 0) {
+  if (!ParseRankRange(args[1], args[2], &spec)) {
     return RangeStatus::kSyntaxError;
   }
   ApplyRangeOptions(options, &spec);
 
-  auto* redis_db = client->Db();
-  if (redis_db == nullptr) {
-    return RangeStatus::kDbUnavailable;
-  }
-  const auto* object = redis_db->LookupKey(args[0]);
+  const auto* object = client->Db()->LookupKey(args[0]);
   if (object == nullptr) {
     return RangeStatus::kOk;
   }
@@ -192,16 +178,12 @@ RangeStatus RangeByScore(Client* const client, const CommandArgs& args,
   RangeByScoreSpec spec;
   const std::string_view start = options.reverse ? args[2] : args[1];
   const std::string_view stop = options.reverse ? args[1] : args[2];
-  if (ParseScoreRange(start, stop, &spec) < 0) {
+  if (!ParseScoreRange(start, stop, &spec)) {
     return RangeStatus::kSyntaxError;
   }
   ApplyRangeOptions(options, &spec);
 
-  auto* redis_db = client->Db();
-  if (redis_db == nullptr) {
-    return RangeStatus::kDbUnavailable;
-  }
-  const auto* object = redis_db->LookupKey(args[0]);
+  const auto* object = client->Db()->LookupKey(args[0]);
   if (object == nullptr) {
     return RangeStatus::kOk;
   }
@@ -238,11 +220,9 @@ std::string EncodeZRangeReply(const ZSetEntryList& result, bool with_scores,
 
 void AddRangeError(Client* const client, RangeStatus status) {
   if (status == RangeStatus::kWrongType) {
-    client->AddReply(reply::WrongTypeError());
-  } else if (status == RangeStatus::kDbUnavailable) {
-    client->AddReply(reply::FromError("ERR db unavailable"));
+    client->AddReply(reply::kWrongTypeError);
   } else {
-    client->AddReply(reply::SyntaxError());
+    client->AddReply(reply::kSyntaxError);
   }
 }
 
@@ -250,7 +230,7 @@ void AddRangeReply(Client* const client, RangeMode mode, bool reverse) {
   const auto& args = client->Args();
   RangeOptions options;
   if (!ParseRangeOptions(args, mode, reverse, &options)) {
-    client->AddReply(reply::SyntaxError());
+    client->AddReply(reply::kSyntaxError);
     return;
   }
 
@@ -288,29 +268,19 @@ void HandleZRangeByScore(Client* const client) {
 
 void HandleZCount(Client* const client) {
   const auto& args = client->Args();
-  if (args.size() != 3) {
-    client->AddReply(reply::WrongNumberOfArguments());
-    return;
-  }
-
   RangeByScoreSpec spec;
-  if (ParseScoreRange(args[1], args[2], &spec) < 0) {
-    client->AddReply(reply::SyntaxError());
+  if (!ParseScoreRange(args[1], args[2], &spec)) {
+    client->AddReply(reply::kSyntaxError);
     return;
   }
 
-  auto* redis_db = client->Db();
-  if (redis_db == nullptr) {
-    client->AddReply(reply::FromError("ERR db unavailable"));
-    return;
-  }
-  const auto* object = redis_db->LookupKey(args[0]);
+  const auto* object = client->Db()->LookupKey(args[0]);
   if (object == nullptr) {
     client->AddReply(reply::FromInt64(0));
     return;
   }
   if (object->Type() != db::RedisObject::ObjectType::kZSet) {
-    client->AddReply(reply::WrongTypeError());
+    client->AddReply(reply::kWrongTypeError);
     return;
   }
   const auto count = ToReplyInteger(object->ZSet()->Count(&spec));

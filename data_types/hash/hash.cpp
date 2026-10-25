@@ -121,11 +121,7 @@ bool Hash::SetListPack(std::string_view field, std::string_view value) {
     SetDict(field, value);
     return true;
   }
-  const std::vector<in_memory::ListPack::ListPackEntry> entries = {
-      {field, 0, false},
-      {value, 0, false},
-  };
-  return listpack_->BatchAppend(entries);
+  return listpack_->BatchAppend({{field, 0, false}, {value, 0, false}});
 }
 
 bool Hash::SetDict(std::string_view field, std::string_view value) {
@@ -133,13 +129,9 @@ bool Hash::SetDict(std::string_view field, std::string_view value) {
   if (dict_ == nullptr) {
     dict_ = in_memory::Dict<std::string, std::string>::Create();
   }
-  auto* existing = dict_->FindValue(field);
-  if (existing != nullptr) {
-    existing->assign(value);
-    return false;
-  }
-  dict_->Set(std::string(field), std::string(value));
-  return true;
+  auto [stored, inserted] = dict_->FindOrInsert(field);
+  stored->assign(value);
+  return inserted;
 }
 
 void Hash::ConvertListPackToDict(size_t capacity) {

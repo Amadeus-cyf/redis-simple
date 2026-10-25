@@ -3,8 +3,6 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
-#include <algorithm>
-#include <any>
 #include <cstdint>
 #include <utility>
 
@@ -57,7 +55,7 @@ bool Server::Run(const ServerOptions& options) {
     return false;
   }
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
-      [](int64_t) { return ServerCron(); }, nullptr));
+      [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
   fd_ = -1;
@@ -77,14 +75,8 @@ bool Server::RemoveClient(Client* c) {
     return false;
   }
   c->Free();
-  loop_->Defer([this, c] {
-    const auto it =
-        std::find_if(clients_.begin(), clients_.end(),
-                     [c](const auto& client) { return client.get() == c; });
-    if (it != clients_.end()) {
-      clients_.erase(it);
-    }
-  });
+  // Destroy the client after the current event, which may still use it.
+  loop_->Defer([this, c] { clients_.erase(c); });
   return true;
 }
 
@@ -100,20 +92,17 @@ bool Server::InstallAcceptCallback() {
   return true;
 }
 
-int Server::ServerCron() {
-  auto* const server = Server::Get();
-  auto* const append_only_file = server->Aof();
-  if (shutdown::StopRequested() ||
-      (append_only_file != nullptr && !append_only_file->Healthy())) {
-    server->Stop();
-    return event_loop::ToInt(event_loop::EventFlag::kNoMore);
+int64_t Server::ServerCron() {
+  constexpr int64_t kCronIntervalMs = 100;
+  if (shutdown::StopRequested() || (aof_ != nullptr && !aof_->Healthy())) {
+    Stop();
+    return event_loop::TimeEvent::kNoMore;
   }
-  if (append_only_file != nullptr && append_only_file->ShouldAutoRewrite() &&
-      append_only_file->StartRewrite(server->Db()) ==
-          aof::RewriteResult::kError) {
+  if (aof_ != nullptr && aof_->ShouldAutoRewrite() &&
+      aof_->StartRewrite(db_.get()) == aof::RewriteResult::kError) {
     RS_LOG_WARN("automatic AOF rewrite failed to start\n");
   }
-  ActiveExpireCycle();
-  return 1;
+  ActiveExpireCycle(db_.get());
+  return kCronIntervalMs;
 }
 }  // namespace redis_simple

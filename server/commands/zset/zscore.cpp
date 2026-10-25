@@ -1,83 +1,26 @@
-#include <cstdint>
 #include <optional>
-#include <string>
-#include <string_view>
-#include <vector>
 
-#include "logging/logger.h"
+#include "data_types/zset/zset.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
-#include "server/db/db.h"
+#include "server/commands/lookup.h"
 #include "server/reply.h"
 
 namespace redis_simple::command::zsets {
-namespace {
-struct ZScoreArgs {
-  std::string_view key;
-  std::string_view element;
-};
-enum class ZScoreStatus : std::uint8_t {
-  kOk,
-  kMissing,
-  kWrongType,
-};
-struct ZScoreResult {
-  std::optional<double> score;
-  ZScoreStatus status{ZScoreStatus::kMissing};
-};
-int ParseArgs(const CommandArgs& args, ZScoreArgs* zscore_args);
-ZScoreResult ZScore(db::RedisDb* redis_db, const ZScoreArgs* args);
-}  // namespace
-
 void HandleZScore(Client* const client) {
-  ZScoreArgs args;
-  if (ParseArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  const auto& args = client->Args();
+  const auto [object, wrong_type] =
+      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  if (wrong_type) {
+    client->AddReply(reply::kWrongTypeError);
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    const auto result = ZScore(redis_db, &args);
-    if (result.status == ZScoreStatus::kWrongType) {
-      client->AddReply(reply::WrongTypeError());
-    } else if (result.score.has_value()) {
-      client->AddReply(reply::FromFloat(*result.score, client->Protocol()));
-    } else {
-      client->AddReply(reply::Null(client->Protocol()));
-    }
+  const std::optional<double> score =
+      object == nullptr ? std::nullopt : object->ZSet()->Score(args[1]);
+  if (score.has_value()) {
+    client->AddReply(reply::FromFloat(*score, client->Protocol()));
   } else {
-    RS_LOG_DEBUG("db unavailable\n");
-    client->AddReply(reply::FromError("ERR db unavailable"));
+    client->AddReply(reply::NullView(client->Protocol()));
   }
 }
-
-namespace {
-
-int ParseArgs(const CommandArgs& args, ZScoreArgs* const zscore_args) {
-  if (args.size() != 2) {
-    RS_LOG_DEBUG("invalid number of args\n");
-    return -1;
-  }
-  zscore_args->key = args[0];
-  zscore_args->element = args[1];
-  return 0;
-}
-
-ZScoreResult ZScore(db::RedisDb* redis_db, const ZScoreArgs* args) {
-  const auto* obj = redis_db->LookupKey(args->key);
-  if (obj == nullptr) {
-    return {std::nullopt, ZScoreStatus::kMissing};
-  }
-  if (obj->Type() != db::RedisObject::ObjectType::kZSet) {
-    return {std::nullopt, ZScoreStatus::kWrongType};
-  }
-  try {
-    const auto* zset = obj->ZSet();
-    return {zset->Score(args->element), ZScoreStatus::kOk};
-  } catch (const std::exception& e) {
-    RS_LOG_DEBUG("catch exception %s", e.what());
-    return {std::nullopt, ZScoreStatus::kMissing};
-  }
-}
-}  // namespace
 }  // namespace redis_simple::command::zsets

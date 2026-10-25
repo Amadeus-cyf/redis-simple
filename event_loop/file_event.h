@@ -7,7 +7,9 @@
 
 namespace redis_simple::event_loop {
 class Loop;
-enum class CallbackStatus;
+enum class Status;
+// File event callbacks report success or failure with the loop's Status.
+using CallbackStatus = Status;
 
 class FileEvent {
  public:

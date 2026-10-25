@@ -1,24 +1,19 @@
 #include "expire.h"
 
+#include <cstddef>
 #include <cstdint>
 
-#include "logging/logger.h"
-#include "server.h"
+#include "server/db/db.h"
 #include "utils/time_utils.h"
 
 namespace redis_simple {
-void ActiveExpireCycle() {
-  auto* db = Server::Get()->Db();
-  if (db == nullptr) {
-    RS_LOG_DEBUG("db unavailable\n");
-    return;
-  }
-
+void ActiveExpireCycle(db::RedisDb* const db) {
   constexpr size_t kSampleCount = 20;
+  // Runs every cron tick (100 ms), so this caps expiry at 25% of the loop.
   constexpr int64_t kTimeBudgetMilliseconds = 25;
   constexpr size_t kContinueExpirePercent = 25;
-  const int64_t start = utils::NowInMilliseconds();
-  while (utils::NowInMilliseconds() - start < kTimeBudgetMilliseconds) {
+  const int64_t start = utils::MonotonicMilliseconds();
+  while (utils::MonotonicMilliseconds() - start < kTimeBudgetMilliseconds) {
     const auto sample =
         db->ExpireSome(kSampleCount, utils::NowInMilliseconds());
     if (sample.sampled == 0 ||

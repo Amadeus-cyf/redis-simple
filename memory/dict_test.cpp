@@ -2,11 +2,15 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace redis_simple::in_memory {
 TEST(DictStrTest, Init) {
@@ -15,9 +19,100 @@ TEST(DictStrTest, Init) {
   ASSERT_EQ(dict_str->Size(), 0);
 }
 
-TEST(DictStrTest, CustomDictionaryRequiresHashFunction) {
-  const Dict<std::string, std::string>::DictType type;
-  EXPECT_EQ((Dict<std::string, std::string>::Create(type)), nullptr);
+namespace {
+// Case-insensitive policies exercise the hash and equality parameters.
+struct CaseInsensitiveHash {
+  size_t operator()(std::string_view key) const {
+    size_t hash = 0;
+    for (const char ch : key) {
+      hash = (hash * 31) + static_cast<unsigned char>(std::tolower(ch));
+    }
+    return hash;
+  }
+};
+
+struct CaseInsensitiveEqual {
+  bool operator()(std::string_view left, std::string_view right) const {
+    return left.size() == right.size() &&
+           std::equal(left.begin(), left.end(), right.begin(),
+                      [](char a, char b) {
+                        return std::tolower(a) == std::tolower(b);
+                      });
+  }
+};
+}  // namespace
+
+TEST(DictStrTest, UsesCustomHashAndEqualityPolicies) {
+  auto dict = Dict<std::string, int, CaseInsensitiveHash,
+                   CaseInsensitiveEqual>::Create();
+  ASSERT_TRUE(dict->Insert("Key", 1));
+  EXPECT_FALSE(dict->Insert("KEY", 2));
+  ASSERT_NE(dict->FindValue(std::string_view("kEy")), nullptr);
+  EXPECT_EQ(*dict->FindValue(std::string_view("kEy")), 1);
+}
+
+TEST(DictStrTest, FindOrInsertHashesOnceAndKeepsExistingValues) {
+  auto dict = Dict<std::string, std::string>::Create();
+  auto [value, inserted] = dict->FindOrInsert(std::string_view("key"));
+  ASSERT_TRUE(inserted);
+  *value = "first";
+  auto [same, inserted_again] = dict->FindOrInsert(std::string_view("key"));
+  EXPECT_FALSE(inserted_again);
+  EXPECT_EQ(same, value);
+  EXPECT_EQ(*same, "first");
+  EXPECT_EQ(dict->Size(), 1);
+}
+
+TEST(DictStrTest, ShrinksAfterMassDeletes) {
+  auto dict = Dict<std::string, int>::Create();
+  for (int i = 0; i < 4096; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  for (int i = 0; i < 4090; ++i) {
+    ASSERT_TRUE(dict->Delete(std::string_view(std::to_string(i))));
+  }
+  // Finish any rehash still in flight; lookups drive incremental rehashing.
+  for (int i = 0; i < 10000; ++i) {
+    dict->FindValue(std::string_view("4095"));
+  }
+  int visited_buckets = 0;
+  std::optional<size_t> cursor = 0;
+  while (cursor.has_value()) {
+    cursor = dict->Scan(*cursor, [](const std::string&, const int&) {});
+    ++visited_buckets;
+  }
+  EXPECT_EQ(dict->Size(), 6);
+  EXPECT_LE(visited_buckets, 64);
+}
+
+TEST(DictStrTest, ScanVisitsEveryKeyWhileTheTableResizes) {
+  auto dict = Dict<std::string, int>::Create();
+  for (int i = 0; i < 1000; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  std::vector<int> seen(2000, 0);
+  std::optional<size_t> cursor = 0;
+  int step = 0;
+  while (cursor.has_value()) {
+    cursor = dict->Scan(*cursor, [&seen](const std::string&, const int& v) {
+      ++seen[static_cast<size_t>(v)];
+    });
+    // Grow, then shrink, the table between cursor steps.
+    if (step == 20) {
+      for (int i = 1000; i < 2000; ++i) {
+        dict->Insert(std::to_string(i), i);
+      }
+    } else if (step == 200) {
+      for (int i = 1000; i < 2000; ++i) {
+        dict->Delete(std::string_view(std::to_string(i)));
+      }
+    }
+    ++step;
+  }
+  // Keys present for the whole scan must each be returned at least once.
+  for (int i = 0; i < 1000; ++i) {
+    EXPECT_GE(seen[static_cast<size_t>(i)], 1) << i;
+  }
 }
 
 TEST(DictStrTest, Insert) {
@@ -119,31 +214,18 @@ TEST(DictIntTest, BatchInsert) {
 TEST(DictIntTest, Iterator) {
   auto dict_int = MakeIntDictWithEntries();
   auto it = in_memory::Dict<int, int>::Iterator(dict_int.get());
-  it.SeekToFirst();
-  ASSERT_TRUE(it.Valid());
-  ASSERT_EQ(it.Key(), 128);
-  ASSERT_EQ(it.Value(), 128);
-
-  it.Next();
-  ASSERT_TRUE(it.Valid());
-  ASSERT_EQ(it.Key(), 0);
-  ASSERT_EQ(it.Value(), 0);
-
-  it.Next();
-  ASSERT_TRUE(it.Valid());
-  ASSERT_EQ(it.Key(), 1);
-  ASSERT_EQ(it.Value(), 1);
-
-  it.Next();
-  ASSERT_TRUE(it.Valid());
-  ASSERT_EQ(it.Key(), 2);
-  ASSERT_EQ(it.Value(), 2);
+  // Bucket order depends on the table size, so check coverage instead.
+  std::vector<int> seen(129, 0);
+  for (it.SeekToFirst(); it.Valid(); it.Next()) {
+    ASSERT_EQ(it.Key(), it.Value());
+    ASSERT_GE(it.Key(), 0);
+    ASSERT_LT(it.Key(), 129);
+    ++seen[static_cast<size_t>(it.Key())];
+  }
+  EXPECT_EQ(std::count(seen.begin(), seen.end(), 1), 129);
 
   it.SeekToLast();
   ASSERT_TRUE(it.Valid());
-  ASSERT_EQ(it.Key(), 127);
-  ASSERT_EQ(it.Value(), 127);
-
   it.Next();
   ASSERT_FALSE(it.Valid());
 }

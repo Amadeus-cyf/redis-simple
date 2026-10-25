@@ -58,10 +58,12 @@ Enable AOF persistence with Redis-style fsync policies:
 ```
 
 AOF is disabled by default. When enabled, `appendonly.aof` is the default path
-and `everysec` is the default fsync policy. `always` writes and syncs each
-mutation before continuing, while `no` delegates periodic durability to the
-operating system. Background policies move encoded commands into a bounded
-writer queue and use scatter/gather writes without copying command payloads.
+and `everysec` is the default fsync policy. Mutations are encoded into one
+batch per client read and flushed before any of that batch's replies are sent.
+`always` writes and syncs each batch once (group commit), while `no` delegates
+periodic durability to the operating system. Background policies hand each
+batch to a bounded writer queue and use scatter/gather writes; when the writer
+falls behind, the event loop waits for queue space instead of failing.
 Graceful shutdown drains and syncs the queue. `BGREWRITEAOF` compacts command
 history into a point-in-time database snapshot. Snapshot records are produced in
 bounded blocks while a background thread writes them; large strings are split
@@ -262,7 +264,9 @@ benchmarks/           Memory/data-structure benchmarks
 ```
 
 Command handler declarations are grouped in `server/commands/handlers.h`; the
-individual command `.cpp` files keep implementation details local.
+individual command `.cpp` files keep implementation details local. Handlers
+rely on the command table for arity and use `server/commands/lookup.h` for
+typed key lookups that report `WRONGTYPE`.
 Reply encoding helpers live directly under `server/`, while database state and
 Redis object wrappers stay under `server/db/`. The AOF writer and replay logic
 also live directly under `server/` because they coordinate command execution,

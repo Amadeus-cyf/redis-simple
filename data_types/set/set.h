@@ -35,7 +35,7 @@ class Set {
   bool ForEachMember(Visitor&& visitor) const;
   bool Remove(std::string_view value);
   size_t Size() const;
-  Encoding Encoding() const;
+  Encoding Encoding() const { return encoding_; }
 
  private:
   static constexpr size_t kIntSetMaxEntries = 512;

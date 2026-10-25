@@ -51,12 +51,14 @@ DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
   if (object == nullptr) {
     return DbStatus::kError;
   }
-  dict_->Set(std::string(key), std::move(object));
-  if (!HasFlag(flags, SetKeyFlag::kKeepTtl) && expire == 0) {
+  // FindOrInsert hashes once and copies the key only for a new entry.
+  *dict_->FindOrInsert(key).first = std::move(object);
+  if (!HasFlag(flags, SetKeyFlag::kKeepTtl) && expire == 0 &&
+      expires_->Size() > 0) {
     expires_->Delete(key);
   }
   if (expire > 0) {
-    expires_->Set(std::string(key), expire);
+    *expires_->FindOrInsert(key).first = expire;
     RS_LOG_DEBUG("add expire %" PRId64 "\n", expire);
   }
   return DbStatus::kOk;
@@ -110,10 +112,10 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
   if (!condition_met) {
     return DbStatus::kError;
   }
-  if (!loading_ && expire <= utils::NowInMilliseconds()) {
+  if (!loading_ && expire <= Now()) {
     return DeleteKey(key);
   }
-  expires_->Set(std::string(key), expire);
+  *expires_->FindOrInsert(key).first = expire;
   return DbStatus::kOk;
 }
 
@@ -147,10 +149,10 @@ DbStatus RedisDb::RenameKey(std::string_view old_key,
       expire == nullptr ? std::nullopt : std::optional<int64_t>(*expire);
   RedisObjectPtr moved_object = std::move(*object);
   dict_->Delete(old_key);
-  dict_->Set(std::string(new_key), std::move(moved_object));
+  *dict_->FindOrInsert(new_key).first = std::move(moved_object);
   expires_->Delete(old_key);
   if (expire_value.has_value()) {
-    expires_->Set(std::string(new_key), *expire_value);
+    *expires_->FindOrInsert(new_key).first = *expire_value;
   } else {
     expires_->Delete(new_key);
   }
@@ -165,8 +167,7 @@ int64_t RedisDb::TimeToLive(std::string_view key, TtlResolution resolution) {
   if (expire == nullptr) {
     return -1;
   }
-  const int64_t ttl =
-      std::max<int64_t>(*expire - utils::NowInMilliseconds(), 0);
+  const int64_t ttl = std::max<int64_t>(*expire - Now(), 0);
   if (resolution == TtlResolution::kMilliseconds) {
     return ttl;
   }
@@ -214,6 +215,11 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
   return result;
 }
 
+int64_t RedisDb::Now() const {
+  return command_time_.has_value() ? *command_time_
+                                   : utils::NowInMilliseconds();
+}
+
 bool RedisDb::IsKeyExpired(std::string_view key) const {
   if (loading_ || expires_->Size() == 0) {
     return false;
@@ -222,7 +228,6 @@ bool RedisDb::IsKeyExpired(std::string_view key) const {
   if (result == nullptr) {
     return false;
   }
-  const int64_t now = utils::NowInMilliseconds();
-  return *result <= now;
+  return *result <= Now();
 }
 }  // namespace redis_simple::db

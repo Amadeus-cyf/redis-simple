@@ -4,7 +4,6 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -68,17 +67,11 @@ class Connection {
   int Descriptor() const { return fd_; }
   ConnectionState State() const { return state_; }
   void SetState(ConnectionState state) { state_ = state; }
-  void SetPrivateData(std::any private_data) {
-    private_data_ = std::move(private_data);
-  }
-  const std::any& PrivateData() const { return private_data_; }
-  ssize_t Read(char* const buf, size_t readlen) const;
-  ssize_t BatchRead(std::string& s) const;
-  ssize_t SyncRead(char* buffer, size_t readlen, int64_t timeout_ms) const;
-  ssize_t SyncBatchRead(std::string& s, int64_t timeout_ms) const;
-  ssize_t SyncReadline(std::string& s, int64_t timeout_ms) const;
-  ssize_t Write(const char* buffer, size_t len) const;
-  ssize_t WriteVector(const std::vector<iovec>& blocks) const;
+  // Read and write calls update State() when the peer closes or fails.
+  ssize_t Read(char* buffer, size_t readlen);
+  ssize_t SyncRead(char* buffer, size_t readlen, int64_t timeout_ms);
+  ssize_t Write(const char* buffer, size_t len);
+  ssize_t WriteVector(const std::vector<iovec>& blocks);
   ssize_t SyncWrite(const char* buffer, size_t len, int64_t timeout_ms) const;
   void Close();
   ~Connection();
@@ -97,8 +90,7 @@ class Connection {
   int Wait(event_loop::EventFlag flag, int64_t timeout_ms) const;
   int fd_;
   int flags_{};
-  mutable ConnectionState state_;
-  std::any private_data_;
+  ConnectionState state_;
   event_loop::Loop* loop_{nullptr};
   ConnectionCallback read_callback_;
   ConnectionCallback write_callback_;

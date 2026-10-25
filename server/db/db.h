@@ -17,7 +17,7 @@ class Aof;
 
 namespace redis_simple::db {
 enum class DbStatus {
-  kOk = 1 << 0,
+  kOk = 0,
   kError = -1,
 };
 
@@ -74,16 +74,22 @@ class RedisDb {
   size_t ScanKeys(size_t cursor, size_t bucket_count, Visitor&& visitor);
   void Flush();
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
+  // Pins the clock used for expiration while one command runs, so the
+  // command sees a single consistent time and reads the clock only once.
+  void SetCommandTime(int64_t now_ms) { command_time_ = now_ms; }
+  void ClearCommandTime() { command_time_.reset(); }
 
  private:
   friend class aof::Aof;
   RedisDb();
   void SetLoading(bool loading) { loading_ = loading; }
   bool IsKeyExpired(std::string_view key) const;
+  int64_t Now() const;
   std::unique_ptr<in_memory::Dict<std::string, RedisObjectPtr>> dict_;
   std::unique_ptr<in_memory::Dict<std::string, int64_t>> expires_;
   AsyncReclaimer reclaimer_;
   size_t expire_cursor_{};
+  std::optional<int64_t> command_time_;
   // Replay defers expiration checks until all historical writes are applied.
   bool loading_{};
 };

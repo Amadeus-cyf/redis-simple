@@ -1,41 +1,38 @@
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
 
 namespace redis_simple::in_memory {
-class BufNode {
- public:
-  static std::unique_ptr<BufNode> Create(size_t len) {
-    return std::unique_ptr<BufNode>(
-        new BufNode(std::max(len, static_cast<size_t>(1024))));
+// One chunk of a reply list: either writable fixed-size storage or a moved
+// std::string that is sent without copying.
+struct BufNode {
+  static std::unique_ptr<BufNode> CreateWritable(size_t capacity) {
+    auto node = std::make_unique<BufNode>();
+    // Bytes are written before they are read, so skip zero-filling.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
+    node->storage.reset(new char[capacity]);
+    node->capacity = capacity;
+    return node;
   }
-  static std::unique_ptr<BufNode> Create(std::string data) {
-    return std::unique_ptr<BufNode>(new BufNode(std::move(data)));
+  static std::unique_ptr<BufNode> CreateOwned(std::string data) {
+    auto node = std::make_unique<BufNode>();
+    node->used = data.size();
+    node->capacity = data.capacity();
+    node->owned = std::move(data);
+    return node;
   }
-  char* Data() { return buf_ != nullptr ? buf_.get() : owned_.data(); }
-  bool Writable() const { return buf_ != nullptr; }
-  ~BufNode() = default;
-  std::unique_ptr<char[]> buf_;
-  size_t used_;
-  size_t capacity_;
-  std::unique_ptr<BufNode> next_;
-  std::string owned_;
 
- private:
-  static constexpr size_t kProtoNodeSize = 1024;
-  explicit BufNode() : used_(0), capacity_(kProtoNodeSize) {
-    buf_ = std::make_unique<char[]>(kProtoNodeSize);
-  }
-  explicit BufNode(size_t len) : used_(0), capacity_(len) {
-    buf_ = std::make_unique<char[]>(len);
-  }
-  explicit BufNode(std::string data)
-      : used_(data.size()),
-        capacity_(data.capacity()),
-        owned_(std::move(data)) {}
+  char* Data() { return storage != nullptr ? storage.get() : owned.data(); }
+  bool Writable() const { return storage != nullptr; }
+
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
+  std::unique_ptr<char[]> storage;
+  std::string owned;
+  size_t used{};
+  size_t capacity{};
+  std::unique_ptr<BufNode> next;
 };
 }  // namespace redis_simple::in_memory

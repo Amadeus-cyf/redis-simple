@@ -181,23 +181,13 @@ std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
 }
 
 void AddSetOperationReply(Client* const client, SetOperation operation) {
-  const auto& keys = client->Args();
-  if (keys.empty()) {
-    client->AddReply(reply::WrongNumberOfArguments());
+  auto encoded = operation(client->Db(), client->Args());
+  if (!encoded.has_value()) {
+    client->AddReply(reply::kWrongTypeError);
     return;
   }
-
-  if (auto* redis_db = client->Db()) {
-    auto encoded = operation(redis_db, keys);
-    if (!encoded.has_value()) {
-      client->AddReply(reply::WrongTypeError());
-      return;
-    }
-    client->AddReply(reply::FromSetHeader(encoded->count, client->Protocol()),
-                     std::move(encoded->body));
-    return;
-  }
-  client->AddReply(reply::FromError("ERR db unavailable"));
+  client->AddReply(reply::FromSetHeader(encoded->count, client->Protocol()),
+                   std::move(encoded->body));
 }
 }  // namespace
 
