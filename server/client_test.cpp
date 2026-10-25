@@ -140,12 +140,17 @@ TEST(ClientTest, ResumesLargeRequestAcrossBufferGrowth) {
 
   std::string expected = "+OK\r\n$60000\r\n";
   expected.append(value).append("\r\n");
+  // Interleave sends and reads: the reply is larger than some platforms'
+  // socket buffers (about 8 KiB for macOS socket pairs).
   std::string response;
-  while (client->HasPendingReplies()) {
-    ASSERT_GT(client->SendReply(), 0);
-  }
   std::array<char, 4096> buffer{};
   while (response.size() < expected.size()) {
+    if (client->HasPendingReplies()) {
+      // A full socket buffer makes this a would-block, not an error.
+      client->SendReply();
+      ASSERT_EQ(client->Connection()->State(),
+                connection::ConnectionState::kConnected);
+    }
     const ssize_t bytes_read = read(peer.Get(), buffer.data(), buffer.size());
     ASSERT_GT(bytes_read, 0);
     response.append(buffer.data(), static_cast<size_t>(bytes_read));
