@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -62,8 +63,7 @@ TEST(RequestParserTest, ResumesSplitRequestFromSavedState) {
         << size;
     EXPECT_TRUE(args.empty());
   }
-  const std::string complete = request;
-  const auto result = Parse(complete, &state, &command, &args);
+  const auto result = Parse(request, &state, &command, &args);
   ASSERT_EQ(result.status, ParseStatus::kComplete);
   EXPECT_EQ(result.consumed, request.size());
   EXPECT_EQ(command, "SET");
@@ -89,9 +89,9 @@ TEST(RequestParserTest, RejectsOverlongHeaderLines) {
   std::string_view command;
   command::CommandArgs args;
 
-  const std::string long_count = "*" + std::string(70 * 1024, '1');
+  const std::string long_count = "*" + std::string(size_t{70} * 1024, '1');
   EXPECT_EQ(Parse(long_count, &command, &args).status, ParseStatus::kInvalid);
-  const std::string long_inline(70 * 1024, 'a');
+  const std::string long_inline(size_t{70} * 1024, 'a');
   EXPECT_EQ(Parse(long_inline, &command, &args).status, ParseStatus::kInvalid);
   const std::string short_inline(1024, 'a');
   EXPECT_EQ(Parse(short_inline, &command, &args).status,

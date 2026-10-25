@@ -264,9 +264,10 @@ bool Connection::UnsetWriteCallback() {
 
 ssize_t Connection::Read(char* const buffer, size_t readlen) {
   ssize_t r = -1;
-  do {
+  r = read(fd_, buffer, readlen);
+  while (r < 0 && errno == EINTR) {
     r = read(fd_, buffer, readlen);
-  } while (r < 0 && errno == EINTR);
+  }
   if (r < 0 && !WouldBlock(errno)) {
     if (state_ == ConnectionState::kConnected) {
       state_ = ConnectionState::kError;
@@ -282,9 +283,10 @@ ssize_t Connection::Read(char* const buffer, size_t readlen) {
 ssize_t Connection::SyncRead(char* buffer, size_t readlen, int64_t timeout_ms) {
   // Try the syscall first so already-ready sockets avoid an extra poll().
   ssize_t r = -1;
-  do {
+  r = read(fd_, buffer, readlen);
+  while (r < 0 && errno == EINTR) {
     r = read(fd_, buffer, readlen);
-  } while (r < 0 && errno == EINTR);
+  }
   if (r >= 0) {
     return r;
   }
@@ -299,9 +301,10 @@ ssize_t Connection::SyncRead(char* buffer, size_t readlen, int64_t timeout_ms) {
 
 ssize_t Connection::Write(const char* buffer, size_t len) {
   ssize_t n = -1;
-  do {
+  n = write(fd_, buffer, len);
+  while (n < 0 && errno == EINTR) {
     n = write(fd_, buffer, len);
-  } while (n < 0 && errno == EINTR);
+  }
   if (n < 0 && !WouldBlock(errno)) {
     if (state_ == ConnectionState::kConnected) {
       state_ = ConnectionState::kError;
@@ -345,9 +348,10 @@ ssize_t Connection::WriteVector(const std::vector<iovec>& blocks) {
   const auto block_count =
       static_cast<int>(std::min(blocks.size(), MaxIovCount()));
   ssize_t n = -1;
-  do {
+  n = writev(fd_, blocks.data(), block_count);
+  while (n < 0 && errno == EINTR) {
     n = writev(fd_, blocks.data(), block_count);
-  } while (n < 0 && errno == EINTR);
+  }
   if (n < 0 && !WouldBlock(errno)) {
     if (state_ == ConnectionState::kConnected) {
       state_ = ConnectionState::kError;

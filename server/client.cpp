@@ -30,6 +30,8 @@ class CommandTimeScope {
   }
   CommandTimeScope(const CommandTimeScope&) = delete;
   CommandTimeScope& operator=(const CommandTimeScope&) = delete;
+  CommandTimeScope(CommandTimeScope&&) = delete;
+  CommandTimeScope& operator=(CommandTimeScope&&) = delete;
   ~CommandTimeScope() { db_->ClearCommandTime(); }
 
  private:

@@ -76,10 +76,14 @@ TEST(DictStrTest, ShrinksAfterMassDeletes) {
     dict->FindValue(std::string_view("4095"));
   }
   int visited_buckets = 0;
-  std::optional<size_t> cursor = 0;
-  while (cursor.has_value()) {
-    cursor = dict->Scan(*cursor, [](const std::string&, const int&) {});
+  size_t cursor = 0;
+  while (true) {
+    const auto next = dict->Scan(cursor, [](const std::string&, const int&) {});
     ++visited_buckets;
+    if (!next.has_value()) {
+      break;
+    }
+    cursor = *next;
   }
   EXPECT_EQ(dict->Size(), 6);
   EXPECT_LE(visited_buckets, 64);
@@ -91,12 +95,17 @@ TEST(DictStrTest, ScanVisitsEveryKeyWhileTheTableResizes) {
     dict->Insert(std::to_string(i), i);
   }
   std::vector<int> seen(2000, 0);
-  std::optional<size_t> cursor = 0;
+  size_t cursor = 0;
   int step = 0;
-  while (cursor.has_value()) {
-    cursor = dict->Scan(*cursor, [&seen](const std::string&, const int& v) {
-      ++seen[static_cast<size_t>(v)];
-    });
+  while (true) {
+    const auto next =
+        dict->Scan(cursor, [&seen](const std::string&, const int& v) {
+          ++seen[static_cast<size_t>(v)];
+        });
+    if (!next.has_value()) {
+      break;
+    }
+    cursor = *next;
     // Grow, then shrink, the table between cursor steps.
     if (step == 20) {
       for (int i = 1000; i < 2000; ++i) {

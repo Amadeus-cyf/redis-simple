@@ -2,8 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
-#include <cstring>
+#include <cstddef>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -112,7 +113,7 @@ TEST(DynamicBufferTest, Resize) {
 
 TEST(DynamicBufferTest, GrowsGeometricallyForLargePayloads) {
   DynamicBuffer buffer;
-  const std::string chunk(16 * 1024, 'x');
+  const std::string chunk(size_t{16} * 1024, 'x');
   size_t growths = 0;
   size_t capacity = buffer.Capacity();
   for (int i = 0; i < 512; ++i) {
@@ -132,8 +133,9 @@ TEST(DynamicBufferTest, WritableTailCommitsWrittenBytes) {
   buffer.Append("ab", 2);
   char* const tail = buffer.WritableTail(8192);
   ASSERT_GE(buffer.Capacity() - buffer.Size(), 8192);
-  std::memcpy(tail, "cd", 2);
-  buffer.Commit(2);
+  constexpr std::string_view kTail = "cd";
+  std::copy(kTail.begin(), kTail.end(), tail);
+  buffer.Commit(kTail.size());
   EXPECT_EQ(buffer.View(), "abcd");
   EXPECT_THROW(buffer.Commit(buffer.Capacity()), std::length_error);
 }

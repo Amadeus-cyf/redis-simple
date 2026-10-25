@@ -21,7 +21,6 @@ constexpr char kArrayPrefix = '*';
 constexpr char kMapPrefix = '%';
 constexpr char kSetPrefix = '~';
 constexpr char kDoublePrefix = ',';
-constexpr char kNullPrefix = '_';
 constexpr char kErrorPrefix = '-';
 
 template <typename Integer>
