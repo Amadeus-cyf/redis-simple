@@ -43,8 +43,6 @@ TEST(RedisObjectTest, IntReadsBothEncodings) {
   EXPECT_EQ(RedisObject::CreateWithInt(12)->Int(), 12);
   EXPECT_EQ(RedisObject::CreateWithString("12")->Int(), 12);
   EXPECT_FALSE(RedisObject::CreateWithString("abc")->Int().has_value());
-  EXPECT_DEATH(RedisObject::CreateWithSet(set::Set::Create())->Int(),
-               "Check failed");
 }
 
 TEST(RedisObjectTest, MutableStringConvertsIntEncoding) {
@@ -69,7 +67,7 @@ TEST(RedisObjectTest, CollectionObjectsExposeTypedStorage) {
   const auto set_object = RedisObject::CreateWithSet(set::Set::Create());
   EXPECT_EQ(set_object->Type(), RedisObject::ObjectType::kSet);
   ASSERT_NE(set_object->Set(), nullptr);
-  EXPECT_DEATH(set_object->String(), "Check failed");
+
   EXPECT_EQ(set_object->MutableString(), nullptr);
 
   const auto list_object = RedisObject::CreateWithList(list::List::Create());
@@ -93,5 +91,11 @@ TEST(RedisObjectTest, RejectsNullCollectionStorage) {
   EXPECT_EQ(RedisObject::CreateWithList(nullptr), nullptr);
   EXPECT_EQ(RedisObject::CreateWithZSet(nullptr), nullptr);
   EXPECT_EQ(RedisObject::CreateWithHash(nullptr), nullptr);
+}
+TEST(RedisObjectDeathTest, StringAccessorsRequireAStringObject) {
+  const auto object = RedisObject::CreateWithSet(set::Set::Create());
+  EXPECT_DEATH(object->String(), "Check failed");
+  EXPECT_DEATH(object->Int(), "Check failed");
+  EXPECT_DEATH(object->SetInt(1), "Check failed");
 }
 }  // namespace redis_simple::db

@@ -273,15 +273,6 @@ TEST(ListPackTest, Append) {
 
   // Reach the end of the listpack.
   ASSERT_FALSE(listpack->Next(idx).has_value());
-
-  // Invalid get for string type.
-  EXPECT_DEATH(listpack->Get(ListPack::kListPackHeaderSize - 1, nullptr),
-               "Check failed");
-  EXPECT_DEATH(listpack->Get(listpack->TotalBytes(), nullptr), "Check failed");
-
-  // Invalid get for integer type.
-  EXPECT_DEATH(listpack->IntegerAt(3), "Check failed");
-  EXPECT_DEATH(listpack->IntegerAt(listpack->TotalBytes()), "Check failed");
 }
 
 TEST(ListPackTest, PreservesNonCanonicalIntegerStrings) {
@@ -381,11 +372,6 @@ TEST(ListPackTest, Insert) {
   idx = Advance(*listpack, idx, 2);
   size_t i4 = idx;
   ASSERT_TRUE(listpack->Insert(i4, s2));
-
-  // Insert out of bound.
-  EXPECT_DEATH(listpack->Insert(0, "test invalid insert"), "Check failed");
-  EXPECT_DEATH(listpack->Insert(listpack->TotalBytes(), 123456),
-               "Check failed");
 
   ASSERT_EQ(listpack->Size(), 21);
 
@@ -506,12 +492,6 @@ TEST(ListPackTest, Replace) {
   ASSERT_EQ(listpack->IntegerAt(idx), 217);
   // Check if the element is the last element.
   ASSERT_FALSE(listpack->Next(idx).has_value());
-
-  // Replace out of bound.
-  EXPECT_DEATH(listpack->Replace(0, "test replace out of bound"),
-               "Check failed");
-  EXPECT_DEATH(listpack->Replace(listpack->TotalBytes(), 123456789),
-               "Check failed");
 }
 
 TEST(ListPackTest, BatchAppend) {
@@ -559,16 +539,11 @@ TEST(ListPackTest, BatchInsert) {
   ASSERT_EQ(listpack->Size(), 49);
   ExpectEntriesFrom(*listpack, idx, entries);
 
-  // Insert out of bound.
-  EXPECT_DEATH(listpack->BatchInsert(0, entries), "Check failed");
-  EXPECT_DEATH(listpack->BatchInsert(listpack->TotalBytes(), entries),
-               "Check failed");
-
   // Insert an empty list.
   ASSERT_FALSE(listpack->BatchInsert(0, {}));
 }
 
-TEST(ListPackTest, InvalidGet) {
+TEST(ListPackDeathTest, InvalidGetOnEmptyListPack) {
   auto listpack = std::make_unique<ListPack>();
   // Out of bound
   EXPECT_DEATH(listpack->Get(0, nullptr), "Check failed");
@@ -662,11 +637,6 @@ TEST(ListPackTest, Delete) {
   unsigned char* c5 = listpack->Get(next_idx, &l5);
   ASSERT_EQ(l4, l5);
   ASSERT_TRUE(std::equal(c5, c5 + l5, c4));
-
-  // Delete out of bound.
-  EXPECT_DEATH(listpack->Delete(ListPack::kListPackHeaderSize - 1),
-               "Check failed");
-  EXPECT_DEATH(listpack->Delete(listpack->TotalBytes()), "Check failed");
 }
 
 TEST(ListPackTest, DeleteRangeUsesOneContiguousMutation) {
@@ -711,5 +681,27 @@ TEST(ListPackTest, DeleteMatchingHonorsDirectionAndLimit) {
 
   EXPECT_EQ(listpack.DeleteMatching("x", 0), 2);
   EXPECT_EQ(listpack.Size(), 2);
+}
+TEST(ListPackDeathTest, RejectsOutOfBoundsIndexes) {
+  auto listpack = std::make_unique<ListPack>();
+  ASSERT_TRUE(listpack->Append("value"));
+  ASSERT_TRUE(listpack->Append(42));
+  const size_t end = listpack->TotalBytes();
+  const auto entries = MakeBatchInsertEntries("a", "b", "c");
+
+  EXPECT_DEATH(listpack->Get(ListPack::kListPackHeaderSize - 1, nullptr),
+               "Check failed");
+  EXPECT_DEATH(listpack->Get(end, nullptr), "Check failed");
+  EXPECT_DEATH(listpack->IntegerAt(3), "Check failed");
+  EXPECT_DEATH(listpack->IntegerAt(end), "Check failed");
+  EXPECT_DEATH(listpack->Insert(0, "value"), "Check failed");
+  EXPECT_DEATH(listpack->Insert(end, 123456), "Check failed");
+  EXPECT_DEATH(listpack->Replace(0, "value"), "Check failed");
+  EXPECT_DEATH(listpack->Replace(end, 123456789), "Check failed");
+  EXPECT_DEATH(listpack->BatchInsert(0, entries), "Check failed");
+  EXPECT_DEATH(listpack->BatchInsert(end, entries), "Check failed");
+  EXPECT_DEATH(listpack->Delete(ListPack::kListPackHeaderSize - 1),
+               "Check failed");
+  EXPECT_DEATH(listpack->Delete(end), "Check failed");
 }
 }  // namespace redis_simple::in_memory

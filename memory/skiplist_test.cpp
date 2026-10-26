@@ -67,7 +67,7 @@ struct CountingDestructor {
 };
 }  // namespace
 
-TEST(SkiplistTest, RejectsInvalidLevel) {
+TEST(SkiplistDeathTest, RejectsInvalidLevel) {
   EXPECT_DEATH((Skiplist<std::string>(0)), "Check failed");
   EXPECT_DEATH((Skiplist<std::string>(33)), "Check failed");
 }
@@ -167,11 +167,6 @@ TEST(SkiplistTest, FindKeyByRank) {
 
   const std::string& s4 = skiplist->FindKeyByRank(-4);
   ASSERT_EQ(s4, "key0");
-
-  EXPECT_DEATH(skiplist->FindKeyByRank(skiplist->Size()), "Check failed");
-  EXPECT_DEATH(skiplist->FindKeyByRank(-skiplist->Size() - 1), "Check failed");
-  EXPECT_DEATH(skiplist->FindKeyByRank(INT_MAX), "Check failed");
-  EXPECT_DEATH(skiplist->FindKeyByRank(INT_MIN), "Check failed");
 }
 
 TEST(SkiplistTest, FindRankOfKey) {
@@ -192,11 +187,6 @@ TEST(SkiplistTest, ArrayAccess) {
   ASSERT_EQ((*skiplist)[2], "key4");
   ASSERT_EQ((*skiplist)[3], "key5");
   ASSERT_EQ((*skiplist)[skiplist->Size() - 1], "key5");
-
-  EXPECT_DEATH((*skiplist)[skiplist->Size()], "Check failed");
-  EXPECT_DEATH((*skiplist)[-1], "Check failed");
-  EXPECT_DEATH((*skiplist)[INT_MAX], "Check failed");
-  EXPECT_DEATH((*skiplist)[INT_MIN], "Check failed");
 }
 
 TEST(SkiplistTest, RangeByRank) {
@@ -411,7 +401,15 @@ TEST(CustomSkiplistTest, ArrayAccess) {
   ASSERT_EQ((*skiplist)[1], "key1");
   ASSERT_EQ((*skiplist)[2], "key0");
   ASSERT_EQ((*skiplist)[skiplist->Size() - 1], "key0");
+}
+TEST(SkiplistDeathTest, RejectsOutOfRangeRanks) {
+  auto skiplist = MakeRankedSkiplist();
+  const auto size = static_cast<int64_t>(skiplist->Size());
 
+  EXPECT_DEATH(skiplist->FindKeyByRank(size), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(-size - 1), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(INT_MAX), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(INT_MIN), "Check failed");
   EXPECT_DEATH((*skiplist)[skiplist->Size()], "Check failed");
   EXPECT_DEATH((*skiplist)[-1], "Check failed");
   EXPECT_DEATH((*skiplist)[INT_MAX], "Check failed");

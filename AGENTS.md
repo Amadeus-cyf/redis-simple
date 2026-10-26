@@ -14,7 +14,8 @@ Guidance for AI coding agents working in this repository.
   (`bool`, `std::optional`, status enums, or `nullptr`), and guard
   programming errors with `RS_CHECK` / `RS_UNREACHABLE` from `utils/check.h`,
   which abort and stay enabled in release builds. Test them with
-  `EXPECT_DEATH`. The only `catch` blocks are where `std::thread` reports a
+  `EXPECT_DEATH` in suites named `<Suite>DeathTest`, which the macOS leak
+  check skips. The only `catch` blocks are where `std::thread` reports a
   failure to start.
 - Spell project includes from the repository root (`"server/db/db.h"`), and
   include GoogleTest as `<gtest/gtest.h>`.

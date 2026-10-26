@@ -54,8 +54,6 @@ TEST(IntSetTest, AddAndUpgradeAndGet) {
   ASSERT_EQ(intset->Get(9), INT16_MAX);
   ASSERT_EQ(intset->Get(10), INT32_MAX);
   ASSERT_EQ(intset->Get(11), INT64_MAX);
-  EXPECT_DEATH(intset->Get(-1), "Check failed");
-  EXPECT_DEATH(intset->Get(12), "Check failed");
 }
 
 TEST(IntSetTest, Find) {
@@ -116,5 +114,10 @@ TEST(IntSetTest, Iterator) {
   ASSERT_EQ(it.Value(), 7);
   it.SeekToLast();
   ASSERT_EQ(it.Value(), INT32_MAX);
+}
+TEST(IntSetDeathTest, RejectsOutOfRangeIndex) {
+  auto intset = MakeFullIntSet();
+  EXPECT_DEATH(intset->Get(-1), "Check failed");
+  EXPECT_DEATH(intset->Get(intset->Size()), "Check failed");
 }
 }  // namespace redis_simple::in_memory

@@ -136,7 +136,6 @@ TEST(DynamicBufferTest, WritableTailCommitsWrittenBytes) {
   std::copy(kTail.begin(), kTail.end(), tail);
   buffer.Commit(kTail.size());
   EXPECT_EQ(buffer.View(), "abcd");
-  EXPECT_DEATH(buffer.Commit(buffer.Capacity()), "Check failed");
 }
 
 TEST(DynamicBufferTest, ReusesConsumedCapacityBeforeGrowing) {
@@ -152,5 +151,10 @@ TEST(DynamicBufferTest, ReusesConsumedCapacityBeforeGrowing) {
   EXPECT_EQ(buffer.Consumed(), 0);
   EXPECT_EQ(buffer.Size(), 2500);
   EXPECT_EQ(buffer.View(), std::string(500, 'a') + second);
+}
+TEST(DynamicBufferDeathTest, RejectsCommitBeyondCapacity) {
+  DynamicBuffer buffer;
+  buffer.Append("ab", 2);
+  EXPECT_DEATH(buffer.Commit(buffer.Capacity()), "Check failed");
 }
 }  // namespace redis_simple::in_memory
