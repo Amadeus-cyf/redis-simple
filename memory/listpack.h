@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_LISTPACK_H_
+#define REDIS_SIMPLE_MEMORY_LISTPACK_H_
 
 #include <algorithm>
 #include <array>
@@ -251,3 +252,5 @@ bool ListPack::ForEachPair(Visitor&& visitor) const {
   return true;
 }
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_LISTPACK_H_

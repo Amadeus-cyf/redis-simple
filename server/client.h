@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_CLIENT_H_
+#define REDIS_SIMPLE_SERVER_CLIENT_H_
 
 #include <sys/types.h>
 
@@ -116,3 +117,5 @@ class Client {
   bool authenticated_{true};
 };
 }  // namespace redis_simple
+
+#endif  // REDIS_SIMPLE_SERVER_CLIENT_H_

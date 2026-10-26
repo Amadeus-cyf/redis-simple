@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_TEST_UTIL_H_
+#define REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_TEST_UTIL_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -238,3 +239,5 @@ void TestDelete() {
   ASSERT_FALSE(zset->Delete("key not exist"));
 }
 }  // namespace redis_simple::zset::zset_storage_test
+
+#endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_TEST_UTIL_H_

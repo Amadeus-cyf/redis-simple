@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_CLIENT_CONNECTION_H_
+#define REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_CLIENT_CONNECTION_H_
 
 #include <string_view>
 
@@ -18,3 +19,5 @@ event_loop::CallbackStatus AcceptConnectionCallback(event_loop::Loop* loop,
                                                     int fd, Server* server,
                                                     int mask);
 }  // namespace redis_simple::client_connection
+
+#endif  // REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_CLIENT_CONNECTION_H_

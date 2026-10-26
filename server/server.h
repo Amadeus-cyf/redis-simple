@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_SERVER_H_
+#define REDIS_SIMPLE_SERVER_SERVER_H_
 
 #include <cstdint>
 #include <memory>
@@ -45,3 +46,5 @@ class Server {
   bool protected_mode_{true};
 };
 }  // namespace redis_simple
+
+#endif  // REDIS_SIMPLE_SERVER_SERVER_H_

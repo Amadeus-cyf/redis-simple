@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_EVENT_LOOP_FILE_EVENT_H_
+#define REDIS_SIMPLE_EVENT_LOOP_FILE_EVENT_H_
 
 #include <cstddef>
 #include <functional>
@@ -100,3 +101,5 @@ class FileEvent {
   bool has_separate_callbacks_;
 };
 }  // namespace redis_simple::event_loop
+
+#endif  // REDIS_SIMPLE_EVENT_LOOP_FILE_EVENT_H_

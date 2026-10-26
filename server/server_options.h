@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_SERVER_OPTIONS_H_
+#define REDIS_SIMPLE_SERVER_SERVER_OPTIONS_H_
 
 #include <string>
 #include <string_view>
@@ -32,3 +33,5 @@ struct OptionsResult {
 OptionsResult ParseServerOptions(int argc, const char* const* argv);
 std::string_view ServerUsage();
 }  // namespace redis_simple
+
+#endif  // REDIS_SIMPLE_SERVER_SERVER_OPTIONS_H_

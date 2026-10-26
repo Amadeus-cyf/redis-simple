@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_UTILS_STRING_UTILS_H_
+#define REDIS_SIMPLE_UTILS_STRING_UTILS_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -35,3 +36,5 @@ int Int64ToString(char* dst, size_t dstlen, int64_t svalue);
 // https://engineering.fb.com/2013/03/15/developer-tools/three-optimization-tips-for-c/
 int Uint64ToString(char* dst, size_t dstlen, uint64_t value);
 }  // namespace redis_simple::utils
+
+#endif  // REDIS_SIMPLE_UTILS_STRING_UTILS_H_

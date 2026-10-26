@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_COMMANDS_HANDLERS_H_
+#define REDIS_SIMPLE_SERVER_COMMANDS_HANDLERS_H_
 
 namespace redis_simple {
 class Client;
@@ -96,3 +97,5 @@ void HandleHMGet(Client* client);
 void HandleHSet(Client* client);
 void HandleHVals(Client* client);
 }  // namespace redis_simple::command::hashes
+
+#endif  // REDIS_SIMPLE_SERVER_COMMANDS_HANDLERS_H_

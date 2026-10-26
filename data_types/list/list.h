@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_DATA_TYPES_LIST_LIST_H_
+#define REDIS_SIMPLE_DATA_TYPES_LIST_LIST_H_
 
 #include <cstddef>
 #include <memory>
@@ -77,3 +78,5 @@ bool List::ForEachReverse(size_t start, size_t stop, Visitor&& visitor) const {
                    : quicklist_->ForEachReverse(start, stop, visitor);
 }
 }  // namespace redis_simple::list
+
+#endif  // REDIS_SIMPLE_DATA_TYPES_LIST_LIST_H_

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_EVENT_LOOP_TIME_EVENT_H_
+#define REDIS_SIMPLE_EVENT_LOOP_TIME_EVENT_H_
 
 #include <cstdint>
 #include <functional>
@@ -51,3 +52,5 @@ class TimeEvent {
   FinalizeCallback finalize_callback_;
 };
 }  // namespace redis_simple::event_loop
+
+#endif  // REDIS_SIMPLE_EVENT_LOOP_TIME_EVENT_H_

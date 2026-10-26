@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_COMMANDS_COMMAND_H_
+#define REDIS_SIMPLE_SERVER_COMMANDS_COMMAND_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -52,3 +53,5 @@ struct Command {
 
 const Command* Find(std::string_view name);
 }  // namespace redis_simple::command
+
+#endif  // REDIS_SIMPLE_SERVER_COMMANDS_COMMAND_H_

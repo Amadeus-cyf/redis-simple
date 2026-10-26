@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_LOGGING_LOGGER_H_
+#define REDIS_SIMPLE_LOGGING_LOGGER_H_
 
 #include <array>
 #include <chrono>
@@ -179,3 +180,5 @@ inline void Logf(Level level, const char* file, int line, const char* fmt,
   RS_LOG_AT_LEVEL(::redis_simple::logging::Level::kWarn, __VA_ARGS__)
 #define RS_LOG_ERROR(...) \
   RS_LOG_AT_LEVEL(::redis_simple::logging::Level::kError, __VA_ARGS__)
+
+#endif  // REDIS_SIMPLE_LOGGING_LOGGER_H_

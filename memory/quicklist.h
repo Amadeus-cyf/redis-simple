@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_QUICKLIST_H_
+#define REDIS_SIMPLE_MEMORY_QUICKLIST_H_
 
 #include <algorithm>
 #include <cstddef>
@@ -145,3 +146,5 @@ bool QuickList::ForEachReverse(size_t start, size_t stop,
   return true;
 }
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_QUICKLIST_H_

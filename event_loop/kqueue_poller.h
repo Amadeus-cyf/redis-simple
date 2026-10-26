@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_EVENT_LOOP_KQUEUE_POLLER_H_
+#define REDIS_SIMPLE_EVENT_LOOP_KQUEUE_POLLER_H_
 
 #include <sys/event.h>
 
@@ -26,3 +27,5 @@ class KqueuePoller final : public EventPoller {
   std::unordered_map<int, int> masks_;
 };
 }  // namespace redis_simple::event_loop
+
+#endif  // REDIS_SIMPLE_EVENT_LOOP_KQUEUE_POLLER_H_

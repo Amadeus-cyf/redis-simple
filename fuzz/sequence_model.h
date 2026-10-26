@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_FUZZ_SEQUENCE_MODEL_H_
+#define REDIS_SIMPLE_FUZZ_SEQUENCE_MODEL_H_
 
 #include <algorithm>
 #include <cstddef>
@@ -48,3 +49,5 @@ inline size_t RemoveMatchesFromModel(std::vector<std::string>* model,
   return removed;
 }
 }  // namespace redis_simple::fuzz
+
+#endif  // REDIS_SIMPLE_FUZZ_SEQUENCE_MODEL_H_

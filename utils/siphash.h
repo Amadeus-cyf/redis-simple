@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_UTILS_SIPHASH_H_
+#define REDIS_SIMPLE_UTILS_SIPHASH_H_
 
 #include <array>
 #include <cstddef>
@@ -97,3 +98,5 @@ inline uint64_t SeededHash(std::string_view data) {
   return SipHash<1, 3>(data, HashSeed());
 }
 }  // namespace redis_simple::utils
+
+#endif  // REDIS_SIMPLE_UTILS_SIPHASH_H_

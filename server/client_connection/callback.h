@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_CALLBACK_H_
+#define REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_CALLBACK_H_
 
 #include "connection/connection_callback.h"
 
@@ -17,3 +18,5 @@ enum class CallbackType {
 connection::ConnectionCallback CreateCallback(CallbackType type, Server* server,
                                               Client* client);
 }  // namespace redis_simple::client_connection
+
+#endif  // REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_CALLBACK_H_

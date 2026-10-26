@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_DATA_TYPES_HASH_HASH_H_
+#define REDIS_SIMPLE_DATA_TYPES_HASH_HASH_H_
 
 #include <cstddef>
 #include <memory>
@@ -127,3 +128,5 @@ bool Hash::ForEachValue(Visitor&& visitor) const {
       });
 }
 }  // namespace redis_simple::hash
+
+#endif  // REDIS_SIMPLE_DATA_TYPES_HASH_HASH_H_

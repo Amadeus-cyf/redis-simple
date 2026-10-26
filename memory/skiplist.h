@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_SKIPLIST_H_
+#define REDIS_SIMPLE_MEMORY_SKIPLIST_H_
 
 #include <array>
 #include <cstddef>
@@ -1081,3 +1082,5 @@ Skiplist<Key, Comparator, Destructor>::~Skiplist() {
   delete head_;
 }
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_SKIPLIST_H_

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_DB_DB_H_
+#define REDIS_SIMPLE_SERVER_DB_DB_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -138,3 +139,5 @@ size_t RedisDb::ScanKeys(size_t cursor, size_t bucket_count,
   return next_cursor.value_or(0);
 }
 }  // namespace redis_simple::db
+
+#endif  // REDIS_SIMPLE_SERVER_DB_DB_H_

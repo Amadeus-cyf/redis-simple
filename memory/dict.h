@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_DICT_H_
+#define REDIS_SIMPLE_MEMORY_DICT_H_
 
 #include <algorithm>
 #include <array>
@@ -665,3 +666,5 @@ size_t Dict<K, V, Hash, KeyEqual>::ReverseBits(size_t value) {
   return value;
 }
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_DICT_H_

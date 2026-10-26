@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_FUZZ_FUZZ_INPUT_H_
+#define REDIS_SIMPLE_FUZZ_FUZZ_INPUT_H_
 
 #include <algorithm>
 #include <array>
@@ -110,3 +111,5 @@ const T& ValueOrAbort(const std::optional<T>& value) {
   return *value;
 }
 }  // namespace redis_simple::fuzz
+
+#endif  // REDIS_SIMPLE_FUZZ_FUZZ_INPUT_H_

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_DATA_TYPES_SET_SET_H_
+#define REDIS_SIMPLE_DATA_TYPES_SET_SET_H_
 
 #include <array>
 #include <charconv>
@@ -97,3 +98,5 @@ bool Set::ForEachMember(Visitor&& visitor) const {
   throw std::invalid_argument("unknown encoding type");
 }
 }  // namespace redis_simple::set
+
+#endif  // REDIS_SIMPLE_DATA_TYPES_SET_SET_H_

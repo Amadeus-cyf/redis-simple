@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_REPLY_BUFFER_H_
+#define REDIS_SIMPLE_MEMORY_REPLY_BUFFER_H_
 
 #include <sys/uio.h>
 
@@ -60,3 +61,5 @@ class ReplyBuffer {
   size_t pending_bytes_{};
 };
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_REPLY_BUFFER_H_

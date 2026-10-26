@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_EVENT_LOOP_EVENT_POLLER_H_
+#define REDIS_SIMPLE_EVENT_LOOP_EVENT_POLLER_H_
 
 #include <ctime>
 #include <vector>
@@ -18,3 +19,5 @@ class EventPoller {
   virtual ~EventPoller() = default;
 };
 }  // namespace redis_simple::event_loop
+
+#endif  // REDIS_SIMPLE_EVENT_LOOP_EVENT_POLLER_H_

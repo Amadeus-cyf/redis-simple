@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_AOF_H_
+#define REDIS_SIMPLE_SERVER_AOF_H_
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -185,3 +186,5 @@ class Aof {
   std::chrono::steady_clock::time_point last_rewrite_attempt_{};
 };
 }  // namespace redis_simple::aof
+
+#endif  // REDIS_SIMPLE_SERVER_AOF_H_
