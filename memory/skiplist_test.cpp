@@ -5,7 +5,6 @@
 #include <climits>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -69,8 +68,8 @@ struct CountingDestructor {
 }  // namespace
 
 TEST(SkiplistTest, RejectsInvalidLevel) {
-  EXPECT_THROW((Skiplist<std::string>(0)), std::invalid_argument);
-  EXPECT_THROW((Skiplist<std::string>(33)), std::invalid_argument);
+  EXPECT_DEATH((Skiplist<std::string>(0)), "Check failed");
+  EXPECT_DEATH((Skiplist<std::string>(33)), "Check failed");
 }
 
 TEST(SkiplistTest, DestroysOnlyStoredKeys) {
@@ -169,11 +168,10 @@ TEST(SkiplistTest, FindKeyByRank) {
   const std::string& s4 = skiplist->FindKeyByRank(-4);
   ASSERT_EQ(s4, "key0");
 
-  ASSERT_THROW(skiplist->FindKeyByRank(skiplist->Size()), std::out_of_range);
-  ASSERT_THROW(skiplist->FindKeyByRank(-skiplist->Size() - 1),
-               std::out_of_range);
-  ASSERT_THROW(skiplist->FindKeyByRank(INT_MAX), std::out_of_range);
-  ASSERT_THROW(skiplist->FindKeyByRank(INT_MIN), std::out_of_range);
+  EXPECT_DEATH(skiplist->FindKeyByRank(skiplist->Size()), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(-skiplist->Size() - 1), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(INT_MAX), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(INT_MIN), "Check failed");
 }
 
 TEST(SkiplistTest, FindRankOfKey) {
@@ -195,10 +193,10 @@ TEST(SkiplistTest, ArrayAccess) {
   ASSERT_EQ((*skiplist)[3], "key5");
   ASSERT_EQ((*skiplist)[skiplist->Size() - 1], "key5");
 
-  ASSERT_THROW((*skiplist)[skiplist->Size()], std::out_of_range);
-  ASSERT_THROW((*skiplist)[-1], std::out_of_range);
-  ASSERT_THROW((*skiplist)[INT_MAX], std::out_of_range);
-  ASSERT_THROW((*skiplist)[INT_MIN], std::out_of_range);
+  EXPECT_DEATH((*skiplist)[skiplist->Size()], "Check failed");
+  EXPECT_DEATH((*skiplist)[-1], "Check failed");
+  EXPECT_DEATH((*skiplist)[INT_MAX], "Check failed");
+  EXPECT_DEATH((*skiplist)[INT_MIN], "Check failed");
 }
 
 TEST(SkiplistTest, RangeByRank) {
@@ -424,9 +422,9 @@ TEST(CustomSkiplistTest, ArrayAccess) {
   ASSERT_EQ((*skiplist)[2], "key0");
   ASSERT_EQ((*skiplist)[skiplist->Size() - 1], "key0");
 
-  ASSERT_THROW((*skiplist)[skiplist->Size()], std::out_of_range);
-  ASSERT_THROW((*skiplist)[-1], std::out_of_range);
-  ASSERT_THROW((*skiplist)[INT_MAX], std::out_of_range);
-  ASSERT_THROW((*skiplist)[INT_MIN], std::out_of_range);
+  EXPECT_DEATH((*skiplist)[skiplist->Size()], "Check failed");
+  EXPECT_DEATH((*skiplist)[-1], "Check failed");
+  EXPECT_DEATH((*skiplist)[INT_MAX], "Check failed");
+  EXPECT_DEATH((*skiplist)[INT_MIN], "Check failed");
 }
 }  // namespace redis_simple::in_memory

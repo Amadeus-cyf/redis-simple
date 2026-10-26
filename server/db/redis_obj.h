@@ -103,23 +103,26 @@ class RedisObject {
       std::unique_ptr<hash::Hash> hash) {
     return hash == nullptr ? nullptr : Create(Value(std::move(hash)));
   }
+  // String accessors require a string object (Type() == kString).
   StringValue String() const;
-  // Returns the integer value of a string object if it is integer-encoded or
-  // holds a decimal integer.
+  // Returns the integer value if the string is integer-encoded or holds a
+  // decimal integer.
   std::optional<int64_t> Int() const;
   // Converts an integer-encoded string to raw form so it can be edited.
+  // Returns nullptr if this is not a string object.
   std::string* MutableString();
   // Replaces a string object's value with an integer-encoded one.
   void SetInt(int64_t value);
   Encoding StringEncoding() const;
-  set::Set* Set();
-  const set::Set* Set() const;
-  list::List* List();
-  const list::List* List() const;
-  zset::ZSet* ZSet();
-  const zset::ZSet* ZSet() const;
-  hash::Hash* Hash();
-  const hash::Hash* Hash() const;
+  // Collection accessors return nullptr if the object holds another type.
+  set::Set* Set() { return Held<SetPtr>(); }
+  const set::Set* Set() const { return Held<SetPtr>(); }
+  list::List* List() { return Held<ListPtr>(); }
+  const list::List* List() const { return Held<ListPtr>(); }
+  zset::ZSet* ZSet() { return Held<ZSetPtr>(); }
+  const zset::ZSet* ZSet() const { return Held<ZSetPtr>(); }
+  hash::Hash* Hash() { return Held<HashPtr>(); }
+  const hash::Hash* Hash() const { return Held<HashPtr>(); }
   // ObjectType values follow the variant's alternative order, offset by one.
   ObjectType Type() const {
     if (std::holds_alternative<int64_t>(value_)) {
@@ -133,6 +136,12 @@ class RedisObject {
     return std::unique_ptr<RedisObject>(new RedisObject(std::move(value)));
   }
   explicit RedisObject(Value value) : value_(std::move(value)) {}
+
+  template <typename Ptr>
+  typename Ptr::element_type* Held() const {
+    const auto* holder = std::get_if<Ptr>(&value_);
+    return holder == nullptr ? nullptr : holder->get();
+  }
 
   template <ObjectType kType>
   using Alternative =

@@ -1,13 +1,11 @@
 #include <cstddef>
 #include <cstdint>
-#include <exception>
 #include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
 
 #include "data_types/zset/zset.h"
-#include "logging/logger.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
 #include "server/reply.h"
@@ -163,12 +161,7 @@ RangeStatus RangeByRank(Client* const client, const CommandArgs& args,
   if (object->Type() != db::RedisObject::ObjectType::kZSet) {
     return RangeStatus::kWrongType;
   }
-  try {
-    *result = object->ZSet()->RangeByRank(&spec);
-  } catch (const std::exception& error) {
-    RS_LOG_DEBUG("zrange by rank failed: %s\n", error.what());
-    return RangeStatus::kSyntaxError;
-  }
+  *result = object->ZSet()->RangeByRank(&spec);
   return RangeStatus::kOk;
 }
 
@@ -190,12 +183,7 @@ RangeStatus RangeByScore(Client* const client, const CommandArgs& args,
   if (object->Type() != db::RedisObject::ObjectType::kZSet) {
     return RangeStatus::kWrongType;
   }
-  try {
-    *result = object->ZSet()->RangeByScore(&spec);
-  } catch (const std::exception& error) {
-    RS_LOG_DEBUG("zrange by score failed: %s\n", error.what());
-    return RangeStatus::kSyntaxError;
-  }
+  *result = object->ZSet()->RangeByScore(&spec);
   return RangeStatus::kOk;
 }
 

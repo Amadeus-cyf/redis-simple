@@ -7,12 +7,12 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "utils/check.h"
 #include "utils/string_utils.h"
 
 namespace redis_simple::in_memory {
@@ -27,9 +27,7 @@ ListPack::ListPack()
 
 unsigned char* ListPack::Get(size_t idx, size_t* const len) const {
   size_t listpack_bytes = TotalBytes();
-  if (idx < kListPackHeaderSize || idx >= listpack_bytes) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(idx >= kListPackHeaderSize && idx < listpack_bytes);
   if (idx == listpack_bytes - 1) {
     return nullptr;
   }
@@ -42,9 +40,7 @@ unsigned char* ListPack::Get(size_t idx, size_t* const len) const {
 
 std::optional<std::string> ListPack::Get(size_t idx) const {
   size_t listpack_bytes = TotalBytes();
-  if (idx < kListPackHeaderSize || idx >= listpack_bytes) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(idx >= kListPackHeaderSize && idx < listpack_bytes);
   if (idx == listpack_bytes - 1) {
     return std::nullopt;
   }
@@ -61,9 +57,7 @@ std::optional<std::string> ListPack::Get(size_t idx) const {
 
 std::optional<int64_t> ListPack::IntegerAt(size_t idx) const {
   size_t listpack_bytes = TotalBytes();
-  if (idx < kListPackHeaderSize || idx >= listpack_bytes) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(idx >= kListPackHeaderSize && idx < listpack_bytes);
   if (idx == listpack_bytes - 1) {
     return std::nullopt;
   }
@@ -174,9 +168,7 @@ void ListPack::Delete(size_t idx) { DeleteRange(idx, 1); }
 
 size_t ListPack::DeleteRange(size_t idx, size_t count) {
   uint32_t listpack_bytes = TotalBytes();
-  if (idx < kListPackHeaderSize || idx >= listpack_bytes) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(idx >= kListPackHeaderSize && idx < listpack_bytes);
   if (idx == listpack_bytes - 1 || count == 0) {
     return 0;
   }
@@ -266,9 +258,7 @@ std::optional<size_t> ListPack::Last() const {
 }
 
 std::optional<size_t> ListPack::Next(size_t idx) const {
-  if (idx < kListPackHeaderSize || idx >= TotalBytes()) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(idx >= kListPackHeaderSize && idx < TotalBytes());
   if (lp_[idx] == kListPackEof) {
     return std::nullopt;
   }
@@ -279,9 +269,7 @@ std::optional<size_t> ListPack::Next(size_t idx) const {
 
 std::optional<size_t> ListPack::Prev(size_t idx) const {
   size_t listpack_bytes = TotalBytes();
-  if (idx < kListPackHeaderSize || idx >= listpack_bytes) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(idx >= kListPackHeaderSize && idx < listpack_bytes);
   if (listpack_bytes <= kListPackHeaderSize + 1 || idx == kListPackHeaderSize) {
     return std::nullopt;
   }
@@ -389,9 +377,7 @@ bool ListPack::Insert(size_t idx, ListPack::Position where,
     return false;
   }
   uint32_t listpack_bytes = TotalBytes();
-  if (idx < kListPackHeaderSize || idx >= listpack_bytes) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(idx >= kListPackHeaderSize && idx < listpack_bytes);
   if (where == Position::kInsertAfter) {
     idx = Skip(idx);
   }
@@ -486,9 +472,7 @@ bool ListPack::BatchInsert(size_t idx, ListPack::Position where,
     return false;
   }
   uint32_t listpack_bytes = TotalBytes();
-  if (idx < kListPackHeaderSize || idx >= listpack_bytes) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(idx >= kListPackHeaderSize && idx < listpack_bytes);
   if (where == Position::kInsertAfter) {
     idx = Skip(idx);
   }
@@ -906,9 +890,7 @@ bool ListPack::IsString(EncodingType encoding_type) {
 }
 
 void ListPack::Realloc(size_t bytes) {
-  if (bytes < kListPackHeaderSize + 1) {
-    throw std::length_error("listpack allocation is smaller than its header");
-  }
+  RS_CHECK(bytes >= kListPackHeaderSize + 1);
   // Keep spare capacity so repeated inserts do not copy the whole listpack
   // each time, but release memory once most of it is unused.
   if (bytes <= capacity_ && bytes >= capacity_ / 4) {

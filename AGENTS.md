@@ -8,6 +8,14 @@ Guidance for AI coding agents working in this repository.
 - Follow Google C++ style and the checked-in `.clang-format`.
 - Prefer clear, simple C++17 code over legacy C++11 patterns.
 - Keep naming consistent with nearby code.
+- Use `#define` header guards named `REDIS_SIMPLE_<PATH>_<FILE>_H_`, not
+  `#pragma once`.
+- Do not use exceptions. Report recoverable failures through return values
+  (`bool`, `std::optional`, status enums, or `nullptr`), and guard
+  programming errors with `RS_CHECK` / `RS_UNREACHABLE` from `utils/check.h`,
+  which abort and stay enabled in release builds. Test them with
+  `EXPECT_DEATH`. The only `catch` blocks are where `std::thread` reports a
+  failure to start.
 - Use `Create()` for owning factory functions and return `std::unique_ptr`
   instead of owning raw pointers.
 - Prefer concise accessor names such as `Type()`, `Encoding()`, and

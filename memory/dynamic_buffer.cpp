@@ -5,10 +5,11 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include "utils/check.h"
 
 namespace redis_simple::in_memory {
 namespace {
@@ -27,9 +28,7 @@ void DynamicBuffer::Append(const char* buffer, size_t n) {
   if (n == 0) {
     return;
   }
-  if (buffer == nullptr) {
-    throw std::invalid_argument("cannot append a null buffer");
-  }
+  RS_CHECK(buffer != nullptr);
   Reserve(n);
   std::memcpy(buf_.get() + size_, buffer, n);
   size_ += n;
@@ -41,9 +40,7 @@ char* DynamicBuffer::WritableTail(size_t n) {
 }
 
 void DynamicBuffer::Commit(size_t n) {
-  if (n > capacity_ - size_) {
-    throw std::length_error("dynamic buffer commit exceeds capacity");
-  }
+  RS_CHECK(n <= capacity_ - size_);
   size_ += n;
 }
 
@@ -57,9 +54,7 @@ void DynamicBuffer::Reserve(size_t n) {
       return;
     }
   }
-  if (n > std::numeric_limits<size_t>::max() - size_) {
-    throw std::length_error("dynamic buffer size overflow");
-  }
+  RS_CHECK(n <= std::numeric_limits<size_t>::max() - size_);
   Resize(size_ + n);
 }
 

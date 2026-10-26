@@ -4,11 +4,12 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "utils/check.h"
 
 namespace redis_simple::hash {
 namespace {
@@ -34,7 +35,7 @@ bool Hash::Set(std::string_view field, std::string_view value) {
   if (encoding_ == Encoding::kDict) {
     return SetDict(field, value);
   }
-  throw std::invalid_argument("unknown hash encoding type");
+  RS_UNREACHABLE();
 }
 
 std::optional<std::string> Hash::Get(std::string_view field) const {
@@ -57,7 +58,7 @@ bool Hash::Delete(std::string_view field) {
   if (encoding_ == Encoding::kDict) {
     return dict_->Delete(field);
   }
-  throw std::invalid_argument("unknown hash encoding type");
+  RS_UNREACHABLE();
 }
 
 bool Hash::Exists(std::string_view field) const {
@@ -67,7 +68,7 @@ bool Hash::Exists(std::string_view field) const {
   if (encoding_ == Encoding::kDict) {
     return dict_->FindValue(std::string_view(field)) != nullptr;
   }
-  throw std::invalid_argument("unknown hash encoding type");
+  RS_UNREACHABLE();
 }
 
 size_t Hash::Size() const {
@@ -77,7 +78,7 @@ size_t Hash::Size() const {
   if (encoding_ == Encoding::kDict) {
     return dict_ == nullptr ? 0 : dict_->Size();
   }
-  throw std::invalid_argument("unknown hash encoding type");
+  RS_UNREACHABLE();
 }
 
 std::vector<Hash::Entry> Hash::Entries() const {

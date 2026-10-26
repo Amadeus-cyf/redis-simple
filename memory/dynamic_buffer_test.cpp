@@ -6,7 +6,6 @@
 #include <array>
 #include <cstddef>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -137,7 +136,7 @@ TEST(DynamicBufferTest, WritableTailCommitsWrittenBytes) {
   std::copy(kTail.begin(), kTail.end(), tail);
   buffer.Commit(kTail.size());
   EXPECT_EQ(buffer.View(), "abcd");
-  EXPECT_THROW(buffer.Commit(buffer.Capacity()), std::length_error);
+  EXPECT_DEATH(buffer.Commit(buffer.Capacity()), "Check failed");
 }
 
 TEST(DynamicBufferTest, ReusesConsumedCapacityBeforeGrowing) {

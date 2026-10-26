@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -16,6 +15,7 @@
 #include "memory/dict.h"
 #include "memory/intset.h"
 #include "memory/listpack.h"
+#include "utils/check.h"
 
 namespace redis_simple::set {
 class Set {
@@ -95,7 +95,7 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     }
     return true;
   }
-  throw std::invalid_argument("unknown encoding type");
+  RS_UNREACHABLE();
 }
 }  // namespace redis_simple::set
 

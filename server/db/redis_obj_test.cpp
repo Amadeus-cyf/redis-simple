@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <limits>
-#include <stdexcept>
 #include <string>
 
 namespace redis_simple::db {
@@ -13,10 +12,10 @@ TEST(RedisObjectTest, StringObjectExposesStringValue) {
 
   EXPECT_EQ(object->Type(), RedisObject::ObjectType::kString);
   EXPECT_EQ(object->String(), "value");
-  EXPECT_THROW(object->Set(), std::invalid_argument);
-  EXPECT_THROW(object->List(), std::invalid_argument);
-  EXPECT_THROW(object->ZSet(), std::invalid_argument);
-  EXPECT_THROW(object->Hash(), std::invalid_argument);
+  EXPECT_EQ(object->Set(), nullptr);
+  EXPECT_EQ(object->List(), nullptr);
+  EXPECT_EQ(object->ZSet(), nullptr);
+  EXPECT_EQ(object->Hash(), nullptr);
 }
 
 TEST(RedisObjectTest, CanonicalIntegersUseIntEncoding) {
@@ -44,8 +43,8 @@ TEST(RedisObjectTest, IntReadsBothEncodings) {
   EXPECT_EQ(RedisObject::CreateWithInt(12)->Int(), 12);
   EXPECT_EQ(RedisObject::CreateWithString("12")->Int(), 12);
   EXPECT_FALSE(RedisObject::CreateWithString("abc")->Int().has_value());
-  EXPECT_THROW(RedisObject::CreateWithSet(set::Set::Create())->Int(),
-               std::invalid_argument);
+  EXPECT_DEATH(RedisObject::CreateWithSet(set::Set::Create())->Int(),
+               "Check failed");
 }
 
 TEST(RedisObjectTest, MutableStringConvertsIntEncoding) {
@@ -70,22 +69,23 @@ TEST(RedisObjectTest, CollectionObjectsExposeTypedStorage) {
   const auto set_object = RedisObject::CreateWithSet(set::Set::Create());
   EXPECT_EQ(set_object->Type(), RedisObject::ObjectType::kSet);
   ASSERT_NE(set_object->Set(), nullptr);
-  EXPECT_THROW(set_object->String(), std::invalid_argument);
+  EXPECT_DEATH(set_object->String(), "Check failed");
+  EXPECT_EQ(set_object->MutableString(), nullptr);
 
   const auto list_object = RedisObject::CreateWithList(list::List::Create());
   EXPECT_EQ(list_object->Type(), RedisObject::ObjectType::kList);
   ASSERT_NE(list_object->List(), nullptr);
-  EXPECT_THROW(list_object->Set(), std::invalid_argument);
+  EXPECT_EQ(list_object->Set(), nullptr);
 
   const auto zset_object = RedisObject::CreateWithZSet(zset::ZSet::Create());
   EXPECT_EQ(zset_object->Type(), RedisObject::ObjectType::kZSet);
   ASSERT_NE(zset_object->ZSet(), nullptr);
-  EXPECT_THROW(zset_object->List(), std::invalid_argument);
+  EXPECT_EQ(zset_object->List(), nullptr);
 
   const auto hash_object = RedisObject::CreateWithHash(hash::Hash::Create());
   EXPECT_EQ(hash_object->Type(), RedisObject::ObjectType::kHash);
   ASSERT_NE(hash_object->Hash(), nullptr);
-  EXPECT_THROW(hash_object->ZSet(), std::invalid_argument);
+  EXPECT_EQ(hash_object->ZSet(), nullptr);
 }
 
 TEST(RedisObjectTest, RejectsNullCollectionStorage) {

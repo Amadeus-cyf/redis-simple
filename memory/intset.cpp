@@ -6,8 +6,9 @@
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <stdexcept>
 #include <utility>
+
+#include "utils/check.h"
 
 namespace redis_simple::in_memory {
 IntSet::IntSet()
@@ -152,9 +153,7 @@ bool IntSet::Search(int64_t value, unsigned int* const index) const {
 }
 
 int64_t IntSet::EncodedValue(unsigned int index, EncodingType encoding) const {
-  if (index >= length_) {
-    throw std::out_of_range("index out of bound");
-  }
+  RS_CHECK(index < length_);
   const unsigned char* src =
       contents_.get() + (static_cast<size_t>(index * encoding));
   if (encoding == kInt64) {

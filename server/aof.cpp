@@ -530,6 +530,9 @@ std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
   aof->current_size_ = static_cast<size_t>(file_info.st_size);
   aof->base_size_ = aof->current_size_;
   if (options.fsync != FsyncPolicy::kAlways) {
+    // The project does not throw, but std::thread reports a failure to start
+    // only by throwing std::system_error; catch it at this boundary so the
+    // caller sees an ordinary error.
     try {
       aof->worker_ = std::thread([instance = aof.get()] { instance->Run(); });
     } catch (const std::system_error&) {
@@ -698,6 +701,7 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
     return RewriteResult::kError;
   }
 
+  // See Open(): std::thread signals start failure only via an exception.
   try {
     rewrite_worker_ = std::thread(
         [this, rewrite_fd, temp_path = std::string(writable_path.data())] {

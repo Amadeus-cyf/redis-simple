@@ -4,13 +4,13 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "memory/dict.h"
 #include "memory/listpack.h"
+#include "utils/check.h"
 
 namespace redis_simple::hash {
 class Hash {
@@ -87,7 +87,7 @@ bool Hash::VisitValue(std::string_view field, Visitor&& visitor) const {
     visitor(std::string_view(value->data(), value->size()));
     return true;
   }
-  throw std::invalid_argument("unknown hash encoding type");
+  RS_UNREACHABLE();
 }
 
 template <typename Visitor>
@@ -109,7 +109,7 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
     }
     return true;
   }
-  throw std::invalid_argument("unknown hash encoding type");
+  RS_UNREACHABLE();
 }
 
 template <typename Visitor>
