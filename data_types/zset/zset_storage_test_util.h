@@ -1,6 +1,8 @@
 #ifndef REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_TEST_UTIL_H_
 #define REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_TEST_UTIL_H_
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -11,7 +13,6 @@
 #include <vector>
 
 #include "data_types/zset/zset_storage.h"
-#include "gtest/gtest.h"
 
 namespace redis_simple::zset::zset_storage_test {
 using KeyScorePair = std::pair<std::string, double>;

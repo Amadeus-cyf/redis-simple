@@ -1,4 +1,4 @@
-#include "redis_obj.h"
+#include "server/db/redis_obj.h"
 
 #include <cstdint>
 #include <optional>

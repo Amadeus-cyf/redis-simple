@@ -61,8 +61,8 @@ class SystemFileOps final : public FileOps {
 };
 
 std::shared_ptr<FileOps> DefaultFileOps() {
-  static auto file_ops = std::make_shared<SystemFileOps>();
-  return file_ops;
+  // SystemFileOps is stateless, so each Aof can own its own instance.
+  return std::make_shared<SystemFileOps>();
 }
 
 size_t MaxIovCount() {

@@ -1,4 +1,4 @@
-#include "dynamic_buffer.h"
+#include "memory/dynamic_buffer.h"
 
 #include <algorithm>
 #include <cstring>

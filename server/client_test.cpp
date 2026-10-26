@@ -39,8 +39,9 @@ class ScopedFd {
 };
 
 db::RedisDb* TestDb() {
-  static const auto db = db::RedisDb::Create();
-  return db.get();
+  // Leaked on purpose: static objects must be trivially destructible.
+  static db::RedisDb* const db = db::RedisDb::Create().release();
+  return db;
 }
 
 std::array<ScopedFd, 2> CreateSocketPair() {

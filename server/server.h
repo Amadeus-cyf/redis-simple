@@ -17,7 +17,9 @@
 namespace redis_simple {
 class Server {
  public:
-  static Server* Get();
+  static std::unique_ptr<Server> Create();
+  Server(const Server&) = delete;
+  Server& operator=(const Server&) = delete;
   bool Run(const ServerOptions& options);
   void Stop();
   event_loop::Loop* Loop() { return loop_.get(); }

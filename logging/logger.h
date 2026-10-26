@@ -78,7 +78,8 @@ inline bool Enabled(Level level) {
 }
 
 inline std::mutex& LogMutex() {
-  static std::mutex mutex;
+  // Never destroyed, so logging from other threads stays safe during exit.
+  static std::mutex& mutex = *new std::mutex;
   return mutex;
 }
 

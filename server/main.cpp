@@ -15,6 +15,6 @@ int main(int argc, char* argv[]) {
               << redis_simple::ServerUsage();
     return EXIT_FAILURE;
   }
-  return redis_simple::Server::Get()->Run(result.options) ? EXIT_SUCCESS
-                                                          : EXIT_FAILURE;
+  const auto server = redis_simple::Server::Create();
+  return server->Run(result.options) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
