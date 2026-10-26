@@ -16,6 +16,10 @@ Guidance for AI coding agents working in this repository.
   which abort and stay enabled in release builds. Test them with
   `EXPECT_DEATH`. The only `catch` blocks are where `std::thread` reports a
   failure to start.
+- Spell project includes from the repository root (`"server/db/db.h"`), and
+  include GoogleTest as `<gtest/gtest.h>`.
+- Keep objects with static storage duration trivially destructible. When one
+  must hold a non-trivial type, leak it (`static T& t = *new T;`).
 - Use `Create()` for owning factory functions and return `std::unique_ptr`
   instead of owning raw pointers.
 - Prefer concise accessor names such as `Type()`, `Encoding()`, and

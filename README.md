@@ -344,6 +344,13 @@ functions are named `Create()` and return `std::unique_ptr`, while concise
 accessors such as `Type()`, `Encoding()`, and `TotalBytes()` are preferred over
 Java-style `Get...` names.
 
+As in Google style, headers use `#define` guards, includes are spelled from the
+repository root, and the code does not use exceptions. Recoverable failures are
+returned as values (`bool`, `std::optional`, status enums, or `nullptr`), while
+programming errors are caught by `RS_CHECK` in `utils/check.h`, which aborts
+and stays enabled in release builds. Objects with static storage duration are
+trivially destructible or deliberately leaked.
+
 Hot paths prefer `std::string_view` for read-only inputs and visitor-style
 traversal when callers can encode or rebuild results directly. Vector-returning
 helpers remain useful for convenience APIs and tests, but command handlers
