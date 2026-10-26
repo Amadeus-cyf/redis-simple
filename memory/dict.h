@@ -618,6 +618,9 @@ void Dict<K, V, Hash, KeyEqual>::MigrateRehashedTable() {
   tables_[1].clear();
   table_used_[1] = 0;
   rehash_idx_ = std::nullopt;
+  // Deletes cannot start a shrink while a rehash is in flight, so a table that
+  // emptied out during this rehash would otherwise stay oversized.
+  ShrinkIfNeeded();
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
