@@ -40,7 +40,7 @@ bool ZSetSkiplist::InsertOrUpdate(std::string_view key, double score) {
     inserted = true;
   }
   [[maybe_unused]] auto* skiplist_owned_entry = ze.release();
-  dict_->Set(std::string(key), score);
+  *dict_->FindOrInsert(key).first = score;
   // Update min and max key.
   if (!min_key_.has_value() || key < std::string_view(*min_key_)) {
     min_key_.emplace(key.data(), key.size());

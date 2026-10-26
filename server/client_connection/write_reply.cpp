@@ -1,7 +1,10 @@
 #include "server/client_connection/write_reply.h"
 
-#include <any>
+#include <sys/types.h>
 
+#include <cstddef>
+
+#include "connection/connection.h"
 #include "logging/logger.h"
 #include "server/client.h"
 #include "server/client_connection/callback.h"
@@ -9,52 +12,52 @@
 
 namespace redis_simple::client_connection {
 namespace {
-ssize_t WriteToClient(Client* client) {
-  ssize_t nwritten = 0;
-  ssize_t bytes_written = 0;
-  while (client->HasPendingReplies()) {
-    bytes_written = client->SendReply();
-    if (bytes_written <= 0) {
-      break;
-    }
-    nwritten += bytes_written;
-  }
-  if (bytes_written == -1) {
-    if (client->Connection()->State() !=
-        connection::ConnectionState::kConnected) {
-      Server::Get()->RemoveClient(client);
-      return -1;
-    }
-  }
-  if (!client->HasPendingReplies() &&
-      !client->Connection()->UnsetWriteCallback()) {
-    // Ignore the failure of uninstalling the write callback.
-    RS_LOG_DEBUG("failed to unset the write callback\n");
-  }
-  if (client->ShouldCloseAfterReply() && !client->HasPendingReplies()) {
-    Server::Get()->RemoveClient(client);
-    return nwritten;
-  }
-  if (client->ShouldResumeReads() &&
-      client->Connection()->SetReadCallback(
-          CreateCallback(CallbackType::kReadQuery))) {
-    client->SetReadsPaused(false);
-  }
-  return nwritten;
-}
-
-void SendReplyToClient(connection::Connection* conn) {
-  const auto* client_data = std::any_cast<Client*>(&conn->PrivateData());
-  if (client_data == nullptr || *client_data == nullptr) {
-    return;
-  }
-  Client* client = *client_data;
-  RS_LOG_DEBUG("write reply called %d\n", client->HasPendingReplies());
-  WriteToClient(client);
-}
+// Bounds the bytes written to one client per event so a large reply cannot
+// starve other clients, like Redis' NET_MAX_WRITES_PER_EVENT.
+constexpr size_t kMaxBytesPerEvent = size_t{64} * 1024;
 }  // namespace
 
-connection::ConnectionCallback CreateWriteReplyCallback() {
-  return SendReplyToClient;
+void WriteToClient(Server* const server, Client* const client) {
+  connection::Connection* const conn = client->Connection();
+  size_t total_written = 0;
+  ssize_t written = 0;
+  while (client->HasPendingReplies() && total_written < kMaxBytesPerEvent) {
+    written = client->SendReply();
+    if (written <= 0) {
+      break;
+    }
+    total_written += static_cast<size_t>(written);
+  }
+  if (written < 0 && conn->State() != connection::ConnectionState::kConnected) {
+    server->RemoveClient(client);
+    return;
+  }
+  if (client->HasPendingReplies()) {
+    if (!conn->HasWriteCallback() &&
+        !conn->SetWriteCallback(
+            CreateCallback(CallbackType::kWriteReply, server, client))) {
+      RS_LOG_DEBUG("failed to install the write callback\n");
+    }
+  } else {
+    if (conn->HasWriteCallback() && !conn->UnsetWriteCallback()) {
+      RS_LOG_DEBUG("failed to unset the write callback\n");
+    }
+    if (client->ShouldCloseAfterReply()) {
+      server->RemoveClient(client);
+      return;
+    }
+  }
+  if (client->ShouldResumeReads() &&
+      conn->SetReadCallback(
+          CreateCallback(CallbackType::kReadQuery, server, client))) {
+    client->SetReadsPaused(false);
+  }
+}
+
+connection::ConnectionCallback CreateWriteReplyCallback(Server* const server,
+                                                        Client* const client) {
+  return [server, client](connection::Connection* /*conn*/) {
+    WriteToClient(server, client);
+  };
 }
 }  // namespace redis_simple::client_connection

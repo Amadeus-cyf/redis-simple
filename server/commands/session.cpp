@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include "server/client.h"
 #include "server/commands/handlers.h"
@@ -31,11 +32,6 @@ std::string EncodeHello(reply::ProtocolVersion protocol) {
 
 void HandleHello(Client* const client) {
   const auto& args = client->Args();
-  if (args.size() > 1) {
-    client->AddReply(reply::WrongNumberOfArguments());
-    return;
-  }
-
   auto protocol = client->Protocol();
   if (!args.empty()) {
     int64_t version = 0;
@@ -52,30 +48,21 @@ void HandleHello(Client* const client) {
 }
 
 void HandlePing(Client* const client) {
+  constexpr std::string_view kPong = "+PONG\r\n";
   const auto& args = client->Args();
-  if (args.size() > 1) {
-    client->AddReply(reply::WrongNumberOfArguments());
-    return;
+  if (args.empty()) {
+    client->AddReply(kPong);
+  } else {
+    client->AddBulkReply(args[0]);
   }
-  client->AddReply(args.empty() ? reply::FromString("PONG")
-                                : reply::FromBulkString(args[0]));
 }
 
 void HandleEcho(Client* const client) {
-  const auto& args = client->Args();
-  if (args.size() != 1) {
-    client->AddReply(reply::WrongNumberOfArguments());
-    return;
-  }
-  client->AddReply(reply::FromBulkString(args[0]));
+  client->AddBulkReply(client->Args()[0]);
 }
 
 void HandleQuit(Client* const client) {
-  if (!client->Args().empty()) {
-    client->AddReply(reply::WrongNumberOfArguments());
-    return;
-  }
-  client->AddReply(reply::FromString("OK"));
+  client->AddReply(reply::kOk);
   client->CloseAfterReply();
 }
 }  // namespace redis_simple::command::session

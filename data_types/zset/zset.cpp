@@ -1,5 +1,6 @@
 #include "zset.h"
 
+#include <cassert>
 #include <cmath>
 #include <memory>
 #include <optional>

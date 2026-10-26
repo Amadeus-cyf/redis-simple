@@ -2,11 +2,18 @@
 
 #include "connection/connection_callback.h"
 
+namespace redis_simple {
+class Client;
+class Server;
+}  // namespace redis_simple
+
 namespace redis_simple::client_connection {
 enum class CallbackType {
-  kReadQuery = 1,
-  kWriteReply = 1 << 1,
+  kReadQuery,
+  kWriteReply,
 };
 
-connection::ConnectionCallback CreateCallback(CallbackType type);
+// `server` and `client` must outlive the connection the callback is set on.
+connection::ConnectionCallback CreateCallback(CallbackType type, Server* server,
+                                              Client* client);
 }  // namespace redis_simple::client_connection

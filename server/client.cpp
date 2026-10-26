@@ -10,21 +10,41 @@
 #include <vector>
 
 #include "logging/logger.h"
-#include "server.h"
 #include "server/aof.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
+#include "utils/time_utils.h"
+
 namespace redis_simple {
 namespace {
 constexpr auto kReadBufferSize = size_t{16} * 1024;
+// Upper bound for one read while receiving a large bulk argument.
+constexpr auto kMaxBulkReadSize = size_t{1024} * 1024;
 constexpr auto kMaxQueryBufferSize = size_t{64} * 1024 * 1024;
+
+// Pins the database clock for one command.
+class CommandTimeScope {
+ public:
+  explicit CommandTimeScope(db::RedisDb* const db) : db_(db) {
+    db_->SetCommandTime(utils::NowInMilliseconds());
+  }
+  CommandTimeScope(const CommandTimeScope&) = delete;
+  CommandTimeScope& operator=(const CommandTimeScope&) = delete;
+  CommandTimeScope(CommandTimeScope&&) = delete;
+  CommandTimeScope& operator=(CommandTimeScope&&) = delete;
+  ~CommandTimeScope() { db_->ClearCommandTime(); }
+
+ private:
+  db::RedisDb* const db_;
+};
 }  // namespace
 
 Client::Client(std::unique_ptr<connection::Connection> connection,
+               db::RedisDb* const db, aof::Aof* const aof,
                OutputBufferLimits output_limits)
     : connection_(std::move(connection)),
-      db_(Server::Get()->Db()),
-      aof_(Server::Get()->Aof()),
+      db_(db),
+      aof_(aof),
       output_limits_(output_limits) {}
 
 Client::Client(db::RedisDb* const db) : db_(db), discard_replies_(true) {}
@@ -70,6 +90,24 @@ size_t Client::AddReply(std::string&& header, std::string&& body) {
   return header_size + body_size;
 }
 
+size_t Client::AddBulkReply(std::string_view value) {
+  constexpr std::string_view kCrlf = "\r\n";
+  std::array<char, reply::kBulkStringHeaderCapacity> header{};
+  const size_t header_size =
+      reply::EncodeBulkStringHeader(value.size(), header.data(), header.size());
+  const size_t total_size = header_size + value.size() + kCrlf.size();
+  if (discard_replies_) {
+    return total_size;
+  }
+  if (!CanQueueReply(total_size)) {
+    return 0;
+  }
+  reply_buf_.Append(header.data(), header_size);
+  reply_buf_.Append(value.data(), value.size());
+  reply_buf_.Append(kCrlf.data(), kCrlf.size());
+  return total_size;
+}
+
 bool Client::ShouldPauseReads() const {
   return !reads_paused_ && (close_after_reply_ ||
                             (output_limits_.soft_bytes > 0 &&
@@ -93,32 +131,30 @@ bool Client::CanQueueReply(size_t size) {
 }
 
 ssize_t Client::ReadQuery() {
-  std::array<char, kReadBufferSize> buffer{};
-  size_t total_read = 0;
-  while (true) {
-    const ssize_t nread = connection_->Read(buffer.data(), buffer.size());
-    if (nread > 0) {
-      const auto chunk_size = static_cast<size_t>(nread);
-      if (query_buf_.Size() > kMaxQueryBufferSize ||
-          chunk_size > kMaxQueryBufferSize - query_buf_.Size()) {
-        RS_LOG_DEBUG("query buffer limit exceeded\n");
-        connection_->SetState(connection::ConnectionState::kError);
-        return -1;
-      }
-      query_buf_.Append(buffer.data(), chunk_size);
-      total_read += chunk_size;
-      continue;
-    }
-    if (nread == 0) {
-      break;
-    }
-    if (connection_->State() != connection::ConnectionState::kConnected) {
-      return -1;
-    }
-    break;
+  // One read per readable event: level-triggered polling reports any bytes
+  // left in the socket again, so a busy client cannot monopolize the loop.
+  // Large bulk arguments are read in bigger steps to save syscalls.
+  const size_t pending_bulk =
+      parse_state_.PendingBulkBytes(query_buf_.View().size());
+  const size_t read_size =
+      std::clamp(pending_bulk, kReadBufferSize, kMaxBulkReadSize);
+  char* const tail = query_buf_.WritableTail(read_size);
+  const ssize_t nread = connection_->Read(tail, read_size);
+  if (nread == 0) {
+    return 0;
   }
-  RS_LOG_DEBUG("read %zu query bytes\n", total_read);
-  return static_cast<ssize_t>(total_read);
+  if (nread < 0) {
+    // Would-block leaves the connection usable; other errors mark it failed.
+    return connection_->State() == connection::ConnectionState::kConnected ? 0
+                                                                           : -1;
+  }
+  query_buf_.Commit(static_cast<size_t>(nread));
+  if (query_buf_.View().size() > kMaxQueryBufferSize) {
+    RS_LOG_DEBUG("query buffer limit exceeded\n");
+    connection_->SetState(connection::ConnectionState::kError);
+    return -1;
+  }
+  return nread;
 }
 
 ssize_t Client::SendReply() {
@@ -175,7 +211,8 @@ Client::RequestStatus Client::ParseRequest() {
   command_ = nullptr;
   args_.clear();
   std::string_view name;
-  const auto parsed = request_parser::Parse(query_buf_.View(), &name, &args_);
+  const auto parsed =
+      request_parser::Parse(query_buf_.View(), &parse_state_, &name, &args_);
   if (parsed.status == request_parser::ParseStatus::kIncomplete) {
     return RequestStatus::kIncomplete;
   }
@@ -199,7 +236,7 @@ Client::RequestStatus Client::ParseRequest() {
     return RequestStatus::kRejected;
   }
   if (!command->arity.Accepts(args_.size())) {
-    AddReply(reply::WrongNumberOfArguments());
+    AddReply(reply::kWrongNumberOfArguments);
     return RequestStatus::kRejected;
   }
   command_ = command;
@@ -213,12 +250,14 @@ ClientStatus Client::ProcessCommand() {
   RS_LOG_DEBUG("process command: %.*s\n",
                static_cast<int>(command_->name.size()), command_->name.data());
   modified_ = false;
-  command_->callback(this);
+  {
+    const CommandTimeScope command_time(db_);
+    command_->callback(this);
+  }
   if (modified_ && aof_ != nullptr &&
       !aof_->Append(command_->name, args_, db_)) {
     RS_LOG_DEBUG("failed to append command to AOF\n");
     close_after_reply_ = true;
-    Server::Get()->Stop();
     return ClientStatus::kError;
   }
   return ClientStatus::kOk;

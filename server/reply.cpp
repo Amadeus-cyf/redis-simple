@@ -21,7 +21,6 @@ constexpr char kArrayPrefix = '*';
 constexpr char kMapPrefix = '%';
 constexpr char kSetPrefix = '~';
 constexpr char kDoublePrefix = ',';
-constexpr char kNullPrefix = '_';
 constexpr char kErrorPrefix = '-';
 
 template <typename Integer>
@@ -99,6 +98,22 @@ void AppendBulkString(std::string_view s, std::string* const reply) {
       .append(kCrlf.data(), kCrlf.size());
 }
 
+size_t EncodeBulkStringHeader(size_t length, char* const buffer,
+                              size_t capacity) {
+  if (capacity < kBulkStringHeaderCapacity) {
+    throw std::length_error("bulk string header buffer too small");
+  }
+  buffer[0] = kBulkStringPrefix;
+  const auto result = std::to_chars(buffer + 1, buffer + capacity, length);
+  if (result.ec != std::errc()) {
+    throw std::runtime_error("failed to encode bulk string header");
+  }
+  char* end = result.ptr;
+  *end++ = '\r';
+  *end++ = '\n';
+  return static_cast<size_t>(end - buffer);
+}
+
 std::string FromFloat(double fl, ProtocolVersion protocol) {
   const std::string value = utils::FloatToString(fl);
   if (protocol == ProtocolVersion::kResp2) {
@@ -119,7 +134,7 @@ std::string FromError(std::string_view message) {
 }
 
 std::string WrongNumberOfArguments() {
-  return FromError("ERR wrong number of arguments");
+  return std::string(kWrongNumberOfArguments);
 }
 
 std::string UnknownCommand(std::string_view command) {
@@ -128,21 +143,12 @@ std::string UnknownCommand(std::string_view command) {
   return FromError(message);
 }
 
-std::string SyntaxError() { return FromError("ERR syntax error"); }
+std::string SyntaxError() { return std::string(kSyntaxError); }
 
-std::string WrongTypeError() {
-  return FromError(
-      "WRONGTYPE Operation against a key holding the wrong kind of "
-      "value");
-}
+std::string WrongTypeError() { return std::string(kWrongTypeError); }
 
 std::string Null(ProtocolVersion protocol) {
-  if (protocol == ProtocolVersion::kResp2) {
-    return "$-1\r\n";
-  }
-  std::string reply(1, kNullPrefix);
-  reply.append(kCrlf);
-  return reply;
+  return std::string(NullView(protocol));
 }
 
 std::string FromMapHeader(size_t size, ProtocolVersion protocol) {

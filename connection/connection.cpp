@@ -4,13 +4,11 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -264,16 +262,14 @@ bool Connection::UnsetWriteCallback() {
   return true;
 }
 
-ssize_t Connection::Read(char* const buffer, size_t readlen) const {
+ssize_t Connection::Read(char* const buffer, size_t readlen) {
   ssize_t r = -1;
-  while (r < 0) {
+  r = read(fd_, buffer, readlen);
+  while (r < 0 && errno == EINTR) {
     r = read(fd_, buffer, readlen);
-    if (r < 0 && errno != EINTR) {
-      break;
-    }
   }
   if (r < 0 && !WouldBlock(errno)) {
-    if (errno != EINTR && state_ == ConnectionState::kConnected) {
+    if (state_ == ConnectionState::kConnected) {
       state_ = ConnectionState::kError;
     }
     return -1;
@@ -284,54 +280,17 @@ ssize_t Connection::Read(char* const buffer, size_t readlen) const {
   return r;
 }
 
-ssize_t Connection::BatchRead(std::string& s) const {
-  std::array<char, 1024> buffer{};
-  const size_t initial_size = s.size();
-  ssize_t r = -1;
-  while (true) {
-    r = read(fd_, buffer.data(), buffer.size());
-    if (r < 0 && errno == EINTR) {
-      continue;
-    }
-    RS_LOG_DEBUG("read %zd\n", r);
-    if (r <= 0) {
-      break;
-    }
-    s.append(buffer.data(), static_cast<size_t>(r));
-  }
-  if (s.size() == initial_size && r < 0 && !WouldBlock(errno)) {
-    if (state_ == ConnectionState::kConnected) {
-      state_ = ConnectionState::kError;
-    }
-    return -1;
-  }
-  if (s.size() == initial_size && r == 0) {
-    state_ = ConnectionState::kClosed;
-  }
-  const size_t bytes_read = s.size() - initial_size;
-  if (bytes_read > static_cast<size_t>(std::numeric_limits<ssize_t>::max())) {
-    return -1;
-  }
-  return static_cast<ssize_t>(bytes_read);
-}
-
-ssize_t Connection::SyncRead(char* buffer, size_t readlen,
-                             int64_t timeout_ms) const {
+ssize_t Connection::SyncRead(char* buffer, size_t readlen, int64_t timeout_ms) {
   // Try the syscall first so already-ready sockets avoid an extra poll().
   ssize_t r = -1;
-  while (r < 0) {
+  r = read(fd_, buffer, readlen);
+  while (r < 0 && errno == EINTR) {
     r = read(fd_, buffer, readlen);
-    if (r < 0 && errno != EINTR) {
-      break;
-    }
   }
-  if (r > 0) {
+  if (r >= 0) {
     return r;
   }
-  if (r == 0) {
-    return 0;
-  }
-  if (r < 0 && !WouldBlock(errno)) {
+  if (!WouldBlock(errno)) {
     return -1;
   }
   if (WaitRead(timeout_ms) < 0) {
@@ -340,47 +299,14 @@ ssize_t Connection::SyncRead(char* buffer, size_t readlen,
   return Read(buffer, readlen);
 }
 
-ssize_t Connection::SyncBatchRead(std::string& s, int64_t timeout_ms) const {
-  if (WaitRead(timeout_ms) < 0) {
-    return -1;
-  }
-  return BatchRead(s);
-}
-
-ssize_t Connection::SyncReadline(std::string& s, int64_t timeout_ms) const {
-  if (WaitRead(timeout_ms) < 0) {
-    return -1;
-  }
-  ssize_t r = 0;
-  char buffer = '\0';
-  while ((r = read(fd_, &buffer, 1)) != EOF) {
-    if (r == 0 || buffer == '\n') {
-      break;
-    }
-    s.push_back(buffer);
-  }
-  if (r < 0 && !WouldBlock(errno)) {
-    if (errno != EINTR && state_ == ConnectionState::kConnected) {
-      state_ = ConnectionState::kError;
-    }
-    return -1;
-  }
-  if (s.empty() && r == 0) {
-    state_ = ConnectionState::kClosed;
-  }
-  if (s.size() > static_cast<size_t>(std::numeric_limits<ssize_t>::max())) {
-    return -1;
-  }
-  return static_cast<ssize_t>(s.size());
-}
-
-ssize_t Connection::Write(const char* buffer, size_t len) const {
-  auto n = write(fd_, buffer, len);
+ssize_t Connection::Write(const char* buffer, size_t len) {
+  ssize_t n = -1;
+  n = write(fd_, buffer, len);
   while (n < 0 && errno == EINTR) {
     n = write(fd_, buffer, len);
   }
   if (n < 0 && !WouldBlock(errno)) {
-    if (errno != EINTR && state_ == ConnectionState::kConnected) {
+    if (state_ == ConnectionState::kConnected) {
       state_ = ConnectionState::kError;
     }
     RS_LOG_DEBUG("write failed\n");
@@ -415,17 +341,19 @@ ssize_t Connection::SyncWrite(const char* buffer, size_t len,
   return static_cast<ssize_t>(total_written);
 }
 
-ssize_t Connection::WriteVector(const std::vector<iovec>& blocks) const {
+ssize_t Connection::WriteVector(const std::vector<iovec>& blocks) {
   if (blocks.empty()) {
     return 0;
   }
-  const size_t block_count = std::min(blocks.size(), MaxIovCount());
-  auto n = writev(fd_, blocks.data(), static_cast<int>(block_count));
+  const auto block_count =
+      static_cast<int>(std::min(blocks.size(), MaxIovCount()));
+  ssize_t n = -1;
+  n = writev(fd_, blocks.data(), block_count);
   while (n < 0 && errno == EINTR) {
-    n = writev(fd_, blocks.data(), static_cast<int>(block_count));
+    n = writev(fd_, blocks.data(), block_count);
   }
   if (n < 0 && !WouldBlock(errno)) {
-    if (errno != EINTR && state_ == ConnectionState::kConnected) {
+    if (state_ == ConnectionState::kConnected) {
       state_ = ConnectionState::kError;
     }
     RS_LOG_DEBUG("write failed\n");

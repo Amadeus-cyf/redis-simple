@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -39,6 +40,7 @@ class ListPack {
   bool Replace(size_t idx, std::string_view element_string);
   bool Replace(size_t idx, int64_t element_integer);
   bool BatchAppend(const std::vector<ListPackEntry>& entries);
+  bool BatchAppend(std::initializer_list<ListPackEntry> entries);
   bool BatchPrepend(const std::vector<ListPackEntry>& entries);
   bool BatchInsert(size_t idx, const std::vector<ListPackEntry>& entries);
   std::optional<size_t> IndexAt(size_t index) const;
@@ -127,7 +129,10 @@ class ListPack {
               const std::string_view* element_string,
               const int64_t* element_integer);
   bool BatchInsert(size_t idx, ListPack::Position where,
-                   const std::vector<ListPackEntry>& entries);
+                   const ListPackEntry* entries, size_t entry_count);
+  // Chooses the encoding for `entry`; returns false if it is too large.
+  static bool PlanEntry(const ListPackEntry& entry, Encoding* encoding);
+  static size_t EncodedEntryBytes(const Encoding& encoding);
   void SetTotalBytes(uint32_t listpack_bytes);
   uint16_t ElementCount() const;
   void SetNumOfElements(uint16_t num_of_elements) const;
@@ -143,6 +148,8 @@ class ListPack {
   static bool IsString(EncodingType encoding_type);
   void Realloc(size_t bytes);
   std::unique_ptr<unsigned char[]> lp_;
+  // Allocated bytes of lp_; at least TotalBytes().
+  size_t capacity_;
   mutable std::array<unsigned char, kListPackIntBufSize> int_buf_{};
 };
 

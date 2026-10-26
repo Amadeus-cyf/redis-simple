@@ -1,8 +1,5 @@
-#include <string>
 #include <string_view>
-#include <vector>
 
-#include "logging/logger.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
 #include "server/db/db.h"
@@ -11,24 +8,10 @@
 
 namespace redis_simple::command::key {
 namespace {
-struct TypeArgs {
-  std::string_view key;
-};
-
-int ParseTypeArgs(const CommandArgs& args, TypeArgs* type_args) {
-  if (args.size() != 1) {
-    RS_LOG_DEBUG("invalid args\n");
-    return -1;
-  }
-  type_args->key = args[0];
-  return 0;
-}
-
 std::string_view ObjectTypeName(const db::RedisObject* const object) {
   if (object == nullptr) {
     return "none";
   }
-
   switch (object->Type()) {
     case db::RedisObject::ObjectType::kString:
       return "string";
@@ -46,19 +29,7 @@ std::string_view ObjectTypeName(const db::RedisObject* const object) {
 }  // namespace
 
 void HandleType(Client* const client) {
-  RS_LOG_DEBUG("type command called\n");
-  TypeArgs args;
-  if (ParseTypeArgs(client->Args(), &args) < 0) {
-    client->AddReply(reply::WrongNumberOfArguments());
-    return;
-  }
-
-  if (auto* redis_db = client->Db()) {
-    client->AddReply(
-        reply::FromString(ObjectTypeName(redis_db->LookupKey(args.key))));
-  } else {
-    RS_LOG_DEBUG("db unavailable\n");
-    client->AddReply(reply::FromError("ERR db unavailable"));
-  }
+  client->AddReply(reply::FromString(
+      ObjectTypeName(client->Db()->LookupKey(client->Args()[0]))));
 }
 }  // namespace redis_simple::command::key

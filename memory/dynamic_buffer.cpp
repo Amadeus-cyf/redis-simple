@@ -11,10 +11,15 @@
 #include <utility>
 
 namespace redis_simple::in_memory {
+namespace {
+constexpr size_t kInitialCapacity = 4096;
+}  // namespace
+
 DynamicBuffer::DynamicBuffer()
+    // Bytes are always written before they are read, so skip zero-filling.
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
-    : buf_(std::make_unique<char[]>(4096)),
-      capacity_(4096),
+    : buf_(new char[kInitialCapacity]),
+      capacity_(kInitialCapacity),
       size_(0),
       processed_(0) {}
 
@@ -25,17 +30,37 @@ void DynamicBuffer::Append(const char* buffer, size_t n) {
   if (buffer == nullptr) {
     throw std::invalid_argument("cannot append a null buffer");
   }
-  if (capacity_ - size_ < n && processed_ > 0) {
+  Reserve(n);
+  std::memcpy(buf_.get() + size_, buffer, n);
+  size_ += n;
+}
+
+char* DynamicBuffer::WritableTail(size_t n) {
+  Reserve(n);
+  return buf_.get() + size_;
+}
+
+void DynamicBuffer::Commit(size_t n) {
+  if (n > capacity_ - size_) {
+    throw std::length_error("dynamic buffer commit exceeds capacity");
+  }
+  size_ += n;
+}
+
+void DynamicBuffer::Reserve(size_t n) {
+  if (capacity_ - size_ >= n) {
+    return;
+  }
+  if (processed_ > 0) {
     Compact();
+    if (capacity_ - size_ >= n) {
+      return;
+    }
   }
   if (n > std::numeric_limits<size_t>::max() - size_) {
     throw std::length_error("dynamic buffer size overflow");
   }
-  if (capacity_ - size_ < n) {
-    Resize(size_ + n);
-  }
-  std::memcpy(buf_.get() + size_, buffer, n);
-  size_ += n;
+  Resize(size_ + n);
 }
 
 void DynamicBuffer::Compact() {
@@ -73,20 +98,13 @@ std::string DynamicBuffer::ReadLine() {
 }
 
 void DynamicBuffer::Resize(size_t n) {
-  size_t new_capacity = 0;
-  if (n < kResizeThreshold) {
-    const size_t doubled = capacity_ > std::numeric_limits<size_t>::max() / 2
-                               ? std::numeric_limits<size_t>::max()
-                               : capacity_ * 2;
-    new_capacity = std::max(n, doubled);
-  } else {
-    constexpr size_t kGrowthSlack = 1000;
-    new_capacity = n > std::numeric_limits<size_t>::max() - kGrowthSlack
-                       ? n
-                       : n + kGrowthSlack;
-  }
+  // Grow geometrically so appending a large payload in chunks stays linear.
+  const size_t doubled = capacity_ > std::numeric_limits<size_t>::max() / 2
+                             ? std::numeric_limits<size_t>::max()
+                             : capacity_ * 2;
+  const size_t new_capacity = std::max(n, doubled);
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
-  auto new_buf = std::make_unique<char[]>(new_capacity);
+  std::unique_ptr<char[]> new_buf(new char[new_capacity]);
   std::memcpy(new_buf.get(), buf_.get(), size_);
   buf_ = std::move(new_buf);
   capacity_ = new_capacity;

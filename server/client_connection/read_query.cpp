@@ -1,53 +1,50 @@
 #include "server/client_connection/read_query.h"
 
-#include <any>
+#include <sys/types.h>
 
+#include "connection/connection.h"
 #include "logging/logger.h"
+#include "server/aof.h"
 #include "server/client.h"
-#include "server/client_connection/callback.h"
-#include "server/client_connection/client_connection.h"
+#include "server/client_connection/write_reply.h"
 #include "server/server.h"
 
 namespace redis_simple::client_connection {
 namespace {
-void ReadQuery(connection::Connection* conn) {
-  RS_LOG_DEBUG("read query from client\n");
-  const auto* client_data = std::any_cast<Client*>(&conn->PrivateData());
-  if (client_data == nullptr || *client_data == nullptr) {
-    RS_LOG_DEBUG("invalid client\n");
-    return;
-  }
-  Client* client = *client_data;
-  ssize_t nread = client->ReadQuery();
+void ReadQuery(Server* const server, Client* const client) {
+  connection::Connection* const conn = client->Connection();
+  const ssize_t nread = client->ReadQuery();
   if (nread <= 0) {
     if (conn->State() != connection::ConnectionState::kConnected) {
-      RS_LOG_DEBUG("client free\n");
-      Server::Get()->RemoveClient(client);
+      server->RemoveClient(client);
     }
     return;
   }
   if (client->ProcessInputBuffer() == ClientStatus::kError) {
     RS_LOG_DEBUG("process query buffer failed\n");
   }
+  // Persist this batch of mutations before any of its replies are sent.
+  if (aof::Aof* const append_only_file = server->Aof();
+      append_only_file != nullptr && !append_only_file->Flush()) {
+    server->Stop();
+    server->RemoveClient(client);
+    return;
+  }
   if (conn->State() != connection::ConnectionState::kConnected) {
-    Server::Get()->RemoveClient(client);
+    server->RemoveClient(client);
     return;
   }
   if (client->ShouldPauseReads() && conn->UnsetReadCallback()) {
     client->SetReadsPaused(true);
   }
-  if (client->ShouldCloseAfterReply() && !client->HasPendingReplies()) {
-    Server::Get()->RemoveClient(client);
-    return;
-  }
-  if (client->HasPendingReplies() &&
-      !client->Connection()->HasWriteCallback()) {
-    RS_LOG_DEBUG("client has pending replies, install write callback\n");
-    client->Connection()->SetWriteCallback(
-        CreateCallback(CallbackType::kWriteReply));
-  }
+  WriteToClient(server, client);
 }
 }  // namespace
 
-connection::ConnectionCallback CreateReadQueryCallback() { return ReadQuery; }
+connection::ConnectionCallback CreateReadQueryCallback(Server* const server,
+                                                       Client* const client) {
+  return [server, client](connection::Connection* /*conn*/) {
+    ReadQuery(server, client);
+  };
+}
 }  // namespace redis_simple::client_connection

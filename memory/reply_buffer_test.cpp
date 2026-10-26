@@ -3,7 +3,6 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -11,16 +10,14 @@
 namespace redis_simple::in_memory {
 namespace {
 constexpr size_t kExpectedSentAfterConsume = 5000 - (4096 - 2047) - 2000;
-constexpr size_t kTailInitialUsed = 1000 / 3;
-constexpr size_t kTailFillBytes = 1024 - kTailInitialUsed;
-constexpr size_t kRemainingBytes = 5000 - kTailFillBytes;
 
 std::string BlockString(const iovec& block) {
   return {static_cast<const char*>(block.iov_base), block.iov_len};
 }
 
 std::unique_ptr<ReplyBuffer> MakeBufferWithMainBytes() {
-  auto buf = std::make_unique<ReplyBuffer>();
+  // Small sizes keep the overflow-list cases below easy to reach.
+  auto buf = std::make_unique<ReplyBuffer>(4096, 1024);
   std::string s(2000, 'a');
   buf->Append(s.c_str(), 2000);
   return buf;
@@ -41,12 +38,6 @@ std::unique_ptr<ReplyBuffer> MakeBufferWithReplyList() {
   return buf;
 }
 
-std::unique_ptr<ReplyBuffer> MakeConsumedBuffer() {
-  auto buf = MakeBufferWithReplyList();
-  buf->Consume(2047);
-  buf->Consume(5000);
-  return buf;
-}
 }  // namespace
 
 TEST(ReplyBufferTest, AddToBuf) {
@@ -155,33 +146,25 @@ TEST(ReplyBufferTest, ConsumeListNodeInMultiplePartialWrites) {
   ASSERT_EQ(mem_vec[0].iov_len, 1300);
 }
 
-TEST(ReplyBufferTest, AppendNewNodeToReplyList) {
-  auto buf = MakeConsumedBuffer();
-  BufNode* tail = buf->ReplyTail();
+TEST(ReplyBufferTest, AppendFillsTailBeforeAddingNode) {
+  ReplyBuffer buffer(16, 1024);
+  const std::string head(16, 'a');
+  buffer.Append(head.data(), head.size());
+  const std::string partial(333, 'd');
+  buffer.Append(partial.data(), partial.size());
+  ASSERT_EQ(buffer.ReplyCount(), 1);
 
-  tail->used_ /= 3;
-  std::memset(tail->buf_.get() + tail->used_, 0, tail->capacity_ - tail->used_);
+  const std::string s(5000, 'e');
+  ASSERT_EQ(buffer.Append(s.data(), s.size()), 5000);
+  // The tail chunk is topped up before one node holds the remainder.
+  ASSERT_EQ(buffer.ReplyCount(), 2);
 
-  std::string s(5000, 'e');
-  size_t r = buf->Append(s.c_str(), 5000);
-  ASSERT_EQ(r, 5000);
-  ASSERT_EQ(buf->BufferSize(), 0);
-  ASSERT_EQ(buf->ReplyCount(), 4);
-
-  std::vector<iovec> mem_vec;
-  buf->FillBlocks(&mem_vec);
-  ASSERT_EQ(mem_vec.size(), 4);
-  ASSERT_EQ(BlockString(mem_vec[0]),
-            std::string(1024 - kExpectedSentAfterConsume, 'c'));
-  ASSERT_EQ(mem_vec[0].iov_len, 1024 - kExpectedSentAfterConsume);
-  ASSERT_EQ(BlockString(mem_vec[1]),
-            std::string(1000, 'c') + std::string(24, 'd'));
-  ASSERT_EQ(mem_vec[1].iov_len, 1024);
-  ASSERT_EQ(BlockString(mem_vec[2]),
-            std::string(kTailInitialUsed, 'd').append(kTailFillBytes, 'e'));
-  ASSERT_EQ(mem_vec[2].iov_len, 1024);
-  ASSERT_EQ(BlockString(mem_vec[3]), std::string(kRemainingBytes, 'e'));
-  ASSERT_EQ(mem_vec[3].iov_len, kRemainingBytes);
+  std::vector<iovec> blocks;
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 3);
+  EXPECT_EQ(BlockString(blocks[0]), head);
+  EXPECT_EQ(BlockString(blocks[1]), partial + std::string(1024 - 333, 'e'));
+  EXPECT_EQ(BlockString(blocks[2]), std::string(5000 - (1024 - 333), 'e'));
 }
 
 TEST(ReplyBufferTest, MovesLargeReplyIntoOutputList) {
@@ -203,5 +186,27 @@ TEST(ReplyBufferTest, MovesLargeReplyIntoOutputList) {
   ASSERT_EQ(blocks.size(), 1);
   EXPECT_EQ(blocks[0].iov_len, 4096);
   EXPECT_EQ(BlockString(blocks[0]), std::string(4096, 'x'));
+}
+
+TEST(ReplyBufferTest, CopiesSmallMovedRepliesIntoSharedChunks) {
+  ReplyBuffer buffer(16, 1024);
+  for (int i = 0; i < 100; ++i) {
+    EXPECT_EQ(buffer.Append(std::string("+OK\r\n")), 5);
+  }
+  // 16 bytes fit in the main buffer; the remaining 484 share one chunk.
+  EXPECT_EQ(buffer.ReplyCount(), 1);
+  EXPECT_EQ(buffer.PendingBytes(), 500);
+
+  std::vector<iovec> blocks;
+  buffer.FillBlocks(&blocks);
+  std::string sent;
+  for (const auto& block : blocks) {
+    sent.append(BlockString(block));
+  }
+  std::string expected;
+  for (int i = 0; i < 100; ++i) {
+    expected.append("+OK\r\n");
+  }
+  EXPECT_EQ(sent, expected);
 }
 }  // namespace redis_simple::in_memory

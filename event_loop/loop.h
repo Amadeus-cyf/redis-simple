@@ -17,8 +17,6 @@ enum class EventFlag {
   kReadable = 1,
   kWritable = 1 << 1,
   kBarrier = 1 << 2,
-  kNoMore = -1,
-  kDeleteEventId = -1024,
 };
 
 constexpr int ToInt(EventFlag flag) { return static_cast<int>(flag); }
@@ -43,11 +41,6 @@ constexpr bool operator==(EventFlag flag, int value) { return value == flag; }
 constexpr bool operator!=(EventFlag flag, int value) { return value != flag; }
 
 enum class Status {
-  kOk = 0,
-  kError = -1,
-};
-
-enum class CallbackStatus {
   kOk = 0,
   kError = -1,
 };

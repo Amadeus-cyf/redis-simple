@@ -138,7 +138,7 @@ TEST(LoopTest, TimeEventRunsAndFinalizes) {
   loop->CreateTimeEvent(TimeEvent::Create(
       [&run_count](int64_t) {
         ++run_count;
-        return ToInt(EventFlag::kNoMore);
+        return TimeEvent::kNoMore;
       },
       [&finalize_count] {
         ++finalize_count;

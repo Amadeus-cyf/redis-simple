@@ -71,8 +71,9 @@ inline Level& MinLevel() {
 inline void SetLevel(Level level) { MinLevel() = level; }
 
 inline bool Enabled(Level level) {
-  return static_cast<int>(level) >= static_cast<int>(MinLevel()) &&
-         MinLevel() != Level::kOff;
+  const Level min_level = MinLevel();
+  return min_level != Level::kOff &&
+         static_cast<int>(level) >= static_cast<int>(min_level);
 }
 
 inline std::mutex& LogMutex() {
@@ -122,7 +123,10 @@ inline void VLogf(Level level, const char* file, int line, const char* fmt,
   }
 
 #ifdef REDIS_SIMPLE_USE_SPDLOG
-  spdlog::set_level(ToSpdlogLevel(MinLevel()));
+  // Enabled() already filters by level, so spdlog only needs configuring once.
+  static const bool kSpdlogConfigured =
+      (spdlog::set_level(spdlog::level::trace), true);
+  static_cast<void>(kSpdlogConfigured);
   spdlog::log(spdlog::source_loc{file, line, ""}, ToSpdlogLevel(level), "{}",
               rendered);
 #else
@@ -160,15 +164,18 @@ inline void Logf(Level level, const char* file, int line, const char* fmt,
 
 }  // namespace redis_simple::logging
 
-#define RS_LOG_DEBUG(...)                                               \
-  ::redis_simple::logging::Logf(::redis_simple::logging::Level::kDebug, \
-                                __FILE__, __LINE__, __VA_ARGS__)
-#define RS_LOG_INFO(...)                                               \
-  ::redis_simple::logging::Logf(::redis_simple::logging::Level::kInfo, \
-                                __FILE__, __LINE__, __VA_ARGS__)
-#define RS_LOG_WARN(...)                                               \
-  ::redis_simple::logging::Logf(::redis_simple::logging::Level::kWarn, \
-                                __FILE__, __LINE__, __VA_ARGS__)
-#define RS_LOG_ERROR(...)                                               \
-  ::redis_simple::logging::Logf(::redis_simple::logging::Level::kError, \
-                                __FILE__, __LINE__, __VA_ARGS__)
+// Arguments are evaluated only when the level is enabled, so a disabled log
+// statement on a hot path costs a single branch.
+#define RS_LOG_AT_LEVEL(level, ...)                                            \
+  (::redis_simple::logging::Enabled(level)                                     \
+       ? ::redis_simple::logging::Logf(level, __FILE__, __LINE__, __VA_ARGS__) \
+       : static_cast<void>(0))
+
+#define RS_LOG_DEBUG(...) \
+  RS_LOG_AT_LEVEL(::redis_simple::logging::Level::kDebug, __VA_ARGS__)
+#define RS_LOG_INFO(...) \
+  RS_LOG_AT_LEVEL(::redis_simple::logging::Level::kInfo, __VA_ARGS__)
+#define RS_LOG_WARN(...) \
+  RS_LOG_AT_LEVEL(::redis_simple::logging::Level::kWarn, __VA_ARGS__)
+#define RS_LOG_ERROR(...) \
+  RS_LOG_AT_LEVEL(::redis_simple::logging::Level::kError, __VA_ARGS__)

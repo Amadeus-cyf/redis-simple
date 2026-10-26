@@ -41,6 +41,16 @@ Guidance for AI coding agents working in this repository.
 - Keep AOF propagation at the successful command-mutation boundary. Preserve
   command order, encode relative TTLs as absolute `PEXPIREAT` records, and do
   not copy argument payloads beyond the owned persistence record.
+- `Aof::Append` only encodes into the pending batch. The read handler calls
+  `Aof::Flush` once per batch of commands, before any replies are written;
+  call `Flush` before arming test failures that depend on file-write order.
+- Reply directly after processing a client's input; install a write callback
+  only while output remains unsent. Read once per readable event.
+- Rely on the command table for arity in handlers, and use
+  `server/commands/lookup.h` for typed lookups instead of re-checking the
+  object type and null database in each command.
+- Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
+  only when it is new.
 - Keep AOF rewrite snapshots visitor-based and preserve the original AOF until
   the snapshot and buffered mutation delta have been synced and atomically
   installed. The normal append path should pay no copy cost when no rewrite is

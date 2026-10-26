@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <string>
@@ -11,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "server/db/db.h"
 #include "server/reply.h"
 #include "tcp/tcp.h"
 
@@ -36,6 +38,11 @@ class ScopedFd {
   int fd_;
 };
 
+db::RedisDb* TestDb() {
+  static const auto db = db::RedisDb::Create();
+  return db.get();
+}
+
 std::array<ScopedFd, 2> CreateSocketPair() {
   std::array<int, 2> fds{-1, -1};
   EXPECT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds.data()), 0);
@@ -49,7 +56,8 @@ std::pair<std::unique_ptr<Client>, ScopedFd> CreateClient(
   auto connection = std::make_unique<connection::Connection>(
       connection::Context{nullptr, sockets[0].Release()});
   connection->SetState(connection::ConnectionState::kConnected);
-  return {Client::Create(std::move(connection), limits), std::move(sockets[1])};
+  return {Client::Create(std::move(connection), TestDb(), nullptr, limits),
+          std::move(sockets[1])};
 }
 
 std::string EncodeRequest(const std::vector<std::string_view>& parts) {
@@ -77,13 +85,13 @@ std::string SendAndReadReply(Client* client, int peer_fd) {
 }
 }  // namespace
 
-TEST(ClientTest, ReadQueryDrainsReadySocket) {
+TEST(ClientTest, ReadQueryReadsOncePerCall) {
   auto sockets = CreateSocketPair();
   ASSERT_EQ(tcp::NonBlock(sockets[0].Get()), tcp::TcpStatusCode::kOk);
   auto connection = std::make_unique<connection::Connection>(
       connection::Context{nullptr, sockets[0].Release()});
   connection->SetState(connection::ConnectionState::kConnected);
-  auto client = Client::Create(std::move(connection));
+  auto client = Client::Create(std::move(connection), TestDb(), nullptr);
 
   const std::string query(8192, 'x');
   ASSERT_EQ(write(sockets[1].Get(), query.data(), query.size()),
@@ -111,6 +119,44 @@ TEST(ClientTest, ProcessesFragmentedRespRequest) {
   ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(kSecond.size()));
   EXPECT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
   EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), "$-1\r\n");
+}
+
+TEST(ClientTest, ResumesLargeRequestAcrossBufferGrowth) {
+  auto [client, peer] = CreateClient();
+  const std::string value(60000, 'v');
+  const std::string request = EncodeRequest({"SET", "large-key", value}) +
+                              EncodeRequest({"GET", "large-key"});
+
+  // Deliver the request in pieces so the query buffer grows and compacts
+  // while the parser holds partial state.
+  constexpr size_t kPieceSize = 7000;
+  for (size_t offset = 0; offset < request.size(); offset += kPieceSize) {
+    const size_t size = std::min(kPieceSize, request.size() - offset);
+    ASSERT_EQ(write(peer.Get(), request.data() + offset, size),
+              static_cast<ssize_t>(size));
+    ASSERT_GT(client->ReadQuery(), 0);
+    ASSERT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  }
+
+  std::string expected = "+OK\r\n$60000\r\n";
+  expected.append(value).append("\r\n");
+  // Interleave sends and reads: the reply is larger than some platforms'
+  // socket buffers (about 8 KiB for macOS socket pairs).
+  std::string response;
+  std::array<char, 4096> buffer{};
+  while (response.size() < expected.size()) {
+    if (client->HasPendingReplies()) {
+      // A full socket buffer makes this a would-block, not an error.
+      client->SendReply();
+      ASSERT_EQ(client->Connection()->State(),
+                connection::ConnectionState::kConnected);
+    }
+    const ssize_t bytes_read = read(peer.Get(), buffer.data(), buffer.size());
+    ASSERT_GT(bytes_read, 0);
+    response.append(buffer.data(), static_cast<size_t>(bytes_read));
+  }
+  EXPECT_EQ(response, expected);
+  client->Db()->DeleteKey("large-key");
 }
 
 TEST(ClientTest, RespRequestsPreserveSpacesAndBinaryData) {
