@@ -4,7 +4,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <string_view>
 
 namespace redis_simple::utils {
@@ -23,28 +22,54 @@ inline uint64_t LoadLittleEndian64(const uint8_t* bytes) {
   return value;
 }
 
-struct State {
-  uint64_t v0;
-  uint64_t v1;
-  uint64_t v2;
-  uint64_t v3;
+class State {
+ public:
+  State(uint64_t k0, uint64_t k1)
+      : v0_(k0 ^ 0x736f6d6570736575ULL),
+        v1_(k1 ^ 0x646f72616e646f6dULL),
+        v2_(k0 ^ 0x6c7967656e657261ULL),
+        v3_(k1 ^ 0x7465646279746573ULL) {}
 
-  void Round() {
-    v0 += v1;
-    v1 = RotateLeft(v1, 13);
-    v1 ^= v0;
-    v0 = RotateLeft(v0, 32);
-    v2 += v3;
-    v3 = RotateLeft(v3, 16);
-    v3 ^= v2;
-    v0 += v3;
-    v3 = RotateLeft(v3, 21);
-    v3 ^= v0;
-    v2 += v1;
-    v1 = RotateLeft(v1, 17);
-    v1 ^= v2;
-    v2 = RotateLeft(v2, 32);
+  template <int kRounds>
+  void Absorb(uint64_t message) {
+    v3_ ^= message;
+    for (int round = 0; round < kRounds; ++round) {
+      Round();
+    }
+    v0_ ^= message;
   }
+
+  template <int kRounds>
+  uint64_t Finish() {
+    v2_ ^= 0xff;
+    for (int round = 0; round < kRounds; ++round) {
+      Round();
+    }
+    return v0_ ^ v1_ ^ v2_ ^ v3_;
+  }
+
+ private:
+  void Round() {
+    v0_ += v1_;
+    v1_ = RotateLeft(v1_, 13);
+    v1_ ^= v0_;
+    v0_ = RotateLeft(v0_, 32);
+    v2_ += v3_;
+    v3_ = RotateLeft(v3_, 16);
+    v3_ ^= v2_;
+    v0_ += v3_;
+    v3_ = RotateLeft(v3_, 21);
+    v3_ ^= v0_;
+    v2_ += v1_;
+    v1_ = RotateLeft(v1_, 17);
+    v1_ ^= v2_;
+    v2_ = RotateLeft(v2_, 32);
+  }
+
+  uint64_t v0_;
+  uint64_t v1_;
+  uint64_t v2_;
+  uint64_t v3_;
 };
 }  // namespace siphash_internal
 
@@ -55,21 +80,14 @@ template <int kCompressionRounds, int kFinalizationRounds>
 uint64_t SipHash(std::string_view data, const SipHashKey& key) {
   const uint64_t k0 = siphash_internal::LoadLittleEndian64(key.data());
   const uint64_t k1 = siphash_internal::LoadLittleEndian64(key.data() + 8);
-  siphash_internal::State state{
-      k0 ^ 0x736f6d6570736575ULL, k1 ^ 0x646f72616e646f6dULL,
-      k0 ^ 0x6c7967656e657261ULL, k1 ^ 0x7465646279746573ULL};
+  siphash_internal::State state(k0, k1);
 
   const auto* bytes = reinterpret_cast<const uint8_t*>(data.data());
   const size_t length = data.size();
   const size_t full_words = length / 8;
   for (size_t word = 0; word < full_words; ++word) {
-    const uint64_t message =
-        siphash_internal::LoadLittleEndian64(bytes + (word * 8));
-    state.v3 ^= message;
-    for (int round = 0; round < kCompressionRounds; ++round) {
-      state.Round();
-    }
-    state.v0 ^= message;
+    state.Absorb<kCompressionRounds>(
+        siphash_internal::LoadLittleEndian64(bytes + (word * 8)));
   }
 
   uint64_t last = static_cast<uint64_t>(length & 0xff) << 56;
@@ -77,17 +95,8 @@ uint64_t SipHash(std::string_view data, const SipHashKey& key) {
   for (size_t index = 0; index < (length & 7); ++index) {
     last |= static_cast<uint64_t>(tail[index]) << (8 * index);
   }
-  state.v3 ^= last;
-  for (int round = 0; round < kCompressionRounds; ++round) {
-    state.Round();
-  }
-  state.v0 ^= last;
-
-  state.v2 ^= 0xff;
-  for (int round = 0; round < kFinalizationRounds; ++round) {
-    state.Round();
-  }
-  return state.v0 ^ state.v1 ^ state.v2 ^ state.v3;
+  state.Absorb<kCompressionRounds>(last);
+  return state.Finish<kFinalizationRounds>();
 }
 
 // Process-wide random key for hash tables, generated once on first use.

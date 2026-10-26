@@ -27,7 +27,7 @@ struct SetArgs {
   std::string_view key;
   std::string_view value;
   int64_t expire{0};
-  int flags{0};
+  db::ExistingTtl existing_ttl{db::ExistingTtl::kClear};
   SetCondition condition{SetCondition::kNone};
   bool return_old_value{};
 };
@@ -77,12 +77,12 @@ bool ParseSetOption(const CommandArgs& args, size_t* const idx,
     ++(*idx);
     return true;
   }
-  const bool keep_ttl = db::HasFlag(set_args->flags, db::SetKeyFlag::kKeepTtl);
+  const bool keep_ttl = set_args->existing_ttl == db::ExistingTtl::kKeep;
   if (utils::EqualsIgnoreCase(option, "KEEPTTL")) {
     if (set_args->expire > 0 || keep_ttl) {
       return false;
     }
-    set_args->flags |= db::ToInt(db::SetKeyFlag::kKeepTtl);
+    set_args->existing_ttl = db::ExistingTtl::kKeep;
     ++(*idx);
     return true;
   }
@@ -157,7 +157,8 @@ void HandleSet(Client* const client) {
       (args->condition == SetCondition::kIfExists && !exists);
   if (!blocked) {
     auto value = db::RedisObject::CreateWithString(std::string(args->value));
-    redis_db->SetKey(args->key, std::move(value), args->expire, args->flags);
+    redis_db->SetKey(args->key, std::move(value), args->expire,
+                     args->existing_ttl);
     client->MarkModified();
   }
   if (!blocked && !args->return_old_value) {

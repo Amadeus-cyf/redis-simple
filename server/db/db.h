@@ -22,8 +22,10 @@ enum class DbStatus {
   kError = -1,
 };
 
-enum class SetKeyFlag {
-  kKeepTtl = 1,
+// What SetKey does with an existing TTL when no new expiration is given.
+enum class ExistingTtl {
+  kClear,
+  kKeep,
 };
 
 enum class TtlResolution {
@@ -44,19 +46,14 @@ struct ExpireSampleResult {
   size_t expired{};
 };
 
-constexpr int ToInt(SetKeyFlag flag) { return static_cast<int>(flag); }
-constexpr bool HasFlag(int flags, SetKeyFlag flag) {
-  return (flags & ToInt(flag)) != 0;
-}
-
 class RedisDb {
  public:
   static std::unique_ptr<RedisDb> Create();
   const RedisObject* LookupKey(std::string_view key);
   RedisObject* MutableLookupKey(std::string_view key);
-  DbStatus SetKey(std::string_view key, RedisObjectPtr object, int64_t expire);
+  // `expire` is an absolute time in milliseconds, or 0 for none.
   DbStatus SetKey(std::string_view key, RedisObjectPtr object, int64_t expire,
-                  int flags);
+                  ExistingTtl existing_ttl = ExistingTtl::kClear);
   DbStatus DeleteKey(std::string_view key);
   DbStatus UnlinkKey(std::string_view key);
   DbStatus ExpireKeyAt(std::string_view key, int64_t expire,

@@ -42,18 +42,13 @@ RedisObject* RedisDb::MutableLookupKey(std::string_view key) {
 }
 
 DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
-                         int64_t expire) {
-  return SetKey(key, std::move(object), expire, 0);
-}
-
-DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
-                         int64_t expire, int flags) {
+                         int64_t expire, ExistingTtl existing_ttl) {
   if (object == nullptr) {
     return DbStatus::kError;
   }
   // FindOrInsert hashes once and copies the key only for a new entry.
   *dict_->FindOrInsert(key).first = std::move(object);
-  if (!HasFlag(flags, SetKeyFlag::kKeepTtl) && expire == 0 &&
+  if (existing_ttl == ExistingTtl::kClear && expire == 0 &&
       expires_->Size() > 0) {
     expires_->Delete(key);
   }

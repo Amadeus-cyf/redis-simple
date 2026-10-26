@@ -62,7 +62,7 @@ TEST(RedisDbTest, ReplacingKeyCanClearOrKeepTtl) {
   EXPECT_GT(redis_db->TimeToLive("key", TtlResolution::kMilliseconds), 0);
 
   ASSERT_EQ(redis_db->SetKey("key", RedisObject::CreateWithString("new"), 0,
-                             ToInt(SetKeyFlag::kKeepTtl)),
+                             ExistingTtl::kKeep),
             DbStatus::kOk);
   EXPECT_GT(redis_db->TimeToLive("key", TtlResolution::kMilliseconds), 0);
   ASSERT_NE(redis_db->LookupKey("key"), nullptr);
