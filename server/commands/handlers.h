@@ -23,6 +23,7 @@ void HandleUnlink(Client* client);
 }  // namespace redis_simple::command::key
 
 namespace redis_simple::command::session {
+void HandleAuth(Client* client);
 void HandleEcho(Client* client);
 void HandleHello(Client* client);
 void HandlePing(Client* client);

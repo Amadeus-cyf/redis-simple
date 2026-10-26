@@ -46,6 +46,8 @@ struct Command {
   CommandArity arity;
   CommandAccess access;
   KeySpec keys;
+  // Commands that unauthenticated clients may run when a password is set.
+  bool allowed_before_auth{false};
 };
 
 const Command* Find(std::string_view name);

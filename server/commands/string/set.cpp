@@ -148,7 +148,7 @@ void HandleSet(Client* const client) {
       client->AddReply(reply::kWrongTypeError);
       return;
     }
-    old_value = existing->String();
+    old_value = std::string(existing->String().View());
   }
 
   const bool exists = existing != nullptr;

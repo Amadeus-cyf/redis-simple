@@ -239,6 +239,10 @@ Client::RequestStatus Client::ParseRequest() {
     AddReply(reply::kWrongNumberOfArguments);
     return RequestStatus::kRejected;
   }
+  if (!authenticated_ && !command->allowed_before_auth) {
+    AddReply(reply::kNoAuthError);
+    return RequestStatus::kRejected;
+  }
   command_ = command;
   return RequestStatus::kReady;
 }

@@ -25,7 +25,7 @@ bool ParsePort(std::string_view value, int* const port) {
   return true;
 }
 
-bool ParseAppendOnly(std::string_view value, bool* const enabled) {
+bool ParseYesNo(std::string_view value, bool* const enabled) {
   if (value == "yes") {
     *enabled = true;
     return true;
@@ -74,7 +74,8 @@ OptionsResult ParseServerOptions(int argc, const char* const* argv) {
     if (option != "--bind" && option != "--port" && option != "--appendonly" &&
         option != "--appendfilename" && option != "--appendfsync" &&
         option != "--auto-aof-rewrite-min-size" &&
-        option != "--auto-aof-rewrite-percentage") {
+        option != "--auto-aof-rewrite-percentage" &&
+        option != "--requirepass" && option != "--protected-mode") {
       result.status = OptionsStatus::kError;
       result.error = "unknown option";
       return result;
@@ -104,7 +105,7 @@ OptionsResult ParseServerOptions(int argc, const char* const* argv) {
       return result;
     }
     if (option == "--appendonly") {
-      if (ParseAppendOnly(value, &result.options.append_only)) {
+      if (ParseYesNo(value, &result.options.append_only)) {
         continue;
       }
       result.status = OptionsStatus::kError;
@@ -118,6 +119,18 @@ OptionsResult ParseServerOptions(int argc, const char* const* argv) {
       }
       result.status = OptionsStatus::kError;
       result.error = "appendfilename cannot be empty";
+      return result;
+    }
+    if (option == "--requirepass") {
+      result.options.require_pass.assign(value.data(), value.size());
+      continue;
+    }
+    if (option == "--protected-mode") {
+      if (ParseYesNo(value, &result.options.protected_mode)) {
+        continue;
+      }
+      result.status = OptionsStatus::kError;
+      result.error = "protected-mode must be yes or no";
       return result;
     }
     if (option == "--auto-aof-rewrite-min-size") {
@@ -152,6 +165,7 @@ std::string_view ServerUsage() {
          "[--appendonly <yes|no>] [--appendfilename <path>] "
          "[--appendfsync <always|everysec|no>] "
          "[--auto-aof-rewrite-min-size <bytes>] "
-         "[--auto-aof-rewrite-percentage <percent>]\n";
+         "[--auto-aof-rewrite-percentage <percent>] "
+         "[--requirepass <password>] [--protected-mode <yes|no>]\n";
 }
 }  // namespace redis_simple

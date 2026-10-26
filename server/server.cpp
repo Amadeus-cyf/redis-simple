@@ -29,6 +29,8 @@ bool Server::Run(const ServerOptions& options) {
     return false;
   }
   aof_.reset();
+  require_pass_ = options.require_pass;
+  protected_mode_ = options.protected_mode;
   db_ = db::RedisDb::Create();
   if (db_ == nullptr) {
     return false;

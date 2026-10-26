@@ -17,6 +17,8 @@ inline constexpr std::string_view kOk = "+OK\r\n";
 inline constexpr std::string_view kWrongNumberOfArguments =
     "-ERR wrong number of arguments\r\n";
 inline constexpr std::string_view kSyntaxError = "-ERR syntax error\r\n";
+inline constexpr std::string_view kNoAuthError =
+    "-NOAUTH Authentication required.\r\n";
 inline constexpr std::string_view kWrongTypeError =
     "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
 inline constexpr std::string_view kNullResp2 = "$-1\r\n";

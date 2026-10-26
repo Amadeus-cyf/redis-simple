@@ -48,6 +48,11 @@ constexpr Command ConnectionCommand(std::string_view name,
   return {name, callback, arity, CommandAccess::kConnection, NoKeys()};
 }
 
+constexpr Command AllowBeforeAuth(Command command) {
+  command.allowed_before_auth = true;
+  return command;
+}
+
 constexpr char FoldAsciiCase(char value) {
   return value >= 'a' && value <= 'z' ? static_cast<char>(value - ('a' - 'A'))
                                       : value;
@@ -70,6 +75,7 @@ constexpr int CompareIgnoreCase(std::string_view left, std::string_view right) {
 
 constexpr std::array kCommandTable = {
     WriteCommand("APPEND", strings::HandleAppend, FixedArity(2), OneKey()),
+    AllowBeforeAuth(ConnectionCommand("AUTH", session::HandleAuth, {1, 2})),
     AdminCommand("BGREWRITEAOF", persistence::HandleBgRewriteAof,
                  FixedArity(0)),
     ReadCommand("DBSIZE", key::HandleDbSize, FixedArity(0)),
@@ -111,7 +117,8 @@ constexpr std::array kCommandTable = {
     WriteCommand("PEXPIREAT", key::HandlePExpireAt, VariableArity(2), OneKey()),
     ConnectionCommand("PING", session::HandlePing, {0, 1}),
     ReadCommand("PTTL", key::HandlePTtl, FixedArity(1), OneKey()),
-    ConnectionCommand("QUIT", session::HandleQuit, FixedArity(0)),
+    AllowBeforeAuth(
+        ConnectionCommand("QUIT", session::HandleQuit, FixedArity(0))),
     WriteCommand("RENAME", key::HandleRename, FixedArity(2), {0, 1, 1}),
     WriteCommand("RPOP", lists::HandleRPop, FixedArity(1), OneKey()),
     WriteCommand("RPUSH", lists::HandleRPush, VariableArity(2), OneKey()),

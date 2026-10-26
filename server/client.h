@@ -67,6 +67,14 @@ class Client {
   ClientStatus ProcessInputBuffer();
   void Free() { connection_->Close(); }
   const command::CommandArgs& Args() const { return args_; }
+  // Requires AUTH before most commands. `password` must outlive the client.
+  void RequirePassword(std::string_view password) {
+    required_password_ = password;
+    authenticated_ = password.empty();
+  }
+  std::string_view RequiredPassword() const { return required_password_; }
+  bool Authenticated() const { return authenticated_; }
+  void SetAuthenticated(bool authenticated) { authenticated_ = authenticated; }
   void MarkModified() { modified_ = true; }
 
  private:
@@ -104,5 +112,7 @@ class Client {
   bool modified_{};
   bool discard_replies_{};
   bool reply_error_{};
+  std::string_view required_password_;
+  bool authenticated_{true};
 };
 }  // namespace redis_simple

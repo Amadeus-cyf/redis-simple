@@ -19,6 +19,23 @@ TEST(ServerOptionsTest, UsesDefaults) {
   EXPECT_EQ(result.options.aof_options.auto_rewrite_min_bytes,
             size_t{64} * 1024 * 1024);
   EXPECT_EQ(result.options.aof_options.auto_rewrite_percentage, 100);
+  EXPECT_TRUE(result.options.require_pass.empty());
+  EXPECT_TRUE(result.options.protected_mode);
+}
+
+TEST(ServerOptionsTest, ParsesSecurityOptions) {
+  constexpr std::array kArgv = {"redis_simple", "--requirepass", "s3cret",
+                                "--protected-mode", "no"};
+
+  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+
+  EXPECT_EQ(result.status, OptionsStatus::kOk);
+  EXPECT_EQ(result.options.require_pass, "s3cret");
+  EXPECT_FALSE(result.options.protected_mode);
+
+  constexpr std::array kInvalid = {"redis_simple", "--protected-mode", "off"};
+  EXPECT_EQ(ParseServerOptions(kInvalid.size(), kInvalid.data()).status,
+            OptionsStatus::kError);
 }
 
 TEST(ServerOptionsTest, ParsesBindAddressAndPort) {

@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "utils/siphash.h"
+
 namespace redis_simple::in_memory {
 // Default hash and key-equality policies. The std::string specializations
 // accept std::string_view so lookups by borrowed key do not allocate.
@@ -22,10 +24,12 @@ struct DictHash {
   size_t operator()(const K& key) const { return std::hash<K>{}(key); }
 };
 
+// String keys usually come from clients, so they use the process-seeded
+// SipHash to resist hash-flooding attacks.
 template <>
 struct DictHash<std::string> {
   size_t operator()(std::string_view key) const {
-    return std::hash<std::string_view>{}(key);
+    return static_cast<size_t>(utils::SeededHash(key));
   }
 };
 

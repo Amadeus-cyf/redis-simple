@@ -11,6 +11,10 @@ struct ServerOptions {
   int port{8080};
   bool append_only{};
   aof::Options aof_options;
+  // Clients must AUTH with this password when it is non-empty.
+  std::string require_pass;
+  // Without a password, refuse clients that do not connect over loopback.
+  bool protected_mode{true};
 };
 
 enum class OptionsStatus {

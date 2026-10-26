@@ -176,6 +176,24 @@ TEST(RedisDbTest, RenameAndFlush) {
   EXPECT_EQ(redis_db->LookupKey("target"), nullptr);
 }
 
+TEST(RedisDbTest, RenameDropsTargetTtlAndAllowsSelfRename) {
+  auto redis_db = RedisDb::Create();
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  ASSERT_EQ(redis_db->SetKey("source", RedisObject::CreateWithString("v"), 0),
+            DbStatus::kOk);
+  ASSERT_EQ(
+      redis_db->SetKey("target", RedisObject::CreateWithString("old"), future),
+      DbStatus::kOk);
+
+  EXPECT_EQ(redis_db->RenameKey("source", "target"), DbStatus::kOk);
+  EXPECT_EQ(redis_db->TimeToLive("target", TtlResolution::kMilliseconds), -1);
+  EXPECT_EQ(redis_db->LookupKey("target")->String(), "v");
+
+  EXPECT_EQ(redis_db->RenameKey("target", "target"), DbStatus::kOk);
+  EXPECT_EQ(redis_db->LookupKey("target")->String(), "v");
+  EXPECT_EQ(redis_db->KeyCount(), 1);
+}
+
 TEST(RedisDbTest, ScansKeysIncrementallyWithoutExpiredKeys) {
   auto redis_db = RedisDb::Create();
   ASSERT_EQ(redis_db->ScanKeys(0, 1, [](std::string_view) {}), 0);

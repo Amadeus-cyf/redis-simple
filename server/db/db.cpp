@@ -140,20 +140,18 @@ DbStatus RedisDb::RenameKey(std::string_view old_key,
     return DbStatus::kOk;
   }
 
-  auto* object = dict_->FindValue(old_key);
-  if (object == nullptr) {
+  // Extract moves the value and TTL out with one hash lookup each, instead of
+  // finding and then deleting them separately.
+  std::optional<RedisObjectPtr> object = dict_->Extract(old_key);
+  if (!object.has_value()) {
     return DbStatus::kError;
   }
-  const auto* expire = expires_->FindValue(old_key);
-  const std::optional<int64_t> expire_value =
-      expire == nullptr ? std::nullopt : std::optional<int64_t>(*expire);
-  RedisObjectPtr moved_object = std::move(*object);
-  dict_->Delete(old_key);
-  *dict_->FindOrInsert(new_key).first = std::move(moved_object);
-  expires_->Delete(old_key);
-  if (expire_value.has_value()) {
-    *expires_->FindOrInsert(new_key).first = *expire_value;
-  } else {
+  const std::optional<int64_t> expire =
+      expires_->Size() > 0 ? expires_->Extract(old_key) : std::nullopt;
+  *dict_->FindOrInsert(new_key).first = std::move(*object);
+  if (expire.has_value()) {
+    *expires_->FindOrInsert(new_key).first = *expire;
+  } else if (expires_->Size() > 0) {
     expires_->Delete(new_key);
   }
   return DbStatus::kOk;

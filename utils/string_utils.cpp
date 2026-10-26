@@ -160,6 +160,19 @@ bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
   return true;
 }
 
+bool ConstantTimeEquals(std::string_view left, std::string_view right) {
+  const size_t length = std::max(left.size(), right.size());
+  unsigned char difference = left.size() == right.size() ? 0 : 1;
+  for (size_t i = 0; i < length; ++i) {
+    const auto left_byte =
+        static_cast<unsigned char>(i < left.size() ? left[i] : 0);
+    const auto right_byte =
+        static_cast<unsigned char>(i < right.size() ? right[i] : 0);
+    difference |= static_cast<unsigned char>(left_byte ^ right_byte);
+  }
+  return difference == 0;
+}
+
 bool MatchesGlob(std::string_view value, std::string_view pattern) {
   size_t value_offset = 0;
   size_t pattern_offset = 0;

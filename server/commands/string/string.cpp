@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -51,9 +52,13 @@ void UpdateInteger(Client* const client, std::string_view key, int64_t operand,
     return;
   }
   int64_t value = 0;
-  if (object != nullptr && !utils::ToInt64(object->String(), &value)) {
-    client->AddReply(reply::FromError("ERR value is not an integer"));
-    return;
+  if (object != nullptr) {
+    const std::optional<int64_t> current = object->Int();
+    if (!current.has_value()) {
+      client->AddReply(reply::FromError("ERR value is not an integer"));
+      return;
+    }
+    value = *current;
   }
   int64_t next = 0;
   if (!ApplyIntegerOperation(value, operand, operation, &next)) {
@@ -61,12 +66,10 @@ void UpdateInteger(Client* const client, std::string_view key, int64_t operand,
         reply::FromError("ERR increment or decrement would overflow"));
     return;
   }
-  std::string next_value = std::to_string(next);
   if (object != nullptr) {
-    *object->MutableString() = std::move(next_value);
+    object->SetInt(next);
   } else {
-    client->Db()->SetKey(
-        key, db::RedisObject::CreateWithString(std::move(next_value)), 0);
+    client->Db()->SetKey(key, db::RedisObject::CreateWithInt(next), 0);
   }
   client->MarkModified();
   client->AddReply(reply::FromInt64(next));

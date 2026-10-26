@@ -51,6 +51,15 @@ Guidance for AI coding agents working in this repository.
   object type and null database in each command.
 - Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
   only when it is new.
+- String-keyed `Dict`s hash with process-seeded SipHash-1-3
+  (`utils/siphash.h`) to resist hash flooding. Do not depend on iteration or
+  `SCAN` order in tests; it changes between runs.
+- Canonical integer strings are stored as `int64_t`. Read string objects
+  through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
+  `MutableString()` only to edit bytes in place, since it converts the value
+  back to raw form.
+- Only commands marked `AllowBeforeAuth` in the command table run before a
+  client authenticates when `--requirepass` is set.
 - Keep AOF rewrite snapshots visitor-based and preserve the original AOF until
   the snapshot and buffered mutation delta have been synced and atomically
   installed. The normal append path should pay no copy cost when no rewrite is
