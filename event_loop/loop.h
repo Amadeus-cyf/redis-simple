@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_EVENT_LOOP_LOOP_H_
+#define REDIS_SIMPLE_EVENT_LOOP_LOOP_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -83,3 +84,5 @@ class Loop {
   bool stop_requested_{false};
 };
 }  // namespace redis_simple::event_loop
+
+#endif  // REDIS_SIMPLE_EVENT_LOOP_LOOP_H_

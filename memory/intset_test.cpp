@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <stdexcept>
 
 namespace redis_simple::in_memory {
 namespace {
@@ -55,8 +54,6 @@ TEST(IntSetTest, AddAndUpgradeAndGet) {
   ASSERT_EQ(intset->Get(9), INT16_MAX);
   ASSERT_EQ(intset->Get(10), INT32_MAX);
   ASSERT_EQ(intset->Get(11), INT64_MAX);
-  ASSERT_THROW(intset->Get(-1), std::out_of_range);
-  ASSERT_THROW(intset->Get(12), std::out_of_range);
 }
 
 TEST(IntSetTest, Find) {
@@ -117,5 +114,10 @@ TEST(IntSetTest, Iterator) {
   ASSERT_EQ(it.Value(), 7);
   it.SeekToLast();
   ASSERT_EQ(it.Value(), INT32_MAX);
+}
+TEST(IntSetDeathTest, RejectsOutOfRangeIndex) {
+  auto intset = MakeFullIntSet();
+  EXPECT_DEATH(intset->Get(-1), "Check failed");
+  EXPECT_DEATH(intset->Get(intset->Size()), "Check failed");
 }
 }  // namespace redis_simple::in_memory

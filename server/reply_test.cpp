@@ -2,8 +2,6 @@
 
 #include <gtest/gtest.h>
 
-#include <stdexcept>
-
 namespace redis_simple::reply {
 TEST(ReplyTest, FromSimpleString) {
   ASSERT_EQ(FromString("OK"), "+OK\r\n");
@@ -46,11 +44,6 @@ TEST(ReplyTest, FromArray) {
   ASSERT_EQ(
       FromArray({":123\r\n", "+hello world\r\n", "$13\r\nhello world\r\n"}),
       "*3\r\n:123\r\n+hello world\r\n$13\r\nhello world\r\n");
-  ASSERT_THROW(FromArray({":123\r\n", "\r", "$13\r\nhello world"}),
-               std::invalid_argument);
-  ASSERT_THROW(
-      FromArray({":123\r\n", "+hello world\r\n", "$13\r\nhello world"}),
-      std::invalid_argument);
 }
 
 TEST(ReplyTest, FromError) {
@@ -58,5 +51,12 @@ TEST(ReplyTest, FromError) {
   ASSERT_EQ(WrongNumberOfArguments(), "-ERR wrong number of arguments\r\n");
   ASSERT_EQ(UnknownCommand("NOTACOMMAND"),
             "-ERR unknown command 'NOTACOMMAND'\r\n");
+}
+TEST(ReplyDeathTest, FromArrayRequiresEncodedElements) {
+  EXPECT_DEATH(FromArray({":123\r\n", "\r", "$13\r\nhello world"}),
+               "Check failed");
+  EXPECT_DEATH(
+      FromArray({":123\r\n", "+hello world\r\n", "$13\r\nhello world"}),
+      "Check failed");
 }
 }  // namespace redis_simple::reply

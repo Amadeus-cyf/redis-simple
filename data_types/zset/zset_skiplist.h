@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_SKIPLIST_H_
+#define REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_SKIPLIST_H_
 
 #include <cstddef>
 #include <memory>
@@ -76,3 +77,5 @@ class ZSetSkiplist : public ZSetStorage {
   mutable std::optional<std::string> max_key_, min_key_;
 };
 }  // namespace redis_simple::zset
+
+#endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_SKIPLIST_H_

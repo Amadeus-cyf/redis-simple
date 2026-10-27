@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_INTSET_H_
+#define REDIS_SIMPLE_MEMORY_INTSET_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -64,3 +65,5 @@ class IntSet::Iterator {
   size_t idx_;
 };
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_INTSET_H_

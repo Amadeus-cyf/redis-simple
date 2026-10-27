@@ -8,6 +8,19 @@ Guidance for AI coding agents working in this repository.
 - Follow Google C++ style and the checked-in `.clang-format`.
 - Prefer clear, simple C++17 code over legacy C++11 patterns.
 - Keep naming consistent with nearby code.
+- Use `#define` header guards named `REDIS_SIMPLE_<PATH>_<FILE>_H_`, not
+  `#pragma once`.
+- Do not use exceptions. Report recoverable failures through return values
+  (`bool`, `std::optional`, status enums, or `nullptr`), and guard
+  programming errors with `RS_CHECK` / `RS_UNREACHABLE` from `utils/check.h`,
+  which abort and stay enabled in release builds. Test them with
+  `EXPECT_DEATH` in suites named `<Suite>DeathTest`, which the macOS leak
+  check skips. The only `catch` blocks are where `std::thread` reports a
+  failure to start.
+- Spell project includes from the repository root (`"server/db/db.h"`), and
+  include GoogleTest as `<gtest/gtest.h>`.
+- Keep objects with static storage duration trivially destructible. When one
+  must hold a non-trivial type, leak it (`static T& t = *new T;`).
 - Use `Create()` for owning factory functions and return `std::unique_ptr`
   instead of owning raw pointers.
 - Prefer concise accessor names such as `Type()`, `Encoding()`, and
@@ -51,6 +64,15 @@ Guidance for AI coding agents working in this repository.
   object type and null database in each command.
 - Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
   only when it is new.
+- String-keyed `Dict`s hash with process-seeded SipHash-1-3
+  (`utils/siphash.h`) to resist hash flooding. Do not depend on iteration or
+  `SCAN` order in tests; it changes between runs.
+- Canonical integer strings are stored as `int64_t`. Read string objects
+  through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
+  `MutableString()` only to edit bytes in place, since it converts the value
+  back to raw form.
+- Only commands marked `AllowBeforeAuth` in the command table run before a
+  client authenticates when `--requirepass` is set.
 - Keep AOF rewrite snapshots visitor-based and preserve the original AOF until
   the snapshot and buffered mutation delta have been synced and atomically
   installed. The normal append path should pay no copy cost when no rewrite is

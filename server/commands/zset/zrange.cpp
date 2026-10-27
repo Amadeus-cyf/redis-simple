@@ -1,15 +1,14 @@
 #include <cstddef>
 #include <cstdint>
-#include <exception>
 #include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
 
 #include "data_types/zset/zset.h"
-#include "logging/logger.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
+#include "server/commands/lookup.h"
 #include "server/reply.h"
 #include "utils/float_utils.h"
 #include "utils/string_utils.h"
@@ -156,19 +155,15 @@ RangeStatus RangeByRank(Client* const client, const CommandArgs& args,
   }
   ApplyRangeOptions(options, &spec);
 
-  const auto* object = client->Db()->LookupKey(args[0]);
+  const auto [object, wrong_type] =
+      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  if (wrong_type) {
+    return RangeStatus::kWrongType;
+  }
   if (object == nullptr) {
     return RangeStatus::kOk;
   }
-  if (object->Type() != db::RedisObject::ObjectType::kZSet) {
-    return RangeStatus::kWrongType;
-  }
-  try {
-    *result = object->ZSet()->RangeByRank(&spec);
-  } catch (const std::exception& error) {
-    RS_LOG_DEBUG("zrange by rank failed: %s\n", error.what());
-    return RangeStatus::kSyntaxError;
-  }
+  *result = object->ZSet()->RangeByRank(&spec);
   return RangeStatus::kOk;
 }
 
@@ -183,19 +178,15 @@ RangeStatus RangeByScore(Client* const client, const CommandArgs& args,
   }
   ApplyRangeOptions(options, &spec);
 
-  const auto* object = client->Db()->LookupKey(args[0]);
+  const auto [object, wrong_type] =
+      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  if (wrong_type) {
+    return RangeStatus::kWrongType;
+  }
   if (object == nullptr) {
     return RangeStatus::kOk;
   }
-  if (object->Type() != db::RedisObject::ObjectType::kZSet) {
-    return RangeStatus::kWrongType;
-  }
-  try {
-    *result = object->ZSet()->RangeByScore(&spec);
-  } catch (const std::exception& error) {
-    RS_LOG_DEBUG("zrange by score failed: %s\n", error.what());
-    return RangeStatus::kSyntaxError;
-  }
+  *result = object->ZSet()->RangeByScore(&spec);
   return RangeStatus::kOk;
 }
 
@@ -274,13 +265,14 @@ void HandleZCount(Client* const client) {
     return;
   }
 
-  const auto* object = client->Db()->LookupKey(args[0]);
-  if (object == nullptr) {
-    client->AddReply(reply::FromInt64(0));
+  const auto [object, wrong_type] =
+      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  if (wrong_type) {
+    client->AddReply(reply::kWrongTypeError);
     return;
   }
-  if (object->Type() != db::RedisObject::ObjectType::kZSet) {
-    client->AddReply(reply::kWrongTypeError);
+  if (object == nullptr) {
+    client->AddReply(reply::FromInt64(0));
     return;
   }
   const auto count = ToReplyInteger(object->ZSet()->Count(&spec));

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_UTILS_STRING_UTILS_H_
+#define REDIS_SIMPLE_UTILS_STRING_UTILS_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,9 @@ void ShiftCString(char* s, size_t len, size_t offset);
 void ToUppercase(std::string& s);
 // Compare ASCII text without allocating normalized copies.
 bool EqualsIgnoreCase(std::string_view left, std::string_view right);
+// Compare secrets in time that depends only on their lengths, not on where
+// they first differ.
+bool ConstantTimeEquals(std::string_view left, std::string_view right);
 // Match Redis-style glob patterns without allocating temporary strings.
 bool MatchesGlob(std::string_view value, std::string_view pattern);
 // Return true if the string strictly represents a signed int64: no leading or
@@ -32,3 +36,5 @@ int Int64ToString(char* dst, size_t dstlen, int64_t svalue);
 // https://engineering.fb.com/2013/03/15/developer-tools/three-optimization-tips-for-c/
 int Uint64ToString(char* dst, size_t dstlen, uint64_t value);
 }  // namespace redis_simple::utils
+
+#endif  // REDIS_SIMPLE_UTILS_STRING_UTILS_H_

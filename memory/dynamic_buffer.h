@@ -1,10 +1,10 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_DYNAMIC_BUFFER_H_
+#define REDIS_SIMPLE_MEMORY_DYNAMIC_BUFFER_H_
 
 #include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -44,3 +44,5 @@ class DynamicBuffer {
   size_t processed_;
 };
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_DYNAMIC_BUFFER_H_

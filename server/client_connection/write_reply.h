@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_WRITE_REPLY_H_
+#define REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_WRITE_REPLY_H_
 
 #include "connection/connection_callback.h"
 
@@ -15,3 +16,5 @@ connection::ConnectionCallback CreateWriteReplyCallback(Server* server,
 // callback is installed only while the socket cannot take all pending output.
 void WriteToClient(Server* server, Client* client);
 }  // namespace redis_simple::client_connection
+
+#endif  // REDIS_SIMPLE_SERVER_CLIENT_CONNECTION_WRITE_REPLY_H_

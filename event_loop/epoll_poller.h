@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_EVENT_LOOP_EPOLL_POLLER_H_
+#define REDIS_SIMPLE_EVENT_LOOP_EPOLL_POLLER_H_
 
 #include <sys/epoll.h>
 
@@ -26,3 +27,5 @@ class EpollPoller final : public EventPoller {
   std::unordered_map<int, int> masks_;
 };
 }  // namespace redis_simple::event_loop
+
+#endif  // REDIS_SIMPLE_EVENT_LOOP_EPOLL_POLLER_H_

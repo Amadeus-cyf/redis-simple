@@ -1,4 +1,4 @@
-#include "client.h"
+#include "server/client.h"
 
 #include <algorithm>
 #include <array>
@@ -237,6 +237,10 @@ Client::RequestStatus Client::ParseRequest() {
   }
   if (!command->arity.Accepts(args_.size())) {
     AddReply(reply::kWrongNumberOfArguments);
+    return RequestStatus::kRejected;
+  }
+  if (!authenticated_ && !command->allowed_before_auth) {
+    AddReply(reply::kNoAuthError);
     return RequestStatus::kRejected;
   }
   command_ = command;

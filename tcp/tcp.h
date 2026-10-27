@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_TCP_TCP_H_
+#define REDIS_SIMPLE_TCP_TCP_H_
 
 #include <sys/socket.h>
 
@@ -44,3 +45,5 @@ int Block(int fd);
 int NonBlock(int fd);
 bool IsSocketError(int fd);
 }  // namespace redis_simple::tcp
+
+#endif  // REDIS_SIMPLE_TCP_TCP_H_

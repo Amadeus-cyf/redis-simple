@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_SKIPLIST_H_
+#define REDIS_SIMPLE_MEMORY_SKIPLIST_H_
 
 #include <array>
 #include <cstddef>
@@ -8,11 +9,11 @@
 #include <memory>
 #include <optional>
 #include <random>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "logging/logger.h"
+#include "utils/check.h"
 
 namespace redis_simple::in_memory {
 // Redis skiplists begin with one level and promote at a probability of 0.25.
@@ -105,9 +106,7 @@ class Skiplist {
   static constexpr size_t kMaxSkiplistLevel = 32;
   static constexpr double kSkiplistP = 0.25;
   static size_t ValidateLevel(size_t level) {
-    if (level == 0 || level > kMaxSkiplistLevel) {
-      throw std::invalid_argument("skiplist level is out of range");
-    }
+    RS_CHECK(level > 0 && level <= kMaxSkiplistLevel);
     return level;
   }
   size_t RandomLevel() const;
@@ -327,9 +326,7 @@ bool Skiplist<Key, Comparator, Destructor>::Iterator::operator!=(
 
 template <typename Key, typename Comparator, typename Destructor>
 const Key& Skiplist<Key, Comparator, Destructor>::Iterator::operator*() const {
-  if (!node_) {
-    throw std::out_of_range("skiplist iterator is not dereferenceable");
-  }
+  RS_CHECK(node_ != nullptr);
   return node_->key;
 }
 
@@ -444,9 +441,7 @@ bool Skiplist<Key, Comparator, Destructor>::Eq(const Key& k1,
  */
 template <typename Key, typename Comparator, typename Destructor>
 const Key& Skiplist<Key, Comparator, Destructor>::Insert(const Key& key) {
-  if (level_ == 0) {
-    throw std::logic_error("skiplist level must be positive");
-  }
+  RS_CHECK(level_ != 0);
   const size_t insert_level = RandomLevel();
   // If the random level is larger than level, init empty skiplist level for
   // extra levels and update level to the random level.
@@ -553,18 +548,12 @@ template <typename Key, typename Comparator, typename Destructor>
 const Key& Skiplist<Key, Comparator, Destructor>::FindKeyByRank(
     int64_t rank) const {
   if (rank < 0) {
-    if (size_ > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
-      throw std::out_of_range("skiplist rank out of bound");
-    }
+    RS_CHECK(size_ <= static_cast<size_t>(std::numeric_limits<int64_t>::max()));
     rank += static_cast<int64_t>(size_);
   }
-  if (rank < 0) {
-    throw std::out_of_range("skiplist rank out of bound");
-  }
+  RS_CHECK(rank >= 0);
   const SkiplistNode* node = FindKey(static_cast<size_t>(rank));
-  if (!node) {
-    throw std::out_of_range("skiplist rank out of bound");
-  }
+  RS_CHECK(node != nullptr);
   return node->key;
 }
 
@@ -695,9 +684,7 @@ Skiplist<Key, Comparator, Destructor>::FindKeyLess(const Key& key,
 template <typename Key, typename Comparator, typename Destructor>
 const Key& Skiplist<Key, Comparator, Destructor>::operator[](size_t i) {
   const SkiplistNode* node = FindKey(i);
-  if (node == nullptr) {
-    throw std::out_of_range("skiplist rank out of bound");
-  }
+  RS_CHECK(node != nullptr);
   return node->key;
 }
 
@@ -1081,3 +1068,5 @@ Skiplist<Key, Comparator, Destructor>::~Skiplist() {
   delete head_;
 }
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_SKIPLIST_H_

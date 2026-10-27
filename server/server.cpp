@@ -1,4 +1,4 @@
-#include "server.h"
+#include "server/server.h"
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -6,21 +6,20 @@
 #include <cstdint>
 #include <utility>
 
-#include "client_connection/client_connection.h"
-#include "db/db.h"
 #include "event_loop/file_event.h"
 #include "event_loop/time_event.h"
-#include "expire.h"
 #include "logging/logger.h"
+#include "server/client_connection/client_connection.h"
+#include "server/db/db.h"
+#include "server/expire.h"
 #include "server/shutdown.h"
 
 namespace redis_simple {
 Server::Server()
     : loop_(event_loop::Loop::Create()), db_(db::RedisDb::Create()) {}
 
-Server* Server::Get() {
-  static Server server;
-  return &server;
+std::unique_ptr<Server> Server::Create() {
+  return std::unique_ptr<Server>(new Server());
 }
 
 bool Server::Run(const ServerOptions& options) {
@@ -29,6 +28,8 @@ bool Server::Run(const ServerOptions& options) {
     return false;
   }
   aof_.reset();
+  require_pass_ = options.require_pass;
+  protected_mode_ = options.protected_mode;
   db_ = db::RedisDb::Create();
   if (db_ == nullptr) {
     return false;

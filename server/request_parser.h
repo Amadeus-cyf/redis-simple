@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_REQUEST_PARSER_H_
+#define REDIS_SIMPLE_SERVER_REQUEST_PARSER_H_
 
 #include <cstddef>
 #include <string_view>
@@ -52,3 +53,5 @@ ParseResult Parse(std::string_view input, ParseState* state,
 ParseResult Parse(std::string_view input, std::string_view* command,
                   command::CommandArgs* args);
 }  // namespace redis_simple::request_parser
+
+#endif  // REDIS_SIMPLE_SERVER_REQUEST_PARSER_H_

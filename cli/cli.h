@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_CLI_CLI_H_
+#define REDIS_SIMPLE_CLI_CLI_H_
 
 #include <future>
 #include <memory>
@@ -43,3 +44,5 @@ class RedisCli {
   std::mutex lock_;
 };
 }  // namespace redis_simple::cli
+
+#endif  // REDIS_SIMPLE_CLI_CLI_H_

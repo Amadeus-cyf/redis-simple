@@ -1,12 +1,12 @@
 #include "data_types/zset/zset.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "gtest/gtest.h"
 
 namespace redis_simple::zset {
 TEST(ZSetTest, InsertAndConvert) {

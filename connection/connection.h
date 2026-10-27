@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_CONNECTION_CONNECTION_H_
+#define REDIS_SIMPLE_CONNECTION_CONNECTION_H_
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -96,3 +97,5 @@ class Connection {
   ConnectionCallback write_callback_;
 };
 }  // namespace redis_simple::connection
+
+#endif  // REDIS_SIMPLE_CONNECTION_CONNECTION_H_

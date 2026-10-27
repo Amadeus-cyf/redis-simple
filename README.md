@@ -44,9 +44,15 @@ The server binds to `127.0.0.1:8080` by default. Configure either value at
 startup and stop cleanly with `SIGINT` or `SIGTERM`:
 
 ```sh
-./build/debug/redis_simple --bind 0.0.0.0 --port 6380
+./build/debug/redis_simple --bind 0.0.0.0 --port 6380 --requirepass s3cret
 ./build/debug/redis_simple --help
 ```
+
+Like Redis, the server starts in protected mode: when no password is set, it
+only accepts clients connecting over loopback and answers others with a
+`DENIED` error. Set a password with `--requirepass`, after which clients must
+send `AUTH <password>` (or `AUTH default <password>`) before other commands,
+or disable the check with `--protected-mode no` on a trusted network.
 
 Enable AOF persistence with Redis-style fsync policies:
 
@@ -111,7 +117,8 @@ including protocol errors such as `ERR wrong number of arguments` and
 - Hashes: `HSET`, `HGET`, `HDEL`, `HLEN`, `HEXISTS`, `HGETALL`, `HMGET`,
   `HKEYS`, `HVALS`, `HINCRBY`
 - Persistence: `BGREWRITEAOF`, `INFO [persistence]`
-- Connection: `HELLO` with RESP2 and RESP3 negotiation, `PING`, `ECHO`, `QUIT`
+- Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `PING`,
+  `ECHO`, `QUIT`
 
 `UNLINK` detaches keys synchronously and releases their values on a background
 worker. Command names, arity, access mode, and key positions are held in one
@@ -336,6 +343,13 @@ The code follows Google C++ style with project-local conventions: owning factory
 functions are named `Create()` and return `std::unique_ptr`, while concise
 accessors such as `Type()`, `Encoding()`, and `TotalBytes()` are preferred over
 Java-style `Get...` names.
+
+As in Google style, headers use `#define` guards, includes are spelled from the
+repository root, and the code does not use exceptions. Recoverable failures are
+returned as values (`bool`, `std::optional`, status enums, or `nullptr`), while
+programming errors are caught by `RS_CHECK` in `utils/check.h`, which aborts
+and stays enabled in release builds. Objects with static storage duration are
+trivially destructible or deliberately leaked.
 
 Hot paths prefer `std::string_view` for read-only inputs and visitor-style
 traversal when callers can encode or rebuild results directly. Vector-returning

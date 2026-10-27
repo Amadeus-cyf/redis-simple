@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_RANGE_SPEC_H_
+#define REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_RANGE_SPEC_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -66,3 +67,5 @@ struct RangeByScoreSpec {
 std::optional<RangeByRankSpec> NormalizeRankRange(const RangeByRankSpec& spec,
                                                   size_t size);
 }  // namespace redis_simple::zset
+
+#endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_RANGE_SPEC_H_

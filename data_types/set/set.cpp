@@ -1,4 +1,4 @@
-#include "set.h"
+#include "data_types/set/set.h"
 
 #include <algorithm>
 #include <cassert>
@@ -6,12 +6,12 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "utils/check.h"
 #include "utils/int_utils.h"
 #include "utils/string_utils.h"
 
@@ -32,7 +32,7 @@ bool Set::Add(std::string_view value) {
   if (encoding_ == Encoding::kDict) {
     return DictAdd(value);
   }
-  throw std::invalid_argument("unknown encoding type");
+  RS_UNREACHABLE();
 }
 
 bool Set::HasMember(std::string_view value) const {
@@ -52,7 +52,7 @@ bool Set::HasMember(std::string_view value) const {
   if (encoding_ == Encoding::kDict) {
     return dict_->FindValue(value) != nullptr;
   }
-  throw std::invalid_argument("unknown encoding type");
+  RS_UNREACHABLE();
 }
 
 std::vector<std::string> Set::ListAllMembers() const {
@@ -87,7 +87,7 @@ bool Set::Remove(std::string_view value) {
   if (encoding_ == Encoding::kDict) {
     return dict_->Delete(value);
   }
-  throw std::invalid_argument("unknown encoding type");
+  RS_UNREACHABLE();
 }
 
 size_t Set::Size() const {
@@ -99,7 +99,7 @@ size_t Set::Size() const {
     case Encoding::kDict:
       return dict_ ? dict_->Size() : 0;
     default:
-      throw std::invalid_argument("unknown encoding type");
+      RS_UNREACHABLE();
   }
 }
 

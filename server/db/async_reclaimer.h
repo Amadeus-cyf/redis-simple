@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_DB_ASYNC_RECLAIMER_H_
+#define REDIS_SIMPLE_SERVER_DB_ASYNC_RECLAIMER_H_
 
 #include <condition_variable>
 #include <cstddef>
@@ -33,3 +34,5 @@ class AsyncReclaimer {
   std::thread worker_;
 };
 }  // namespace redis_simple::db
+
+#endif  // REDIS_SIMPLE_SERVER_DB_ASYNC_RECLAIMER_H_

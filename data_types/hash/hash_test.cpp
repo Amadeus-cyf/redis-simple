@@ -1,11 +1,11 @@
 #include "data_types/hash/hash.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "gtest/gtest.h"
 
 namespace redis_simple::hash {
 namespace {

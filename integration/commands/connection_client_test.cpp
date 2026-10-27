@@ -52,6 +52,12 @@ int Run() {
                    "ERR wrong number of arguments\n")) {
     return EXIT_FAILURE;
   }
+  if (!ExpectReply(&cli, {"AUTH", "secret"},
+                   "ERR AUTH <password> called without any password "
+                   "configured for the default user. Are you sure your "
+                   "configuration is correct?\n")) {
+    return EXIT_FAILURE;
+  }
   if (!ExpectReply(&cli, {"ECHO"}, "ERR wrong number of arguments\n")) {
     return EXIT_FAILURE;
   }

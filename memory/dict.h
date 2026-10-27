@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_DICT_H_
+#define REDIS_SIMPLE_MEMORY_DICT_H_
 
 #include <algorithm>
 #include <array>
@@ -14,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include "utils/siphash.h"
+
 namespace redis_simple::in_memory {
 // Default hash and key-equality policies. The std::string specializations
 // accept std::string_view so lookups by borrowed key do not allocate.
@@ -22,10 +25,12 @@ struct DictHash {
   size_t operator()(const K& key) const { return std::hash<K>{}(key); }
 };
 
+// String keys usually come from clients, so they use the process-seeded
+// SipHash to resist hash-flooding attacks.
 template <>
 struct DictHash<std::string> {
   size_t operator()(std::string_view key) const {
-    return std::hash<std::string_view>{}(key);
+    return static_cast<size_t>(utils::SeededHash(key));
   }
 };
 
@@ -613,6 +618,9 @@ void Dict<K, V, Hash, KeyEqual>::MigrateRehashedTable() {
   tables_[1].clear();
   table_used_[1] = 0;
   rehash_idx_ = std::nullopt;
+  // Deletes cannot start a shrink while a rehash is in flight, so a table that
+  // emptied out during this rehash would otherwise stay oversized.
+  ShrinkIfNeeded();
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -661,3 +669,5 @@ size_t Dict<K, V, Hash, KeyEqual>::ReverseBits(size_t value) {
   return value;
 }
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_DICT_H_

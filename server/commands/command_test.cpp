@@ -77,4 +77,23 @@ TEST(CommandRegistryTest, ExposesCommandMetadata) {
   EXPECT_TRUE(info->arity.Accepts(0));
   EXPECT_TRUE(info->arity.Accepts(1));
 }
+
+TEST(CommandRegistryTest, OnlyAuthAndQuitRunBeforeAuth) {
+  const auto* auth = Find("auth");
+  ASSERT_NE(auth, nullptr);
+  EXPECT_TRUE(auth->allowed_before_auth);
+  EXPECT_TRUE(auth->arity.Accepts(1));
+  EXPECT_TRUE(auth->arity.Accepts(2));
+  EXPECT_FALSE(auth->arity.Accepts(3));
+
+  const auto* quit = Find("QUIT");
+  ASSERT_NE(quit, nullptr);
+  EXPECT_TRUE(quit->allowed_before_auth);
+
+  for (const auto* name : {"PING", "HELLO", "GET", "SET", "INFO"}) {
+    const auto* command = Find(name);
+    ASSERT_NE(command, nullptr) << name;
+    EXPECT_FALSE(command->allowed_before_auth) << name;
+  }
+}
 }  // namespace redis_simple::command

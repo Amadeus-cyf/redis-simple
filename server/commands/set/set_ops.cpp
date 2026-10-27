@@ -10,6 +10,7 @@
 #include "data_types/set/set.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
+#include "server/commands/lookup.h"
 #include "server/db/db.h"
 #include "server/reply.h"
 
@@ -44,12 +45,13 @@ std::optional<SetReply> SDiff(db::RedisDb* redis_db, const CommandArgs& keys);
 void AddSetOperationReply(Client* client, SetOperation operation);
 
 SetLookup FindSet(db::RedisDb* const redis_db, std::string_view key) {
-  const auto* object = redis_db->LookupKey(key);
+  const auto [object, wrong_type] =
+      LookupTyped(redis_db, key, db::RedisObject::ObjectType::kSet);
+  if (wrong_type) {
+    return {nullptr, SetLookupStatus::kWrongType};
+  }
   if (object == nullptr) {
     return {nullptr, SetLookupStatus::kMissing};
-  }
-  if (object->Type() != db::RedisObject::ObjectType::kSet) {
-    return {nullptr, SetLookupStatus::kWrongType};
   }
   return {object->Set(), SetLookupStatus::kOk};
 }

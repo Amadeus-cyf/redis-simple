@@ -1,4 +1,4 @@
-#include "db.h"
+#include "server/db/db.h"
 
 #include <algorithm>
 #include <cinttypes>
@@ -42,18 +42,13 @@ RedisObject* RedisDb::MutableLookupKey(std::string_view key) {
 }
 
 DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
-                         int64_t expire) {
-  return SetKey(key, std::move(object), expire, 0);
-}
-
-DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
-                         int64_t expire, int flags) {
+                         int64_t expire, ExistingTtl existing_ttl) {
   if (object == nullptr) {
     return DbStatus::kError;
   }
   // FindOrInsert hashes once and copies the key only for a new entry.
   *dict_->FindOrInsert(key).first = std::move(object);
-  if (!HasFlag(flags, SetKeyFlag::kKeepTtl) && expire == 0 &&
+  if (existing_ttl == ExistingTtl::kClear && expire == 0 &&
       expires_->Size() > 0) {
     expires_->Delete(key);
   }
@@ -140,20 +135,18 @@ DbStatus RedisDb::RenameKey(std::string_view old_key,
     return DbStatus::kOk;
   }
 
-  auto* object = dict_->FindValue(old_key);
-  if (object == nullptr) {
+  // Extract moves the value and TTL out with one hash lookup each, instead of
+  // finding and then deleting them separately.
+  std::optional<RedisObjectPtr> object = dict_->Extract(old_key);
+  if (!object.has_value()) {
     return DbStatus::kError;
   }
-  const auto* expire = expires_->FindValue(old_key);
-  const std::optional<int64_t> expire_value =
-      expire == nullptr ? std::nullopt : std::optional<int64_t>(*expire);
-  RedisObjectPtr moved_object = std::move(*object);
-  dict_->Delete(old_key);
-  *dict_->FindOrInsert(new_key).first = std::move(moved_object);
-  expires_->Delete(old_key);
-  if (expire_value.has_value()) {
-    *expires_->FindOrInsert(new_key).first = *expire_value;
-  } else {
+  const std::optional<int64_t> expire =
+      expires_->Size() > 0 ? expires_->Extract(old_key) : std::nullopt;
+  *dict_->FindOrInsert(new_key).first = std::move(*object);
+  if (expire.has_value()) {
+    *expires_->FindOrInsert(new_key).first = *expire;
+  } else if (expires_->Size() > 0) {
     expires_->Delete(new_key);
   }
   return DbStatus::kOk;

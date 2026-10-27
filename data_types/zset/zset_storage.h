@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_H_
+#define REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_H_
 
 #include <cstddef>
 #include <functional>
@@ -40,3 +41,5 @@ class ZSetStorage {
   virtual ~ZSetStorage() = default;
 };
 }  // namespace redis_simple::zset
+
+#endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_H_

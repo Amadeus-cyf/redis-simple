@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_CONNECTION_CONNECTION_CALLBACK_H_
+#define REDIS_SIMPLE_CONNECTION_CONNECTION_CALLBACK_H_
 
 #include <functional>
 
@@ -7,3 +8,5 @@ class Connection;
 
 using ConnectionCallback = std::function<void(Connection*)>;
 }  // namespace redis_simple::connection
+
+#endif  // REDIS_SIMPLE_CONNECTION_CONNECTION_CALLBACK_H_

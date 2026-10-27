@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_COMMANDS_LOOKUP_H_
+#define REDIS_SIMPLE_SERVER_COMMANDS_LOOKUP_H_
 
 #include <string_view>
 
@@ -40,3 +41,5 @@ inline TypedLookup<db::RedisObject> MutableLookupTyped(
   return {object, false};
 }
 }  // namespace redis_simple::command
+
+#endif  // REDIS_SIMPLE_SERVER_COMMANDS_LOOKUP_H_

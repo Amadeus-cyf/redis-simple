@@ -97,6 +97,15 @@ TEST(StringUtilsTest, ToUppercase) {
   ASSERT_EQ(s5, "123456_**&&&||||%%%%");
 }
 
+TEST(StringUtilsTest, ConstantTimeEquals) {
+  EXPECT_TRUE(ConstantTimeEquals("", ""));
+  EXPECT_TRUE(ConstantTimeEquals("secret", "secret"));
+  EXPECT_FALSE(ConstantTimeEquals("secret", "Secret"));
+  EXPECT_FALSE(ConstantTimeEquals("secret", "secret!"));
+  EXPECT_FALSE(ConstantTimeEquals("secret", ""));
+  EXPECT_FALSE(ConstantTimeEquals(std::string_view("a\0", 2), "a"));
+}
+
 TEST(StringUtilsTest, EqualsIgnoreCase) {
   EXPECT_TRUE(EqualsIgnoreCase("zrange", "ZRANGE"));
   EXPECT_TRUE(EqualsIgnoreCase("KeepTtl", "KEEPTTL"));

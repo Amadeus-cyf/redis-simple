@@ -14,8 +14,10 @@ case "$(uname -s)" in
 
     output_file=$(mktemp "${TMPDIR:-/tmp}/redis_simple_leaks.XXXXXX")
     trap 'rm -f "$output_file"' EXIT INT TERM
+    # Death tests fork children that abort on purpose, which stalls `leaks`.
+    # Skip them here; the Linux LeakSanitizer run still covers them.
     if ! MallocStackLogging=1 leaks --atExit -- "$test_binary" \
-        >"$output_file" 2>&1; then
+        --gtest_filter='-*DeathTest.*' >"$output_file" 2>&1; then
       cat "$output_file"
       exit 1
     fi

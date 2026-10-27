@@ -39,8 +39,9 @@ class ScopedFd {
 };
 
 db::RedisDb* TestDb() {
-  static const auto db = db::RedisDb::Create();
-  return db.get();
+  // Leaked on purpose: static objects must be trivially destructible.
+  static db::RedisDb* const db = db::RedisDb::Create().release();
+  return db;
 }
 
 std::array<ScopedFd, 2> CreateSocketPair() {
@@ -241,6 +242,62 @@ TEST(ClientTest, RejectsInvalidArityBeforeDispatch) {
   EXPECT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
   EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()),
             "-ERR wrong number of arguments\r\n+PONG\r\n");
+}
+
+TEST(ClientTest, RequiresAuthWhenPasswordIsSet) {
+  auto [client, peer] = CreateClient();
+  client->RequirePassword("s3cret");
+  EXPECT_FALSE(client->Authenticated());
+  const std::string request =
+      EncodeRequest({"PING"}) + EncodeRequest({"GET", "key"}) +
+      EncodeRequest({"AUTH", "wrong"}) +
+      EncodeRequest({"AUTH", "other", "s3cret"}) + EncodeRequest({"PING"}) +
+      EncodeRequest({"AUTH", "s3cret"}) + EncodeRequest({"PING"}) +
+      EncodeRequest({"AUTH", "default", "s3cret"});
+
+  ASSERT_EQ(write(peer.Get(), request.data(), request.size()),
+            static_cast<ssize_t>(request.size()));
+  ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(request.size()));
+  EXPECT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  EXPECT_TRUE(client->Authenticated());
+
+  constexpr std::string_view kNoAuth = "-NOAUTH Authentication required.\r\n";
+  constexpr std::string_view kWrongPass =
+      "-WRONGPASS invalid username-password pair or user is disabled.\r\n";
+  std::string expected;
+  expected.append(kNoAuth).append(kNoAuth);
+  expected.append(kWrongPass).append(kWrongPass).append(kNoAuth);
+  expected.append("+OK\r\n+PONG\r\n+OK\r\n");
+  EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), expected);
+}
+
+TEST(ClientTest, QuitWorksBeforeAuth) {
+  auto [client, peer] = CreateClient();
+  client->RequirePassword("s3cret");
+  const std::string request = EncodeRequest({"QUIT"});
+
+  ASSERT_EQ(write(peer.Get(), request.data(), request.size()),
+            static_cast<ssize_t>(request.size()));
+  ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(request.size()));
+  EXPECT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  EXPECT_TRUE(client->ShouldCloseAfterReply());
+  EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), "+OK\r\n");
+}
+
+TEST(ClientTest, AuthWithoutConfiguredPasswordFails) {
+  auto [client, peer] = CreateClient();
+  EXPECT_TRUE(client->Authenticated());
+  const std::string request =
+      EncodeRequest({"AUTH", "anything"}) + EncodeRequest({"PING"});
+
+  ASSERT_EQ(write(peer.Get(), request.data(), request.size()),
+            static_cast<ssize_t>(request.size()));
+  ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(request.size()));
+  EXPECT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  const std::string reply = SendAndReadReply(client.get(), peer.Get());
+  EXPECT_EQ(reply.rfind("-ERR AUTH <password> called without any password", 0),
+            0);
+  EXPECT_NE(reply.find("\r\n+PONG\r\n"), std::string::npos);
 }
 
 TEST(ClientTest, OutputLimitsControlBackpressure) {

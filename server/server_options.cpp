@@ -1,5 +1,7 @@
 #include "server/server_options.h"
 
+#include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <string_view>
@@ -25,7 +27,7 @@ bool ParsePort(std::string_view value, int* const port) {
   return true;
 }
 
-bool ParseAppendOnly(std::string_view value, bool* const enabled) {
+bool ParseYesNo(std::string_view value, bool* const enabled) {
   if (value == "yes") {
     *enabled = true;
     return true;
@@ -61,6 +63,79 @@ bool ParseSize(std::string_view value, size_t* const result) {
       std::from_chars(value.data(), value.data() + value.size(), *result);
   return parsed.ec == std::errc() && parsed.ptr == value.data() + value.size();
 }
+
+// Each option takes one value. `apply` stores it and returns false if it is
+// invalid, in which case parsing fails with `error`.
+struct OptionSpec {
+  std::string_view name;
+  bool (*apply)(std::string_view value, ServerOptions* options);
+  std::string_view error;
+};
+
+constexpr std::array<OptionSpec, 9> kOptionSpecs = {{
+    {"--bind",
+     [](std::string_view value, ServerOptions* options) {
+       options->bind_address.assign(value.data(), value.size());
+       return !value.empty();
+     },
+     "bind address cannot be empty"},
+    {"--port",
+     [](std::string_view value, ServerOptions* options) {
+       return ParsePort(value, &options->port);
+     },
+     "port must be between 1 and 65535"},
+    {"--appendonly",
+     [](std::string_view value, ServerOptions* options) {
+       return ParseYesNo(value, &options->append_only);
+     },
+     "appendonly must be yes or no"},
+    {"--appendfilename",
+     [](std::string_view value, ServerOptions* options) {
+       options->aof_options.path.assign(value.data(), value.size());
+       return !value.empty();
+     },
+     "appendfilename cannot be empty"},
+    {"--appendfsync",
+     [](std::string_view value, ServerOptions* options) {
+       return ParseFsyncPolicy(value, &options->aof_options.fsync);
+     },
+     "appendfsync must be always, everysec, or no"},
+    {"--auto-aof-rewrite-min-size",
+     [](std::string_view value, ServerOptions* options) {
+       return ParseSize(value, &options->aof_options.auto_rewrite_min_bytes);
+     },
+     "auto AOF rewrite minimum size must be a byte count"},
+    {"--auto-aof-rewrite-percentage",
+     [](std::string_view value, ServerOptions* options) {
+       return ParseSize(value, &options->aof_options.auto_rewrite_percentage);
+     },
+     "auto AOF rewrite percentage must be an integer"},
+    {"--requirepass",
+     [](std::string_view value, ServerOptions* options) {
+       options->require_pass.assign(value.data(), value.size());
+       return true;
+     },
+     ""},
+    {"--protected-mode",
+     [](std::string_view value, ServerOptions* options) {
+       return ParseYesNo(value, &options->protected_mode);
+     },
+     "protected-mode must be yes or no"},
+}};
+
+const OptionSpec* FindOption(std::string_view name) {
+  const auto* const spec = std::find_if(
+      kOptionSpecs.begin(), kOptionSpecs.end(),
+      [name](const OptionSpec& spec) { return spec.name == name; });
+  return spec == kOptionSpecs.end() ? nullptr : spec;
+}
+
+OptionsResult Fail(std::string_view error) {
+  OptionsResult result;
+  result.status = OptionsStatus::kError;
+  result.error = error;
+  return result;
+}
 }  // namespace
 
 OptionsResult ParseServerOptions(int argc, const char* const* argv) {
@@ -71,77 +146,15 @@ OptionsResult ParseServerOptions(int argc, const char* const* argv) {
       result.status = OptionsStatus::kHelp;
       return result;
     }
-    if (option != "--bind" && option != "--port" && option != "--appendonly" &&
-        option != "--appendfilename" && option != "--appendfsync" &&
-        option != "--auto-aof-rewrite-min-size" &&
-        option != "--auto-aof-rewrite-percentage") {
-      result.status = OptionsStatus::kError;
-      result.error = "unknown option";
-      return result;
+    const OptionSpec* const spec = FindOption(option);
+    if (spec == nullptr) {
+      return Fail("unknown option");
     }
     if (++index >= argc) {
-      result.status = OptionsStatus::kError;
-      result.error = "missing option value";
-      return result;
+      return Fail("missing option value");
     }
-
-    const std::string_view value(argv[index]);
-    if (option == "--bind") {
-      if (value.empty()) {
-        result.status = OptionsStatus::kError;
-        result.error = "bind address cannot be empty";
-        return result;
-      }
-      result.options.bind_address.assign(value.data(), value.size());
-      continue;
-    }
-    if (option == "--port") {
-      if (ParsePort(value, &result.options.port)) {
-        continue;
-      }
-      result.status = OptionsStatus::kError;
-      result.error = "port must be between 1 and 65535";
-      return result;
-    }
-    if (option == "--appendonly") {
-      if (ParseAppendOnly(value, &result.options.append_only)) {
-        continue;
-      }
-      result.status = OptionsStatus::kError;
-      result.error = "appendonly must be yes or no";
-      return result;
-    }
-    if (option == "--appendfilename") {
-      if (!value.empty()) {
-        result.options.aof_options.path.assign(value.data(), value.size());
-        continue;
-      }
-      result.status = OptionsStatus::kError;
-      result.error = "appendfilename cannot be empty";
-      return result;
-    }
-    if (option == "--auto-aof-rewrite-min-size") {
-      if (ParseSize(value,
-                    &result.options.aof_options.auto_rewrite_min_bytes)) {
-        continue;
-      }
-      result.status = OptionsStatus::kError;
-      result.error = "auto AOF rewrite minimum size must be a byte count";
-      return result;
-    }
-    if (option == "--auto-aof-rewrite-percentage") {
-      if (ParseSize(value,
-                    &result.options.aof_options.auto_rewrite_percentage)) {
-        continue;
-      }
-      result.status = OptionsStatus::kError;
-      result.error = "auto AOF rewrite percentage must be an integer";
-      return result;
-    }
-    if (!ParseFsyncPolicy(value, &result.options.aof_options.fsync)) {
-      result.status = OptionsStatus::kError;
-      result.error = "appendfsync must be always, everysec, or no";
-      return result;
+    if (!spec->apply(argv[index], &result.options)) {
+      return Fail(spec->error);
     }
   }
   return result;
@@ -152,6 +165,7 @@ std::string_view ServerUsage() {
          "[--appendonly <yes|no>] [--appendfilename <path>] "
          "[--appendfsync <always|everysec|no>] "
          "[--auto-aof-rewrite-min-size <bytes>] "
-         "[--auto-aof-rewrite-percentage <percent>]\n";
+         "[--auto-aof-rewrite-percentage <percent>] "
+         "[--requirepass <password>] [--protected-mode <yes|no>]\n";
 }
 }  // namespace redis_simple

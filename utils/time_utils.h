@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_UTILS_TIME_UTILS_H_
+#define REDIS_SIMPLE_UTILS_TIME_UTILS_H_
 
 #include <chrono>
 #include <cstdint>
@@ -18,3 +19,5 @@ inline int64_t MonotonicMilliseconds() {
       .count();
 }
 }  // namespace redis_simple::utils
+
+#endif  // REDIS_SIMPLE_UTILS_TIME_UTILS_H_

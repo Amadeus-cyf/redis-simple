@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_ENTRY_H_
+#define REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_ENTRY_H_
 
 #include <string>
 #include <string_view>
@@ -13,3 +14,5 @@ struct ZSetEntry {
   mutable double score;
 };
 }  // namespace redis_simple::zset
+
+#endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_ENTRY_H_

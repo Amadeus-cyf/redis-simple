@@ -4,12 +4,12 @@
 #include <charconv>
 #include <cstdint>
 #include <limits>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
 
+#include "utils/check.h"
 #include "utils/float_utils.h"
 
 namespace redis_simple::reply {
@@ -28,9 +28,7 @@ void AppendInteger(Integer value, std::string* output) {
   std::array<char, std::numeric_limits<Integer>::digits10 + 3> buffer{};
   const auto result =
       std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
-  if (result.ec != std::errc()) {
-    throw std::runtime_error("failed to encode integer reply");
-  }
+  RS_CHECK(result.ec == std::errc());
   output->append(buffer.data(),
                  static_cast<size_t>(result.ptr - buffer.data()));
 }
@@ -60,11 +58,9 @@ std::string FromInt64(int64_t i64) {
 std::string FromArray(const std::vector<std::string>& array) {
   std::string reply = FromArrayHeader(array.size());
   for (const std::string& str : array) {
-    if (str.size() < kCrlf.size() ||
-        str.compare(str.size() - kCrlf.size(), kCrlf.size(), kCrlf.data(),
-                    kCrlf.size()) != 0) {
-      throw std::invalid_argument("array element not encoded");
-    }
+    RS_CHECK(str.size() >= kCrlf.size() &&
+             str.compare(str.size() - kCrlf.size(), kCrlf.size(), kCrlf.data(),
+                         kCrlf.size()) == 0);
     reply.append(str);
   }
   return reply;
@@ -100,14 +96,10 @@ void AppendBulkString(std::string_view s, std::string* const reply) {
 
 size_t EncodeBulkStringHeader(size_t length, char* const buffer,
                               size_t capacity) {
-  if (capacity < kBulkStringHeaderCapacity) {
-    throw std::length_error("bulk string header buffer too small");
-  }
+  RS_CHECK(capacity >= kBulkStringHeaderCapacity);
   buffer[0] = kBulkStringPrefix;
   const auto result = std::to_chars(buffer + 1, buffer + capacity, length);
-  if (result.ec != std::errc()) {
-    throw std::runtime_error("failed to encode bulk string header");
-  }
+  RS_CHECK(result.ec == std::errc());
   char* end = result.ptr;
   *end++ = '\r';
   *end++ = '\n';
@@ -153,9 +145,7 @@ std::string Null(ProtocolVersion protocol) {
 
 std::string FromMapHeader(size_t size, ProtocolVersion protocol) {
   if (protocol == ProtocolVersion::kResp2) {
-    if (size > std::numeric_limits<size_t>::max() / 2) {
-      throw std::length_error("map reply size overflow");
-    }
+    RS_CHECK(size <= std::numeric_limits<size_t>::max() / 2);
     return FromArrayHeader(size * 2);
   }
   std::string reply;

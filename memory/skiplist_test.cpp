@@ -5,7 +5,6 @@
 #include <climits>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,9 +67,9 @@ struct CountingDestructor {
 };
 }  // namespace
 
-TEST(SkiplistTest, RejectsInvalidLevel) {
-  EXPECT_THROW((Skiplist<std::string>(0)), std::invalid_argument);
-  EXPECT_THROW((Skiplist<std::string>(33)), std::invalid_argument);
+TEST(SkiplistDeathTest, RejectsInvalidLevel) {
+  EXPECT_DEATH((Skiplist<std::string>(0)), "Check failed");
+  EXPECT_DEATH((Skiplist<std::string>(33)), "Check failed");
 }
 
 TEST(SkiplistTest, DestroysOnlyStoredKeys) {
@@ -168,12 +167,6 @@ TEST(SkiplistTest, FindKeyByRank) {
 
   const std::string& s4 = skiplist->FindKeyByRank(-4);
   ASSERT_EQ(s4, "key0");
-
-  ASSERT_THROW(skiplist->FindKeyByRank(skiplist->Size()), std::out_of_range);
-  ASSERT_THROW(skiplist->FindKeyByRank(-skiplist->Size() - 1),
-               std::out_of_range);
-  ASSERT_THROW(skiplist->FindKeyByRank(INT_MAX), std::out_of_range);
-  ASSERT_THROW(skiplist->FindKeyByRank(INT_MIN), std::out_of_range);
 }
 
 TEST(SkiplistTest, FindRankOfKey) {
@@ -194,11 +187,6 @@ TEST(SkiplistTest, ArrayAccess) {
   ASSERT_EQ((*skiplist)[2], "key4");
   ASSERT_EQ((*skiplist)[3], "key5");
   ASSERT_EQ((*skiplist)[skiplist->Size() - 1], "key5");
-
-  ASSERT_THROW((*skiplist)[skiplist->Size()], std::out_of_range);
-  ASSERT_THROW((*skiplist)[-1], std::out_of_range);
-  ASSERT_THROW((*skiplist)[INT_MAX], std::out_of_range);
-  ASSERT_THROW((*skiplist)[INT_MIN], std::out_of_range);
 }
 
 TEST(SkiplistTest, RangeByRank) {
@@ -242,16 +230,11 @@ TEST(SkiplistTest, Count) {
 }
 
 std::vector<RangeByRankSpecTestCase> RangeByRankSpecTestCases() {
-  static auto limit1 =
-      std::make_unique<Skiplist<std::string>::SkiplistLimitSpec>(0,
-                                                                 std::nullopt);
-  static auto limit2 =
-      std::make_unique<Skiplist<std::string>::SkiplistLimitSpec>(0, 2);
-  static auto limit3 =
-      std::make_unique<Skiplist<std::string>::SkiplistLimitSpec>(2, 3);
-  static auto limit4 =
-      std::make_unique<Skiplist<std::string>::SkiplistLimitSpec>(10,
-                                                                 std::nullopt);
+  static const Skiplist<std::string>::SkiplistLimitSpec limit1(0, std::nullopt);
+  static const Skiplist<std::string>::SkiplistLimitSpec limit2(0, 2);
+  static const Skiplist<std::string>::SkiplistLimitSpec limit3(2, 3);
+  static const Skiplist<std::string>::SkiplistLimitSpec limit4(10,
+                                                               std::nullopt);
 
   return {
       RangeByRankSpecTestCase(Skiplist<std::string>::SkiplistRangeByRankSpec(
@@ -265,17 +248,17 @@ std::vector<RangeByRankSpecTestCase> RangeByRankSpecTestCases() {
                                   1, 3, false, true, nullptr),
                               {"key2", "key4"}, {"key4", "key2"}),
       RangeByRankSpecTestCase(Skiplist<std::string>::SkiplistRangeByRankSpec(
-                                  1, 3, false, false, limit1.get()),
+                                  1, 3, false, false, &limit1),
                               {"key2", "key4", "key5"},
                               {"key4", "key2", "key0"}),
       RangeByRankSpecTestCase(Skiplist<std::string>::SkiplistRangeByRankSpec(
-                                  1, 3, false, false, limit2.get()),
+                                  1, 3, false, false, &limit2),
                               {"key2", "key4"}, {"key4", "key2"}),
       RangeByRankSpecTestCase(Skiplist<std::string>::SkiplistRangeByRankSpec(
-                                  0, 3, false, false, limit3.get()),
+                                  0, 3, false, false, &limit3),
                               {"key4", "key5"}, {"key2", "key0"}),
       RangeByRankSpecTestCase(Skiplist<std::string>::SkiplistRangeByRankSpec(
-                                  0, 4, false, false, limit4.get()),
+                                  0, 4, false, false, &limit4),
                               {}, {}),
       RangeByRankSpecTestCase(Skiplist<std::string>::SkiplistRangeByRankSpec(
                                   2, 1, false, false, nullptr),
@@ -292,16 +275,11 @@ std::vector<RangeByRankSpecTestCase> RangeByRankSpecTestCases() {
 }
 
 std::vector<RangeByKeySpecTestCase> RangeByKeySpecTestCases() {
-  static auto limit1 =
-      std::make_unique<Skiplist<std::string>::SkiplistLimitSpec>(0,
-                                                                 std::nullopt);
-  static auto limit2 =
-      std::make_unique<Skiplist<std::string>::SkiplistLimitSpec>(0, 2);
-  static auto limit3 =
-      std::make_unique<Skiplist<std::string>::SkiplistLimitSpec>(2, 3);
-  static auto limit4 =
-      std::make_unique<Skiplist<std::string>::SkiplistLimitSpec>(10,
-                                                                 std::nullopt);
+  static const Skiplist<std::string>::SkiplistLimitSpec limit1(0, std::nullopt);
+  static const Skiplist<std::string>::SkiplistLimitSpec limit2(0, 2);
+  static const Skiplist<std::string>::SkiplistLimitSpec limit3(2, 3);
+  static const Skiplist<std::string>::SkiplistLimitSpec limit4(10,
+                                                               std::nullopt);
 
   return {
       RangeByKeySpecTestCase(Skiplist<std::string>::SkiplistRangeByKeySpec(
@@ -323,17 +301,17 @@ std::vector<RangeByKeySpecTestCase> RangeByKeySpecTestCases() {
                              {"key2", "key4", "key5"}, {"key5", "key4", "key2"},
                              3),
       RangeByKeySpecTestCase(Skiplist<std::string>::SkiplistRangeByKeySpec(
-                                 "key2", false, "key5", false, limit1.get()),
+                                 "key2", false, "key5", false, &limit1),
                              {"key2", "key4", "key5"}, {"key5", "key4", "key2"},
                              3),
       RangeByKeySpecTestCase(Skiplist<std::string>::SkiplistRangeByKeySpec(
-                                 "", false, "zzzzzzz", false, limit2.get()),
+                                 "", false, "zzzzzzz", false, &limit2),
                              {"key0", "key2"}, {"key5", "key4"}, 4),
       RangeByKeySpecTestCase(Skiplist<std::string>::SkiplistRangeByKeySpec(
-                                 "", false, "zzzzzzz", false, limit3.get()),
+                                 "", false, "zzzzzzz", false, &limit3),
                              {"key4", "key5"}, {"key2", "key0"}, 4),
       RangeByKeySpecTestCase(Skiplist<std::string>::SkiplistRangeByKeySpec(
-                                 "", false, "zzzzzzz", false, limit4.get()),
+                                 "", false, "zzzzzzz", false, &limit4),
                              {}, {}, 4),
       RangeByKeySpecTestCase(Skiplist<std::string>::SkiplistRangeByKeySpec(
                                  "zzzzzzz", false, "", false, nullptr),
@@ -423,10 +401,18 @@ TEST(CustomSkiplistTest, ArrayAccess) {
   ASSERT_EQ((*skiplist)[1], "key1");
   ASSERT_EQ((*skiplist)[2], "key0");
   ASSERT_EQ((*skiplist)[skiplist->Size() - 1], "key0");
+}
+TEST(SkiplistDeathTest, RejectsOutOfRangeRanks) {
+  auto skiplist = MakeRankedSkiplist();
+  const auto size = static_cast<int64_t>(skiplist->Size());
 
-  ASSERT_THROW((*skiplist)[skiplist->Size()], std::out_of_range);
-  ASSERT_THROW((*skiplist)[-1], std::out_of_range);
-  ASSERT_THROW((*skiplist)[INT_MAX], std::out_of_range);
-  ASSERT_THROW((*skiplist)[INT_MIN], std::out_of_range);
+  EXPECT_DEATH(skiplist->FindKeyByRank(size), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(-size - 1), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(INT_MAX), "Check failed");
+  EXPECT_DEATH(skiplist->FindKeyByRank(INT_MIN), "Check failed");
+  EXPECT_DEATH((*skiplist)[skiplist->Size()], "Check failed");
+  EXPECT_DEATH((*skiplist)[-1], "Check failed");
+  EXPECT_DEATH((*skiplist)[INT_MAX], "Check failed");
+  EXPECT_DEATH((*skiplist)[INT_MIN], "Check failed");
 }
 }  // namespace redis_simple::in_memory

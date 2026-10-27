@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_REPLY_H_
+#define REDIS_SIMPLE_SERVER_REPLY_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,8 @@ inline constexpr std::string_view kOk = "+OK\r\n";
 inline constexpr std::string_view kWrongNumberOfArguments =
     "-ERR wrong number of arguments\r\n";
 inline constexpr std::string_view kSyntaxError = "-ERR syntax error\r\n";
+inline constexpr std::string_view kNoAuthError =
+    "-NOAUTH Authentication required.\r\n";
 inline constexpr std::string_view kWrongTypeError =
     "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
 inline constexpr std::string_view kNullResp2 = "$-1\r\n";
@@ -49,3 +52,5 @@ std::string Null(ProtocolVersion protocol);
 std::string FromMapHeader(size_t size, ProtocolVersion protocol);
 std::string FromSetHeader(size_t size, ProtocolVersion protocol);
 }  // namespace redis_simple::reply
+
+#endif  // REDIS_SIMPLE_SERVER_REPLY_H_

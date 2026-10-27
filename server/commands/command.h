@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_COMMANDS_COMMAND_H_
+#define REDIS_SIMPLE_SERVER_COMMANDS_COMMAND_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -46,7 +47,11 @@ struct Command {
   CommandArity arity;
   CommandAccess access;
   KeySpec keys;
+  // Commands that unauthenticated clients may run when a password is set.
+  bool allowed_before_auth{false};
 };
 
 const Command* Find(std::string_view name);
 }  // namespace redis_simple::command
+
+#endif  // REDIS_SIMPLE_SERVER_COMMANDS_COMMAND_H_

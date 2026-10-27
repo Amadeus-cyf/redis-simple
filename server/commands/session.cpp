@@ -30,6 +30,26 @@ std::string EncodeHello(reply::ProtocolVersion protocol) {
 }
 }  // namespace
 
+void HandleAuth(Client* const client) {
+  const auto& args = client->Args();
+  const std::string_view password = client->RequiredPassword();
+  if (password.empty()) {
+    client->AddReply(reply::FromError(
+        "ERR AUTH <password> called without any password configured for the "
+        "default user. Are you sure your configuration is correct?"));
+    return;
+  }
+  // AUTH <password> or AUTH <username> <password>; only "default" exists.
+  const bool known_user = args.size() == 1 || args[0] == "default";
+  if (!known_user || !utils::ConstantTimeEquals(args.back(), password)) {
+    client->AddReply(reply::FromError(
+        "WRONGPASS invalid username-password pair or user is disabled."));
+    return;
+  }
+  client->SetAuthenticated(true);
+  client->AddReply(reply::kOk);
+}
+
 void HandleHello(Client* const client) {
   const auto& args = client->Args();
   auto protocol = client->Protocol();

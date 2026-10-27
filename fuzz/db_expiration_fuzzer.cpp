@@ -39,9 +39,10 @@ void Verify(db::RedisDb* database, const DbModel& model) {
 
 void SetValue(db::RedisDb* database, DbModel* model, const std::string& key,
               const std::string& value, bool expires, bool keep_ttl) {
-  const int flags = keep_ttl ? db::ToInt(db::SetKeyFlag::kKeepTtl) : 0;
+  const db::ExistingTtl existing_ttl =
+      keep_ttl ? db::ExistingTtl::kKeep : db::ExistingTtl::kClear;
   const int64_t expiration = expires ? kFutureExpiration : 0;
-  Require(database->SetKey(key, MakeObject(value), expiration, flags) ==
+  Require(database->SetKey(key, MakeObject(value), expiration, existing_ttl) ==
           db::DbStatus::kOk);
 
   const auto existing = model->find(key);

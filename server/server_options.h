@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_SERVER_SERVER_OPTIONS_H_
+#define REDIS_SIMPLE_SERVER_SERVER_OPTIONS_H_
 
 #include <string>
 #include <string_view>
@@ -11,6 +12,10 @@ struct ServerOptions {
   int port{8080};
   bool append_only{};
   aof::Options aof_options;
+  // Clients must AUTH with this password when it is non-empty.
+  std::string require_pass;
+  // Without a password, refuse clients that do not connect over loopback.
+  bool protected_mode{true};
 };
 
 enum class OptionsStatus {
@@ -28,3 +33,5 @@ struct OptionsResult {
 OptionsResult ParseServerOptions(int argc, const char* const* argv);
 std::string_view ServerUsage();
 }  // namespace redis_simple
+
+#endif  // REDIS_SIMPLE_SERVER_SERVER_OPTIONS_H_

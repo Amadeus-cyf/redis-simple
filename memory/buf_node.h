@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REDIS_SIMPLE_MEMORY_BUF_NODE_H_
+#define REDIS_SIMPLE_MEMORY_BUF_NODE_H_
 
 #include <cstddef>
 #include <memory>
@@ -36,3 +37,5 @@ struct BufNode {
   std::unique_ptr<BufNode> next;
 };
 }  // namespace redis_simple::in_memory
+
+#endif  // REDIS_SIMPLE_MEMORY_BUF_NODE_H_

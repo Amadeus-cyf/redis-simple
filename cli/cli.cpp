@@ -1,4 +1,4 @@
-#include "cli.h"
+#include "cli/cli.h"
 
 #include <arpa/inet.h>
 #include <sys/types.h>
@@ -12,8 +12,8 @@
 #include <string_view>
 #include <vector>
 
+#include "cli/resp_parser.h"
 #include "logging/logger.h"
-#include "resp_parser.h"
 #include "server/reply.h"
 #include "tcp/tcp.h"
 
