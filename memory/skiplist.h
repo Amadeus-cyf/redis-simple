@@ -1,11 +1,13 @@
 #ifndef REDIS_SIMPLE_MEMORY_SKIPLIST_H_
 #define REDIS_SIMPLE_MEMORY_SKIPLIST_H_
 
+#include <algorithm>
 #include <array>
+#include <compare>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <iostream>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -13,1068 +15,495 @@
 #include <utility>
 #include <vector>
 
-#include "logging/logger.h"
 #include "utils/check.h"
 
 namespace redis_simple::in_memory {
 // Redis skiplists begin with one level and promote at a probability of 0.25.
 inline constexpr size_t kInitSkiplistLevel = 1;
 
-// Default comparator
-template <typename Key>
-const auto kDefaultCompare = [](const Key& k1, const Key& k2) {
-  return k1 < k2 ? -1 : (k1 == k2 ? 0 : 1);
-};
-
-// Default destructor
-template <typename Key>
-const auto kDefaultDestructor = [](const Key&) {};
-
-// A Skiplist comparator orders two keys like strcmp: negative, zero, or
-// positive.
-template <typename Comparator, typename Key>
-concept SkiplistComparatorFor =
-    std::copy_constructible<Comparator> &&
-    requires(const Comparator& compare, const Key& left, const Key& right) {
-      { compare(left, right) } -> std::convertible_to<int>;
+// Orders a stored key against a probe with a three-way comparison. A probe is
+// a Key or any other type Compare accepts. Any ordering category works
+// (strong, weak, or partial); the skiplist only tests results against zero.
+template <typename Compare, typename Key, typename Probe = Key>
+concept SkiplistCompareFor =
+    std::copy_constructible<Compare> &&
+    requires(const Compare& compare, const Key& key, const Probe& probe) {
+      { compare(key, probe) } -> std::convertible_to<std::partial_ordering>;
     };
 
-// A Skiplist destructor releases whatever a key owns when its node is freed.
-template <typename Destructor, typename Key>
-concept SkiplistDestructorFor = std::copy_constructible<Destructor> &&
-                                std::invocable<const Destructor&, const Key&>;
-
-template <typename Key, typename Comparator = decltype(kDefaultCompare<Key>),
-          typename Destructor = decltype(kDefaultDestructor<Key>)>
+// Sorted set of unique keys with O(log n) insert, delete, rank lookup, and
+// range queries, following Redis' zskiplist.
+//
+// Searches take a probe: a Key, or any type Compare can compare a Key against,
+// so callers can search without building a full Key. A probe is used in one of
+// two roles:
+//  - A lookup (Contains, Delete, Update, FindRankOfKey) must compare equal to
+//    at most one stored key, so it carries every field the order uses. A
+//    sorted set ordered by (score, member) looks members up by both.
+//  - A range bound (KeyRange) marks a position and may compare equal to many
+//    keys or none. That sorted set ranges over scores with a bare double.
+// Either way, comparing keys against a probe must agree with key order: keys
+// below the probe all come before keys equal to it, which come before keys
+// above it.
+//
+// Keys live in nodes that never move, so references to them stay valid until
+// that key is deleted, updated, or the skiplist is cleared.
+template <typename Key,
+          SkiplistCompareFor<Key> Compare = std::compare_three_way>
+  requires std::default_initializable<Key>
 class Skiplist {
-  // Checked here rather than on the template parameters so the out-of-line
-  // member definitions keep their short template heads.
-  static_assert(SkiplistComparatorFor<Comparator, Key>,
-                "Comparator must order two const Key& keys as an int");
-  static_assert(SkiplistDestructorFor<Destructor, Key>,
-                "Destructor must accept a const Key&");
-
- private:
-  struct SkiplistLevel;
-  class SkiplistNode;
-
  public:
-  // Spec for LIMIT flag
-  struct SkiplistLimitSpec {
-    SkiplistLimitSpec() : offset(0), count(std::nullopt) {}
-    SkiplistLimitSpec(size_t offset, std::optional<size_t> count)
-        : offset(offset), count(count) {}
-    // Starting offset
-    size_t offset;
-    // Number of keys to return; empty means unbounded.
+  struct Limit {
+    size_t offset{};
+    // Empty means unbounded.
     std::optional<size_t> count;
   };
-  // Spec for range by rank
-  struct SkiplistRangeByRankSpec {
-    SkiplistRangeByRankSpec()
-        : min(0), max(0), minex(false), maxex(false), limit(nullptr) {}
-    SkiplistRangeByRankSpec(size_t min, size_t max, bool minex, bool maxex,
-                            const SkiplistLimitSpec* limit)
-        : min(min), max(max), minex(minex), maxex(maxex), limit(limit) {}
-    // Min and max index
-    size_t min, max;
-    // Are min or max exclusive?
-    bool minex, maxex;
-    // Set if LIMIT flag is included
-    const SkiplistLimitSpec* limit;
+
+  // 0-based ranks in key order; `reverse` counts ranks from the last key and
+  // visits keys in descending order.
+  struct RankRange {
+    size_t min{};
+    size_t max{};
+    bool min_exclusive{};
+    bool max_exclusive{};
+    std::optional<Limit> limit;
+    bool reverse{};
   };
-  // Spec for range by key
-  struct SkiplistRangeByKeySpec {
-    SkiplistRangeByKeySpec(const Key& min, bool minex, const Key& max,
-                           bool maxex, const SkiplistLimitSpec* limit)
-        : min(min), max(max), minex(minex), maxex(maxex), limit(limit) {}
-    // Min and max key
-    const Key min, max;
-    // Min or max exclusive?
-    bool minex, maxex;
-    // Set if LIMIT flag is included
-    const SkiplistLimitSpec* limit;
+
+  // Bounds are probes in the range-bound role. With `reverse`, keys are
+  // visited in descending order, still between `min` and `max`.
+  template <typename Probe>
+  struct KeyRange {
+    Probe min;
+    Probe max;
+    bool min_exclusive{};
+    bool max_exclusive{};
+    std::optional<Limit> limit;
+    bool reverse{};
   };
-  // Skiplist iterator
+
   class Iterator;
-  Skiplist();
-  explicit Skiplist(size_t level);
-  explicit Skiplist(size_t level, const Comparator& compare);
-  explicit Skiplist(size_t level, const Comparator& compare,
-                    const Destructor& dtr);
+
+  explicit Skiplist(size_t level = kInitSkiplistLevel, Compare compare = {})
+      : head_(std::make_unique<Node>(kMaxLevel)),
+        compare_(std::move(compare)),
+        level_(ValidateLevel(level)) {}
   Skiplist(const Skiplist&) = delete;
   Skiplist& operator=(const Skiplist&) = delete;
-  Iterator Begin() const;
-  Iterator End() const;
-  const Key& Insert(const Key& key);
-  bool Contains(const Key& key) const;
-  bool Delete(const Key& key);
-  bool Update(const Key& key, const Key& new_key);
-  const Key& FindKeyByRank(int64_t rank) const;
-  std::optional<size_t> FindRankOfKey(const Key& key) const;
-  std::vector<Key> RangeByRank(const SkiplistRangeByRankSpec* spec) const;
-  std::vector<Key> RevRangeByRank(const SkiplistRangeByRankSpec* spec) const;
-  std::vector<Key> RangeByKey(const SkiplistRangeByKeySpec* spec) const;
-  std::vector<Key> RevRangeByKey(const SkiplistRangeByKeySpec* spec) const;
-  size_t Count(const SkiplistRangeByKeySpec* spec) const;
-  const Key& operator[](size_t i);
+  ~Skiplist() { Clear(); }
+
   size_t Size() const { return size_; }
-  void Clear();
-  void Print() const;
-  ~Skiplist();
+  Iterator Begin() const { return Iterator(head_->levels[0].next); }
+  Iterator End() const { return Iterator(nullptr); }
+  // Iterator at the last key, or End() if empty.
+  Iterator Last() const {
+    return Iterator(LastNodeWhere([](const Key& /*key*/) { return true; }));
+  }
+
+  // Inserts `key` unless an equal key exists. Returns the stored key.
+  const Key& Insert(Key key) {
+    const size_t insert_level = RandomLevel();
+    for (size_t i = level_; i < insert_level; ++i) {
+      head_->levels[i] = {.next = nullptr, .span = size_};
+    }
+    level_ = std::max(level_, insert_level);
+
+    Path path;
+    Node* const next = FindPath(key, &path);
+    if (next != nullptr && compare_(next->key, key) == 0) {
+      return next->key;
+    }
+    auto node = std::make_unique<Node>(insert_level, std::move(key));
+    for (size_t i = 0; i < level_; ++i) {
+      Level& prev = path.prev[i]->levels[i];
+      if (i >= insert_level) {
+        ++prev.span;
+        continue;
+      }
+      const size_t distance = path.rank[0] - path.rank[i];
+      node->levels[i] = {.next = prev.next, .span = prev.span - distance};
+      prev = {.next = node.get(), .span = distance + 1};
+    }
+    node->prev = path.prev[0] == head_.get() ? nullptr : path.prev[0];
+    if (node->levels[0].next != nullptr) {
+      node->levels[0].next->prev = node.get();
+    }
+    ++size_;
+    return node.release()->key;
+  }
+
+  // Each lookup has a `const Key&` overload so that literals and other values
+  // convertible to Key still work; it forwards to the probe overload.
+  bool Contains(const Key& key) const { return Contains<Key>(key); }
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  bool Contains(const Probe& lookup) const {
+    return Find(lookup) != nullptr;
+  }
+
+  bool Delete(const Key& key) { return Delete<Key>(key); }
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  bool Delete(const Probe& lookup) {
+    Path path;
+    Node* const node = FindWithPath(lookup, &path);
+    if (node == nullptr) {
+      return false;
+    }
+    Unlink(node, path);
+    delete node;
+    return true;
+  }
+
+  // Applies `mutation` to the stored key equal to `lookup`, then moves the key
+  // if its position changed. The changed key must not equal another stored
+  // key. Returns false if no key equals `lookup`.
+  template <std::invocable<Key&> Mutation>
+  bool Update(const Key& key, Mutation&& mutation) {
+    return Update<Key>(key, std::forward<Mutation>(mutation));
+  }
+  template <typename Probe, std::invocable<Key&> Mutation>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  bool Update(const Probe& lookup, Mutation&& mutation) {
+    Path path;
+    Node* const node = FindWithPath(lookup, &path);
+    if (node == nullptr) {
+      return false;
+    }
+    std::invoke(std::forward<Mutation>(mutation), node->key);
+    const Node* const next = node->levels[0].next;
+    const bool in_place =
+        (node->prev == nullptr || compare_(node->prev->key, node->key) < 0) &&
+        (next == nullptr || compare_(node->key, next->key) < 0);
+    if (!in_place) {
+      Unlink(node, path);
+      Key moved = std::move(node->key);
+      delete node;
+      Insert(std::move(moved));
+    }
+    return true;
+  }
+
+  // Negative ranks count from the end: -1 is the last key.
+  const Key& FindKeyByRank(int64_t rank) const {
+    if (rank < 0) {
+      RS_CHECK(std::cmp_less_equal(size_, std::numeric_limits<int64_t>::max()));
+      rank += static_cast<int64_t>(size_);
+    }
+    RS_CHECK(rank >= 0);
+    const Node* const node = NodeAtRank(static_cast<size_t>(rank));
+    RS_CHECK(node != nullptr);
+    return node->key;
+  }
+
+  // Returns the 0-based rank of the key equal to `lookup`.
+  std::optional<size_t> FindRankOfKey(const Key& key) const {
+    return FindRankOfKey<Key>(key);
+  }
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  std::optional<size_t> FindRankOfKey(const Probe& lookup) const {
+    const auto [before, rank] = LastWhere(
+        [&](const Key& stored) { return compare_(stored, lookup) < 0; });
+    const Node* const next = before->levels[0].next;
+    if (next == nullptr || compare_(next->key, lookup) != 0) {
+      return std::nullopt;
+    }
+    return rank;
+  }
+
+  // Calls `visitor(const Key&)` for each key in the rank range.
+  template <std::invocable<const Key&> Visitor>
+  void ForEachInRange(const RankRange& range, Visitor&& visitor) const {
+    const size_t first = range.min + (range.min_exclusive ? 1 : 0);
+    if (first >= size_ || range.max < first + (range.max_exclusive ? 1 : 0)) {
+      return;
+    }
+    const size_t last =
+        std::min(range.max - (range.max_exclusive ? 1 : 0), size_ - 1);
+    size_t remaining = last - first + 1;
+    const Node* const start =
+        NodeAtRank(range.reverse ? size_ - 1 - first : first);
+    Walk(
+        start, range.reverse, range.limit,
+        [&remaining](const Key&) { return remaining-- > 0; }, visitor);
+  }
+
+  // Calls `visitor(const Key&)` for each key in the key range.
+  template <typename Probe, std::invocable<const Key&> Visitor>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  void ForEachInRange(const KeyRange<Probe>& range, Visitor&& visitor) const {
+    const auto below_min = BelowMin(range);
+    const auto within_max = WithinMax(range);
+    if (range.reverse) {
+      Walk(
+          LastNodeWhere(within_max), /*reverse=*/true, range.limit,
+          [&](const Key& key) { return !below_min(key); }, visitor);
+    } else {
+      Walk(FirstNodeWhereNot(below_min), /*reverse=*/false, range.limit,
+           within_max, visitor);
+    }
+  }
+
+  // Counts the keys in a key range, ignoring its limit, in O(log n).
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  size_t Count(const KeyRange<Probe>& range) const {
+    const size_t below_min = LastWhere(BelowMin(range)).rank;
+    const size_t through_max = LastWhere(WithinMax(range)).rank;
+    return through_max > below_min ? through_max - below_min : 0;
+  }
+
+  // Convenience wrappers that copy the matching keys.
+  std::vector<Key> RangeByRank(const RankRange& range) const {
+    std::vector<Key> keys;
+    ForEachInRange(range, [&keys](const Key& key) { keys.push_back(key); });
+    return keys;
+  }
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  std::vector<Key> RangeByKey(const KeyRange<Probe>& range) const {
+    std::vector<Key> keys;
+    ForEachInRange(range, [&keys](const Key& key) { keys.push_back(key); });
+    return keys;
+  }
+
+  void Clear() {
+    const Node* node = head_->levels[0].next;
+    while (node != nullptr) {
+      const Node* const next = node->levels[0].next;
+      delete node;
+      node = next;
+    }
+    std::ranges::fill(head_->levels, Level{});
+    level_ = kInitSkiplistLevel;
+    size_ = 0;
+  }
 
  private:
-  static constexpr size_t kMaxSkiplistLevel = 32;
-  static constexpr double kSkiplistP = 0.25;
+  static constexpr size_t kMaxLevel = 32;
+  static constexpr double kPromoteProbability = 0.25;
+
+  struct Node;
+
+  struct Level {
+    Node* next{};
+    // Number of level-0 steps from this node to `next`.
+    size_t span{};
+  };
+
+  struct Node {
+    explicit Node(size_t level, Key key = {})
+        : key(std::move(key)), levels(level) {}
+    Key key;
+    // Previous node at level 0; null for the first node.
+    Node* prev{};
+    std::vector<Level> levels;
+  };
+
+  // The last node before the search key at each level, and its rank.
+  struct Path {
+    std::array<Node*, kMaxLevel> prev{};
+    std::array<size_t, kMaxLevel> rank{};
+  };
+
+  struct Position {
+    const Node* node;
+    // 1-based rank of `node`; 0 when `node` is the head.
+    size_t rank;
+  };
+
   static size_t ValidateLevel(size_t level) {
-    RS_CHECK(level > 0 && level <= kMaxSkiplistLevel);
+    RS_CHECK(level > 0 && level <= kMaxLevel);
     return level;
   }
-  size_t RandomLevel() const;
-  bool Lt(const Key& k1, const Key& k2) const;
-  bool Lte(const Key& k1, const Key& k2) const;
-  bool Gt(const Key& k1, const Key& k2) const;
-  bool Gte(const Key& k1, const Key& k2) const;
-  bool Eq(const Key& k1, const Key& k2) const;
-  void DeleteNode(const Key& key, SkiplistNode** const prev);
-  const SkiplistNode* FindKey(size_t rank) const;
-  const SkiplistNode* FindMinNodeByRangeRankSpec(
-      const SkiplistRangeByRankSpec* spec) const;
-  const SkiplistNode* FindRevMinNodeByRangeRankSpec(
-      const SkiplistRangeByRankSpec* spec) const;
-  bool ValidateRangeRankSpec(const SkiplistRangeByRankSpec* spec) const;
-  bool ValidateRangeKeySpec(const SkiplistRangeByKeySpec* spec) const;
-  std::vector<Key> RangeByRankWithValidSpec(
-      const SkiplistRangeByRankSpec* spec) const;
-  std::vector<Key> RevRangeByRankWithValidSpec(
-      const SkiplistRangeByRankSpec* spec) const;
-  std::vector<Key> RangeByKeyWithValidSpec(
-      const SkiplistRangeByKeySpec* spec) const;
-  std::vector<Key> RevRangeByKeyWithValidSpec(
-      const SkiplistRangeByKeySpec* spec) const;
-  size_t CountWithValidSpec(const SkiplistRangeByKeySpec* spec) const;
-  SkiplistNode* FindKeyGreaterOrEqual(const Key& key, SkiplistNode** const prev,
-                                      size_t* const rank) const;
-  const SkiplistNode* FindKeyGreaterOrEqual(const Key& key) const;
-  const SkiplistNode* FindKeyGreaterThan(const Key& key) const;
-  const SkiplistNode* FindKeyLessOrEqual(const Key& key) const;
-  const SkiplistNode* FindKeyLessThan(const Key& key) const;
-  const SkiplistNode* FindKeyLess(const Key& key, bool eq) const;
-  const SkiplistNode* FindLast() const;
-  void Reset();
-  // Skiplist node head
-  SkiplistNode* head_;
-  // Key comparator
-  const Comparator compare_;
-  // Key destructor
-  const Destructor dtr_;
-  // Number of levels
+
+  size_t RandomLevel() const {
+    std::bernoulli_distribution promote(kPromoteProbability);
+    size_t level = 1;
+    while (level < kMaxLevel && promote(random_generator_)) {
+      ++level;
+    }
+    return level;
+  }
+
+  // Search primitives. `before` must hold for a prefix of the keys in order
+  // and fail for the rest, which is what probe ordering guarantees.
+
+  // Walks to the last node whose key satisfies `before`; the head if none.
+  template <std::predicate<const Key&> Before>
+  Position LastWhere(Before&& before) const {
+    const Node* node = head_.get();
+    size_t rank = 0;
+    for (size_t i = level_; i-- > 0;) {
+      while (node->levels[i].next != nullptr &&
+             before(node->levels[i].next->key)) {
+        rank += node->levels[i].span;
+        node = node->levels[i].next;
+      }
+    }
+    return {.node = node, .rank = rank};
+  }
+
+  // The last node satisfying `before`, or null if none does.
+  template <std::predicate<const Key&> Before>
+  const Node* LastNodeWhere(Before&& before) const {
+    const Node* const node = LastWhere(std::forward<Before>(before)).node;
+    return node == head_.get() ? nullptr : node;
+  }
+
+  // The first node not satisfying `before`, or null if every node does.
+  template <std::predicate<const Key&> Before>
+  const Node* FirstNodeWhereNot(Before&& before) const {
+    return LastWhere(std::forward<Before>(before)).node->levels[0].next;
+  }
+
+  // Like LastWhere for keys below `probe`, but also records the path for
+  // relinking. Returns the first node not below `probe`.
+  template <typename Probe>
+  Node* FindPath(const Probe& probe, Path* path) const {
+    Node* node = head_.get();
+    for (size_t i = level_; i-- > 0;) {
+      path->rank[i] = i + 1 == level_ ? 0 : path->rank[i + 1];
+      while (node->levels[i].next != nullptr &&
+             compare_(node->levels[i].next->key, probe) < 0) {
+        path->rank[i] += node->levels[i].span;
+        node = node->levels[i].next;
+      }
+      path->prev[i] = node;
+    }
+    return node->levels[0].next;
+  }
+
+  // The node equal to `lookup` with its path recorded, or null.
+  template <typename Probe>
+  Node* FindWithPath(const Probe& lookup, Path* path) const {
+    Node* const node = FindPath(lookup, path);
+    return node != nullptr && compare_(node->key, lookup) == 0 ? node : nullptr;
+  }
+
+  // The node equal to `lookup`, or null.
+  template <typename Probe>
+  const Node* Find(const Probe& lookup) const {
+    const Node* const node = FirstNodeWhereNot(
+        [&](const Key& key) { return compare_(key, lookup) < 0; });
+    return node != nullptr && compare_(node->key, lookup) == 0 ? node : nullptr;
+  }
+
+  // Removes `node` from every level; the caller owns it afterwards.
+  void Unlink(Node* node, const Path& path) {
+    for (size_t i = 0; i < level_; ++i) {
+      Level& prev = path.prev[i]->levels[i];
+      if (prev.next == node) {
+        prev.span += node->levels[i].span - 1;
+        prev.next = node->levels[i].next;
+      } else {
+        --prev.span;
+      }
+    }
+    if (node->levels[0].next != nullptr) {
+      node->levels[0].next->prev = node->prev;
+    }
+    --size_;
+  }
+
+  // Returns the node at a 0-based rank, or null if out of range.
+  const Node* NodeAtRank(size_t rank) const {
+    if (rank >= size_) {
+      return nullptr;
+    }
+    const size_t target = rank + 1;
+    const Node* node = head_.get();
+    size_t traversed = 0;
+    for (size_t i = level_; i-- > 0;) {
+      while (node->levels[i].next != nullptr &&
+             traversed + node->levels[i].span <= target) {
+        traversed += node->levels[i].span;
+        node = node->levels[i].next;
+      }
+      if (traversed == target) {
+        return node;
+      }
+    }
+    return nullptr;
+  }
+
+  // Whether a key falls before the range's lower bound; holds for a prefix.
+  template <typename Probe>
+  auto BelowMin(const KeyRange<Probe>& range) const {
+    return [this, &range](const Key& key) {
+      const auto order = compare_(key, range.min);
+      return !(range.min_exclusive ? order > 0 : order >= 0);
+    };
+  }
+
+  // Whether a key is at or before the range's upper bound; holds for a prefix.
+  template <typename Probe>
+  auto WithinMax(const KeyRange<Probe>& range) const {
+    return [this, &range](const Key& key) {
+      const auto order = compare_(key, range.max);
+      return range.max_exclusive ? order < 0 : order <= 0;
+    };
+  }
+
+  // Visits keys from `node` in the given direction while `in_range` holds,
+  // applying the limit's offset and count.
+  template <std::predicate<const Key&> InRange,
+            std::invocable<const Key&> Visitor>
+  static void Walk(const Node* node, bool reverse,
+                   const std::optional<Limit>& limit, InRange&& in_range,
+                   Visitor& visitor) {
+    size_t skip = limit.has_value() ? limit->offset : 0;
+    size_t remaining = limit.has_value() && limit->count.has_value()
+                           ? *limit->count
+                           : std::numeric_limits<size_t>::max();
+    for (; node != nullptr && remaining > 0 && in_range(node->key);
+         node = reverse ? node->prev : node->levels[0].next) {
+      if (skip > 0) {
+        --skip;
+        continue;
+      }
+      std::invoke(visitor, node->key);
+      --remaining;
+    }
+  }
+
+  // The head holds no key and has every level, so the list can grow without
+  // reallocating it.
+  std::unique_ptr<Node> head_;
+  Compare compare_;
   size_t level_;
-  // Number of nodes
-  size_t size_;
-  // Deterministic RNG keeps tests reproducible while avoiding C rand().
+  size_t size_{};
+  // Fixed default seed keeps level choices, and so tests, reproducible.
   mutable std::mt19937 random_generator_;
 };
 
-// SkiplistLevel
-template <typename Key, typename Comparator, typename Destructor>
-struct Skiplist<Key, Comparator, Destructor>::SkiplistLevel {
-  SkiplistNode* next_{nullptr};
-  size_t span_{};
-};
-
-// SkiplistNode
-template <typename Key, typename Comparator, typename Destructor>
-class Skiplist<Key, Comparator, Destructor>::SkiplistNode {
+template <typename Key, SkiplistCompareFor<Key> Compare>
+  requires std::default_initializable<Key>
+class Skiplist<Key, Compare>::Iterator {
  public:
-  static SkiplistNode* Create(const Key& key, size_t level,
-                              const Destructor& dtr);
-  static SkiplistNode* Create(size_t level, const Destructor& dtr);
-  const SkiplistNode* Next(size_t level) const { return levels_[level].next_; }
-  SkiplistNode* Next(size_t level) { return levels_[level].next_; }
-  void SetNext(size_t level, SkiplistNode* next) {
-    levels_[level].next_ = next;
+  bool Valid() const { return node_ != nullptr; }
+  void Next() { node_ = node_->levels[0].next; }
+  void Prev() { node_ = node_->prev; }
+  Iterator& operator++() {
+    Next();
+    return *this;
   }
-  size_t Span(size_t level) const { return levels_[level].span_; }
-  void SetSpan(size_t level, size_t span) { levels_[level].span_ = span; }
-  const SkiplistNode* Prev() const { return prev_; }
-  SkiplistNode* Prev() { return prev_; }
-  void SetPrev(SkiplistNode* prev) { prev_ = prev; }
-  void InitLevel(size_t level) {
-    if (level >= levels_.size()) {
-      levels_.resize(level + 1);
-    }
+  Iterator& operator--() {
+    Prev();
+    return *this;
   }
-  void Reset();
-  ~SkiplistNode();
-  Key key;
+  bool operator==(const Iterator& other) const = default;
+  const Key& operator*() const {
+    RS_CHECK(node_ != nullptr);
+    return node_->key;
+  }
 
  private:
-  SkiplistNode(size_t level, const Destructor& dtr)
-      : key{}, levels_(level), prev_(nullptr), dtr_(dtr), owns_key_(false) {}
-  SkiplistNode(const Key& key, size_t level, Destructor dtr)
-      : key(key),
-        levels_(level),
-        prev_(nullptr),
-        dtr_(std::move(dtr)),
-        owns_key_(true) {}
-  std::vector<SkiplistLevel> levels_;
-  SkiplistNode* prev_;
-  const Destructor dtr_;
-  const bool owns_key_;
+  friend class Skiplist;
+  explicit Iterator(const Node* node) : node_(node) {}
+  const Node* node_;
 };
-
-template <typename Key, typename Comparator, typename Destructor>
-typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::SkiplistNode::Create(
-    const Key& key, size_t level, const Destructor& dtr) {
-  return new SkiplistNode(key, level, dtr);
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::SkiplistNode::Create(
-    size_t level, const Destructor& dtr) {
-  return new SkiplistNode(level, dtr);
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::SkiplistNode::Reset() {
-  std::fill(levels_.begin(), levels_.end(), SkiplistLevel{});
-  prev_ = nullptr;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-Skiplist<Key, Comparator, Destructor>::SkiplistNode::~SkiplistNode() {
-  Reset();
-  if (owns_key_) {
-    dtr_(key);
-  }
-}
-
-// Iterator
-template <typename Key, typename Comparator, typename Destructor>
-class Skiplist<Key, Comparator, Destructor>::Iterator {
- public:
-  explicit Iterator(const Skiplist* skiplist);
-  explicit Iterator(const Skiplist* skiplist, const SkiplistNode* node);
-  Iterator(const Iterator& it) = default;
-  // Return true if the iterator is positioned to a valid node.
-  bool Valid() const;
-  // Position at the first node in the list.
-  void SeekToFirst();
-  // Position at the last node in the list.
-  void SeekToLast();
-  // Advance to the next node in the list.
-  void Next();
-  // Advance to the previous node in the list.
-  void Prev();
-  Iterator& operator=(const Iterator& it) = default;
-  // Move to the next node in the list.
-  Iterator& operator--();
-  // Move to the previous node in the list.
-  Iterator& operator++();
-  bool operator==(const Iterator& it) const = default;
-  const Key& operator*() const;
-
- private:
-  const SkiplistNode* node_;
-  const Skiplist* skiplist_;
-};
-
-template <typename Key, typename Comparator, typename Destructor>
-Skiplist<Key, Comparator, Destructor>::Iterator::Iterator(
-    const Skiplist* skiplist)
-    : node_(nullptr), skiplist_(skiplist) {}
-
-template <typename Key, typename Comparator, typename Destructor>
-Skiplist<Key, Comparator, Destructor>::Iterator::Iterator(
-    const Skiplist* skiplist, const SkiplistNode* node)
-    : node_(node), skiplist_(skiplist) {}
-
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Iterator::Valid() const {
-  return node_ != nullptr;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::Iterator::SeekToFirst() {
-  node_ = skiplist_->head_->Next(0);
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::Iterator::SeekToLast() {
-  node_ = skiplist_->FindLast();
-  if (node_ == skiplist_->head_) node_ = nullptr;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::Iterator::Next() {
-  node_ = node_->Next(0);
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::Iterator::Prev() {
-  node_ = node_->Prev();
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-typename Skiplist<Key, Comparator, Destructor>::Iterator&
-Skiplist<Key, Comparator, Destructor>::Iterator::operator++() {
-  node_ = node_->Next(0);
-  return *this;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-typename Skiplist<Key, Comparator, Destructor>::Iterator&
-Skiplist<Key, Comparator, Destructor>::Iterator::operator--() {
-  node_ = node_->Prev();
-  return *this;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-const Key& Skiplist<Key, Comparator, Destructor>::Iterator::operator*() const {
-  RS_CHECK(node_ != nullptr);
-  return node_->key;
-}
-
-// Skiplist
-template <typename Key, typename Comparator, typename Destructor>
-Skiplist<Key, Comparator, Destructor>::Skiplist()
-    : head_(SkiplistNode::Create(kInitSkiplistLevel, kDefaultDestructor<Key>)),
-      compare_(kDefaultCompare<Key>),
-      dtr_(kDefaultDestructor<Key>),
-      level_(kInitSkiplistLevel),
-      size_(0),
-      random_generator_(std::mt19937::default_seed) {}
-
-template <typename Key, typename Comparator, typename Destructor>
-Skiplist<Key, Comparator, Destructor>::Skiplist(size_t level)
-    : head_(
-          SkiplistNode::Create(ValidateLevel(level), kDefaultDestructor<Key>)),
-      compare_(kDefaultCompare<Key>),
-      dtr_(kDefaultDestructor<Key>),
-      level_(level),
-      size_(0),
-      random_generator_(std::mt19937::default_seed) {}
-
-template <typename Key, typename Comparator, typename Destructor>
-Skiplist<Key, Comparator, Destructor>::Skiplist(size_t level,
-                                                const Comparator& compare)
-    : head_(
-          SkiplistNode::Create(ValidateLevel(level), kDefaultDestructor<Key>)),
-      compare_(compare),
-      dtr_(kDefaultDestructor<Key>),
-      level_(level),
-      size_(0),
-      random_generator_(std::mt19937::default_seed) {}
-
-template <typename Key, typename Comparator, typename Destructor>
-Skiplist<Key, Comparator, Destructor>::Skiplist(size_t level,
-                                                const Comparator& compare,
-                                                const Destructor& dtr)
-    : head_(SkiplistNode::Create(ValidateLevel(level), dtr)),
-      compare_(compare),
-      dtr_(dtr),
-      level_(level),
-      size_(0),
-      random_generator_(std::mt19937::default_seed) {}
-
-/*
- * Return an iterator pointing to the first node.
- */
-template <typename Key, typename Comparator, typename Destructor>
-typename Skiplist<Key, Comparator, Destructor>::Iterator
-Skiplist<Key, Comparator, Destructor>::Begin() const {
-  return Iterator(this, head_->Next(0));
-}
-
-/*
- * Return an iterator pointing to the last  node.
- */
-template <typename Key, typename Comparator, typename Destructor>
-typename Skiplist<Key, Comparator, Destructor>::Iterator
-Skiplist<Key, Comparator, Destructor>::End() const {
-  return Iterator(this, nullptr);
-}
-
-/*
- * Return a randomnized level used for insertion.
- */
-template <typename Key, typename Comparator, typename Destructor>
-size_t Skiplist<Key, Comparator, Destructor>::RandomLevel() const {
-  size_t level = 1;
-  std::bernoulli_distribution promote(kSkiplistP);
-  while (level < kMaxSkiplistLevel && promote(random_generator_)) {
-    ++level;
-  }
-  return level;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Lt(const Key& k1,
-                                               const Key& k2) const {
-  return compare_(k1, k2) < 0;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Lte(const Key& k1,
-                                                const Key& k2) const {
-  return Lt(k1, k2) || Eq(k1, k2);
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Gt(const Key& k1,
-                                               const Key& k2) const {
-  return compare_(k1, k2) > 0;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Gte(const Key& k1,
-                                                const Key& k2) const {
-  return Gt(k1, k2) || Eq(k1, k2);
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Eq(const Key& k1,
-                                               const Key& k2) const {
-  return compare_(k1, k2) == 0;
-}
-
-/*
- * Insert a new key into the skiplist. If the key already exists, return the
- * node containing the key and skip the insertion. Otherwise, create a new node
- * with the given key and insert it into the skiplist. Return the newly created
- * node as the result.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const Key& Skiplist<Key, Comparator, Destructor>::Insert(const Key& key) {
-  RS_CHECK(level_ != 0);
-  const size_t insert_level = RandomLevel();
-  // If the random level is larger than level, init empty skiplist level for
-  // extra levels and update level to the random level.
-  for (size_t i = level_; i < insert_level; ++i) {
-    head_->InitLevel(i);
-    head_->SetSpan(i, size_);
-  }
-  if (insert_level > level_) {
-    level_ = insert_level;
-  }
-  // Find previous key at each level having the next key greater than or equal
-  // to the given key.
-  std::array<SkiplistNode*, kMaxSkiplistLevel> prev{};
-  std::array<size_t, kMaxSkiplistLevel> rank{};
-  const SkiplistNode* n = FindKeyGreaterOrEqual(key, prev.data(), rank.data());
-  if (n && Eq(n->key, key)) {
-    // If key already exists, do not insert,
-    return n->key;
-  }
-  // Insert the key and update span.
-  std::unique_ptr<SkiplistNode> node(SkiplistNode::Create(key, level_, dtr_));
-  SkiplistNode* node_ptr = node.get();
-  for (size_t i = 0; i < level_; ++i) {
-    if (i < insert_level) {
-      // Need to insert the key
-      size_t span = prev[i]->Span(i);
-      node_ptr->SetNext(i, prev[i]->Next(i));
-      node_ptr->SetSpan(i, span - rank[0] + rank[i]);
-      prev[i]->SetNext(i, node_ptr);
-      prev[i]->SetSpan(i, rank[0] - rank[i] + 1);
-    } else {
-      // No need to insert key, only increase span by 1.
-      prev[i]->SetSpan(i, prev[i]->Span(i) + 1);
-    }
-  }
-  // For level 0, update backward pointer since it's a double linked list.
-  node_ptr->SetPrev(prev[0]);
-  if (node_ptr->Next(0)) {
-    node_ptr->Next(0)->SetPrev(node_ptr);
-  }
-  ++size_;
-  const Key& inserted_key = node_ptr->key;
-  node.release();
-  return inserted_key;
-}
-
-/*
- * Return true if the node containing the key is found in the skiplist.
- */
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Contains(const Key& key) const {
-  const SkiplistNode* n = FindKeyGreaterOrEqual(key);
-  return n && Eq(n->key, key);
-}
-
-/*
- * Delete the given node containing the key from the skiplist. Return true if
- * the key is deleted, and false if the key is not found.
- */
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Delete(const Key& key) {
-  std::array<SkiplistNode*, kMaxSkiplistLevel> prev{};
-  const SkiplistNode* n = FindKeyGreaterOrEqual(key, prev.data(), nullptr);
-  if (!n || !Eq(n->key, key)) {
-    return false;
-  }
-  DeleteNode(key, prev.data());
-  return true;
-}
-
-/*
- * Update the key. Return true if the key is updated, and false if the original
- * key is not found.
- */
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Update(const Key& key,
-                                                   const Key& new_key) {
-  std::array<SkiplistNode*, kMaxSkiplistLevel> prev{};
-  const SkiplistNode* n = FindKeyGreaterOrEqual(key, prev.data(), nullptr);
-  if (!n || !Eq(n->key, key)) {
-    // Key not found.
-    return false;
-  }
-  const SkiplistNode* next = n->Next(0);
-  if ((prev[0] == head_ || Gte(new_key, prev[0]->key)) &&
-      (!next || Lte(new_key, next->key))) {
-    // If in the key's position is not changed, update the key directly.
-    SkiplistNode* next = prev[0]->Next(0);
-    // Delete the old key.
-    dtr_(next->key);
-    next->key = new_key;
-  } else {
-    // Otherwise, delete the original node and insert a new one.
-    DeleteNode(key, prev.data());
-    Insert(new_key);
-  }
-  return true;
-}
-
-/*
- * Return the key at the given index.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const Key& Skiplist<Key, Comparator, Destructor>::FindKeyByRank(
-    int64_t rank) const {
-  if (rank < 0) {
-    RS_CHECK(size_ <= static_cast<size_t>(std::numeric_limits<int64_t>::max()));
-    rank += static_cast<int64_t>(size_);
-  }
-  RS_CHECK(rank >= 0);
-  const SkiplistNode* node = FindKey(static_cast<size_t>(rank));
-  RS_CHECK(node != nullptr);
-  return node->key;
-}
-
-/*
- * Return the index of the key.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::optional<size_t> Skiplist<Key, Comparator, Destructor>::FindRankOfKey(
-    const Key& key) const {
-  size_t rank = 0;
-  const SkiplistNode* node = head_;
-  for (size_t i = level_; i-- > 0;) {
-    while (node->Next(i) && Lt(node->Next(i)->key, key)) {
-      rank += node->Span(i);
-      node = node->Next(i);
-    }
-    if (node->Next(i) && Eq(node->Next(i)->key, key)) {
-      return rank + node->Span(i) - 1;
-    }
-  }
-  return std::nullopt;
-}
-
-/*
- * Return all keys within the rank range.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::vector<Key> Skiplist<Key, Comparator, Destructor>::RangeByRank(
-    const SkiplistRangeByRankSpec* spec) const {
-  return ValidateRangeRankSpec(spec) ? RangeByRankWithValidSpec(spec)
-                                     : std::vector<Key>();
-}
-
-/*
- * Return the keys which have the reversed rank within the range.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::vector<Key> Skiplist<Key, Comparator, Destructor>::RevRangeByRank(
-    const SkiplistRangeByRankSpec* spec) const {
-  return ValidateRangeRankSpec(spec) ? RevRangeByRankWithValidSpec(spec)
-                                     : std::vector<Key>();
-}
-
-/*
- * Return all keys within the range in ascending order.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::vector<Key> Skiplist<Key, Comparator, Destructor>::RangeByKey(
-    const SkiplistRangeByKeySpec* spec) const {
-  return ValidateRangeKeySpec(spec) ? RangeByKeyWithValidSpec(spec)
-                                    : std::vector<Key>();
-}
-
-/*
- * Return all keys within the range in descending order.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::vector<Key> Skiplist<Key, Comparator, Destructor>::RevRangeByKey(
-    const SkiplistRangeByKeySpec* spec) const {
-  return ValidateRangeKeySpec(spec) ? RevRangeByKeyWithValidSpec(spec)
-                                    : std::vector<Key>();
-}
-
-/*
- * Return the count of keys which have the rank within range.
- */
-template <typename Key, typename Comparator, typename Destructor>
-size_t Skiplist<Key, Comparator, Destructor>::Count(
-    const SkiplistRangeByKeySpec* spec) const {
-  return ValidateRangeKeySpec(spec) ? CountWithValidSpec(spec) : 0;
-}
-
-/*
- * Return the first key greater than or equal to the given key.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindKeyGreaterOrEqual(
-    const Key& key) const {
-  const SkiplistNode* n = FindKeyGreaterOrEqual(key, nullptr, nullptr);
-  return n;
-}
-
-/*
- * Return the first key greater than the given key.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindKeyGreaterThan(
-    const Key& key) const {
-  const SkiplistNode* n = FindKeyGreaterOrEqual(key);
-  return (n && Eq(n->key, key)) ? n->Next(0) : n;
-}
-
-/*
- * Return the last key less than or equal to the given key.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindKeyLessOrEqual(
-    const Key& key) const {
-  return FindKeyLess(key, true);
-}
-
-/*
- * Return the last key less than the given key.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindKeyLessThan(const Key& key) const {
-  return FindKeyLess(key, false);
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindKeyLess(const Key& key,
-                                                   bool eq) const {
-  const SkiplistNode* node = head_;
-  for (size_t i = level_; i-- > 0;) {
-    while (node->Next(i) &&
-           (eq ? Lte(node->Next(i)->key, key) : Lt(node->Next(i)->key, key))) {
-      node = node->Next(i);
-    }
-  }
-  return node;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-const Key& Skiplist<Key, Comparator, Destructor>::operator[](size_t i) {
-  const SkiplistNode* node = FindKey(i);
-  RS_CHECK(node != nullptr);
-  return node->key;
-}
-
-/*
- * Remove all nodes from the skiplist.
- */
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::Clear() {
-  Reset();
-  level_ = kInitSkiplistLevel;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::Print() const {
-  const SkiplistNode* node = head_;
-  for (size_t i = level_; i-- > 0;) {
-    RS_LOG_DEBUG("h%zu", i);
-    while (node) {
-      std::cout << node->key;
-      RS_LOG_DEBUG("---%zu---", node->Span(i));
-      node = node->Next(i);
-    }
-    RS_LOG_DEBUG("end\n");
-    node = head_;
-  }
-}
-
-/*
- * Find the first key greater than or equal to the given key.
- * If prev is non-null, fills prev[level] with pointer to previous node at
- * "level" for every level in [0...level_-1].
- * If rank is non-null, fills rank[level] with the rank of the previous key at
- * "level" for every level in [0...level_-1];
- */
-template <typename Key, typename Comparator, typename Destructor>
-typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindKeyGreaterOrEqual(
-    const Key& key, SkiplistNode** const prev, size_t* const rank) const {
-  SkiplistNode* n = head_;
-  for (size_t i = level_; i-- > 0;) {
-    if (rank) {
-      rank[i] = (i == level_ - 1) ? 0 : rank[i + 1];
-    }
-    while (n->Next(i) && Lt(n->Next(i)->key, key)) {
-      if (rank) {
-        rank[i] += n->Span(i);
-      }
-      n = n->Next(i);
-    }
-    if (prev) {
-      prev[i] = n;
-    }
-    if (i == 0 && n) {
-      return n->Next(0);
-    }
-  }
-  return nullptr;
-}
-
-/*
- * Delete the node from the skiplist.
- * The function assumes that the node exists in the skiplist.
- */
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::DeleteNode(
-    const Key& key, SkiplistNode** const prev) {
-  SkiplistNode* node_to_delete = prev[0]->Next(0);
-  for (size_t i = level_; i-- > 0;) {
-    SkiplistNode* next = prev[i]->Next(i);
-    if (next && Eq(next->key, key)) {
-      prev[i]->SetNext(i, next ? next->Next(i) : nullptr);
-      prev[i]->SetSpan(i, prev[i]->Span(i) + (next ? next->Span(i) : 0) - 1);
-    } else {
-      prev[i]->SetSpan(i, prev[i]->Span(i) - 1);
-    }
-  }
-  // For level 0, update backward pointer since it's a double linked list.
-  if (prev[0]->Next(0)) {
-    prev[0]->Next(0)->SetPrev(prev[0]);
-  }
-  delete node_to_delete;
-  --size_;
-}
-
-/*
- * Return the key at the given index. Nullptr if index is out of range.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindKey(size_t rank) const {
-  if (rank >= size_) {
-    return nullptr;
-  }
-  size_t span = 0;
-  const SkiplistNode* node = head_;
-  for (size_t i = level_; i-- > 0;) {
-    while (node->Next(i) && (span + node->Span(i) < rank + 1)) {
-      span += node->Span(i);
-      node = node->Next(i);
-    }
-
-    if (node->Next(i) && span + node->Span(i) == rank + 1) {
-      return node->Next(i);
-    }
-  }
-  return nullptr;
-}
-
-/*
- * Return the first node having rank in the rank range. If spec has minex =
- * true, the returned node should be the one next to the node at the min rank.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindMinNodeByRangeRankSpec(
-    const SkiplistRangeByRankSpec* spec) const {
-  const SkiplistNode* node = FindKey(spec->min);
-  // If min rank is excluded, start at the next node.
-  if (node && spec->minex) {
-    node = node->Next(0);
-  }
-  return node;
-}
-
-/*
- * Return the first node having reversed rank in the rank range. If spec has
- * minex = true, the returned node should be the one previous to the node at the
- * min rank.
- */
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindRevMinNodeByRangeRankSpec(
-    const SkiplistRangeByRankSpec* spec) const {
-  const SkiplistNode* node = FindKey(size_ - 1 - spec->min);
-  // If min rank is excluded, start at the previous node.
-  if (node && spec->minex) {
-    node = node->Prev();
-  }
-  return node;
-}
-
-/*
- * Validate the range rank spec. Return true if the spec is
- * valid.
- */
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::ValidateRangeRankSpec(
-    const SkiplistRangeByRankSpec* spec) const {
-  return spec && spec->min >= 0 && spec->max >= 0 &&
-         ((!spec->minex && !spec->maxex && spec->min <= spec->max) ||
-          spec->min < spec->max);
-}
-
-/*
- * Validate the range key spec. Return true if the spec is
- * valid.
- */
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::ValidateRangeKeySpec(
-    const SkiplistRangeByKeySpec* spec) const {
-  return spec && ((!spec->minex && !spec->maxex && Lte(spec->min, spec->max)) ||
-                  Lt(spec->min, spec->max));
-}
-
-/*
- * Find keys in reverse range of rank. Rank indicates the position of the key in
- * the skiplist.
- * The function assumes the spec are valid. Should call ValidateRangeRankSpec
- * before calling this function.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::vector<Key>
-Skiplist<Key, Comparator, Destructor>::RangeByRankWithValidSpec(
-    const SkiplistRangeByRankSpec* spec) const {
-  const std::optional<size_t> count =
-      spec->limit ? spec->limit->count : std::nullopt;
-  if (count.has_value() && *count == 0) return {};
-  const SkiplistNode* node = FindMinNodeByRangeRankSpec(spec);
-  if (!node) {
-    return {};
-  }
-  std::vector<Key> keys;
-  size_t i = 0, start = spec->min + (spec->minex ? 1 : 0),
-         end = spec->max + (spec->maxex ? -1 : 0),
-         offset = spec->limit ? spec->limit->offset : 0;
-  if (count == 0) return {};
-  while (node && start <= end) {
-    ++start;
-    // Add the key if the current rank is larger of equal to the specified
-    // offset.
-    if (i++ >= offset) {
-      keys.push_back(node->key);
-      // Return the keys if the number reach the limit, only works when the
-      // limit is a non-negative value.
-      if (count.has_value() && keys.size() >= *count) {
-        return keys;
-      }
-    }
-    node = node->Next(0);
-  }
-  return keys;
-}
-
-/*
- * Find keys in reverse range of rank. Rank indicates the position of the key in
- * the skiplist.
- * The function assumes the spec are valid with non-negative min and max value.
- * Should call ValidateRangeRankSpec before calling this function.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::vector<Key>
-Skiplist<Key, Comparator, Destructor>::RevRangeByRankWithValidSpec(
-    const SkiplistRangeByRankSpec* spec) const {
-  const std::optional<size_t> count =
-      spec->limit ? spec->limit->count : std::nullopt;
-  if (count.has_value() && *count == 0) return {};
-  const SkiplistNode* node = FindRevMinNodeByRangeRankSpec(spec);
-  if (!node) {
-    return {};
-  }
-  std::vector<Key> keys;
-  size_t i = 0, start = spec->min + (spec->minex ? 1 : 0),
-         end = spec->max + (spec->maxex ? -1 : 0),
-         offset = spec->limit ? spec->limit->offset : 0;
-  while (node && start <= end) {
-    // Return the keys if the number reach the limit, only works when the limit
-    // is a non-negative value.
-    if (count.has_value() && keys.size() >= *count) {
-      return keys;
-    }
-    ++start;
-    // Add the key if the current rank is larger of equal to the specified
-    // offset
-    if (i++ >= offset) {
-      keys.push_back(node->key);
-    }
-    node = node->Prev();
-  }
-  return keys;
-}
-
-/*
- * Find keys within the given range of keys.
- * The function assumes spec is valid. Should call ValidateRangeKeySpec
- * before calling this function.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::vector<Key> Skiplist<Key, Comparator, Destructor>::RangeByKeyWithValidSpec(
-    const SkiplistRangeByKeySpec* spec) const {
-  const std::optional<size_t> count =
-      spec->limit ? spec->limit->count : std::nullopt;
-  if (count.has_value() && *count == 0) return {};
-  const SkiplistNode* node = FindKeyGreaterOrEqual(spec->min);
-  if (!node) {
-    return {};
-  }
-  // If min exclusive and the node is equal to min, then move to the next node.
-  if (spec->minex && Eq(node->key, spec->min)) {
-    node = node->Next(0);
-  }
-  size_t i = 0, offset = spec->limit ? spec->limit->offset : 0;
-  std::vector<Key> keys;
-  while (node &&
-         (spec->maxex ? Lt(node->key, spec->max) : Lte(node->key, spec->max))) {
-    // Return the keys if the number reach the limit, only works when the limit
-    // is a non-negative value.
-    if (count.has_value() && keys.size() >= *count) {
-      return keys;
-    }
-    // Add the key if the current rank is larger of equal to the specified
-    // offset.
-    if (i++ >= offset) {
-      keys.push_back(node->key);
-    }
-    node = node->Next(0);
-  }
-  return keys;
-}
-
-/*
- * Find keys within the given range of keys.
- * The function assumes spec is valid. Should call ValidateRangeKeySpec
- * before calling this function.
- */
-template <typename Key, typename Comparator, typename Destructor>
-std::vector<Key>
-Skiplist<Key, Comparator, Destructor>::RevRangeByKeyWithValidSpec(
-    const SkiplistRangeByKeySpec* spec) const {
-  const std::optional<size_t> count =
-      spec->limit ? spec->limit->count : std::nullopt;
-  if (count.has_value() && *count == 0) return {};
-  const SkiplistNode* node = FindKeyLessOrEqual(spec->max);
-  if (!node) {
-    return {};
-  }
-  // If max exclusive and the node is equal to max, then move to the previous
-  // node
-  if (spec->maxex && Eq(node->key, spec->max)) {
-    node = node->Prev();
-  }
-  size_t i = 0, offset = spec->limit ? spec->limit->offset : 0;
-  std::vector<Key> keys;
-  while (node != head_ &&
-         (spec->minex ? Gt(node->key, spec->min) : Gte(node->key, spec->min))) {
-    // Return the keys if the number reach the limit, only works when the limit
-    // is a non-negative value.
-    if (count.has_value() && keys.size() >= *count) {
-      return keys;
-    }
-    // Add the key if the current rank is larger of equal to the specified
-    // offset.
-    if (i++ >= offset) {
-      keys.push_back(node->key);
-    }
-    node = node->Prev();
-  }
-  return keys;
-}
-
-/*
- * Find number of keys within the given range of keys.
- * The function assumes spec is valid. Should call ValidateRangeKeySpec
- * before calling this function.
- * The result is not related to SkiplistRangeByKeySpec.SkiplistLimitSpec.
- */
-template <typename Key, typename Comparator, typename Destructor>
-size_t Skiplist<Key, Comparator, Destructor>::CountWithValidSpec(
-    const SkiplistRangeByKeySpec* spec) const {
-  const SkiplistNode* node = FindKeyGreaterOrEqual(spec->min);
-  if (!node) {
-    return 0;
-  }
-  // If min exclusive and the node is equal to min, then move to the next node.
-  if (spec->minex && Eq(node->key, spec->min)) {
-    node = node->Next(0);
-  }
-  size_t num = 0;
-  std::vector<Key> keys;
-  while (node &&
-         (spec->maxex ? Lt(node->key, spec->max) : Lte(node->key, spec->max))) {
-    node = node->Next(0);
-    ++num;
-  }
-  return num;
-}
-
-/*
- * Seek to the last Key of the skiplist
- */
-template <typename Key, typename Comparator, typename Destructor>
-const typename Skiplist<Key, Comparator, Destructor>::SkiplistNode*
-Skiplist<Key, Comparator, Destructor>::FindLast() const {
-  const SkiplistNode* node = head_;
-  int l = level_;
-  while (--l >= 0) {
-    while (node->Next(l)) {
-      node = node->Next(l);
-    }
-  }
-  return node;
-}
-
-/*
- * Reset the skiplist to the initial state.
- */
-template <typename Key, typename Comparator, typename Destructor>
-void Skiplist<Key, Comparator, Destructor>::Reset() {
-  SkiplistNode* node = head_->Next(0);
-  while (node) {
-    SkiplistNode* next = node->Next(0);
-    delete node;
-    node = next;
-  }
-  head_->Reset();
-  size_ = 0;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-Skiplist<Key, Comparator, Destructor>::~Skiplist() {
-  Reset();
-  delete head_;
-}
 }  // namespace redis_simple::in_memory
 
 #endif  // REDIS_SIMPLE_MEMORY_SKIPLIST_H_
