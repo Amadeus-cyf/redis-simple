@@ -133,7 +133,7 @@ TEST(DynamicBufferTest, WritableTailCommitsWrittenBytes) {
   char* const tail = buffer.WritableTail(8192);
   ASSERT_GE(buffer.Capacity() - buffer.Size(), 8192);
   constexpr std::string_view kTail = "cd";
-  std::copy(kTail.begin(), kTail.end(), tail);
+  std::ranges::copy(kTail, tail);
   buffer.Commit(kTail.size());
   EXPECT_EQ(buffer.View(), "abcd");
 }

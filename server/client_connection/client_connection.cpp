@@ -23,10 +23,8 @@ constexpr std::string_view kProtectedModeError =
 
 // Returns false once the listener has no more pending connections.
 bool AcceptOne(int listener_fd, Server* const server) {
-  connection::Context ctx;
-  ctx.loop = server->Loop();
-  ctx.fd = -1;
-  auto conn = std::make_unique<connection::Connection>(ctx);
+  auto conn = std::make_unique<connection::Connection>(
+      connection::Context{.loop = server->Loop(), .fd = -1});
   conn->SetState(connection::ConnectionState::kAccepting);
   connection::AddressInfo addr_info;
   if (conn->Accept(listener_fd, &addr_info) ==
@@ -41,7 +39,7 @@ bool AcceptOne(int listener_fd, Server* const server) {
                 addr_info.port);
     // Best effort: the socket is new and empty, so one write normally fits.
     // Dropping `conn` closes it.
-    conn->Write(kProtectedModeError.data(), kProtectedModeError.size());
+    conn->Write(kProtectedModeError);
     return true;
   }
   auto client = Client::Create(std::move(conn), server->Db(), server->Aof());
@@ -64,8 +62,7 @@ bool RejectedByProtectedMode(bool protected_mode, std::string_view password,
     return false;
   }
   // 127.0.0.0/8 is loopback. Connections are IPv4-only today.
-  constexpr std::string_view kLoopbackPrefix = "127.";
-  return client_ip.substr(0, kLoopbackPrefix.size()) != kLoopbackPrefix;
+  return !client_ip.starts_with("127.");
 }
 
 event_loop::CallbackStatus AcceptConnectionCallback(event_loop::Loop* /*loop*/,

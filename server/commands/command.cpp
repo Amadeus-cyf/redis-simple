@@ -163,11 +163,12 @@ static_assert(CommandTableIsSorted(), "command table must remain sorted");
 }  // namespace
 
 const Command* Find(std::string_view name) {
-  const Command* const command =
-      std::lower_bound(kCommandTable.begin(), kCommandTable.end(), name,
-                       [](const Command& command, std::string_view candidate) {
-                         return CompareIgnoreCase(command.name, candidate) < 0;
-                       });
+  const auto* const command = std::ranges::lower_bound(
+      kCommandTable, name,
+      [](std::string_view left, std::string_view right) {
+        return CompareIgnoreCase(left, right) < 0;
+      },
+      &Command::name);
   if (command != kCommandTable.end() &&
       utils::EqualsIgnoreCase(name, command->name)) {
     return command;

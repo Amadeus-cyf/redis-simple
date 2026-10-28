@@ -80,10 +80,7 @@ std::optional<SetReply> SInter(db::RedisDb* const redis_db,
     sets.push_back(lookup.set);
   }
 
-  auto smallest = std::min_element(sets.begin(), sets.end(),
-                                   [](const Set* left, const Set* right) {
-                                     return left->Size() < right->Size();
-                                   });
+  auto smallest = std::ranges::min_element(sets, {}, &Set::Size);
   std::string body;
   size_t count = 0;
   (*smallest)->ForEachMember(

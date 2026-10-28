@@ -55,7 +55,7 @@ std::pair<std::unique_ptr<Client>, ScopedFd> CreateClient(
   auto sockets = CreateSocketPair();
   EXPECT_EQ(tcp::NonBlock(sockets[0].Get()), tcp::TcpStatusCode::kOk);
   auto connection = std::make_unique<connection::Connection>(
-      connection::Context{nullptr, sockets[0].Release()});
+      connection::Context{.loop = nullptr, .fd = sockets[0].Release()});
   connection->SetState(connection::ConnectionState::kConnected);
   return {Client::Create(std::move(connection), TestDb(), nullptr, limits),
           std::move(sockets[1])};
@@ -90,7 +90,7 @@ TEST(ClientTest, ReadQueryReadsOncePerCall) {
   auto sockets = CreateSocketPair();
   ASSERT_EQ(tcp::NonBlock(sockets[0].Get()), tcp::TcpStatusCode::kOk);
   auto connection = std::make_unique<connection::Connection>(
-      connection::Context{nullptr, sockets[0].Release()});
+      connection::Context{.loop = nullptr, .fd = sockets[0].Release()});
   connection->SetState(connection::ConnectionState::kConnected);
   auto client = Client::Create(std::move(connection), TestDb(), nullptr);
 
@@ -301,7 +301,8 @@ TEST(ClientTest, AuthWithoutConfiguredPasswordFails) {
 }
 
 TEST(ClientTest, OutputLimitsControlBackpressure) {
-  auto [client, peer] = CreateClient({4, 8, 16});
+  auto [client, peer] =
+      CreateClient({.resume_bytes = 4, .soft_bytes = 8, .hard_bytes = 16});
   EXPECT_EQ(client->AddReply(std::string_view("12345678")), 8);
   EXPECT_TRUE(client->ShouldPauseReads());
   client->SetReadsPaused(true);
@@ -309,7 +310,8 @@ TEST(ClientTest, OutputLimitsControlBackpressure) {
   EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), "12345678");
   EXPECT_TRUE(client->ShouldResumeReads());
 
-  auto [limited_client, limited_peer] = CreateClient({4, 8, 16});
+  auto [limited_client, limited_peer] =
+      CreateClient({.resume_bytes = 4, .soft_bytes = 8, .hard_bytes = 16});
   (void)limited_peer;
   EXPECT_EQ(limited_client->AddReply(std::string(17, 'x')), 0);
   EXPECT_TRUE(limited_client->ShouldCloseAfterReply());
@@ -317,11 +319,13 @@ TEST(ClientTest, OutputLimitsControlBackpressure) {
 }
 
 TEST(ClientTest, QueuesSplitReplyAtomically) {
-  auto [client, peer] = CreateClient({4, 8, 16});
+  auto [client, peer] =
+      CreateClient({.resume_bytes = 4, .soft_bytes = 8, .hard_bytes = 16});
   EXPECT_EQ(client->AddReply(std::string("header"), std::string("body")), 10);
   EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), "headerbody");
 
-  auto [limited_client, limited_peer] = CreateClient({4, 8, 16});
+  auto [limited_client, limited_peer] =
+      CreateClient({.resume_bytes = 4, .soft_bytes = 8, .hard_bytes = 16});
   (void)limited_peer;
   EXPECT_EQ(limited_client->AddReply(std::string(8, 'h'), std::string(9, 'b')),
             0);

@@ -87,7 +87,7 @@ bool Hash::VisitValue(std::string_view field, Visitor&& visitor) const {
     visitor(std::string_view(value->data(), value->size()));
     return true;
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 template <typename Visitor>
@@ -109,7 +109,7 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
     }
     return true;
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 template <typename Visitor>

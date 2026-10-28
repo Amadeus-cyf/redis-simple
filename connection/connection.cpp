@@ -262,11 +262,10 @@ bool Connection::UnsetWriteCallback() {
   return true;
 }
 
-ssize_t Connection::Read(char* const buffer, size_t readlen) {
-  ssize_t r = -1;
-  r = read(fd_, buffer, readlen);
+ssize_t Connection::Read(std::span<char> buffer) {
+  ssize_t r = read(fd_, buffer.data(), buffer.size());
   while (r < 0 && errno == EINTR) {
-    r = read(fd_, buffer, readlen);
+    r = read(fd_, buffer.data(), buffer.size());
   }
   if (r < 0 && !WouldBlock(errno)) {
     if (state_ == ConnectionState::kConnected) {
@@ -280,12 +279,11 @@ ssize_t Connection::Read(char* const buffer, size_t readlen) {
   return r;
 }
 
-ssize_t Connection::SyncRead(char* buffer, size_t readlen, int64_t timeout_ms) {
+ssize_t Connection::SyncRead(std::span<char> buffer, int64_t timeout_ms) {
   // Try the syscall first so already-ready sockets avoid an extra poll().
-  ssize_t r = -1;
-  r = read(fd_, buffer, readlen);
+  ssize_t r = read(fd_, buffer.data(), buffer.size());
   while (r < 0 && errno == EINTR) {
-    r = read(fd_, buffer, readlen);
+    r = read(fd_, buffer.data(), buffer.size());
   }
   if (r >= 0) {
     return r;
@@ -296,14 +294,13 @@ ssize_t Connection::SyncRead(char* buffer, size_t readlen, int64_t timeout_ms) {
   if (WaitRead(timeout_ms) < 0) {
     return -1;
   }
-  return Read(buffer, readlen);
+  return Read(buffer);
 }
 
-ssize_t Connection::Write(const char* buffer, size_t len) {
-  ssize_t n = -1;
-  n = write(fd_, buffer, len);
+ssize_t Connection::Write(std::span<const char> data) {
+  ssize_t n = write(fd_, data.data(), data.size());
   while (n < 0 && errno == EINTR) {
-    n = write(fd_, buffer, len);
+    n = write(fd_, data.data(), data.size());
   }
   if (n < 0 && !WouldBlock(errno)) {
     if (state_ == ConnectionState::kConnected) {
@@ -315,12 +312,12 @@ ssize_t Connection::Write(const char* buffer, size_t len) {
   return n;
 }
 
-ssize_t Connection::SyncWrite(const char* buffer, size_t len,
+ssize_t Connection::SyncWrite(std::span<const char> data,
                               int64_t timeout_ms) const {
   size_t total_written = 0;
-  while (total_written < len) {
-    const ssize_t written =
-        write(fd_, buffer + total_written, len - total_written);
+  while (total_written < data.size()) {
+    const std::span<const char> rest = data.subspan(total_written);
+    const ssize_t written = write(fd_, rest.data(), rest.size());
     if (written > 0) {
       total_written += static_cast<size_t>(written);
       continue;
@@ -341,7 +338,7 @@ ssize_t Connection::SyncWrite(const char* buffer, size_t len,
   return static_cast<ssize_t>(total_written);
 }
 
-ssize_t Connection::WriteVector(const std::vector<iovec>& blocks) {
+ssize_t Connection::WriteVector(std::span<const iovec> blocks) {
   if (blocks.empty()) {
     return 0;
   }

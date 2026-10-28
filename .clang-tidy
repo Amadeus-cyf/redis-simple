@@ -1,3 +1,9 @@
+# modernize-use-designated-initializers is off: it asks for field names on
+# every aggregate, including short returns such as `return {kOk, 0};` and
+# rows of test-case tables, where they add noise. Use designated initializers
+# where naming the fields makes the code clearer.
+# modernize-use-std-print is off: std::print needs GCC 14 or a recent libc++,
+# newer than the minimum compilers in README.md.
 Checks: >
   bugprone-*,
   clang-analyzer-*,
@@ -17,6 +23,8 @@ Checks: >
   -cppcoreguidelines-pro-type-vararg,
   -bugprone-easily-swappable-parameters,
   -modernize-avoid-c-arrays,
+  -modernize-use-designated-initializers,
+  -modernize-use-std-print,
   -modernize-use-trailing-return-type,
   -readability-function-cognitive-complexity,
   -readability-identifier-length,

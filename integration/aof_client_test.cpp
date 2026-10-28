@@ -79,7 +79,7 @@ bool WriteDataset(cli::RedisCli* const cli) {
       {"HSET aof_string field rejected\r\n",
        "WRONGTYPE Operation against a key holding the wrong kind of value\n"},
   };
-  if (!std::all_of(cases.begin(), cases.end(), [cli](const auto& test_case) {
+  if (!std::ranges::all_of(cases, [cli](const auto& test_case) {
         return ExpectReply(cli, test_case);
       })) {
     return false;
@@ -108,15 +108,14 @@ bool RewriteDataset(cli::RedisCli* const cli) {
       {"MSET aof_mset_one updated aof_mset_two changed\r\n", "OK\n"},
       {"RENAME aof_rename_source aof_rename_target\r\n", "OK\n"},
   };
-  if (!std::all_of(cases.begin(), cases.end(), [cli](const auto& test_case) {
+  if (!std::ranges::all_of(cases, [cli](const auto& test_case) {
         return ExpectReply(cli, test_case);
       })) {
     return false;
   }
   cli->AddCommand("INFO persistence\r\n");
   const std::string info = cli->ReadReply();
-  return info.find("aof_enabled:1") != std::string::npos &&
-         info.find("aof_current_size:") != std::string::npos;
+  return info.contains("aof_enabled:1") && info.contains("aof_current_size:");
 }
 
 bool ReadDataset(cli::RedisCli* const cli) {
@@ -144,7 +143,7 @@ bool ReadDataset(cli::RedisCli* const cli) {
       {"GET aof_deleted\r\n", "(nil)\n"},
       {"GET aof_history\r\n", std::string(256, 'x') + "\n"},
   };
-  if (!std::all_of(cases.begin(), cases.end(), [cli](const auto& test_case) {
+  if (!std::ranges::all_of(cases, [cli](const auto& test_case) {
         return ExpectReply(cli, test_case);
       })) {
     return false;
@@ -178,8 +177,8 @@ bool WriteAutoRewriteDataset(cli::RedisCli* const cli) {
   for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
     cli->AddCommand("INFO persistence\r\n");
     const std::string info = cli->ReadReply();
-    if (info.find("aof_rewrite_in_progress:0") != std::string::npos &&
-        info.find("aof_last_bgrewrite_status:ok") != std::string::npos) {
+    if (info.contains("aof_rewrite_in_progress:0") &&
+        info.contains("aof_last_bgrewrite_status:ok")) {
       return true;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));

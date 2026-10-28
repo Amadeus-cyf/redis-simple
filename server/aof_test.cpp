@@ -30,7 +30,7 @@ class TempFile {
   TempFile() {
     constexpr std::string_view kTemplate = "/tmp/redis_simple_aof_XXXXXX";
     std::array<char, kTemplate.size() + 1> path{};
-    std::copy(kTemplate.begin(), kTemplate.end(), path.begin());
+    std::ranges::copy(kTemplate, path.begin());
     const int fd = mkstemp(path.data());
     if (fd < 0) {
       throw std::runtime_error("failed to create temporary AOF");
@@ -124,10 +124,10 @@ class TestFileOps final : public FileOps {
 
  private:
   size_t max_write_size_{std::numeric_limits<size_t>::max()};
-  std::atomic<bool> fail_write_{};
-  std::atomic<bool> fail_write_vector_{};
-  std::atomic<bool> fail_rename_{};
-  std::atomic<int> sync_calls_{};
+  std::atomic<bool> fail_write_;
+  std::atomic<bool> fail_write_vector_;
+  std::atomic<bool> fail_rename_;
+  std::atomic<int> sync_calls_;
   std::atomic<int> fail_sync_call_{-1};
 };
 

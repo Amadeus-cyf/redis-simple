@@ -2,6 +2,7 @@
 #define REDIS_SIMPLE_MEMORY_SKIPLIST_H_
 
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -29,10 +30,30 @@ const auto kDefaultCompare = [](const Key& k1, const Key& k2) {
 template <typename Key>
 const auto kDefaultDestructor = [](const Key&) {};
 
+// A Skiplist comparator orders two keys like strcmp: negative, zero, or
+// positive.
+template <typename Comparator, typename Key>
+concept SkiplistComparatorFor =
+    std::copy_constructible<Comparator> &&
+    requires(const Comparator& compare, const Key& left, const Key& right) {
+      { compare(left, right) } -> std::convertible_to<int>;
+    };
+
+// A Skiplist destructor releases whatever a key owns when its node is freed.
+template <typename Destructor, typename Key>
+concept SkiplistDestructorFor = std::copy_constructible<Destructor> &&
+                                std::invocable<const Destructor&, const Key&>;
+
 template <typename Key, typename Comparator = decltype(kDefaultCompare<Key>),
           typename Destructor = decltype(kDefaultDestructor<Key>)>
-
 class Skiplist {
+  // Checked here rather than on the template parameters so the out-of-line
+  // member definitions keep their short template heads.
+  static_assert(SkiplistComparatorFor<Comparator, Key>,
+                "Comparator must order two const Key& keys as an int");
+  static_assert(SkiplistDestructorFor<Destructor, Key>,
+                "Destructor must accept a const Key&");
+
  private:
   struct SkiplistLevel;
   class SkiplistNode;
@@ -253,8 +274,7 @@ class Skiplist<Key, Comparator, Destructor>::Iterator {
   Iterator& operator--();
   // Move to the previous node in the list.
   Iterator& operator++();
-  bool operator==(const Iterator& it) const;
-  bool operator!=(const Iterator& it) const;
+  bool operator==(const Iterator& it) const = default;
   const Key& operator*() const;
 
  private:
@@ -310,18 +330,6 @@ typename Skiplist<Key, Comparator, Destructor>::Iterator&
 Skiplist<Key, Comparator, Destructor>::Iterator::operator--() {
   node_ = node_->Prev();
   return *this;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Iterator::operator==(
-    const Iterator& it) const {
-  return skiplist_ == it.skiplist_ && node_ == it.node_;
-}
-
-template <typename Key, typename Comparator, typename Destructor>
-bool Skiplist<Key, Comparator, Destructor>::Iterator::operator!=(
-    const Iterator& it) const {
-  return !((*this) == it);
 }
 
 template <typename Key, typename Comparator, typename Destructor>

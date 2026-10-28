@@ -31,7 +31,7 @@ int Run() {
   }
 
   cli.AddCommand(std::vector<std::string_view>{"HELLO", "3"});
-  if (cli.ReadReply().find("proto\n3\n") == std::string::npos) {
+  if (!cli.ReadReply().contains("proto\n3\n")) {
     RS_LOG_DEBUG("failed to negotiate RESP3\n");
     return EXIT_FAILURE;
   }
@@ -70,8 +70,8 @@ int Run() {
   }
   cli.AddCommand(std::vector<std::string_view>{"INFO", "persistence"});
   const std::string persistence_info = cli.ReadReply();
-  if (persistence_info.find("aof_enabled:0") == std::string::npos ||
-      persistence_info.find("aof_last_error:none") == std::string::npos) {
+  if (!persistence_info.contains("aof_enabled:0") ||
+      !persistence_info.contains("aof_last_error:none")) {
     RS_LOG_DEBUG("unexpected persistence info: %s\n", persistence_info.c_str());
     return EXIT_FAILURE;
   }

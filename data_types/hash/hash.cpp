@@ -35,7 +35,7 @@ bool Hash::Set(std::string_view field, std::string_view value) {
   if (encoding_ == Encoding::kDict) {
     return SetDict(field, value);
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 std::optional<std::string> Hash::Get(std::string_view field) const {
@@ -58,7 +58,7 @@ bool Hash::Delete(std::string_view field) {
   if (encoding_ == Encoding::kDict) {
     return dict_->Delete(field);
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 bool Hash::Exists(std::string_view field) const {
@@ -68,7 +68,7 @@ bool Hash::Exists(std::string_view field) const {
   if (encoding_ == Encoding::kDict) {
     return dict_->FindValue(std::string_view(field)) != nullptr;
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 size_t Hash::Size() const {
@@ -78,7 +78,7 @@ size_t Hash::Size() const {
   if (encoding_ == Encoding::kDict) {
     return dict_ == nullptr ? 0 : dict_->Size();
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 std::vector<Hash::Entry> Hash::Entries() const {

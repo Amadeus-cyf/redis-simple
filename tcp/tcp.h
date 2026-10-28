@@ -14,17 +14,9 @@ enum class TcpStatusCode {
 };
 
 constexpr int ToInt(TcpStatusCode status) { return static_cast<int>(status); }
+// C++20 derives the reversed and != forms from this operator.
 constexpr bool operator==(int value, TcpStatusCode status) {
   return value == ToInt(status);
-}
-constexpr bool operator!=(int value, TcpStatusCode status) {
-  return value != ToInt(status);
-}
-constexpr bool operator==(TcpStatusCode status, int value) {
-  return value == status;
-}
-constexpr bool operator!=(TcpStatusCode status, int value) {
-  return value != status;
 }
 
 struct TcpAddrInfo {

@@ -139,7 +139,7 @@ ssize_t Client::ReadQuery() {
   const size_t read_size =
       std::clamp(pending_bulk, kReadBufferSize, kMaxBulkReadSize);
   char* const tail = query_buf_.WritableTail(read_size);
-  const ssize_t nread = connection_->Read(tail, read_size);
+  const ssize_t nread = connection_->Read({tail, read_size});
   if (nread == 0) {
     return 0;
   }
@@ -167,8 +167,8 @@ ssize_t Client::SendBufferReply() {
       reply_length, static_cast<size_t>(std::numeric_limits<int>::max())));
   RS_LOG_DEBUG("_sendReply %.*s %zu\n", logged_length,
                reply_buf_.UnsentBuffer(), reply_length);
-  ssize_t nwritten =
-      connection_->Write(reply_buf_.UnsentBuffer(), reply_buf_.UnsentLength());
+  ssize_t nwritten = connection_->Write(
+      {reply_buf_.UnsentBuffer(), reply_buf_.UnsentLength()});
   if (nwritten < 0) {
     return -1;
   }

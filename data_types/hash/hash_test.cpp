@@ -44,7 +44,7 @@ TEST(HashTest, EntriesIncludesAllPairs) {
   EXPECT_FALSE(hash->Set("beta", "updated"));
 
   std::vector<Hash::Entry> entries = hash->Entries();
-  std::sort(entries.begin(), entries.end(), EntryLess);
+  std::ranges::sort(entries, EntryLess);
 
   ASSERT_EQ(entries.size(), 2);
   EXPECT_EQ(entries[0].field, "alpha");
@@ -93,11 +93,9 @@ TEST(HashEncodingTest, ConvertsToDictWhenFieldOrValueIsLong) {
 
   const std::vector<Hash::Entry> entries = hash->Entries();
   const auto field_entry =
-      std::find_if(entries.begin(), entries.end(),
-                   [](const auto& entry) { return entry.field == "field"; });
-  const auto long_field_entry = std::find_if(
-      entries.begin(), entries.end(),
-      [&](const auto& entry) { return entry.field == long_field; });
+      std::ranges::find(entries, "field", &Hash::Entry::field);
+  const auto long_field_entry =
+      std::ranges::find(entries, long_field, &Hash::Entry::field);
 
   ASSERT_EQ(entries.size(), 2);
   ASSERT_NE(field_entry, entries.end());

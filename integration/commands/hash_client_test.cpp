@@ -56,8 +56,8 @@ bool ExpectPairs(
   for (size_t i = 0; i < lines.size(); i += 2) {
     actual_pairs.emplace_back(lines[i], lines[i + 1]);
   }
-  std::sort(actual_pairs.begin(), actual_pairs.end());
-  std::sort(expected_pairs.begin(), expected_pairs.end());
+  std::ranges::sort(actual_pairs);
+  std::ranges::sort(expected_pairs);
   if (actual_pairs != expected_pairs) {
     RS_LOG_DEBUG("hash pair command failed: %s\n", command.c_str());
     return false;
@@ -69,8 +69,8 @@ bool ExpectMembers(cli::RedisCli* cli, const std::string& command,
                    std::vector<std::string> expected_members) {
   cli->AddCommand(command);
   std::vector<std::string> actual_members = NonEmptyLines(cli->ReadReply());
-  std::sort(actual_members.begin(), actual_members.end());
-  std::sort(expected_members.begin(), expected_members.end());
+  std::ranges::sort(actual_members);
+  std::ranges::sort(expected_members);
   if (actual_members != expected_members) {
     RS_LOG_DEBUG("hash member command failed: %s\n", command.c_str());
     return false;
@@ -179,7 +179,7 @@ int Run() {
   }
 
   cli.AddCommand(std::vector<std::string_view>{"HELLO", "3"});
-  if (cli.ReadReply().find("proto\n3\n") == std::string::npos) {
+  if (!cli.ReadReply().contains("proto\n3\n")) {
     RS_LOG_DEBUG("failed to negotiate RESP3\n");
     return EXIT_FAILURE;
   }

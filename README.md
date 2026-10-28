@@ -1,7 +1,7 @@
 # redis-simple
 
 `redis-simple` is a compact Redis-compatible server implemented in modern
-C++17. It includes a TCP server, event loop, command handlers, in-memory data
+C++23. It includes a TCP server, event loop, command handlers, in-memory data
 structures, optional append-only persistence, a simple CLI client, unit tests,
 integration tests, and memory benchmarks. The executable remains
 `redis_simple`.
@@ -13,7 +13,7 @@ to the code they cover, while runnable end-to-end checks live under
 ## Requirements
 
 - CMake 3.21+
-- A C++17 compiler
+- A C++23 compiler (GCC 13+, Clang 17+, or Apple Clang 15+)
 - Git submodules for third-party dependencies
 - macOS (`kqueue`) or Linux (`epoll`) for the event-loop poller
 

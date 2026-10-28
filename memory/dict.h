@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <climits>
+#include <concepts>
 #include <cstddef>
 #include <functional>
 #include <limits>
@@ -46,11 +48,30 @@ struct DictKeyEqual<std::string> {
   }
 };
 
+// A Dict hash policy maps a key to a bucket hash.
+template <typename Hash, typename K>
+concept DictHashFor =
+    std::copy_constructible<Hash> && requires(const Hash& hash, const K& key) {
+      { hash(key) } -> std::convertible_to<size_t>;
+    };
+
+// A Dict equality policy decides whether two keys are the same entry.
+template <typename KeyEqual, typename K>
+concept DictKeyEqualFor = std::copy_constructible<KeyEqual> &&
+                          std::predicate<const KeyEqual&, const K&, const K&>;
+
 // Incrementally rehashed chained hash table modeled on Redis' dict. The
 // policies are template parameters so hashing and comparison inline.
 template <typename K, typename V, typename Hash = DictHash<K>,
           typename KeyEqual = DictKeyEqual<K>>
 class Dict {
+  // Checked here rather than on the template parameters so the out-of-line
+  // member definitions keep their short template heads.
+  static_assert(DictHashFor<Hash, K>,
+                "Hash must map a const K& to a size_t hash");
+  static_assert(DictKeyEqualFor<KeyEqual, K>,
+                "KeyEqual must compare two const K& keys");
+
  public:
   class Iterator;
   static std::unique_ptr<Dict> Create();
@@ -157,8 +178,7 @@ class Dict<K, V, Hash, KeyEqual>::Iterator {
  public:
   explicit Iterator(const Dict* dict);
   Iterator& operator=(const Iterator& it) = default;
-  bool operator==(const Iterator& it) const;
-  bool operator!=(const Iterator& it) const;
+  bool operator==(const Iterator& it) const = default;
   bool Valid() const;
   void SeekToFirst();
   void SeekToLast();
@@ -178,19 +198,6 @@ class Dict<K, V, Hash, KeyEqual>::Iterator {
 template <typename K, typename V, typename Hash, typename KeyEqual>
 Dict<K, V, Hash, KeyEqual>::Iterator::Iterator(const Dict* dict)
     : dict_(dict), table_(0), idx_(std::nullopt), entry_(nullptr) {}
-
-template <typename K, typename V, typename Hash, typename KeyEqual>
-bool Dict<K, V, Hash, KeyEqual>::Iterator::operator==(
-    const Iterator& it) const {
-  return dict_ == it.dict_ && table_ == it.table_ && idx_ == it.idx_ &&
-         entry_ == it.entry_;
-}
-
-template <typename K, typename V, typename Hash, typename KeyEqual>
-bool Dict<K, V, Hash, KeyEqual>::Iterator::operator!=(
-    const Iterator& it) const {
-  return !((*this) == it);
-}
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
 bool Dict<K, V, Hash, KeyEqual>::Iterator::Valid() const {
@@ -551,14 +558,13 @@ bool Dict<K, V, Hash, KeyEqual>::Resize(size_t size) {
   if (IsRehashing()) {
     return false;
   }
-  size_t new_size = kTableInitSize;
-  while (new_size < size) {
-    if (new_size >
-        std::numeric_limits<size_t>::max() / 2 / sizeof(DictEntry*)) {
-      return false;
-    }
-    new_size *= 2;
+  // Largest power-of-two bucket count whose table size fits in size_t.
+  constexpr size_t kMaxTableSize =
+      std::bit_floor(std::numeric_limits<size_t>::max() / sizeof(DictEntry*));
+  if (size > kMaxTableSize) {
+    return false;
   }
+  const size_t new_size = std::max(kTableInitSize, std::bit_ceil(size));
   if (new_size == TableSize(0)) {
     return false;
   }

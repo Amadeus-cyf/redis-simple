@@ -44,10 +44,7 @@ class IntSet {
 class IntSet::Iterator {
  public:
   explicit Iterator(const IntSet* intset) : intset_(intset), idx_(0) {}
-  bool operator==(const Iterator& it) {
-    return intset_ == it.intset_ && idx_ == it.idx_;
-  }
-  bool operator!=(const Iterator& it) { return !((*this) == it); }
+  bool operator==(const Iterator& it) const = default;
   // Return true if the iterator is positioned at a valid element.
   bool Valid() const { return idx_ < intset_->Size(); }
   // Position at the first element.

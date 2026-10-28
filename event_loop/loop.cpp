@@ -21,7 +21,7 @@
 
 #ifdef __APPLE__
 #include "event_loop/kqueue_poller.h"
-#elif defined(__linux__)
+#elifdef __linux__
 #include "event_loop/epoll_poller.h"
 #else
 #error "Unsupported event loop platform"
@@ -106,7 +106,7 @@ Loop::Loop(std::unique_ptr<EventPoller> event_poller)
 std::unique_ptr<Loop> Loop::Create() {
 #ifdef __APPLE__
   auto event_poller = KqueuePoller::Create(kMaxReadyEvents);
-#elif defined(__linux__)
+#elifdef __linux__
   auto event_poller = EpollPoller::Create(kMaxReadyEvents);
 #endif
   if (!event_poller) {
