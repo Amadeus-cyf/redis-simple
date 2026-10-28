@@ -21,24 +21,33 @@ namespace redis_simple::in_memory {
 // Redis skiplists begin with one level and promote at a probability of 0.25.
 inline constexpr size_t kInitSkiplistLevel = 1;
 
-// Orders a key against a key, or against another lookup type, with a
-// three-way comparison. Any ordering category works (strong, weak, or
-// partial); the skiplist only tests results against zero.
-template <typename Compare, typename Key, typename Lookup = Key>
+// Orders a stored key against a probe with a three-way comparison. A probe is
+// a Key or any other type Compare accepts. Any ordering category works
+// (strong, weak, or partial); the skiplist only tests results against zero.
+template <typename Compare, typename Key, typename Probe = Key>
 concept SkiplistCompareFor =
     std::copy_constructible<Compare> &&
-    requires(const Compare& compare, const Key& key, const Lookup& lookup) {
-      { compare(key, lookup) } -> std::convertible_to<std::partial_ordering>;
+    requires(const Compare& compare, const Key& key, const Probe& probe) {
+      { compare(key, probe) } -> std::convertible_to<std::partial_ordering>;
     };
 
 // Sorted set of unique keys with O(log n) insert, delete, rank lookup, and
 // range queries, following Redis' zskiplist.
 //
-// Lookups and range bounds may use any type that Compare can compare a Key
-// against, so callers can search without building a full Key: a sorted set
-// ordered by (score, member) can search by score alone. Keys live in nodes
-// that never move, so references to them stay valid until that key is
-// deleted, updated, or the skiplist is cleared.
+// Searches take a probe: a Key, or any type Compare can compare a Key against,
+// so callers can search without building a full Key. A probe is used in one of
+// two roles:
+//  - A lookup (Contains, Delete, Update, FindRankOfKey) must compare equal to
+//    at most one stored key, so it carries every field the order uses. A
+//    sorted set ordered by (score, member) looks members up by both.
+//  - A range bound (KeyRange) marks a position and may compare equal to many
+//    keys or none. That sorted set ranges over scores with a bare double.
+// Either way, comparing keys against a probe must agree with key order: keys
+// below the probe all come before keys equal to it, which come before keys
+// above it.
+//
+// Keys live in nodes that never move, so references to them stay valid until
+// that key is deleted, updated, or the skiplist is cleared.
 template <typename Key,
           SkiplistCompareFor<Key> Compare = std::compare_three_way>
   requires std::default_initializable<Key>
@@ -55,20 +64,20 @@ class Skiplist {
   struct RankRange {
     size_t min{};
     size_t max{};
-    bool minex{};
-    bool maxex{};
+    bool min_exclusive{};
+    bool max_exclusive{};
     std::optional<Limit> limit;
     bool reverse{};
   };
 
-  // Bounds are keys or any lookup type Compare accepts. With `reverse`, keys
-  // are visited in descending order, still between `min` and `max`.
-  template <typename Bound>
+  // Bounds are probes in the range-bound role. With `reverse`, keys are
+  // visited in descending order, still between `min` and `max`.
+  template <typename Probe>
   struct KeyRange {
-    Bound min;
-    Bound max;
-    bool minex{};
-    bool maxex{};
+    Probe min;
+    Probe max;
+    bool min_exclusive{};
+    bool max_exclusive{};
     std::optional<Limit> limit;
     bool reverse{};
   };
@@ -88,9 +97,7 @@ class Skiplist {
   Iterator End() const { return Iterator(nullptr); }
   // Iterator at the last key, or End() if empty.
   Iterator Last() const {
-    const Node* const node =
-        LastWhere([](const Key& /*key*/) { return true; }).node;
-    return Iterator(node == head_.get() ? nullptr : node);
+    return Iterator(LastNodeWhere([](const Key& /*key*/) { return true; }));
   }
 
   // Inserts `key` unless an equal key exists. Returns the stored key.
@@ -125,22 +132,22 @@ class Skiplist {
     return node.release()->key;
   }
 
-  // Lookups accept a Key, which literals and other convertible values become
-  // implicitly, or any type Compare can compare a Key against.
+  // Each lookup has a `const Key&` overload so that literals and other values
+  // convertible to Key still work; it forwards to the probe overload.
   bool Contains(const Key& key) const { return Contains<Key>(key); }
-  template <typename Lookup>
-    requires SkiplistCompareFor<Compare, Key, Lookup>
-  bool Contains(const Lookup& key) const {
-    return Find(key) != nullptr;
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  bool Contains(const Probe& lookup) const {
+    return Find(lookup) != nullptr;
   }
 
   bool Delete(const Key& key) { return Delete<Key>(key); }
-  template <typename Lookup>
-    requires SkiplistCompareFor<Compare, Key, Lookup>
-  bool Delete(const Lookup& key) {
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  bool Delete(const Probe& lookup) {
     Path path;
-    Node* const node = FindPath(key, &path);
-    if (node == nullptr || compare_(node->key, key) != 0) {
+    Node* const node = FindWithPath(lookup, &path);
+    if (node == nullptr) {
       return false;
     }
     Unlink(node, path);
@@ -148,22 +155,22 @@ class Skiplist {
     return true;
   }
 
-  // Applies `update` to the stored key equal to `key`, then moves it if its
-  // position changed. The updated key must not equal another stored key.
-  // Returns false if no key equals `key`.
+  // Applies `mutation` to the stored key equal to `lookup`, then moves the key
+  // if its position changed. The changed key must not equal another stored
+  // key. Returns false if no key equals `lookup`.
   template <std::invocable<Key&> Mutation>
-  bool Update(const Key& key, Mutation&& update) {
-    return Update<Key>(key, std::forward<Mutation>(update));
+  bool Update(const Key& key, Mutation&& mutation) {
+    return Update<Key>(key, std::forward<Mutation>(mutation));
   }
-  template <typename Lookup, std::invocable<Key&> Mutation>
-    requires SkiplistCompareFor<Compare, Key, Lookup>
-  bool Update(const Lookup& key, Mutation&& update) {
+  template <typename Probe, std::invocable<Key&> Mutation>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  bool Update(const Probe& lookup, Mutation&& mutation) {
     Path path;
-    Node* const node = FindPath(key, &path);
-    if (node == nullptr || compare_(node->key, key) != 0) {
+    Node* const node = FindWithPath(lookup, &path);
+    if (node == nullptr) {
       return false;
     }
-    std::invoke(std::forward<Mutation>(update), node->key);
+    std::invoke(std::forward<Mutation>(mutation), node->key);
     const Node* const next = node->levels[0].next;
     const bool in_place =
         (node->prev == nullptr || compare_(node->prev->key, node->key) < 0) &&
@@ -189,17 +196,17 @@ class Skiplist {
     return node->key;
   }
 
-  // Returns the 0-based rank of the key equal to `key`.
+  // Returns the 0-based rank of the key equal to `lookup`.
   std::optional<size_t> FindRankOfKey(const Key& key) const {
     return FindRankOfKey<Key>(key);
   }
-  template <typename Lookup>
-    requires SkiplistCompareFor<Compare, Key, Lookup>
-  std::optional<size_t> FindRankOfKey(const Lookup& key) const {
-    const auto [before, rank] =
-        LastWhere([&](const Key& stored) { return compare_(stored, key) < 0; });
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  std::optional<size_t> FindRankOfKey(const Probe& lookup) const {
+    const auto [before, rank] = LastWhere(
+        [&](const Key& stored) { return compare_(stored, lookup) < 0; });
     const Node* const next = before->levels[0].next;
-    if (next == nullptr || compare_(next->key, key) != 0) {
+    if (next == nullptr || compare_(next->key, lookup) != 0) {
       return std::nullopt;
     }
     return rank;
@@ -208,11 +215,12 @@ class Skiplist {
   // Calls `visitor(const Key&)` for each key in the rank range.
   template <std::invocable<const Key&> Visitor>
   void ForEachInRange(const RankRange& range, Visitor&& visitor) const {
-    const size_t first = range.min + (range.minex ? 1 : 0);
-    if (first >= size_ || range.max < first + (range.maxex ? 1 : 0)) {
+    const size_t first = range.min + (range.min_exclusive ? 1 : 0);
+    if (first >= size_ || range.max < first + (range.max_exclusive ? 1 : 0)) {
       return;
     }
-    const size_t last = std::min(range.max - (range.maxex ? 1 : 0), size_ - 1);
+    const size_t last =
+        std::min(range.max - (range.max_exclusive ? 1 : 0), size_ - 1);
     size_t remaining = last - first + 1;
     const Node* const start =
         NodeAtRank(range.reverse ? size_ - 1 - first : first);
@@ -222,37 +230,28 @@ class Skiplist {
   }
 
   // Calls `visitor(const Key&)` for each key in the key range.
-  template <typename Bound, std::invocable<const Key&> Visitor>
-    requires SkiplistCompareFor<Compare, Key, Bound>
-  void ForEachInRange(const KeyRange<Bound>& range, Visitor&& visitor) const {
+  template <typename Probe, std::invocable<const Key&> Visitor>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  void ForEachInRange(const KeyRange<Probe>& range, Visitor&& visitor) const {
+    const auto below_min = BelowMin(range);
+    const auto within_max = WithinMax(range);
     if (range.reverse) {
       Walk(
-          LastAtOrBelow(range.max, !range.maxex), true, range.limit,
-          [&](const Key& key) {
-            return AtOrAbove(key, range.min, !range.minex);
-          },
-          visitor);
+          LastNodeWhere(within_max), /*reverse=*/true, range.limit,
+          [&](const Key& key) { return !below_min(key); }, visitor);
     } else {
-      Walk(
-          FirstAtOrAbove(range.min, !range.minex), false, range.limit,
-          [&](const Key& key) {
-            return AtOrBelow(key, range.max, !range.maxex);
-          },
-          visitor);
+      Walk(FirstNodeWhereNot(below_min), /*reverse=*/false, range.limit,
+           within_max, visitor);
     }
   }
 
   // Counts the keys in a key range, ignoring its limit, in O(log n).
-  template <typename Bound>
-    requires SkiplistCompareFor<Compare, Key, Bound>
-  size_t Count(const KeyRange<Bound>& range) const {
-    const size_t below = LastWhere([&](const Key& key) {
-                           return !AtOrAbove(key, range.min, !range.minex);
-                         }).rank;
-    const size_t through = LastWhere([&](const Key& key) {
-                             return AtOrBelow(key, range.max, !range.maxex);
-                           }).rank;
-    return through > below ? through - below : 0;
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  size_t Count(const KeyRange<Probe>& range) const {
+    const size_t below_min = LastWhere(BelowMin(range)).rank;
+    const size_t through_max = LastWhere(WithinMax(range)).rank;
+    return through_max > below_min ? through_max - below_min : 0;
   }
 
   // Convenience wrappers that copy the matching keys.
@@ -261,8 +260,9 @@ class Skiplist {
     ForEachInRange(range, [&keys](const Key& key) { keys.push_back(key); });
     return keys;
   }
-  template <typename Bound>
-  std::vector<Key> RangeByKey(const KeyRange<Bound>& range) const {
+  template <typename Probe>
+    requires SkiplistCompareFor<Compare, Key, Probe>
+  std::vector<Key> RangeByKey(const KeyRange<Probe>& range) const {
     std::vector<Key> keys;
     ForEachInRange(range, [&keys](const Key& key) { keys.push_back(key); });
     return keys;
@@ -327,9 +327,11 @@ class Skiplist {
     return level;
   }
 
-  // Walks to the last node whose key satisfies `before`, which must hold for
-  // a prefix of the keys.
-  template <typename Before>
+  // Search primitives. `before` must hold for a prefix of the keys in order
+  // and fail for the rest, which is what probe ordering guarantees.
+
+  // Walks to the last node whose key satisfies `before`; the head if none.
+  template <std::predicate<const Key&> Before>
   Position LastWhere(Before&& before) const {
     const Node* node = head_.get();
     size_t rank = 0;
@@ -343,14 +345,28 @@ class Skiplist {
     return {.node = node, .rank = rank};
   }
 
-  // Records the path to the first key not below `key` and returns that node.
-  template <typename Lookup>
-  Node* FindPath(const Lookup& key, Path* path) const {
+  // The last node satisfying `before`, or null if none does.
+  template <std::predicate<const Key&> Before>
+  const Node* LastNodeWhere(Before&& before) const {
+    const Node* const node = LastWhere(std::forward<Before>(before)).node;
+    return node == head_.get() ? nullptr : node;
+  }
+
+  // The first node not satisfying `before`, or null if every node does.
+  template <std::predicate<const Key&> Before>
+  const Node* FirstNodeWhereNot(Before&& before) const {
+    return LastWhere(std::forward<Before>(before)).node->levels[0].next;
+  }
+
+  // Like LastWhere for keys below `probe`, but also records the path for
+  // relinking. Returns the first node not below `probe`.
+  template <typename Probe>
+  Node* FindPath(const Probe& probe, Path* path) const {
     Node* node = head_.get();
     for (size_t i = level_; i-- > 0;) {
       path->rank[i] = i + 1 == level_ ? 0 : path->rank[i + 1];
       while (node->levels[i].next != nullptr &&
-             compare_(node->levels[i].next->key, key) < 0) {
+             compare_(node->levels[i].next->key, probe) < 0) {
         path->rank[i] += node->levels[i].span;
         node = node->levels[i].next;
       }
@@ -359,13 +375,19 @@ class Skiplist {
     return node->levels[0].next;
   }
 
-  template <typename Lookup>
-  const Node* Find(const Lookup& key) const {
-    const Node* const next =
-        LastWhere([&](const Key& stored) { return compare_(stored, key) < 0; })
-            .node->levels[0]
-            .next;
-    return next != nullptr && compare_(next->key, key) == 0 ? next : nullptr;
+  // The node equal to `lookup` with its path recorded, or null.
+  template <typename Probe>
+  Node* FindWithPath(const Probe& lookup, Path* path) const {
+    Node* const node = FindPath(lookup, path);
+    return node != nullptr && compare_(node->key, lookup) == 0 ? node : nullptr;
+  }
+
+  // The node equal to `lookup`, or null.
+  template <typename Probe>
+  const Node* Find(const Probe& lookup) const {
+    const Node* const node = FirstNodeWhereNot(
+        [&](const Key& key) { return compare_(key, lookup) < 0; });
+    return node != nullptr && compare_(node->key, lookup) == 0 ? node : nullptr;
   }
 
   // Removes `node` from every level; the caller owns it afterwards.
@@ -406,38 +428,28 @@ class Skiplist {
     return nullptr;
   }
 
-  template <typename Bound>
-  bool AtOrAbove(const Key& key, const Bound& bound, bool inclusive) const {
-    const auto order = compare_(key, bound);
-    return inclusive ? order >= 0 : order > 0;
+  // Whether a key falls before the range's lower bound; holds for a prefix.
+  template <typename Probe>
+  auto BelowMin(const KeyRange<Probe>& range) const {
+    return [this, &range](const Key& key) {
+      const auto order = compare_(key, range.min);
+      return !(range.min_exclusive ? order > 0 : order >= 0);
+    };
   }
 
-  template <typename Bound>
-  bool AtOrBelow(const Key& key, const Bound& bound, bool inclusive) const {
-    const auto order = compare_(key, bound);
-    return inclusive ? order <= 0 : order < 0;
-  }
-
-  template <typename Bound>
-  const Node* FirstAtOrAbove(const Bound& bound, bool inclusive) const {
-    return LastWhere([&](const Key& key) {
-             return !AtOrAbove(key, bound, inclusive);
-           })
-        .node->levels[0]
-        .next;
-  }
-
-  template <typename Bound>
-  const Node* LastAtOrBelow(const Bound& bound, bool inclusive) const {
-    const Node* const node = LastWhere([&](const Key& key) {
-                               return AtOrBelow(key, bound, inclusive);
-                             }).node;
-    return node == head_.get() ? nullptr : node;
+  // Whether a key is at or before the range's upper bound; holds for a prefix.
+  template <typename Probe>
+  auto WithinMax(const KeyRange<Probe>& range) const {
+    return [this, &range](const Key& key) {
+      const auto order = compare_(key, range.max);
+      return range.max_exclusive ? order < 0 : order <= 0;
+    };
   }
 
   // Visits keys from `node` in the given direction while `in_range` holds,
   // applying the limit's offset and count.
-  template <typename InRange, typename Visitor>
+  template <std::predicate<const Key&> InRange,
+            std::invocable<const Key&> Visitor>
   static void Walk(const Node* node, bool reverse,
                    const std::optional<Limit>& limit, InRange&& in_range,
                    Visitor& visitor) {

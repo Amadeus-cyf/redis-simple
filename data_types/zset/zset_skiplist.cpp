@@ -60,8 +60,8 @@ ZSetEntryList ZSetSkiplist::RangeByRank(const RangeByRankSpec* spec) const {
   const SkiplistType::RankRange range{
       .min = static_cast<size_t>(normalized->min),
       .max = static_cast<size_t>(normalized->max),
-      .minex = normalized->minex,
-      .maxex = normalized->maxex,
+      .min_exclusive = normalized->minex,
+      .max_exclusive = normalized->maxex,
       .limit = ToLimit(normalized->limit),
       .reverse = spec->reverse,
   };
@@ -78,8 +78,8 @@ ZSetEntryList ZSetSkiplist::RangeByScore(const RangeByScoreSpec* spec) const {
   const SkiplistType::KeyRange<double> range{
       .min = spec->min,
       .max = spec->max,
-      .minex = spec->minex,
-      .maxex = spec->maxex,
+      .min_exclusive = spec->minex,
+      .max_exclusive = spec->maxex,
       .limit = ToLimit(spec->limit),
       .reverse = spec->reverse,
   };
@@ -96,8 +96,8 @@ size_t ZSetSkiplist::Count(const RangeByScoreSpec* spec) const {
   return skiplist_->Count(SkiplistType::KeyRange<double>{
       .min = spec->min,
       .max = spec->max,
-      .minex = spec->minex,
-      .maxex = spec->maxex,
+      .min_exclusive = spec->minex,
+      .max_exclusive = spec->maxex,
       .limit = std::nullopt,
       .reverse = false,
   });

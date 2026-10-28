@@ -32,22 +32,22 @@ struct KeyRangeTestCase {
   size_t count;
 };
 
-RankRange Ranks(size_t min, size_t max, bool minex, bool maxex,
+RankRange Ranks(size_t min, size_t max, bool min_exclusive, bool max_exclusive,
                 std::optional<Limit> limit = std::nullopt) {
   return {.min = min,
           .max = max,
-          .minex = minex,
-          .maxex = maxex,
+          .min_exclusive = min_exclusive,
+          .max_exclusive = max_exclusive,
           .limit = limit,
           .reverse = false};
 }
 
-KeyRange Keys(std::string min, bool minex, std::string max, bool maxex,
-              std::optional<Limit> limit = std::nullopt) {
+KeyRange Keys(std::string min, bool min_exclusive, std::string max,
+              bool max_exclusive, std::optional<Limit> limit = std::nullopt) {
   return {.min = std::move(min),
           .max = std::move(max),
-          .minex = minex,
-          .maxex = maxex,
+          .min_exclusive = min_exclusive,
+          .max_exclusive = max_exclusive,
           .limit = limit,
           .reverse = false};
 }
@@ -187,12 +187,12 @@ std::vector<std::string> Names(const std::vector<ScoredEntry>& entries) {
   return names;
 }
 
-ScoredSkiplist::KeyRange<double> Scores(double min, bool minex, double max,
-                                        bool maxex) {
+ScoredSkiplist::KeyRange<double> Scores(double min, bool min_exclusive,
+                                        double max, bool max_exclusive) {
   return {.min = min,
           .max = max,
-          .minex = minex,
-          .maxex = maxex,
+          .min_exclusive = min_exclusive,
+          .max_exclusive = max_exclusive,
           .limit = std::nullopt,
           .reverse = false};
 }
@@ -365,8 +365,8 @@ TEST(SkiplistTest, UpdateRepositionsByNewKey) {
   EXPECT_FALSE(skiplist->Contains(entry));
   EXPECT_EQ(Names(skiplist->RangeByRank({.min = 0,
                                          .max = 4,
-                                         .minex = false,
-                                         .maxex = false,
+                                         .min_exclusive = false,
+                                         .max_exclusive = false,
                                          .limit = std::nullopt,
                                          .reverse = false})),
             (std::vector<std::string>{"1b", "2a", "2b", "3a", "5a"}));

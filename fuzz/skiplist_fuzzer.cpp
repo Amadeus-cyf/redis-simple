@@ -37,8 +37,8 @@ void Verify(const IntSkiplist& skiplist, const std::set<int64_t>& model) {
 
   IntSkiplist::RankRange ranks{.min = 0,
                                .max = expected.size() - 1,
-                               .minex = false,
-                               .maxex = false,
+                               .min_exclusive = false,
+                               .max_exclusive = false,
                                .limit = std::nullopt,
                                .reverse = false};
   Require(skiplist.RangeByRank(ranks) == expected);
@@ -49,8 +49,8 @@ void Verify(const IntSkiplist& skiplist, const std::set<int64_t>& model) {
 
   IntSkiplist::KeyRange<int64_t> keys{.min = expected.front(),
                                       .max = expected.back(),
-                                      .minex = false,
-                                      .maxex = false,
+                                      .min_exclusive = false,
+                                      .max_exclusive = false,
                                       .limit = std::nullopt,
                                       .reverse = false};
   Require(skiplist.RangeByKey(keys) == expected);
@@ -61,8 +61,8 @@ void Verify(const IntSkiplist& skiplist, const std::set<int64_t>& model) {
   // Exclusive bounds drop exactly the endpoint keys.
   keys = {.min = expected.front(),
           .max = expected.back(),
-          .minex = true,
-          .maxex = true,
+          .min_exclusive = true,
+          .max_exclusive = true,
           .limit = std::nullopt,
           .reverse = false};
   const size_t interior = expected.size() > 2 ? expected.size() - 2 : 0;

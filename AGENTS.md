@@ -75,8 +75,9 @@ Guidance for AI coding agents working in this repository.
   (`utils/siphash.h`) to resist hash flooding. Do not depend on iteration or
   `SCAN` order in tests; it changes between runs.
 - `Skiplist` stores keys by value, orders them with a three-way comparison,
-  and accepts any lookup or range-bound type its comparator can compare a key
-  against. The sorted-set skiplist searches score ranges by a bare `double`
+  and searches by any probe type its comparator can compare a key against. A
+  lookup probe must identify at most one key; a range-bound probe may match
+  many. The sorted-set skiplist searches score ranges by a bare `double`
   bound and members by a `(score, string_view)` probe; do not reintroduce
   sentinel entries, member copies for lookups, or min/max member tracking.
   Change stored keys through `Skiplist::Update`, which repositions them.
