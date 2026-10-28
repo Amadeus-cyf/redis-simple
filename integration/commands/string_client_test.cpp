@@ -158,7 +158,7 @@ int Run() {
     return EXIT_FAILURE;
   }
   cli.AddCommand(std::vector<std::string_view>{"HELLO", "3"});
-  if (cli.ReadReply().find("proto\n3\n") == std::string::npos) {
+  if (!cli.ReadReply().contains("proto\n3\n")) {
     return EXIT_FAILURE;
   }
   if (!ExpectReply(&cli, {"SET string_resp3 value NX\r\n", "OK\n"}) ||

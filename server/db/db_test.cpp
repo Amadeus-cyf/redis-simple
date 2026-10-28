@@ -217,7 +217,7 @@ TEST(RedisDbTest, ScansKeysIncrementallyWithoutExpiredKeys) {
     }
   }
 
-  std::sort(keys.begin(), keys.end());
+  std::ranges::sort(keys);
   EXPECT_EQ(keys, std::vector<std::string>({"alpha", "beta", "gamma"}));
 }
 }  // namespace redis_simple::db

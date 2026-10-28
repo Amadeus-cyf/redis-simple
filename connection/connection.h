@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -69,11 +70,11 @@ class Connection {
   ConnectionState State() const { return state_; }
   void SetState(ConnectionState state) { state_ = state; }
   // Read and write calls update State() when the peer closes or fails.
-  ssize_t Read(char* buffer, size_t readlen);
-  ssize_t SyncRead(char* buffer, size_t readlen, int64_t timeout_ms);
-  ssize_t Write(const char* buffer, size_t len);
-  ssize_t WriteVector(const std::vector<iovec>& blocks);
-  ssize_t SyncWrite(const char* buffer, size_t len, int64_t timeout_ms) const;
+  ssize_t Read(std::span<char> buffer);
+  ssize_t SyncRead(std::span<char> buffer, int64_t timeout_ms);
+  ssize_t Write(std::span<const char> data);
+  ssize_t WriteVector(std::span<const iovec> blocks);
+  ssize_t SyncWrite(std::span<const char> data, int64_t timeout_ms) const;
   void Close();
   ~Connection();
 

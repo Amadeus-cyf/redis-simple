@@ -45,7 +45,7 @@ void RunOperations(FuzzInput* input) {
     switch (operation) {
       case 0:
       case 5: {
-        const bool inserted = model.find(field) == model.end();
+        const bool inserted = !model.contains(field);
         Require(hash->Set(field, value) == inserted);
         model[field] = value;
         break;
@@ -61,7 +61,7 @@ void RunOperations(FuzzInput* input) {
         break;
       }
       case 3:
-        Require(hash->Exists(field) == (model.count(field) != 0));
+        Require(hash->Exists(field) == model.contains(field));
         break;
       case 4: {
         const auto entries = hash->Entries();

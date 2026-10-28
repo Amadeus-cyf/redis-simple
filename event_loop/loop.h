@@ -32,14 +32,10 @@ inline int& operator&=(int& mask, EventFlag flag) {
 constexpr int operator&(int mask, EventFlag flag) { return mask & ToInt(flag); }
 constexpr int operator&(EventFlag flag, int mask) { return ToInt(flag) & mask; }
 constexpr int operator~(EventFlag flag) { return ~ToInt(flag); }
+// C++20 derives the reversed and != forms from this operator.
 constexpr bool operator==(int value, EventFlag flag) {
   return value == ToInt(flag);
 }
-constexpr bool operator!=(int value, EventFlag flag) {
-  return value != ToInt(flag);
-}
-constexpr bool operator==(EventFlag flag, int value) { return value == flag; }
-constexpr bool operator!=(EventFlag flag, int value) { return value != flag; }
 
 enum class Status {
   kOk = 0,

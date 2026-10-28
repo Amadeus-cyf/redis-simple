@@ -110,8 +110,7 @@ std::string EncodeScanReply(size_t cursor,
   reply::AppendArrayHeader(2, &encoded);
   std::array<char, 21> cursor_buffer{};
   const int cursor_length =
-      utils::Uint64ToString(cursor_buffer.data(), cursor_buffer.size(),
-                            static_cast<uint64_t>(cursor));
+      utils::Uint64ToString(cursor_buffer, static_cast<uint64_t>(cursor));
   const std::string_view cursor_text(cursor_buffer.data(),
                                      static_cast<size_t>(cursor_length));
   reply::AppendBulkString(cursor_text, &encoded);

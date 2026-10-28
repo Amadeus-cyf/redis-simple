@@ -10,6 +10,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "logging/logger.h"
 #include "tcp/tcp.h"
@@ -85,7 +86,7 @@ int Run(std::string_view port_file) {
   std::array<char, 16> buffer{};
   const ssize_t nread =
       ReadWithTimeout(remote_fd, buffer.data(), buffer.size());
-  if (nread != static_cast<ssize_t>(kRequest.size()) ||
+  if (std::cmp_not_equal(nread, kRequest.size()) ||
       std::string_view(buffer.data(), nread) != kRequest) {
     RS_LOG_DEBUG("unexpected tcp request: %s\n", buffer.data());
     close(remote_fd);

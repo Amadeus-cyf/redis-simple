@@ -7,6 +7,7 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "logging/logger.h"
 #include "tcp/tcp.h"
@@ -44,7 +45,7 @@ int Run(int port) {
   std::array<char, 16> buffer{};
   const ssize_t nread = ReadWithTimeout(fd, buffer.data(), buffer.size());
   close(fd);
-  if (nread != static_cast<ssize_t>(kResponse.size()) ||
+  if (std::cmp_not_equal(nread, kResponse.size()) ||
       std::string_view(buffer.data(), nread) != kResponse) {
     RS_LOG_DEBUG("unexpected tcp response: %s\n", buffer.data());
     return EXIT_FAILURE;

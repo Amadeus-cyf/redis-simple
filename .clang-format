@@ -1,5 +1,5 @@
 # Run manually to reformat a file:
 # clang-format -i --style=file <file>
 BasedOnStyle: Google
-Standard: c++17
+Standard: c++20
 DerivePointerAlignment: false

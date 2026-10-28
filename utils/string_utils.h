@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,11 +31,11 @@ bool ToInt64(std::string_view s, int64_t* v);
 // Compact encodings use this to preserve distinct values such as "+1" and "1".
 bool ToCanonicalInt64(std::string_view s, int64_t* v);
 // Convert an int64 to string and store it in dst.
-int Int64ToString(char* dst, size_t dstlen, int64_t svalue);
+int Int64ToString(std::span<char> dst, int64_t svalue);
 // Convert a uint64 to string and store it in dst. Ref to
 // the following article.
 // https://engineering.fb.com/2013/03/15/developer-tools/three-optimization-tips-for-c/
-int Uint64ToString(char* dst, size_t dstlen, uint64_t value);
+int Uint64ToString(std::span<char> dst, uint64_t value);
 }  // namespace redis_simple::utils
 
 #endif  // REDIS_SIMPLE_UTILS_STRING_UTILS_H_

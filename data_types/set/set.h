@@ -95,7 +95,7 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     }
     return true;
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 }  // namespace redis_simple::set
 

@@ -72,7 +72,7 @@ TEST(ConnectionTest, CallbackCanCloseConnection) {
   int callback_count = 0;
   ASSERT_TRUE(connection.SetReadCallback([&callback_count](Connection* conn) {
     char byte = '\0';
-    EXPECT_EQ(conn->Read(&byte, 1), 1);
+    EXPECT_EQ(conn->Read({&byte, 1}), 1);
     ++callback_count;
     conn->Close();
   }));
@@ -110,7 +110,7 @@ TEST(ConnectionTest, SyncWriteCompletesAfterPartialWrites) {
         return total;
       });
 
-  EXPECT_EQ(connection.SyncWrite(payload.data(), payload.size(), 1000),
+  EXPECT_EQ(connection.SyncWrite(payload, 1000),
             static_cast<ssize_t>(payload.size()));
   EXPECT_EQ(reader.get(), payload.size());
 }
@@ -124,7 +124,7 @@ TEST(ConnectionTest, WriteBarrierRunsCallbacksOnceInWriteFirstOrder) {
   std::vector<int> order;
   ASSERT_TRUE(connection.SetReadCallback([&order](Connection* conn) {
     char byte = '\0';
-    EXPECT_EQ(conn->Read(&byte, 1), 1);
+    EXPECT_EQ(conn->Read({&byte, 1}), 1);
     order.push_back(2);
   }));
   ASSERT_TRUE(connection.SetWriteCallback(

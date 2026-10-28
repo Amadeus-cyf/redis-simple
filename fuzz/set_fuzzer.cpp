@@ -47,7 +47,7 @@ void RunOperations(FuzzInput* input) {
         Require(set->Remove(value) == (model.erase(value) != 0));
         break;
       case 2:
-        Require(set->HasMember(value) == (model.count(value) != 0));
+        Require(set->HasMember(value) == model.contains(value));
         break;
       case 3: {
         const auto members = set->ListAllMembers();

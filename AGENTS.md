@@ -4,17 +4,24 @@ Guidance for AI coding agents working in this repository.
 
 ## Project Style
 
-- Keep this a modern C++17 project.
+- Keep this a modern C++23 project. `.clang-format` stays at `c++20`, the
+  newest value clang-format accepts; the formatting rules are the same.
 - Follow Google C++ style and the checked-in `.clang-format`.
-- Prefer clear, simple C++17 code over legacy C++11 patterns.
+- Prefer clear, simple modern C++ over legacy patterns. Use the standard
+  library where it fits (`std::span`, `std::source_location`,
+  `starts_with`/`ends_with`, `<bit>`, concepts, `std::ranges` algorithms
+  with projections, `std::cmp_*` for mixed-sign comparisons), but avoid
+  `std::format` and `std::print`, which need newer standard libraries than
+  the minimum compilers in `README.md`. CI runs clang-tidy 22, which
+  checks more of these than older local versions do.
 - Keep naming consistent with nearby code.
 - Use `#define` header guards named `REDIS_SIMPLE_<PATH>_<FILE>_H_`, not
   `#pragma once`.
 - Do not use exceptions. Report recoverable failures through return values
   (`bool`, `std::optional`, status enums, or `nullptr`), and guard
-  programming errors with `RS_CHECK` / `RS_UNREACHABLE` from `utils/check.h`,
-  which abort and stay enabled in release builds. Test them with
-  `EXPECT_DEATH` in suites named `<Suite>DeathTest`, which the macOS leak
+  programming errors with `RS_CHECK` / `utils::Unreachable()` from
+  `utils/check.h`, which abort and stay enabled in release builds. Test them
+  with `EXPECT_DEATH` in suites named `<Suite>DeathTest`, which the macOS leak
   check skips. The only `catch` blocks are where `std::thread` reports a
   failure to start.
 - Spell project includes from the repository root (`"server/db/db.h"`), and

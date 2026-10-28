@@ -39,9 +39,6 @@ class StringValue {
   friend bool operator==(const StringValue& left, std::string_view right) {
     return left.View() == right;
   }
-  friend bool operator!=(const StringValue& left, std::string_view right) {
-    return left.View() != right;
-  }
   friend std::ostream& operator<<(std::ostream& stream,
                                   const StringValue& value) {
     return stream << value.View();
@@ -85,23 +82,23 @@ class RedisObject {
   // as int64_t so counters avoid parsing and formatting on every update.
   static std::unique_ptr<RedisObject> CreateWithString(std::string value);
   static std::unique_ptr<RedisObject> CreateWithInt(int64_t value) {
-    return Create(Value(value));
+    return Create<int64_t>(value);
   }
   static std::unique_ptr<RedisObject> CreateWithSet(
       std::unique_ptr<set::Set> set) {
-    return set == nullptr ? nullptr : Create(Value(std::move(set)));
+    return set == nullptr ? nullptr : Create<SetPtr>(std::move(set));
   }
   static std::unique_ptr<RedisObject> CreateWithList(
       std::unique_ptr<list::List> list) {
-    return list == nullptr ? nullptr : Create(Value(std::move(list)));
+    return list == nullptr ? nullptr : Create<ListPtr>(std::move(list));
   }
   static std::unique_ptr<RedisObject> CreateWithZSet(
       std::unique_ptr<zset::ZSet> zset) {
-    return zset == nullptr ? nullptr : Create(Value(std::move(zset)));
+    return zset == nullptr ? nullptr : Create<ZSetPtr>(std::move(zset));
   }
   static std::unique_ptr<RedisObject> CreateWithHash(
       std::unique_ptr<hash::Hash> hash) {
-    return hash == nullptr ? nullptr : Create(Value(std::move(hash)));
+    return hash == nullptr ? nullptr : Create<HashPtr>(std::move(hash));
   }
   // String accessors require a string object (Type() == kString).
   StringValue String() const;
@@ -132,10 +129,16 @@ class RedisObject {
   }
 
  private:
-  static std::unique_ptr<RedisObject> Create(Value value) {
-    return std::unique_ptr<RedisObject>(new RedisObject(std::move(value)));
+  // Builds the alternative directly inside the variant, so no temporary Value
+  // is constructed and then moved.
+  template <typename T, typename... Args>
+  static std::unique_ptr<RedisObject> Create(Args&&... args) {
+    return std::unique_ptr<RedisObject>(
+        new RedisObject(std::in_place_type<T>, std::forward<Args>(args)...));
   }
-  explicit RedisObject(Value value) : value_(std::move(value)) {}
+  template <typename T, typename... Args>
+  explicit RedisObject(std::in_place_type_t<T> type, Args&&... args)
+      : value_(type, std::forward<Args>(args)...) {}
 
   template <typename Ptr>
   typename Ptr::element_type* Held() const {

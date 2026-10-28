@@ -72,61 +72,71 @@ struct OptionSpec {
   std::string_view error;
 };
 
-constexpr std::array<OptionSpec, 9> kOptionSpecs = {{
-    {"--bind",
-     [](std::string_view value, ServerOptions* options) {
-       options->bind_address.assign(value.data(), value.size());
-       return !value.empty();
-     },
-     "bind address cannot be empty"},
-    {"--port",
-     [](std::string_view value, ServerOptions* options) {
-       return ParsePort(value, &options->port);
-     },
-     "port must be between 1 and 65535"},
-    {"--appendonly",
-     [](std::string_view value, ServerOptions* options) {
-       return ParseYesNo(value, &options->append_only);
-     },
-     "appendonly must be yes or no"},
-    {"--appendfilename",
-     [](std::string_view value, ServerOptions* options) {
-       options->aof_options.path.assign(value.data(), value.size());
-       return !value.empty();
-     },
-     "appendfilename cannot be empty"},
-    {"--appendfsync",
-     [](std::string_view value, ServerOptions* options) {
-       return ParseFsyncPolicy(value, &options->aof_options.fsync);
-     },
-     "appendfsync must be always, everysec, or no"},
-    {"--auto-aof-rewrite-min-size",
-     [](std::string_view value, ServerOptions* options) {
-       return ParseSize(value, &options->aof_options.auto_rewrite_min_bytes);
-     },
-     "auto AOF rewrite minimum size must be a byte count"},
-    {"--auto-aof-rewrite-percentage",
-     [](std::string_view value, ServerOptions* options) {
-       return ParseSize(value, &options->aof_options.auto_rewrite_percentage);
-     },
-     "auto AOF rewrite percentage must be an integer"},
-    {"--requirepass",
-     [](std::string_view value, ServerOptions* options) {
-       options->require_pass.assign(value.data(), value.size());
-       return true;
-     },
-     ""},
-    {"--protected-mode",
-     [](std::string_view value, ServerOptions* options) {
-       return ParseYesNo(value, &options->protected_mode);
-     },
-     "protected-mode must be yes or no"},
-}};
+constexpr auto kOptionSpecs = std::to_array<OptionSpec>({
+    {.name = "--bind",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           options->bind_address.assign(value.data(), value.size());
+           return !value.empty();
+         },
+     .error = "bind address cannot be empty"},
+    {.name = "--port",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParsePort(value, &options->port);
+         },
+     .error = "port must be between 1 and 65535"},
+    {.name = "--appendonly",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->append_only);
+         },
+     .error = "appendonly must be yes or no"},
+    {.name = "--appendfilename",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           options->aof_options.path.assign(value.data(), value.size());
+           return !value.empty();
+         },
+     .error = "appendfilename cannot be empty"},
+    {.name = "--appendfsync",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseFsyncPolicy(value, &options->aof_options.fsync);
+         },
+     .error = "appendfsync must be always, everysec, or no"},
+    {.name = "--auto-aof-rewrite-min-size",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseSize(value,
+                            &options->aof_options.auto_rewrite_min_bytes);
+         },
+     .error = "auto AOF rewrite minimum size must be a byte count"},
+    {.name = "--auto-aof-rewrite-percentage",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseSize(value,
+                            &options->aof_options.auto_rewrite_percentage);
+         },
+     .error = "auto AOF rewrite percentage must be an integer"},
+    {.name = "--requirepass",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           options->require_pass.assign(value.data(), value.size());
+           return true;
+         },
+     .error = ""},
+    {.name = "--protected-mode",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->protected_mode);
+         },
+     .error = "protected-mode must be yes or no"},
+});
 
 const OptionSpec* FindOption(std::string_view name) {
-  const auto* const spec = std::find_if(
-      kOptionSpecs.begin(), kOptionSpecs.end(),
-      [name](const OptionSpec& spec) { return spec.name == name; });
+  const auto* const spec =
+      std::ranges::find(kOptionSpecs, name, &OptionSpec::name);
   return spec == kOptionSpecs.end() ? nullptr : spec;
 }
 

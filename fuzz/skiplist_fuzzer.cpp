@@ -65,13 +65,13 @@ void RunOperations(FuzzInput* input) {
         Require(skiplist.Delete(value) == (model.erase(value) != 0));
         break;
       case 2:
-        Require(skiplist.Contains(value) == (model.count(value) != 0));
+        Require(skiplist.Contains(value) == model.contains(value));
         break;
       case 3: {
         const int64_t replacement = input->ReadInt64();
-        const bool exists = model.count(value) != 0;
+        const bool exists = model.contains(value);
         const bool replacement_available =
-            replacement == value || model.count(replacement) == 0;
+            replacement == value || !model.contains(replacement);
         if (replacement_available) {
           Require(skiplist.Update(value, replacement) == exists);
           if (exists) {

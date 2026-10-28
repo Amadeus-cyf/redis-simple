@@ -193,7 +193,7 @@ bool ParseFloatText(std::string_view value, std::string* const rendered) {
     return false;
   }
   const auto all_digits = [](std::string_view text) {
-    return std::all_of(text.begin(), text.end(), [](unsigned char character) {
+    return std::ranges::all_of(text, [](unsigned char character) {
       return std::isdigit(character) != 0;
     });
   };

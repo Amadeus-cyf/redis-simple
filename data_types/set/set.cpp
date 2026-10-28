@@ -32,7 +32,7 @@ bool Set::Add(std::string_view value) {
   if (encoding_ == Encoding::kDict) {
     return DictAdd(value);
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 bool Set::HasMember(std::string_view value) const {
@@ -52,7 +52,7 @@ bool Set::HasMember(std::string_view value) const {
   if (encoding_ == Encoding::kDict) {
     return dict_->FindValue(value) != nullptr;
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 std::vector<std::string> Set::ListAllMembers() const {
@@ -87,7 +87,7 @@ bool Set::Remove(std::string_view value) {
   if (encoding_ == Encoding::kDict) {
     return dict_->Delete(value);
   }
-  RS_UNREACHABLE();
+  utils::Unreachable();
 }
 
 size_t Set::Size() const {
@@ -99,7 +99,7 @@ size_t Set::Size() const {
     case Encoding::kDict:
       return dict_ ? dict_->Size() : 0;
     default:
-      RS_UNREACHABLE();
+      utils::Unreachable();
   }
 }
 

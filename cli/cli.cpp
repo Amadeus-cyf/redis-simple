@@ -23,8 +23,7 @@ bool WriteToConnection(const connection::Connection* connection,
                        std::string_view commands) {
   RS_LOG_DEBUG("client write %.*s\n", static_cast<int>(commands.size()),
                commands.data());
-  const ssize_t written =
-      connection->SyncWrite(commands.data(), commands.size(), 1000);
+  const ssize_t written = connection->SyncWrite(commands, 1000);
   return written >= 0 && static_cast<size_t>(written) == commands.size();
 }
 
@@ -50,10 +49,9 @@ RedisCli::RedisCli() : ip_(std::nullopt), port_(std::nullopt) {}
 RedisCli::RedisCli(const std::string& ip, int port) : ip_(ip), port_(port) {}
 
 CliStatus RedisCli::Connect(const std::string& ip, int port) {
-  connection::Context ctx;
-  ctx.loop = nullptr;
-  ctx.fd = -1;
-  connection_ = std::make_unique<connection::Connection>(ctx);
+  // A blocking client connection with no event loop.
+  connection_ = std::make_unique<connection::Connection>(
+      connection::Context{.loop = nullptr, .fd = -1});
   const connection::AddressInfo remote(ip, port);
   std::optional<connection::AddressInfo> local;
   if (ip_.has_value() && port_.has_value()) {
@@ -114,8 +112,7 @@ std::string RedisCli::ReadReplyFromConnection() {
 
   std::array<char, 4096> buffer{};
   while (true) {
-    const ssize_t read =
-        connection_->SyncRead(buffer.data(), buffer.size(), 1000);
+    const ssize_t read = connection_->SyncRead(buffer, 1000);
     if (read <= 0) {
       return kNoReplyResp;
     }

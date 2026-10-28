@@ -11,8 +11,7 @@
 
 namespace redis_simple::db {
 StringValue::StringValue(int64_t value) {
-  const int length =
-      utils::Int64ToString(buffer_.data(), buffer_.size(), value);
+  const int length = utils::Int64ToString(buffer_, value);
   size_ = static_cast<size_t>(length);
 }
 
@@ -23,7 +22,7 @@ std::unique_ptr<RedisObject> RedisObject::CreateWithString(std::string value) {
   if (utils::ToCanonicalInt64(value, &integer)) {
     return CreateWithInt(integer);
   }
-  return Create(Value(std::move(value)));
+  return Create<std::string>(std::move(value));
 }
 
 StringValue RedisObject::String() const {
@@ -48,14 +47,14 @@ std::optional<int64_t> RedisObject::Int() const {
 
 std::string* RedisObject::MutableString() {
   if (const auto* integer = std::get_if<int64_t>(&value_)) {
-    value_ = std::string(StringValue(*integer).View());
+    value_.emplace<std::string>(StringValue(*integer).View());
   }
   return std::get_if<std::string>(&value_);
 }
 
 void RedisObject::SetInt(int64_t value) {
   RS_CHECK(Type() == ObjectType::kString);
-  value_ = value;
+  value_.emplace<int64_t>(value);
 }
 
 RedisObject::Encoding RedisObject::StringEncoding() const {

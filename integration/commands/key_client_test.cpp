@@ -86,8 +86,8 @@ bool ExpectScanKeys(cli::RedisCli* cli, std::string_view pattern,
     }
   }
 
-  std::sort(actual_keys.begin(), actual_keys.end());
-  std::sort(expected_keys.begin(), expected_keys.end());
+  std::ranges::sort(actual_keys);
+  std::ranges::sort(expected_keys);
   return actual_keys == expected_keys;
 }
 }  // namespace

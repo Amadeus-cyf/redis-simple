@@ -223,39 +223,39 @@ TEST(StringUtilsTest, ToCanonicalInt64) {
 TEST(StringUtilsTest, Int64ToString) {
   std::array<char, 21> dst1{};
   std::string s1("1234567");
-  ASSERT_EQ(Int64ToString(dst1.data(), dst1.size(), 1234567), 7);
+  ASSERT_EQ(Int64ToString(dst1, 1234567), 7);
   ASSERT_TRUE(std::equal(dst1.data(), dst1.data() + 7, s1.c_str()));
 
   std::array<char, 21> dst2{};
   std::string s2("-1234567");
-  ASSERT_EQ(Int64ToString(dst2.data(), dst2.size(), -1234567), 8);
+  ASSERT_EQ(Int64ToString(dst2, -1234567), 8);
   ASSERT_TRUE(std::equal(dst2.data(), dst2.data() + 8, s2.c_str()));
 
   std::array<char, 21> dst3{};
   std::string s3("9223372036854775807");
-  ASSERT_EQ(Int64ToString(dst3.data(), dst3.size(), INT64_MAX), 19);
+  ASSERT_EQ(Int64ToString(dst3, INT64_MAX), 19);
   ASSERT_TRUE(std::equal(dst3.data(), dst3.data() + 19, s3.c_str()));
 
   std::array<char, 21> dst4{};
   std::string s4("-9223372036854775808");
-  ASSERT_EQ(Int64ToString(dst4.data(), dst4.size(), INT64_MIN), 20);
+  ASSERT_EQ(Int64ToString(dst4, INT64_MIN), 20);
   ASSERT_TRUE(std::equal(dst4.data(), dst4.data() + 20, s4.c_str()));
 
   std::array<char, 21> dst5{};
   std::string s5("0");
-  ASSERT_EQ(Int64ToString(dst5.data(), dst5.size(), 0), 1);
+  ASSERT_EQ(Int64ToString(dst5, 0), 1);
   ASSERT_TRUE(std::equal(dst5.data(), dst5.data() + 1, s5.c_str()));
 
   std::array<char, 1> dst6{};
-  ASSERT_EQ(Int64ToString(dst6.data(), dst6.size(), 0), 0);
+  ASSERT_EQ(Int64ToString(dst6, 0), 0);
   ASSERT_EQ(dst6[0], '\0');
 
   std::array<char, 7> dst7{};
-  ASSERT_EQ(Int64ToString(dst7.data(), dst7.size(), 10000000), 0);
+  ASSERT_EQ(Int64ToString(dst7, 10000000), 0);
   ASSERT_EQ(dst7[0], '\0');
 
   std::array<char, 7> dst8{};
-  ASSERT_EQ(Int64ToString(dst8.data(), dst8.size(), -10000000), 0);
+  ASSERT_EQ(Int64ToString(dst8, -10000000), 0);
   ASSERT_EQ(dst8[0], '-');
   ASSERT_EQ(dst8[1], '\0');
 }
@@ -263,26 +263,26 @@ TEST(StringUtilsTest, Int64ToString) {
 TEST(StringUtilsTest, Uint64ToString) {
   std::array<char, 21> dst1{};
   std::string s1("1234567");
-  ASSERT_EQ(Uint64ToString(dst1.data(), dst1.size(), 1234567), 7);
+  ASSERT_EQ(Uint64ToString(dst1, 1234567), 7);
   ASSERT_TRUE(std::equal(dst1.data(), dst1.data() + 7, s1.c_str()));
 
   std::array<char, 21> dst2{};
   std::string s2("9223372036854775807");
-  ASSERT_EQ(Uint64ToString(dst2.data(), dst2.size(), INT64_MAX), 19);
+  ASSERT_EQ(Uint64ToString(dst2, INT64_MAX), 19);
   ASSERT_TRUE(std::equal(dst2.data(), dst2.data() + 19, s2.c_str()));
 
   std::array<char, 21> dst3{};
   std::string s3("18446744073709551615");
-  ASSERT_EQ(Uint64ToString(dst3.data(), dst3.size(), UINT64_MAX), 20);
+  ASSERT_EQ(Uint64ToString(dst3, UINT64_MAX), 20);
   ASSERT_TRUE(std::equal(dst3.data(), dst3.data() + 20, s3.c_str()));
 
   std::array<char, 21> dst4{};
   std::string s4("0");
-  ASSERT_EQ(Uint64ToString(dst4.data(), dst4.size(), 0), 1);
+  ASSERT_EQ(Uint64ToString(dst4, 0), 1);
   ASSERT_TRUE(std::equal(dst4.data(), dst4.data() + 1, s4.c_str()));
 
   std::array<char, 7> dst5{};
-  ASSERT_EQ(Uint64ToString(dst5.data(), dst5.size(), 10000000), 0);
+  ASSERT_EQ(Uint64ToString(dst5, 10000000), 0);
   ASSERT_EQ(dst5[0], '\0');
 }
 }  // namespace redis_simple::utils

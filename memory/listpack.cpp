@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -207,9 +208,10 @@ size_t ListPack::DeleteMatching(std::string_view value, size_t limit,
         matches.push_back(*index);
       }
     }
-    std::reverse(matches.begin(), matches.end());
-    for (auto match = matches.rbegin(); match != matches.rend(); ++match) {
-      DeleteRange(*match, 1);
+    // Matches were collected from the tail, so indices are descending and
+    // deleting one never shifts a match still waiting to be deleted.
+    for (const size_t match : matches) {
+      DeleteRange(match, 1);
     }
     return matches.size();
   }
@@ -235,8 +237,9 @@ size_t ListPack::DeleteMatching(std::string_view value, size_t limit,
       break;
     }
   }
-  for (auto range = ranges.rbegin(); range != ranges.rend(); ++range) {
-    DeleteRange(range->first, range->second);
+  // Delete from the back so earlier ranges keep their indices.
+  for (const auto& [index, count] : std::views::reverse(ranges)) {
+    DeleteRange(index, count);
   }
   return match_count;
 }
@@ -356,8 +359,8 @@ unsigned char* ListPack::IntegerAt(size_t idx, unsigned char* dst,
     val = static_cast<int64_t>(uval);
   }
   if (dst != nullptr) {
-    const int string_len = utils::Int64ToString(reinterpret_cast<char*>(dst),
-                                                kListPackIntBufSize, val);
+    const int string_len = utils::Int64ToString(
+        {reinterpret_cast<char*>(dst), kListPackIntBufSize}, val);
     if (len != nullptr) {
       *len = string_len;
     }
@@ -508,8 +511,8 @@ bool ListPack::BatchInsert(size_t idx, ListPack::Position where,
                listpack_bytes - idx);
   // Update number of elements and total bytes.
   if (num_of_elements != kListPackNumEleUnknown) {
-    if (static_cast<int64_t>(entry_count) >
-        kListPackNumEleUnknown - num_of_elements) {
+    if (std::cmp_greater(entry_count,
+                         kListPackNumEleUnknown - num_of_elements)) {
       SetNumOfElements(kListPackNumEleUnknown);
     } else {
       SetNumOfElements(num_of_elements + entry_count);

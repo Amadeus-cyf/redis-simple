@@ -40,10 +40,8 @@ bool Server::Run(const ServerOptions& options) {
       return false;
     }
   }
-  connection::Context ctx;
-  ctx.loop = loop_.get();
-  ctx.fd = -1;
-  connection::Connection conn(ctx);
+  connection::Connection conn(
+      connection::Context{.loop = loop_.get(), .fd = -1});
   const connection::AddressInfo addr_info(options.bind_address, options.port);
   if (conn.BindAndListen(addr_info) == connection::ConnectionStatus::kError) {
     aof_.reset();

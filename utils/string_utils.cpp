@@ -143,7 +143,7 @@ void ShiftCString(char* s, size_t len, size_t offset) {
 }
 
 void ToUppercase(std::string& s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) -> char {
+  std::ranges::transform(s, s.begin(), [](unsigned char c) -> char {
     return static_cast<char>(std::toupper(c));
   });
 }
@@ -260,36 +260,24 @@ bool ToCanonicalInt64(std::string_view s, int64_t* const v) {
   return ToInt64(s, v);
 }
 
-int Int64ToString(char* dst, size_t dstlen, int64_t svalue) {
-  uint64_t value = 0;
-  int negative = 0;
-  if (svalue < 0) {
-    if (svalue != std::numeric_limits<int64_t>::min()) {
-      value = -svalue;
-    } else {
-      value = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1;
-    }
-    if (dstlen < 2) {
-      if (dstlen > 0) {
-        dst[0] = '\0';
-      }
-      return 0;
-    }
-    negative = 1;
-    dst[0] = '-';
-    ++dst;
-    --dstlen;
-  } else {
-    value = svalue;
+int Int64ToString(std::span<char> dst, int64_t svalue) {
+  if (svalue >= 0) {
+    return Uint64ToString(dst, static_cast<uint64_t>(svalue));
   }
-  const int length = Uint64ToString(dst, dstlen, value);
-  if (length == 0) {
+  // Negate in unsigned arithmetic so INT64_MIN does not overflow.
+  const uint64_t value = 0 - static_cast<uint64_t>(svalue);
+  if (dst.size() < 2) {
+    if (!dst.empty()) {
+      dst[0] = '\0';
+    }
     return 0;
   }
-  return length + negative;
+  dst[0] = '-';
+  const int length = Uint64ToString(dst.subspan(1), value);
+  return length == 0 ? 0 : length + 1;
 }
 
-int Uint64ToString(char* dst, size_t dstlen, uint64_t value) {
+int Uint64ToString(std::span<char> dst, uint64_t value) {
   static constexpr std::string_view kDigits =
       "0001020304050607080910111213141516171819"
       "2021222324252627282930313233343536373839"
@@ -297,9 +285,9 @@ int Uint64ToString(char* dst, size_t dstlen, uint64_t value) {
       "6061626364656667686970717273747576777879"
       "8081828384858687888990919293949596979899";
   // Check length.
-  uint32_t length = Digits10(value);
-  if (length >= dstlen) {
-    if (dstlen > 0) {
+  const uint32_t length = Digits10(value);
+  if (length >= dst.size()) {
+    if (!dst.empty()) {
       dst[0] = '\0';
     }
     return 0;
