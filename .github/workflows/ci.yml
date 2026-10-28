@@ -19,6 +19,8 @@ jobs:
   quality:
     name: Quality / Ubuntu
     runs-on: ubuntu-26.04
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v7
@@ -34,7 +36,21 @@ jobs:
         env:
           CLANG_TIDY_BIN: clang-tidy-22
           RUN_CLANG_TIDY_BIN: run-clang-tidy-22
-        run: scripts/run_clang_tidy.sh
+        shell: bash
+        run: |
+          scripts/run_clang_tidy.sh 2>&1 | tee "$RUNNER_TEMP/ci.log"
+          exit "${PIPESTATUS[0]}"
+      - name: TEMP publish log
+        if: always()
+        shell: bash
+        run: |
+          git config user.name ci-logs
+          git config user.email ci-logs@users.noreply.github.com
+          git switch -q --orphan ci-logs-tidy
+          cp "$RUNNER_TEMP/ci.log" ci.log
+          git add -f ci.log
+          git commit -qm "clang-tidy log"
+          git push -qf origin HEAD:refs/heads/ci-logs-tidy
 
   build-and-test:
     name: Build & Test / ${{ matrix.os }}
