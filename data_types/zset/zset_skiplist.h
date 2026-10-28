@@ -1,6 +1,7 @@
 #ifndef REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_SKIPLIST_H_
 #define REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_SKIPLIST_H_
 
+#include <compare>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -8,7 +9,6 @@
 #include <string_view>
 
 #include "data_types/zset/zset_storage.h"
-#include "logging/logger.h"
 #include "memory/dict.h"
 #include "memory/skiplist.h"
 
@@ -30,51 +30,42 @@ class ZSetSkiplist : public ZSetStorage {
   size_t Size() const override { return skiplist_->Size(); }
 
  private:
-  struct Comparator {
-    int operator()(const ZSetEntry* s1, const ZSetEntry* s2) const {
-      if (s1->score < s2->score) {
-        return -1;
+  // Looks up a member by score and name without copying the name.
+  struct MemberRef {
+    double score;
+    std::string_view key;
+  };
+
+  // Orders entries by score, then by member name. NaN scores are rejected on
+  // insert, so this is a total order. Comparing against a bare score looks at
+  // the score only, which lets score ranges search the skiplist directly.
+  struct EntryOrder {
+    std::partial_ordering operator()(const ZSetEntry& entry,
+                                     const MemberRef& member) const {
+      if (const auto order = entry.score <=> member.score; order != 0) {
+        return order;
       }
-      if (s1->score > s2->score) {
-        return 1;
-      }
-      return s1->key.compare(s2->key);
+      return std::string_view(entry.key) <=> member.key;
+    }
+    std::partial_ordering operator()(const ZSetEntry& left,
+                                     const ZSetEntry& right) const {
+      return (*this)(left, MemberRef{.score = right.score, .key = right.key});
+    }
+    std::partial_ordering operator()(const ZSetEntry& entry,
+                                     double score) const {
+      return entry.score <=> score;
     }
   };
 
-  struct Destructor {
-    void operator()(const ZSetEntry* entry) const {
-      if (entry == nullptr) {
-        return;
-      }
-      RS_LOG_DEBUG("delete %s %f\n", entry->key.c_str(), entry->score);
-      delete entry;
-    }
-  };
+  using SkiplistType = in_memory::Skiplist<ZSetEntry, EntryOrder>;
 
-  using SkiplistType =
-      in_memory::Skiplist<const ZSetEntry*, Comparator, Destructor>;
-  using SkiplistLimitSpec = SkiplistType::SkiplistLimitSpec;
-  using SkiplistRangeByRankSpec = SkiplistType::SkiplistRangeByRankSpec;
-  using SkiplistRangeByKeySpec = SkiplistType::SkiplistRangeByKeySpec;
-  struct RankSpecDeleter {
-    void operator()(SkiplistRangeByRankSpec* spec) const;
-  };
-  struct KeySpecDeleter {
-    void operator()(SkiplistRangeByKeySpec* spec) const;
-  };
-  using RankSpecPtr = std::unique_ptr<SkiplistRangeByRankSpec, RankSpecDeleter>;
-  using KeySpecPtr = std::unique_ptr<SkiplistRangeByKeySpec, KeySpecDeleter>;
+  static std::optional<SkiplistType::Limit> ToLimit(
+      const std::optional<LimitSpec>& limit);
 
-  RankSpecPtr ToSkiplistRangeByRankSpec(const RangeByRankSpec* spec) const;
-  KeySpecPtr ToSkiplistRangeByKeySpec(const RangeByScoreSpec* spec) const;
-  void RecomputeMinMaxKeys();
-  // Dict mapping key to score, used with the skiplist
+  // Maps each member to its score.
   std::unique_ptr<in_memory::Dict<std::string, double>> dict_;
-  // Skiplist storing key score pairs ordered by score
+  // Entries ordered by score, then member name.
   std::unique_ptr<SkiplistType> skiplist_;
-  // Min and max key value, used for RangeByScore
-  mutable std::optional<std::string> max_key_, min_key_;
 };
 }  // namespace redis_simple::zset
 

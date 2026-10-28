@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -34,18 +35,39 @@ void Verify(const IntSkiplist& skiplist, const std::set<int64_t>& model) {
     return;
   }
 
-  const IntSkiplist::SkiplistRangeByRankSpec rank_spec(0, expected.size() - 1,
-                                                       false, false, nullptr);
-  Require(skiplist.RangeByRank(&rank_spec) == expected);
+  IntSkiplist::RankRange ranks{.min = 0,
+                               .max = expected.size() - 1,
+                               .minex = false,
+                               .maxex = false,
+                               .limit = std::nullopt,
+                               .reverse = false};
+  Require(skiplist.RangeByRank(ranks) == expected);
   auto reversed = expected;
-  std::reverse(reversed.begin(), reversed.end());
-  Require(skiplist.RevRangeByRank(&rank_spec) == reversed);
+  std::ranges::reverse(reversed);
+  ranks.reverse = true;
+  Require(skiplist.RangeByRank(ranks) == reversed);
 
-  const IntSkiplist::SkiplistRangeByKeySpec key_spec(
-      expected.front(), false, expected.back(), false, nullptr);
-  Require(skiplist.RangeByKey(&key_spec) == expected);
-  Require(skiplist.RevRangeByKey(&key_spec) == reversed);
-  Require(skiplist.Count(&key_spec) == expected.size());
+  IntSkiplist::KeyRange<int64_t> keys{.min = expected.front(),
+                                      .max = expected.back(),
+                                      .minex = false,
+                                      .maxex = false,
+                                      .limit = std::nullopt,
+                                      .reverse = false};
+  Require(skiplist.RangeByKey(keys) == expected);
+  Require(skiplist.Count(keys) == expected.size());
+  keys.reverse = true;
+  Require(skiplist.RangeByKey(keys) == reversed);
+
+  // Exclusive bounds drop exactly the endpoint keys.
+  keys = {.min = expected.front(),
+          .max = expected.back(),
+          .minex = true,
+          .maxex = true,
+          .limit = std::nullopt,
+          .reverse = false};
+  const size_t interior = expected.size() > 2 ? expected.size() - 2 : 0;
+  Require(skiplist.Count(keys) == interior);
+  Require(skiplist.RangeByKey(keys).size() == interior);
 }
 
 void RunOperations(FuzzInput* input) {
@@ -73,7 +95,9 @@ void RunOperations(FuzzInput* input) {
         const bool replacement_available =
             replacement == value || !model.contains(replacement);
         if (replacement_available) {
-          Require(skiplist.Update(value, replacement) == exists);
+          Require(skiplist.Update(value, [replacement](int64_t& key) {
+            key = replacement;
+          }) == exists);
           if (exists) {
             model.erase(value);
             model.insert(replacement);
