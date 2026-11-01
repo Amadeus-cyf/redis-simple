@@ -1,13 +1,13 @@
 #include "server/commands/command.h"
 
-#include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <string_view>
 
 #include "server/commands/handlers.h"
-#include "utils/string_utils.h"
 
 namespace redis_simple::command {
 namespace {
@@ -174,19 +174,81 @@ constexpr bool CommandTableIsSorted() {
 }
 
 static_assert(CommandTableIsSorted(), "command table must remain sorted");
+
+// Find() folds the requested name into a stack buffer and probes a
+// compile-time open-addressing index over the table, so a lookup costs one
+// pass over the name and usually a single comparison.
+constexpr size_t kMaxNameLength = 16;
+constexpr size_t kIndexSize = 256;
+constexpr size_t kIndexMask = kIndexSize - 1;
+static_assert(std::has_single_bit(kIndexSize));
+static_assert(kCommandTable.size() * 2 <= kIndexSize,
+              "grow kIndexSize to keep the command index sparse");
+
+constexpr uint32_t kFnvOffsetBasis = 2166136261U;
+constexpr uint32_t kFnvPrime = 16777619U;
+
+constexpr uint32_t HashStep(uint32_t hash, char folded) {
+  return (hash ^ static_cast<unsigned char>(folded)) * kFnvPrime;
+}
+
+constexpr bool CommandNamesAreIndexable() {
+  for (const Command& command : kCommandTable) {
+    if (command.name.empty() || command.name.size() > kMaxNameLength) {
+      return false;
+    }
+    for (const char value : command.name) {
+      if (FoldAsciiCase(value) != value) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+static_assert(CommandNamesAreIndexable(),
+              "command names must be upper case and at most kMaxNameLength");
+
+// Each slot holds a table index plus one; zero marks an empty slot.
+constexpr std::array<uint8_t, kIndexSize> BuildIndex() {
+  std::array<uint8_t, kIndexSize> index{};
+  for (size_t position = 0; position < kCommandTable.size(); ++position) {
+    uint32_t hash = kFnvOffsetBasis;
+    for (const char value : kCommandTable[position].name) {
+      hash = HashStep(hash, value);
+    }
+    size_t slot = hash & kIndexMask;
+    while (index[slot] != 0) {
+      slot = (slot + 1) & kIndexMask;
+    }
+    index[slot] = static_cast<uint8_t>(position + 1);
+  }
+  return index;
+}
+
+constexpr auto kCommandIndex = BuildIndex();
 }  // namespace
 
 const Command* Find(std::string_view name) {
-  const auto* const command = std::ranges::lower_bound(
-      kCommandTable, name,
-      [](std::string_view left, std::string_view right) {
-        return CompareIgnoreCase(left, right) < 0;
-      },
-      &Command::name);
-  if (command != kCommandTable.end() &&
-      utils::EqualsIgnoreCase(name, command->name)) {
-    return command;
+  if (name.empty() || name.size() > kMaxNameLength) {
+    return nullptr;
   }
-  return nullptr;
+  std::array<char, kMaxNameLength> folded{};
+  uint32_t hash = kFnvOffsetBasis;
+  for (size_t position = 0; position < name.size(); ++position) {
+    folded[position] = FoldAsciiCase(name[position]);
+    hash = HashStep(hash, folded[position]);
+  }
+  const std::string_view key(folded.data(), name.size());
+  for (size_t slot = hash & kIndexMask;; slot = (slot + 1) & kIndexMask) {
+    const uint8_t entry = kCommandIndex[slot];
+    if (entry == 0) {
+      return nullptr;
+    }
+    const Command& command = kCommandTable[entry - 1];
+    if (command.name == key) {
+      return &command;
+    }
+  }
 }
 }  // namespace redis_simple::command

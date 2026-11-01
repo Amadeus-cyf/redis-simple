@@ -50,7 +50,9 @@ Guidance for AI coding agents working in this repository.
   avoid per-command headers unless a handler becomes a broader shared API.
 - Keep command names, arity, access mode, and key positions in the sorted
   metadata table in `server/commands/command.cpp`. Preserve its allocation-free,
-  case-insensitive lookup path.
+  case-insensitive lookup path: `Find` folds the name on the stack and probes a
+  compile-time hash index built from the table, whose names must be upper
+  case and at most 16 bytes.
 - When adding or changing supported commands, update the README command
   coverage list and the relevant command-family integration test.
 - Keep reply encoding helpers directly under `server/`, and keep database

@@ -1,11 +1,9 @@
 #include "server/request_parser.h"
 
 #include <algorithm>
-#include <charconv>
 #include <cstddef>
 #include <limits>
 #include <string_view>
-#include <system_error>
 
 namespace redis_simple::request_parser {
 namespace {
@@ -14,34 +12,50 @@ constexpr size_t kMaxCommandElements = size_t{1024} * 1024;
 // PROTO_INLINE_MAX_SIZE. Larger lines are rejected instead of rescanned.
 constexpr size_t kMaxLineBytes = size_t{64} * 1024;
 constexpr size_t kMinimumBulkStringBytes = 6;
+// Longest accepted length field: every size_t, with a few leading zeros.
+constexpr size_t kMaxLengthDigits = 24;
 constexpr std::string_view kCrlf = "\r\n";
 
-// Finds the CRLF that ends the line starting at `start`, scanning at most
-// kMaxLineBytes so a peer cannot force repeated scans of a huge buffer.
-ParseResult FindLineEnd(std::string_view input, size_t start) {
-  const size_t window = std::min(input.size() - start, kMaxLineBytes);
-  const size_t end = input.substr(start, window).find(kCrlf);
-  if (end != std::string_view::npos) {
-    return {ParseStatus::kComplete, start + end};
-  }
-  return {window == kMaxLineBytes ? ParseStatus::kInvalid
-                                  : ParseStatus::kIncomplete,
-          0};
-}
-
-bool ParseSize(std::string_view value, size_t* const result) {
-  if (value.empty()) {
-    return false;
-  }
+// Parses the decimal length that follows a RESP type byte, starting at
+// `start` and ending in CRLF, in one pass without searching for the CRLF
+// first. At most kMaxLengthDigits digits are read, so a peer cannot make each
+// read rescan a long run of leading zeros. On success, `*line_end` is the
+// offset of the CR.
+ParseStatus ParseLengthLine(std::string_view input, size_t start,
+                            size_t* const value, size_t* const line_end) {
+  constexpr size_t kMax = std::numeric_limits<size_t>::max();
+  constexpr size_t kBase = 10;
   size_t parsed = 0;
-  const auto conversion =
-      std::from_chars(value.data(), value.data() + value.size(), parsed);
-  if (conversion.ec != std::errc() ||
-      conversion.ptr != value.data() + value.size()) {
-    return false;
+  size_t position = start;
+  for (; position < input.size(); ++position) {
+    const char character = input[position];
+    if (character < '0' || character > '9') {
+      break;
+    }
+    if (position - start == kMaxLengthDigits) {
+      return ParseStatus::kInvalid;
+    }
+    const auto digit = static_cast<size_t>(character - '0');
+    if (parsed > (kMax - digit) / kBase) {
+      return ParseStatus::kInvalid;
+    }
+    parsed = (parsed * kBase) + digit;
   }
-  *result = parsed;
-  return true;
+  if (position == input.size()) {
+    return ParseStatus::kIncomplete;
+  }
+  if (position == start || input[position] != '\r') {
+    return ParseStatus::kInvalid;
+  }
+  if (position + 1 == input.size()) {
+    return ParseStatus::kIncomplete;
+  }
+  if (input[position + 1] != '\n') {
+    return ParseStatus::kInvalid;
+  }
+  *value = parsed;
+  *line_end = position;
+  return ParseStatus::kComplete;
 }
 
 struct BulkString {
@@ -62,16 +76,14 @@ ParseStatus ParseBulkString(std::string_view input, size_t start,
   if (input[start] != '$') {
     return ParseStatus::kInvalid;
   }
-  const auto header = FindLineEnd(input, start + 1);
-  if (header.status != ParseStatus::kComplete) {
-    return header.status;
-  }
   size_t length = 0;
-  if (!ParseSize(input.substr(start + 1, header.consumed - start - 1),
-                 &length)) {
-    return ParseStatus::kInvalid;
+  size_t header_end = 0;
+  const ParseStatus header =
+      ParseLengthLine(input, start + 1, &length, &header_end);
+  if (header != ParseStatus::kComplete) {
+    return header;
   }
-  const size_t content_start = header.consumed + kCrlf.size();
+  const size_t content_start = header_end + kCrlf.size();
   if (length >
       std::numeric_limits<size_t>::max() - content_start - kCrlf.size()) {
     return ParseStatus::kInvalid;
@@ -82,7 +94,8 @@ ParseStatus ParseBulkString(std::string_view input, size_t start,
   if (bulk->end > input.size()) {
     return ParseStatus::kIncomplete;
   }
-  if (input.substr(content_start + length, kCrlf.size()) != kCrlf) {
+  if (input[content_start + length] != '\r' ||
+      input[content_start + length + 1] != '\n') {
     return ParseStatus::kInvalid;
   }
   return ParseStatus::kComplete;
@@ -90,17 +103,17 @@ ParseStatus ParseBulkString(std::string_view input, size_t start,
 
 ParseResult ParseResp(std::string_view input, ParseState* const state) {
   if (state->element_count == 0) {
-    const auto header = FindLineEnd(input, 1);
-    if (header.status != ParseStatus::kComplete) {
-      return header;
-    }
     size_t count = 0;
-    if (!ParseSize(input.substr(1, header.consumed - 1), &count) ||
-        count == 0 || count > kMaxCommandElements) {
+    size_t header_end = 0;
+    const ParseStatus header = ParseLengthLine(input, 1, &count, &header_end);
+    if (header != ParseStatus::kComplete) {
+      return {header, 0};
+    }
+    if (count == 0 || count > kMaxCommandElements) {
       return {ParseStatus::kInvalid, 0};
     }
     state->element_count = count;
-    state->offset = header.consumed + kCrlf.size();
+    state->offset = header_end + kCrlf.size();
     // Bound the reservation by what the buffered bytes could hold.
     state->elements.reserve(
         std::min(count, (input.size() / kMinimumBulkStringBytes) + 1));
