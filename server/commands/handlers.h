@@ -31,6 +31,14 @@ void HandlePing(Client* client);
 void HandleQuit(Client* client);
 }  // namespace redis_simple::command::session
 
+namespace redis_simple::command::transaction {
+void HandleDiscard(Client* client);
+void HandleExec(Client* client);
+void HandleMulti(Client* client);
+void HandleUnwatch(Client* client);
+void HandleWatch(Client* client);
+}  // namespace redis_simple::command::transaction
+
 namespace redis_simple::command::persistence {
 void HandleBgRewriteAof(Client* client);
 void HandleInfo(Client* client);

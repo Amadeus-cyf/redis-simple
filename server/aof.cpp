@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -41,6 +42,8 @@ constexpr size_t kSnapshotBatchSize = 64;
 constexpr size_t kRespElementOverhead = 32;
 constexpr std::string_view kLongestInt64 = "-9223372036854775808";
 constexpr auto kSyncInterval = std::chrono::seconds(1);
+constexpr std::string_view kMultiRecord = "*1\r\n$5\r\nMULTI\r\n";
+constexpr std::string_view kExecRecord = "*1\r\n$4\r\nEXEC\r\n";
 constexpr auto kRewriteRetryDelay = std::chrono::seconds(5);
 
 class SystemFileOps final : public FileOps {
@@ -448,6 +451,47 @@ bool BuildSnapshotRecords(db::RedisDb* const db, const Limits& limits,
                                        sink);
          });
 }
+// Commands of one MULTI/EXEC block read during replay, held until EXEC.
+class ReplayTransaction {
+ public:
+  void Queue(const command::Command* command,
+             const command::CommandArgs& args) {
+    commands_.push_back({command, args.size()});
+    for (const std::string_view arg : args) {
+      args_.emplace_back(arg);
+    }
+  }
+
+  // Runs and clears the queued commands through `execute`, which returns
+  // false when a command fails; Apply then stops and returns false.
+  template <typename Execute>
+  bool Apply(const Execute& execute) {
+    command::CommandArgs views;
+    size_t next_arg = 0;
+    bool applied = true;
+    for (const auto& [command, arg_count] : commands_) {
+      views.assign(
+          args_.begin() + static_cast<std::ptrdiff_t>(next_arg),
+          args_.begin() + static_cast<std::ptrdiff_t>(next_arg + arg_count));
+      next_arg += arg_count;
+      if (!execute(command, &views)) {
+        applied = false;
+        break;
+      }
+    }
+    commands_.clear();
+    args_.clear();
+    return applied;
+  }
+
+ private:
+  struct QueuedCommand {
+    const command::Command* command;
+    size_t arg_count;
+  };
+  std::vector<QueuedCommand> commands_;
+  std::vector<std::string> args_;
+};
 }  // namespace
 
 std::string_view ErrorName(AofError error) {
@@ -564,16 +608,47 @@ bool Aof::Append(std::string_view command,
     batch_.resize(batch_size);
     return false;
   }
+  if (in_transaction_) {
+    ++transaction_records_;
+  }
   return true;
 }
 
-bool Aof::Flush() {
-  if (batch_.empty()) {
-    return Healthy();
+void Aof::BeginTransaction() {
+  in_transaction_ = true;
+  transaction_start_ = batch_.size();
+  transaction_records_ = 0;
+}
+
+void Aof::EndTransaction() {
+  if (!in_transaction_) {
+    return;
   }
-  std::string batch;
-  batch.swap(batch_);
-  return Submit(std::move(batch));
+  in_transaction_ = false;
+  if (transaction_records_ < 2) {
+    return;
+  }
+  batch_.insert(transaction_start_, kMultiRecord);
+  batch_.append(kExecRecord);
+}
+
+bool Aof::Flush() {
+  // A flush inside EXEC (BGREWRITEAOF queued in MULTI) closes the records so
+  // far as one atomic segment and starts another for the rest.
+  const bool in_transaction = in_transaction_;
+  if (in_transaction) {
+    EndTransaction();
+  }
+  bool flushed = Healthy();
+  if (!batch_.empty()) {
+    std::string batch;
+    batch.swap(batch_);
+    flushed = Submit(std::move(batch));
+  }
+  if (in_transaction) {
+    BeginTransaction();
+  }
+  return flushed;
 }
 
 bool Aof::Submit(std::string batch) {
@@ -820,6 +895,10 @@ bool Aof::Replay(db::RedisDb* const db) {
     command::CommandArgs args;
     size_t complete_bytes = 0;
     bool reached_end = false;
+    // Records between MULTI and EXEC are copied out of `input` and applied
+    // together at EXEC, so a transaction cut off by a crash is not applied.
+    std::optional<size_t> transaction_start;
+    ReplayTransaction transaction;
 
     while (!reached_end) {
       ssize_t bytes_read = -1;
@@ -853,12 +932,32 @@ bool Aof::Replay(db::RedisDb* const db) {
         if (parsed.consumed > limits_.max_replay_command_bytes) {
           return false;
         }
-        const auto* metadata = command::Find(name);
-        if (metadata == nullptr ||
-            metadata->access != command::CommandAccess::kWrite ||
-            !metadata->arity.Accepts(args.size()) ||
-            !client.ExecuteForReplay(metadata, &args)) {
-          return false;
+        if (name == "MULTI" && args.empty()) {
+          if (transaction_start.has_value()) {
+            return false;
+          }
+          transaction_start = complete_bytes;
+        } else if (name == "EXEC" && args.empty()) {
+          const auto execute = [&client](const command::Command* command,
+                                         command::CommandArgs* views) {
+            return client.ExecuteForReplay(command, views);
+          };
+          if (!transaction_start.has_value() || !transaction.Apply(execute)) {
+            return false;
+          }
+          transaction_start.reset();
+        } else {
+          const auto* metadata = command::Find(name);
+          if (metadata == nullptr ||
+              metadata->access != command::CommandAccess::kWrite ||
+              !metadata->arity.Accepts(args.size())) {
+            return false;
+          }
+          if (transaction_start.has_value()) {
+            transaction.Queue(metadata, args);
+          } else if (!client.ExecuteForReplay(metadata, &args)) {
+            return false;
+          }
         }
         if (!AddSize(parsed.consumed, &complete_bytes)) {
           return false;
@@ -870,14 +969,18 @@ bool Aof::Replay(db::RedisDb* const db) {
       }
     }
 
-    if (!input.Empty()) {
-      if (complete_bytes >
+    const bool truncated = !input.Empty() || transaction_start.has_value();
+    if (truncated) {
+      const size_t valid_bytes = transaction_start.value_or(complete_bytes);
+      RS_LOG_DEBUG("truncating incomplete AOF tail at %zu bytes\n",
+                   valid_bytes);
+      if (valid_bytes >
               static_cast<uintmax_t>(std::numeric_limits<off_t>::max()) ||
-          ftruncate(fd_, static_cast<off_t>(complete_bytes)) < 0) {
+          ftruncate(fd_, static_cast<off_t>(valid_bytes)) < 0) {
         return false;
       }
     }
-    return input.Empty() || SyncFile(fd_);
+    return !truncated || SyncFile(fd_);
   }();
   db->SetLoading(false);
   return replayed;

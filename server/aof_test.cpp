@@ -11,6 +11,8 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -665,5 +667,128 @@ TEST(AofTest, DetectsWhenAutomaticRewriteIsDue) {
   writer->WaitUntilRewriteIdle();
   EXPECT_FALSE(writer->ShouldAutoRewrite());
   EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
+}
+
+TEST(AofTest, ReplaysCompleteTransactions) {
+  TempFile file;
+  std::string commands = Encode("SET", {"before", "1"});
+  commands.append(Encode("MULTI", {}));
+  commands.append(Encode("SET", {"counter", "1"}));
+  commands.append(Encode("INCR", {"counter"}));
+  commands.append(Encode("EXEC", {}));
+  ASSERT_TRUE(file.Append(commands));
+
+  auto restored = db::RedisDb::Create();
+  auto aof = Aof::Open(Always(file), restored.get());
+
+  ASSERT_NE(aof, nullptr);
+  EXPECT_EQ(file.Size(), static_cast<off_t>(commands.size()));
+  ASSERT_NE(restored->LookupKey("before"), nullptr);
+  ASSERT_NE(restored->LookupKey("counter"), nullptr);
+  EXPECT_EQ(restored->LookupKey("counter")->String(), "2");
+}
+
+TEST(AofTest, DiscardsTransactionCutOffByEndOfFile) {
+  TempFile file;
+  const std::string complete = Encode("SET", {"before", "1"});
+  std::string commands = complete;
+  commands.append(Encode("MULTI", {}));
+  commands.append(Encode("SET", {"first", "1"}));
+  commands.append(Encode("SET", {"second", "2"}));
+  // The EXEC record never reached the file.
+  ASSERT_TRUE(file.Append(commands));
+
+  auto restored = db::RedisDb::Create();
+  auto aof = Aof::Open(Always(file), restored.get());
+
+  ASSERT_NE(aof, nullptr);
+  EXPECT_EQ(file.Size(), static_cast<off_t>(complete.size()));
+  EXPECT_NE(restored->LookupKey("before"), nullptr);
+  EXPECT_EQ(restored->LookupKey("first"), nullptr);
+  EXPECT_EQ(restored->LookupKey("second"), nullptr);
+}
+
+TEST(AofTest, RejectsUnbalancedTransactionRecords) {
+  for (const std::string& contents :
+       {Encode("EXEC", {}), Encode("MULTI", {}) + Encode("MULTI", {}),
+        Encode("MULTI", {}) + Encode("GET", {"key"}) + Encode("EXEC", {})}) {
+    TempFile file;
+    ASSERT_TRUE(file.Append(contents));
+    auto database = db::RedisDb::Create();
+    EXPECT_EQ(Aof::Open(Always(file), database.get()), nullptr);
+  }
+}
+
+TEST(AofTest, WrapsMultiRecordTransactions) {
+  TempFile file;
+  auto source = db::RedisDb::Create();
+  ASSERT_EQ(source->SetKey("a", db::RedisObject::CreateWithString("1"), 0),
+            db::DbStatus::kOk);
+  ASSERT_EQ(source->SetKey("b", db::RedisObject::CreateWithString("2"), 0),
+            db::DbStatus::kOk);
+  auto writer = Aof::Open(Always(file), source.get());
+  ASSERT_NE(writer, nullptr);
+
+  // A single mutation is already atomic and stays unwrapped.
+  writer->BeginTransaction();
+  ASSERT_TRUE(writer->Append("SET", {"a", "1"}, source.get()));
+  writer->EndTransaction();
+  ASSERT_TRUE(writer->Append("DEL", {"missing"}, source.get()));
+  writer->BeginTransaction();
+  ASSERT_TRUE(writer->Append("SET", {"a", "1"}, source.get()));
+  ASSERT_TRUE(writer->Append("SET", {"b", "2"}, source.get()));
+  writer->EndTransaction();
+  ASSERT_TRUE(writer->Flush());
+  writer.reset();
+
+  std::string expected = Encode("SET", {"a", "1"});
+  expected.append(Encode("DEL", {"missing"}));
+  expected.append(Encode("MULTI", {}));
+  expected.append(Encode("SET", {"a", "1"}));
+  expected.append(Encode("SET", {"b", "2"}));
+  expected.append(Encode("EXEC", {}));
+  std::ifstream input(file.Path(), std::ios::binary);
+  const std::string contents((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+  EXPECT_EQ(contents, expected);
+
+  auto restored = db::RedisDb::Create();
+  EXPECT_NE(Aof::Open(Always(file), restored.get()), nullptr);
+  EXPECT_EQ(restored->KeyCount(), 2);
+}
+
+TEST(AofTest, FlushInsideTransactionSplitsItIntoAtomicSegments) {
+  TempFile file;
+  auto source = db::RedisDb::Create();
+  for (const std::string_view key : {"a", "b", "c", "d"}) {
+    ASSERT_EQ(source->SetKey(key, db::RedisObject::CreateWithString("v"), 0),
+              db::DbStatus::kOk);
+  }
+  auto writer = Aof::Open(Always(file), source.get());
+  ASSERT_NE(writer, nullptr);
+
+  writer->BeginTransaction();
+  ASSERT_TRUE(writer->Append("SET", {"a", "v"}, source.get()));
+  ASSERT_TRUE(writer->Append("SET", {"b", "v"}, source.get()));
+  // StartRewrite flushes the pending batch, as BGREWRITEAOF inside EXEC does.
+  ASSERT_TRUE(writer->Flush());
+  ASSERT_TRUE(writer->Append("SET", {"c", "v"}, source.get()));
+  ASSERT_TRUE(writer->Append("SET", {"d", "v"}, source.get()));
+  writer->EndTransaction();
+  ASSERT_TRUE(writer->Flush());
+  writer.reset();
+
+  std::string expected;
+  for (const auto& keys : {std::array<std::string_view, 2>{"a", "b"},
+                           std::array<std::string_view, 2>{"c", "d"}}) {
+    expected.append(Encode("MULTI", {}));
+    expected.append(Encode("SET", {keys[0], "v"}));
+    expected.append(Encode("SET", {keys[1], "v"}));
+    expected.append(Encode("EXEC", {}));
+  }
+  std::ifstream input(file.Path(), std::ios::binary);
+  const std::string contents((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+  EXPECT_EQ(contents, expected);
 }
 }  // namespace redis_simple::aof

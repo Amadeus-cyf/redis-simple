@@ -15,6 +15,7 @@
 #include "memory/reply_buffer.h"
 #include "server/commands/command.h"
 #include "server/db/db.h"
+#include "server/db/key_watcher.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
 
@@ -43,6 +44,9 @@ class Client {
     return std::unique_ptr<Client>(
         new Client(std::move(connection), db, aof, output_limits));
   }
+  Client(const Client&) = delete;
+  Client& operator=(const Client&) = delete;
+  ~Client();
   connection::Connection* Connection() { return connection_.get(); }
   const connection::Connection* Connection() const { return connection_.get(); }
   // Never null: every client is bound to a database.
@@ -77,6 +81,17 @@ class Client {
   bool Authenticated() const { return authenticated_; }
   void SetAuthenticated(bool authenticated) { authenticated_ = authenticated; }
   void MarkModified() { modified_ = true; }
+  // MULTI/EXEC. Commands read while a transaction is open are copied into a
+  // queue and run back to back by EXEC.
+  bool InTransaction() const { return in_multi_; }
+  void BeginTransaction() { in_multi_ = true; }
+  // Drops the queued commands and every WATCHed key.
+  void DiscardTransaction();
+  // Runs the queued commands, or aborts when a command was rejected while
+  // queueing or a WATCHed key changed; either way the transaction ends.
+  void ExecTransaction();
+  void WatchKey(std::string_view key) { db_->WatchKey(key, &watcher_); }
+  void UnwatchKeys() { db_->UnwatchKeys(&watcher_); }
 
  private:
   friend class aof::Aof;
@@ -92,8 +107,21 @@ class Client {
   explicit Client(db::RedisDb* db);
   bool ExecuteForReplay(const command::Command* command,
                         command::CommandArgs* args);
+  // A command queued by MULTI. Its arguments are the `arg_count` entries of
+  // `multi_arg_ends_` before `arg_end`, which index into `multi_args_`.
+  struct QueuedCommand {
+    const command::Command* command;
+    size_t arg_end;
+    size_t arg_count;
+  };
+
   RequestStatus ParseRequest();
   ClientStatus ProcessCommand();
+  void QueueCommand();
+  void ResetTransaction();
+  // Propagates a successful mutation: touches WATCHed keys and appends the
+  // command to the AOF. Returns false if the AOF append failed.
+  bool PropagateMutation(const command::Command& command);
   bool CanQueueReply(size_t size);
   ssize_t SendBufferReply();
   ssize_t SendListReply();
@@ -111,6 +139,13 @@ class Client {
   bool reads_paused_{};
   bool close_after_reply_{};
   bool modified_{};
+  bool propagation_failed_{};
+  bool in_multi_{};
+  bool multi_error_{};
+  std::vector<QueuedCommand> multi_commands_;
+  std::vector<size_t> multi_arg_ends_;
+  std::string multi_args_;
+  db::KeyWatcher watcher_;
   bool discard_replies_{};
   bool reply_error_{};
   std::string_view required_password_;

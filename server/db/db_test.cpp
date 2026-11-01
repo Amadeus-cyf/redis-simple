@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "server/db/key_watcher.h"
 #include "utils/time_utils.h"
 
 namespace redis_simple::db {
@@ -219,5 +220,129 @@ TEST(RedisDbTest, ScansKeysIncrementallyWithoutExpiredKeys) {
 
   std::ranges::sort(keys);
   EXPECT_EQ(keys, std::vector<std::string>({"alpha", "beta", "gamma"}));
+}
+
+TEST(RedisDbTest, WatchedKeysBecomeDirtyOnKeyMutations) {
+  auto redis_db = RedisDb::Create();
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  KeyWatcher watcher;
+  ASSERT_EQ(redis_db->SetKey("key", RedisObject::CreateWithString("v"), 0),
+            DbStatus::kOk);
+
+  const auto expect_dirty_after = [&](auto&& mutate) {
+    redis_db->UnwatchKeys(&watcher);
+    redis_db->WatchKey("key", &watcher);
+    redis_db->WatchKey("other", &watcher);
+    EXPECT_FALSE(watcher.Dirty());
+    mutate();
+    EXPECT_TRUE(watcher.Dirty());
+  };
+  expect_dirty_after(
+      [&] { redis_db->SetKey("key", RedisObject::CreateWithString("w"), 0); });
+  expect_dirty_after([&] { redis_db->ExpireKeyAt("key", future); });
+  expect_dirty_after([&] { redis_db->PersistKey("key"); });
+  expect_dirty_after([&] { redis_db->RenameKey("key", "other"); });
+  expect_dirty_after([&] { redis_db->RenameKey("other", "key"); });
+  expect_dirty_after([&] { redis_db->TouchWatchedKey("other"); });
+  expect_dirty_after([&] { redis_db->DeleteKey("key"); });
+  expect_dirty_after([&] {
+    redis_db->SetKey("other", RedisObject::CreateWithString("v"), 0);
+  });
+  expect_dirty_after([&] { redis_db->UnlinkKey("other"); });
+
+  redis_db->UnwatchKeys(&watcher);
+  EXPECT_FALSE(watcher.Watching());
+  EXPECT_FALSE(redis_db->HasWatchedKeys());
+}
+
+TEST(RedisDbTest, FailedMutationsLeaveWatchedKeysClean) {
+  auto redis_db = RedisDb::Create();
+  KeyWatcher watcher;
+  ASSERT_EQ(redis_db->SetKey("key", RedisObject::CreateWithString("v"), 0),
+            DbStatus::kOk);
+  redis_db->WatchKey("key", &watcher);
+  redis_db->WatchKey("missing", &watcher);
+  // Watching the same key twice registers it once.
+  redis_db->WatchKey("key", &watcher);
+  EXPECT_EQ(watcher.Keys().size(), 2);
+
+  EXPECT_EQ(redis_db->DeleteKey("missing"), DbStatus::kError);
+  EXPECT_EQ(redis_db->UnlinkKey("missing"), DbStatus::kError);
+  EXPECT_EQ(redis_db->PersistKey("key"), DbStatus::kError);
+  EXPECT_EQ(redis_db->ExpireKeyAt("missing", 1), DbStatus::kError);
+  EXPECT_EQ(redis_db->RenameKey("missing", "other"), DbStatus::kError);
+  EXPECT_EQ(redis_db->RenameKey("key", "key"), DbStatus::kOk);
+  EXPECT_NE(redis_db->LookupKey("key"), nullptr);
+  EXPECT_FALSE(watcher.Dirty());
+  redis_db->UnwatchKeys(&watcher);
+}
+
+TEST(RedisDbTest, ExpirationAndFlushDirtyWatchedKeys) {
+  auto redis_db = RedisDb::Create();
+  const int64_t now = utils::NowInMilliseconds();
+  const int64_t later = now + 60'000;
+  KeyWatcher lazy;
+  KeyWatcher active;
+  KeyWatcher already_expired;
+  KeyWatcher flushed;
+  KeyWatcher missing;
+  ASSERT_EQ(
+      redis_db->SetKey("lazy", RedisObject::CreateWithString("v"), now + 1000),
+      DbStatus::kOk);
+  ASSERT_EQ(redis_db->SetKey("active", RedisObject::CreateWithString("v"),
+                             now + 1000),
+            DbStatus::kOk);
+  ASSERT_EQ(
+      redis_db->SetKey("stale", RedisObject::CreateWithString("v"), now + 1000),
+      DbStatus::kOk);
+  ASSERT_EQ(redis_db->SetKey("kept", RedisObject::CreateWithString("v"), 0),
+            DbStatus::kOk);
+  redis_db->SetCommandTime(now);
+  redis_db->WatchKey("lazy", &lazy);
+  redis_db->WatchKey("active", &active);
+  redis_db->WatchKey("kept", &flushed);
+  redis_db->WatchKey("missing", &missing);
+
+  redis_db->SetCommandTime(later);
+  // WATCH resolves expiration first, so a key already expired is clean.
+  redis_db->WatchKey("stale", &already_expired);
+  EXPECT_FALSE(already_expired.Dirty());
+
+  EXPECT_EQ(redis_db->LookupKey("lazy"), nullptr);
+  EXPECT_TRUE(lazy.Dirty());
+  EXPECT_FALSE(active.Dirty());
+  EXPECT_EQ(redis_db->ExpireSome(16, later).expired, 1);
+  EXPECT_TRUE(active.Dirty());
+  redis_db->ClearCommandTime();
+
+  redis_db->Flush();
+  EXPECT_TRUE(flushed.Dirty());
+  EXPECT_FALSE(missing.Dirty());
+  EXPECT_FALSE(already_expired.Dirty());
+
+  for (KeyWatcher* const watcher :
+       {&lazy, &active, &already_expired, &flushed, &missing}) {
+    redis_db->UnwatchKeys(watcher);
+  }
+  EXPECT_FALSE(redis_db->HasWatchedKeys());
+}
+
+TEST(RedisDbTest, UnwatchingOneClientKeepsOtherWatchers) {
+  auto redis_db = RedisDb::Create();
+  KeyWatcher first;
+  KeyWatcher second;
+  redis_db->WatchKey("key", &first);
+  redis_db->WatchKey("key", &second);
+
+  redis_db->UnwatchKeys(&first);
+  EXPECT_TRUE(redis_db->HasWatchedKeys());
+  ASSERT_EQ(redis_db->SetKey("key", RedisObject::CreateWithString("v"), 0),
+            DbStatus::kOk);
+  EXPECT_FALSE(first.Dirty());
+  EXPECT_TRUE(second.Dirty());
+
+  redis_db->UnwatchKeys(&second);
+  EXPECT_FALSE(second.Dirty());
+  EXPECT_FALSE(redis_db->HasWatchedKeys());
 }
 }  // namespace redis_simple::db

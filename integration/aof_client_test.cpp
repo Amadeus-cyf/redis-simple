@@ -78,6 +78,13 @@ bool WriteDataset(cli::RedisCli* const cli) {
       {"DEL aof_deleted\r\n", "1\n"},
       {"HSET aof_string field rejected\r\n",
        "WRONGTYPE Operation against a key holding the wrong kind of value\n"},
+      {"MULTI\r\n", "OK\n"},
+      {"SET aof_tx_first one\r\n", "QUEUED\n"},
+      {"RPUSH aof_tx_list a b\r\n", "QUEUED\n"},
+      {"EXEC\r\n", "OK\n2\n\n\n"},
+      {"MULTI\r\n", "OK\n"},
+      {"SET aof_tx_discarded no\r\n", "QUEUED\n"},
+      {"DISCARD\r\n", "OK\n"},
   };
   if (!std::ranges::all_of(cases, [cli](const auto& test_case) {
         return ExpectReply(cli, test_case);
@@ -107,6 +114,10 @@ bool RewriteDataset(cli::RedisCli* const cli) {
       {"ZREM aof_zset removed\r\n", "1\n"},
       {"MSET aof_mset_one updated aof_mset_two changed\r\n", "OK\n"},
       {"RENAME aof_rename_source aof_rename_target\r\n", "OK\n"},
+      {"MULTI\r\n", "OK\n"},
+      {"LPOP aof_tx_list\r\n", "QUEUED\n"},
+      {"SET aof_tx_second two\r\n", "QUEUED\n"},
+      {"EXEC\r\n", "a\nOK\n\n\n"},
   };
   if (!std::ranges::all_of(cases, [cli](const auto& test_case) {
         return ExpectReply(cli, test_case);
@@ -142,6 +153,10 @@ bool ReadDataset(cli::RedisCli* const cli) {
       {"GET aof_counter\r\n", "9\n"},
       {"GET aof_deleted\r\n", "(nil)\n"},
       {"GET aof_history\r\n", std::string(256, 'x') + "\n"},
+      {"GET aof_tx_first\r\n", "one\n"},
+      {"GET aof_tx_second\r\n", "two\n"},
+      {"LRANGE aof_tx_list 0 -1\r\n", "b\n\n\n"},
+      {"GET aof_tx_discarded\r\n", "(nil)\n"},
   };
   if (!std::ranges::all_of(cases, [cli](const auto& test_case) {
         return ExpectReply(cli, test_case);
