@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <string>
+#include <string_view>
 
 namespace redis_simple::command {
 TEST(CommandRegistryTest, FindsCommandsCaseInsensitively) {
@@ -42,6 +44,24 @@ TEST(CommandRegistryTest, FindsExpandedRedisCommandSet) {
 TEST(CommandRegistryTest, ReturnsNullForUnknownCommand) {
   EXPECT_EQ(Find("UNKNOWN"), nullptr);
   EXPECT_EQ(Find(""), nullptr);
+  // Prefixes, extensions, and names longer than any command never match.
+  EXPECT_EQ(Find("GE"), nullptr);
+  EXPECT_EQ(Find("GETS"), nullptr);
+  EXPECT_EQ(Find("ZRANGEBYSCOREX"), nullptr);
+  EXPECT_EQ(Find(std::string(64, 'A')), nullptr);
+  EXPECT_EQ(Find(std::string_view("GET\0", 4)), nullptr);
+  // Case folding is ASCII only.
+  EXPECT_EQ(Find("G\xc5T"), nullptr);
+}
+
+TEST(CommandRegistryTest, FindsEveryCaseVariant) {
+  for (const std::string_view name :
+       {"get", "Get", "gEt", "GET", "zRaNgEbYsCoRe", "bgrewriteaof", "Exec",
+        "unwatch"}) {
+    const auto* command = Find(name);
+    ASSERT_NE(command, nullptr) << name;
+    EXPECT_EQ(command->name.size(), name.size()) << name;
+  }
 }
 
 TEST(CommandRegistryTest, ExposesCommandMetadata) {

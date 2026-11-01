@@ -38,6 +38,31 @@ TEST(RequestParserTest, DistinguishesIncompleteAndInvalidResp) {
   EXPECT_EQ(Parse("*0\r\n", &command, &args).status, ParseStatus::kInvalid);
 }
 
+TEST(RequestParserTest, ValidatesLengthFieldsInOnePass) {
+  std::string_view command;
+  command::CommandArgs args;
+  const auto status = [&](std::string_view input) {
+    return Parse(input, &command, &args).status;
+  };
+
+  for (const std::string_view partial :
+       {"*", "*1", "*1\r", "*1\r\n$", "*1\r\n$3", "*1\r\n$3\r"}) {
+    EXPECT_EQ(status(partial), ParseStatus::kIncomplete) << partial;
+  }
+  for (const std::string_view invalid :
+       {"*\r\n", "*-1\r\n", "*+1\r\n", "*1 \r\n", "*1\rx", "*1\r\n$\r\n",
+        "*1\r\n$3x\r\nGET\r\n", "*1\r\n$3\r\nGETxx",
+        "*1\r\n$18446744073709551616\r\n"}) {
+    EXPECT_EQ(status(invalid), ParseStatus::kInvalid) << invalid;
+  }
+  // Leading zeros are accepted within the digit bound, not beyond it.
+  EXPECT_EQ(status("*01\r\n$003\r\nGET\r\n"), ParseStatus::kComplete);
+  EXPECT_EQ(command, "GET");
+  EXPECT_EQ(status("*" + std::string(25, '0') + "1\r\n"),
+            ParseStatus::kInvalid);
+  EXPECT_EQ(status("*" + std::string(1000, '0')), ParseStatus::kInvalid);
+}
+
 TEST(RequestParserTest, BoundsReservationForIncompleteResp) {
   constexpr std::string_view kRequest = "*1048576\r\n";
   std::string_view command;
