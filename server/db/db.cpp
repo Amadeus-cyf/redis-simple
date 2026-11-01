@@ -20,7 +20,9 @@ std::unique_ptr<RedisDb> RedisDb::Create() {
 
 RedisDb::RedisDb()
     : dict_(in_memory::Dict<std::string, RedisObjectPtr>::Create()),
-      expires_(in_memory::Dict<std::string, int64_t>::Create()) {}
+      expires_(in_memory::Dict<std::string, int64_t>::Create()),
+      watched_keys_(
+          in_memory::Dict<std::string, std::vector<KeyWatcher*>>::Create()) {}
 
 const RedisObject* RedisDb::LookupKey(std::string_view key) {
   return MutableLookupKey(key);
@@ -48,6 +50,7 @@ DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
   }
   // FindOrInsert hashes once and copies the key only for a new entry.
   *dict_->FindOrInsert(key).first = std::move(object);
+  TouchWatchedKey(key);
   if (existing_ttl == ExistingTtl::kClear && expire == 0 &&
       expires_->Size() > 0) {
     expires_->Delete(key);
@@ -63,6 +66,9 @@ DbStatus RedisDb::DeleteKey(std::string_view key) {
   if (!dict_->Delete(key)) {
     return DbStatus::kError;
   }
+  // `key` may view the TTL entry's own key (active expiration), so touch
+  // watchers before that entry is deleted.
+  TouchWatchedKey(key);
   if (expires_->Size() > 0) {
     expires_->Delete(key);
   }
@@ -79,6 +85,7 @@ DbStatus RedisDb::UnlinkKey(std::string_view key) {
     return DbStatus::kError;
   }
   expires_->Delete(key);
+  TouchWatchedKey(key);
   return reclaimer_.Reclaim(std::move(*object)) ? DbStatus::kOk
                                                 : DbStatus::kError;
 }
@@ -111,6 +118,7 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
     return DeleteKey(key);
   }
   *expires_->FindOrInsert(key).first = expire;
+  TouchWatchedKey(key);
   return DbStatus::kOk;
 }
 
@@ -123,7 +131,11 @@ DbStatus RedisDb::PersistKey(std::string_view key) {
   if (LookupKey(key) == nullptr || expires_->FindValue(key) == nullptr) {
     return DbStatus::kError;
   }
-  return expires_->Delete(key) ? DbStatus::kOk : DbStatus::kError;
+  if (!expires_->Delete(key)) {
+    return DbStatus::kError;
+  }
+  TouchWatchedKey(key);
+  return DbStatus::kOk;
 }
 
 DbStatus RedisDb::RenameKey(std::string_view old_key,
@@ -149,6 +161,8 @@ DbStatus RedisDb::RenameKey(std::string_view old_key,
   } else if (expires_->Size() > 0) {
     expires_->Delete(new_key);
   }
+  TouchWatchedKey(old_key);
+  TouchWatchedKey(new_key);
   return DbStatus::kOk;
 }
 
@@ -171,6 +185,21 @@ int64_t RedisDb::TimeToLive(std::string_view key, TtlResolution resolution) {
 }
 
 void RedisDb::Flush() {
+  if (HasWatchedKeys()) {
+    // Like Redis, only watched keys that held a value are modified by FLUSHDB.
+    std::optional<size_t> cursor = 0;
+    while (cursor.has_value()) {
+      cursor = watched_keys_->Scan(
+          *cursor, [this](const std::string& key,
+                          const std::vector<KeyWatcher*>& watchers) {
+            if (dict_->FindValue(std::string_view(key)) != nullptr) {
+              for (KeyWatcher* const watcher : watchers) {
+                watcher->dirty_ = true;
+              }
+            }
+          });
+    }
+  }
   dict_->Clear();
   expires_->Clear();
   expire_cursor_ = 0;
@@ -206,6 +235,45 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
     }
   }
   return result;
+}
+
+void RedisDb::WatchKey(std::string_view key, KeyWatcher* const watcher) {
+  if (std::ranges::find(watcher->keys_, key) != watcher->keys_.end()) {
+    return;
+  }
+  // Resolve lazy expiration first so a key that already expired does not
+  // count as a modification made after WATCH.
+  LookupKey(key);
+  watched_keys_->FindOrInsert(key).first->push_back(watcher);
+  watcher->keys_.emplace_back(key);
+}
+
+void RedisDb::UnwatchKeys(KeyWatcher* const watcher) {
+  for (const std::string& key : watcher->keys_) {
+    auto* const watchers = watched_keys_->FindValue(std::string_view(key));
+    if (watchers == nullptr) {
+      continue;
+    }
+    std::erase(*watchers, watcher);
+    if (watchers->empty()) {
+      watched_keys_->Delete(std::string_view(key));
+    }
+  }
+  watcher->keys_.clear();
+  watcher->dirty_ = false;
+}
+
+void RedisDb::TouchWatchedKey(std::string_view key) {
+  if (watched_keys_->Size() == 0) {
+    return;
+  }
+  auto* const watchers = watched_keys_->FindValue(key);
+  if (watchers == nullptr) {
+    return;
+  }
+  for (KeyWatcher* const watcher : *watchers) {
+    watcher->dirty_ = true;
+  }
 }
 
 int64_t RedisDb::Now() const {

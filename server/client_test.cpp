@@ -84,6 +84,13 @@ std::string SendAndReadReply(Client* client, int peer_fd) {
              ? std::string(buffer.data(), static_cast<size_t>(bytes_read))
              : std::string();
 }
+std::string Roundtrip(Client* client, int peer_fd, std::string_view request) {
+  EXPECT_EQ(write(peer_fd, request.data(), request.size()),
+            static_cast<ssize_t>(request.size()));
+  EXPECT_EQ(client->ReadQuery(), static_cast<ssize_t>(request.size()));
+  EXPECT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  return SendAndReadReply(client, peer_fd);
+}
 }  // namespace
 
 TEST(ClientTest, ReadQueryReadsOncePerCall) {
@@ -331,5 +338,150 @@ TEST(ClientTest, QueuesSplitReplyAtomically) {
             0);
   EXPECT_TRUE(limited_client->ShouldCloseAfterReply());
   EXPECT_FALSE(limited_client->HasPendingReplies());
+}
+
+TEST(ClientTest, ExecRunsQueuedCommandsInOrder) {
+  auto [client, peer] = CreateClient();
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"MULTI"}) +
+                          EncodeRequest({"SET", "tx-key", "1"}) +
+                          EncodeRequest({"INCR", "tx-key"})),
+            "+OK\r\n+QUEUED\r\n+QUEUED\r\n");
+  EXPECT_TRUE(client->InTransaction());
+  // Commands are not applied until EXEC.
+  EXPECT_EQ(client->Db()->LookupKey("tx-key"), nullptr);
+
+  // Queued arguments must survive later reads reusing the query buffer.
+  EXPECT_EQ(
+      Roundtrip(client.get(), peer.Get(),
+                EncodeRequest({"GET", "tx-key"}) + EncodeRequest({"EXEC"})),
+      "+QUEUED\r\n*3\r\n+OK\r\n:2\r\n$1\r\n2\r\n");
+  EXPECT_FALSE(client->InTransaction());
+  client->Db()->DeleteKey("tx-key");
+}
+
+TEST(ClientTest, ExecReportsRuntimeErrorsAndKeepsGoing) {
+  auto [client, peer] = CreateClient();
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"SET", "tx-string", "text"}) +
+                          EncodeRequest({"MULTI"}) +
+                          EncodeRequest({"LPUSH", "tx-string", "x"}) +
+                          EncodeRequest({"SET", "tx-after", "1"}) +
+                          EncodeRequest({"EXEC"})),
+            std::string("+OK\r\n+OK\r\n+QUEUED\r\n+QUEUED\r\n*2\r\n")
+                .append(reply::kWrongTypeError)
+                .append("+OK\r\n"));
+  EXPECT_NE(client->Db()->LookupKey("tx-after"), nullptr);
+  client->Db()->DeleteKey("tx-string");
+  client->Db()->DeleteKey("tx-after");
+}
+
+TEST(ClientTest, RejectedCommandsAbortTransaction) {
+  auto [client, peer] = CreateClient();
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"MULTI"}) +
+                          EncodeRequest({"SET", "tx-aborted", "1"}) +
+                          EncodeRequest({"GET"}) + EncodeRequest({"EXEC"})),
+            "+OK\r\n+QUEUED\r\n-ERR wrong number of arguments\r\n"
+            "-EXECABORT Transaction discarded because of previous "
+            "errors.\r\n");
+  EXPECT_FALSE(client->InTransaction());
+  EXPECT_EQ(client->Db()->LookupKey("tx-aborted"), nullptr);
+
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"MULTI"}) + EncodeRequest({"NOSUCH"}) +
+                          EncodeRequest({"EXEC"})),
+            "+OK\r\n-ERR unknown command 'NOSUCH'\r\n"
+            "-EXECABORT Transaction discarded because of previous "
+            "errors.\r\n");
+}
+
+TEST(ClientTest, TransactionCommandsValidateState) {
+  auto [client, peer] = CreateClient();
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"EXEC"}) + EncodeRequest({"DISCARD"}) +
+                          EncodeRequest({"MULTI"}) + EncodeRequest({"MULTI"}) +
+                          EncodeRequest({"WATCH", "key"}) +
+                          EncodeRequest({"SET", "tx-discarded", "1"}) +
+                          EncodeRequest({"DISCARD"}) + EncodeRequest({"EXEC"})),
+            "-ERR EXEC without MULTI\r\n-ERR DISCARD without MULTI\r\n"
+            "+OK\r\n-ERR MULTI calls can not be nested\r\n"
+            "-ERR WATCH inside MULTI is not allowed\r\n+QUEUED\r\n"
+            "+OK\r\n-ERR EXEC without MULTI\r\n");
+  EXPECT_EQ(client->Db()->LookupKey("tx-discarded"), nullptr);
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"MULTI"}) + EncodeRequest({"EXEC"})),
+            "+OK\r\n*0\r\n");
+}
+
+TEST(ClientTest, WatchAbortsExecWhenAnotherClientWrites) {
+  auto [watching, watching_peer] = CreateClient();
+  auto [writer, writer_peer] = CreateClient();
+  EXPECT_EQ(Roundtrip(writer.get(), writer_peer.Get(),
+                      EncodeRequest({"RPUSH", "tx-watched", "a"})),
+            ":1\r\n");
+  EXPECT_EQ(Roundtrip(watching.get(), watching_peer.Get(),
+                      EncodeRequest({"WATCH", "tx-watched"})),
+            "+OK\r\n");
+
+  // A failed write does not modify the key.
+  EXPECT_EQ(Roundtrip(writer.get(), writer_peer.Get(),
+                      EncodeRequest({"INCR", "tx-watched"})),
+            reply::kWrongTypeError);
+  EXPECT_EQ(Roundtrip(watching.get(), watching_peer.Get(),
+                      EncodeRequest({"MULTI"}) +
+                          EncodeRequest({"LLEN", "tx-watched"}) +
+                          EncodeRequest({"EXEC"})),
+            "+OK\r\n+QUEUED\r\n*1\r\n:1\r\n");
+
+  // EXEC unwatched the key; watch again, then edit the list in place.
+  EXPECT_EQ(Roundtrip(watching.get(), watching_peer.Get(),
+                      EncodeRequest({"WATCH", "tx-watched"})),
+            "+OK\r\n");
+  EXPECT_EQ(Roundtrip(writer.get(), writer_peer.Get(),
+                      EncodeRequest({"RPUSH", "tx-watched", "b"})),
+            ":2\r\n");
+  EXPECT_EQ(Roundtrip(watching.get(), watching_peer.Get(),
+                      EncodeRequest({"MULTI"}) +
+                          EncodeRequest({"RPUSH", "tx-watched", "c"}) +
+                          EncodeRequest({"EXEC"})),
+            "+OK\r\n+QUEUED\r\n*-1\r\n");
+  EXPECT_EQ(Roundtrip(writer.get(), writer_peer.Get(),
+                      EncodeRequest({"LLEN", "tx-watched"})),
+            ":2\r\n");
+  EXPECT_FALSE(watching->Db()->HasWatchedKeys());
+  watching->Db()->DeleteKey("tx-watched");
+}
+
+TEST(ClientTest, UnwatchAndDisconnectReleaseWatchedKeys) {
+  auto [client, peer] = CreateClient();
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"HELLO", "3"}) +
+                          EncodeRequest({"WATCH", "tx-a", "tx-b"}) +
+                          EncodeRequest({"SET", "tx-b", "1"}) +
+                          EncodeRequest({"MULTI"}) + EncodeRequest({"EXEC"}))
+                .substr(0, 4),
+            "%7\r\n");
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"WATCH", "tx-a"}) +
+                          EncodeRequest({"SET", "tx-a", "1"}) +
+                          EncodeRequest({"MULTI"}) + EncodeRequest({"EXEC"})),
+            "+OK\r\n+OK\r\n+OK\r\n_\r\n");
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"WATCH", "tx-a"}) +
+                          EncodeRequest({"SET", "tx-a", "2"}) +
+                          EncodeRequest({"UNWATCH"}) +
+                          EncodeRequest({"MULTI"}) + EncodeRequest({"EXEC"})),
+            "+OK\r\n+OK\r\n+OK\r\n+OK\r\n*0\r\n");
+
+  EXPECT_EQ(
+      Roundtrip(client.get(), peer.Get(), EncodeRequest({"WATCH", "tx-a"})),
+      "+OK\r\n");
+  EXPECT_TRUE(client->Db()->HasWatchedKeys());
+  db::RedisDb* const redis_db = client->Db();
+  client.reset();
+  EXPECT_FALSE(redis_db->HasWatchedKeys());
+  redis_db->DeleteKey("tx-a");
+  redis_db->DeleteKey("tx-b");
 }
 }  // namespace redis_simple

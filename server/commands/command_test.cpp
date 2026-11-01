@@ -96,4 +96,17 @@ TEST(CommandRegistryTest, OnlyAuthAndQuitRunBeforeAuth) {
     EXPECT_FALSE(command->allowed_before_auth) << name;
   }
 }
+
+TEST(CommandRegistryTest, OnlyTransactionControlRunsImmediatelyInMulti) {
+  for (const auto* name : {"EXEC", "DISCARD", "MULTI", "WATCH", "QUIT"}) {
+    const auto* command = Find(name);
+    ASSERT_NE(command, nullptr) << name;
+    EXPECT_FALSE(command->queued_in_multi) << name;
+  }
+  for (const auto* name : {"UNWATCH", "GET", "SET", "PING", "HELLO", "AUTH"}) {
+    const auto* command = Find(name);
+    ASSERT_NE(command, nullptr) << name;
+    EXPECT_TRUE(command->queued_in_multi) << name;
+  }
+}
 }  // namespace redis_simple::command

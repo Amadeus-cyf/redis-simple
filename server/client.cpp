@@ -21,6 +21,13 @@ constexpr auto kReadBufferSize = size_t{16} * 1024;
 // Upper bound for one read while receiving a large bulk argument.
 constexpr auto kMaxBulkReadSize = size_t{1024} * 1024;
 constexpr auto kMaxQueryBufferSize = size_t{64} * 1024 * 1024;
+// Upper bound for the argument bytes one MULTI may queue.
+constexpr auto kMaxTransactionBytes = kMaxQueryBufferSize;
+// Queue buffers larger than this are released after a transaction ends.
+constexpr auto kRetainedTransactionBytes = size_t{64} * 1024;
+constexpr std::string_view kQueued = "+QUEUED\r\n";
+constexpr std::string_view kExecAbort =
+    "-EXECABORT Transaction discarded because of previous errors.\r\n";
 
 // Pins the database clock for one command.
 class CommandTimeScope {
@@ -48,6 +55,8 @@ Client::Client(std::unique_ptr<connection::Connection> connection,
       output_limits_(output_limits) {}
 
 Client::Client(db::RedisDb* const db) : db_(db), discard_replies_(true) {}
+
+Client::~Client() { db_->UnwatchKeys(&watcher_); }
 
 size_t Client::AddReply(std::string_view reply_text) {
   if (discard_replies_) {
@@ -233,14 +242,17 @@ Client::RequestStatus Client::ParseRequest() {
   if (command == nullptr) {
     RS_LOG_DEBUG("command not found\n");
     AddReply(reply::UnknownCommand(name));
+    multi_error_ = in_multi_;
     return RequestStatus::kRejected;
   }
   if (!command->arity.Accepts(args_.size())) {
     AddReply(reply::kWrongNumberOfArguments);
+    multi_error_ = in_multi_;
     return RequestStatus::kRejected;
   }
   if (!authenticated_ && !command->allowed_before_auth) {
     AddReply(reply::kNoAuthError);
+    multi_error_ = in_multi_;
     return RequestStatus::kRejected;
   }
   command_ = command;
@@ -253,18 +265,138 @@ ClientStatus Client::ProcessCommand() {
   }
   RS_LOG_DEBUG("process command: %.*s\n",
                static_cast<int>(command_->name.size()), command_->name.data());
+  if (in_multi_ && command_->queued_in_multi) {
+    QueueCommand();
+    return ClientStatus::kOk;
+  }
   modified_ = false;
   {
     const CommandTimeScope command_time(db_);
     command_->callback(this);
   }
-  if (modified_ && aof_ != nullptr &&
-      !aof_->Append(command_->name, args_, db_)) {
-    RS_LOG_DEBUG("failed to append command to AOF\n");
-    close_after_reply_ = true;
+  if (!PropagateMutation(*command_) || propagation_failed_) {
+    propagation_failed_ = false;
     return ClientStatus::kError;
   }
   return ClientStatus::kOk;
+}
+
+bool Client::PropagateMutation(const command::Command& command) {
+  if (!modified_) {
+    return true;
+  }
+  modified_ = false;
+  // Key-level database operations touch WATCHed keys themselves; this covers
+  // single-key commands that edit a value in place.
+  const command::KeySpec& keys = command.keys;
+  if (keys.HasKeys() && keys.first == keys.last && keys.first < args_.size() &&
+      db_->HasWatchedKeys()) {
+    db_->TouchWatchedKey(args_[keys.first]);
+  }
+  if (aof_ != nullptr && !aof_->Append(command.name, args_, db_)) {
+    RS_LOG_DEBUG("failed to append command to AOF\n");
+    close_after_reply_ = true;
+    return false;
+  }
+  return true;
+}
+
+void Client::QueueCommand() {
+  if (multi_error_) {
+    // EXEC will abort anyway; do not keep copying arguments.
+    AddReply(kQueued);
+    return;
+  }
+  size_t bytes = 0;
+  for (const std::string_view arg : args_) {
+    bytes += arg.size();
+  }
+  if (bytes > kMaxTransactionBytes - multi_args_.size()) {
+    // Release the queue now; the flag makes EXEC abort the transaction.
+    AddReply(reply::FromError("ERR MULTI queue limit exceeded"));
+    ResetTransaction();
+    in_multi_ = true;
+    multi_error_ = true;
+    return;
+  }
+  // The arguments view the query buffer, which is reused after this read, so
+  // the queue owns a copy of them in one contiguous buffer.
+  multi_args_.reserve(multi_args_.size() + bytes);
+  for (const std::string_view arg : args_) {
+    multi_args_.append(arg);
+    multi_arg_ends_.push_back(multi_args_.size());
+  }
+  multi_commands_.push_back({command_, multi_arg_ends_.size(), args_.size()});
+  AddReply(kQueued);
+}
+
+void Client::ResetTransaction() {
+  in_multi_ = false;
+  multi_error_ = false;
+  multi_commands_.clear();
+  multi_arg_ends_.clear();
+  multi_args_.clear();
+  if (multi_args_.capacity() > kRetainedTransactionBytes) {
+    multi_args_.shrink_to_fit();
+    multi_arg_ends_.shrink_to_fit();
+    multi_commands_.shrink_to_fit();
+  }
+}
+
+void Client::DiscardTransaction() {
+  ResetTransaction();
+  UnwatchKeys();
+}
+
+void Client::ExecTransaction() {
+  if (multi_error_) {
+    AddReply(kExecAbort);
+    DiscardTransaction();
+    return;
+  }
+  // Looking the keys up resolves lazy expiration, so a WATCHed key that
+  // expired since WATCH counts as modified.
+  for (const std::string& key : watcher_.Keys()) {
+    db_->LookupKey(key);
+  }
+  if (watcher_.Dirty()) {
+    AddReply(reply::NullArrayView(protocol_));
+    DiscardTransaction();
+    return;
+  }
+  UnwatchKeys();
+
+  AddReply(reply::FromArrayHeader(multi_commands_.size()));
+  const command::Command* const exec_command = command_;
+  if (aof_ != nullptr) {
+    aof_->BeginTransaction();
+  }
+  // Queued commands share the EXEC command's pinned clock, so the whole
+  // transaction observes one time.
+  for (const QueuedCommand& queued : multi_commands_) {
+    command_ = queued.command;
+    args_.clear();
+    const size_t first_arg = queued.arg_end - queued.arg_count;
+    size_t arg_start = first_arg == 0 ? 0 : multi_arg_ends_[first_arg - 1];
+    for (size_t index = first_arg; index < queued.arg_end; ++index) {
+      const size_t arg_end = multi_arg_ends_[index];
+      args_.emplace_back(multi_args_.data() + arg_start, arg_end - arg_start);
+      arg_start = arg_end;
+    }
+    modified_ = false;
+    command_->callback(this);
+    if (!PropagateMutation(*command_)) {
+      propagation_failed_ = true;
+      break;
+    }
+  }
+  if (aof_ != nullptr) {
+    aof_->EndTransaction();
+  }
+  command_ = exec_command;
+  args_.clear();
+  modified_ = false;
+  ResetTransaction();
 }
 
 bool Client::ExecuteForReplay(const command::Command* const command,

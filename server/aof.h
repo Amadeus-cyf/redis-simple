@@ -103,6 +103,11 @@ class Aof {
   // read from a client, before any of their replies are sent.
   bool Append(std::string_view command,
               const std::vector<std::string_view>& args, db::RedisDb* db);
+  // Brackets the mutations of one EXEC. When it appended more than one
+  // record, EndTransaction wraps them in MULTI/EXEC records so replay applies
+  // the transaction completely or, if the file ends inside it, not at all.
+  void BeginTransaction();
+  void EndTransaction();
   // Hands the pending batch to the writer: with `always` it is written and
   // synced once; otherwise it is queued, waiting for space if the background
   // writer is behind. Returns false once the AOF is unhealthy.
@@ -165,6 +170,10 @@ class Aof {
   RecordQueue rewrite_pending_;
   // Encoded mutations not yet handed to the writer; event-loop thread only.
   std::string batch_;
+  // Where the open EXEC's records start in `batch_`, and how many it has.
+  size_t transaction_start_{};
+  size_t transaction_records_{};
+  bool in_transaction_{};
   std::thread worker_;
   std::thread rewrite_worker_;
   size_t pending_bytes_{};

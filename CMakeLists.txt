@@ -240,6 +240,12 @@ redis_simple_add_executable(
 target_link_libraries(mock_hash_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
+  mock_transaction_client
+  "integration/commands/transaction_client_test.cpp"
+)
+target_link_libraries(mock_transaction_client PRIVATE redis_simple_cli)
+
+redis_simple_add_executable(
   mock_aof_client
   "integration/aof_client_test.cpp"
 )
@@ -334,6 +340,15 @@ add_test(
     $<TARGET_FILE:mock_hash_client>
 )
 
+add_test(
+  NAME redis_simple_integration_command_transaction
+  COMMAND
+    /bin/sh
+    "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
+    $<TARGET_FILE:redis_simple>
+    $<TARGET_FILE:mock_transaction_client>
+)
+
 set_tests_properties(
   redis_simple_integration_tcp
   redis_simple_integration_server_lifecycle
@@ -345,6 +360,7 @@ set_tests_properties(
   redis_simple_integration_command_list
   redis_simple_integration_command_zset
   redis_simple_integration_command_hash
+  redis_simple_integration_command_transaction
   PROPERTIES
     LABELS integration
 )

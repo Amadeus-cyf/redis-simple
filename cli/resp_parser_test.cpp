@@ -123,6 +123,13 @@ TEST(ReplyParserTest, ParseSet) {
   EXPECT_EQ(reply, std::vector<std::string>({"one", "two", "\n"}));
 }
 
+TEST(ReplyParserTest, ParseNullArray) {
+  std::vector<std::string> reply;
+  ASSERT_EQ(ParseBytes("*-1\r\n", reply), 5);
+  ASSERT_EQ(reply.back(), "(nil)");
+  ASSERT_EQ(ParseBytes("~-1\r\n", reply), -1);
+}
+
 TEST(ReplyParseTest, ParseNull) {
   std::vector<std::string> reply;
   ASSERT_EQ(ParseBytes("_\r\n", reply), 3);

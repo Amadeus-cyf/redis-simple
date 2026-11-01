@@ -49,6 +49,9 @@ struct Command {
   KeySpec keys;
   // Commands that unauthenticated clients may run when a password is set.
   bool allowed_before_auth{false};
+  // Inside MULTI, commands are queued for EXEC unless this is false, in which
+  // case they run immediately (EXEC, DISCARD, MULTI, WATCH, and QUIT).
+  bool queued_in_multi{true};
 };
 
 const Command* Find(std::string_view name);

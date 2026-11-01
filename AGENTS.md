@@ -87,6 +87,21 @@ Guidance for AI coding agents working in this repository.
   back to raw form.
 - Only commands marked `AllowBeforeAuth` in the command table run before a
   client authenticates when `--requirepass` is set.
+- Inside `MULTI`, every command is queued unless the command table marks it
+  `RunsImmediatelyInMulti` (`EXEC`, `DISCARD`, `MULTI`, `WATCH`, `QUIT`).
+  Queued arguments are copied once into the client's transaction buffer, the
+  ownership boundary for arguments that outlive a read. `EXEC` runs the queue
+  under the `EXEC` command's pinned clock.
+- `WATCH` invalidation lives in `RedisDb`: its key-level mutations (set,
+  delete, unlink, expire, persist, rename, flush, and expiration) touch watched
+  keys. Commands that edit a value in place are covered by `Client`, which
+  touches a single-key command's key after it calls `MarkModified()`. Keep new
+  key-level `RedisDb` mutations touching watchers, and keep
+  `TouchWatchedKey` a single branch when nothing is watched.
+- Wrap an `EXEC`'s AOF records with `Aof::BeginTransaction` and
+  `Aof::EndTransaction`, which add `MULTI`/`EXEC` records when there is more
+  than one. Replay applies a `MULTI` block only at its `EXEC` and truncates a
+  block cut off at the end of the file.
 - Keep AOF rewrite snapshots visitor-based and preserve the original AOF until
   the snapshot and buffered mutation delta have been synced and atomically
   installed. The normal append path should pay no copy cost when no rewrite is
@@ -183,7 +198,7 @@ Before committing, run the relevant build and tests.
   test. Use injected file operations for deterministic write, sync, rename, and
   directory-sync failure unit tests.
 - Keep command-family integration tests split by area, including key, string,
-  set, list, zset, hash, and connection commands.
+  set, list, zset, hash, connection, and transaction commands.
 - Register integration command tests as separate CTest entries by command
   family, so failures identify the affected area without log digging.
 - Keep exact ordering assertions for ordered command results such as sorted-set
