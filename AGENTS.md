@@ -73,6 +73,10 @@ Guidance for AI coding agents working in this repository.
   object type and null database in each command.
 - Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
   only when it is new.
+- `RedisDb` operations hash their key once as an `in_memory::HashedKey` and
+  pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
+  hash. Keep operations that touch more than one of those dicts on that path
+  instead of looking the key up by `std::string_view` in each.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-3
   (`utils/siphash.h`) to resist hash flooding. Do not depend on iteration or
   `SCAN` order in tests; it changes between runs.

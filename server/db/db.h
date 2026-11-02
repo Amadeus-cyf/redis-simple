@@ -91,7 +91,13 @@ class RedisDb {
   friend class aof::Aof;
   RedisDb();
   void SetLoading(bool loading) { loading_ = loading; }
+  // Each public operation hashes its key once and passes the HashedKey to
+  // the keyspace, TTL, and WATCH tables, which share one hash seed.
+  RedisObject* Lookup(const in_memory::HashedKey& key);
+  DbStatus Delete(const in_memory::HashedKey& key);
+  void TouchWatchedKey(const in_memory::HashedKey& key);
   bool IsKeyExpired(std::string_view key) const;
+  bool IsKeyExpired(const in_memory::HashedKey& key) const;
   int64_t Now() const;
   std::unique_ptr<in_memory::Dict<std::string, RedisObjectPtr>> dict_;
   std::unique_ptr<in_memory::Dict<std::string, int64_t>> expires_;
