@@ -14,6 +14,8 @@
 #include "utils/time_utils.h"
 
 namespace redis_simple::db {
+using in_memory::HashedKey;
+
 std::unique_ptr<RedisDb> RedisDb::Create() {
   return std::unique_ptr<RedisDb>(new RedisDb());
 }
@@ -29,18 +31,20 @@ const RedisObject* RedisDb::LookupKey(std::string_view key) {
 }
 
 RedisObject* RedisDb::MutableLookupKey(std::string_view key) {
+  return Lookup(HashedKey(key));
+}
+
+RedisObject* RedisDb::Lookup(const HashedKey& key) {
   auto* const result = dict_->FindValue(key);
   if (result == nullptr) {
     return nullptr;
   }
-  RedisObject* object = result->get();
   if (IsKeyExpired(key)) {
     RS_LOG_DEBUG("look up key expired\n");
-    // If key is already expired, delete the key and return a null pointer.
-    object = nullptr;
-    DeleteKey(key);
+    Delete(key);
+    return nullptr;
   }
-  return object;
+  return result->get();
 }
 
 DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
@@ -48,21 +52,26 @@ DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
   if (object == nullptr) {
     return DbStatus::kError;
   }
-  // FindOrInsert hashes once and copies the key only for a new entry.
-  *dict_->FindOrInsert(key).first = std::move(object);
-  TouchWatchedKey(key);
+  // FindOrInsert copies the key only for a new entry.
+  const HashedKey hashed(key);
+  *dict_->FindOrInsert(hashed).first = std::move(object);
+  TouchWatchedKey(hashed);
   if (existing_ttl == ExistingTtl::kClear && expire == 0 &&
       expires_->Size() > 0) {
-    expires_->Delete(key);
+    expires_->Delete(hashed);
   }
   if (expire > 0) {
-    *expires_->FindOrInsert(key).first = expire;
+    *expires_->FindOrInsert(hashed).first = expire;
     RS_LOG_DEBUG("add expire %" PRId64 "\n", expire);
   }
   return DbStatus::kOk;
 }
 
 DbStatus RedisDb::DeleteKey(std::string_view key) {
+  return Delete(HashedKey(key));
+}
+
+DbStatus RedisDb::Delete(const HashedKey& key) {
   if (!dict_->Delete(key)) {
     return DbStatus::kError;
   }
@@ -76,26 +85,32 @@ DbStatus RedisDb::DeleteKey(std::string_view key) {
 }
 
 DbStatus RedisDb::UnlinkKey(std::string_view key) {
-  if (IsKeyExpired(key)) {
-    DeleteKey(key);
+  const HashedKey hashed(key);
+  if (IsKeyExpired(hashed)) {
+    Delete(hashed);
     return DbStatus::kError;
   }
-  auto object = dict_->Extract(key);
+  auto object = dict_->Extract(hashed);
   if (!object.has_value()) {
     return DbStatus::kError;
   }
-  expires_->Delete(key);
-  TouchWatchedKey(key);
+  if (expires_->Size() > 0) {
+    expires_->Delete(hashed);
+  }
+  TouchWatchedKey(hashed);
   return reclaimer_.Reclaim(std::move(*object)) ? DbStatus::kOk
                                                 : DbStatus::kError;
 }
 
 DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
                               ExpireCondition condition) {
-  if (LookupKey(key) == nullptr) {
+  const HashedKey hashed(key);
+  if (Lookup(hashed) == nullptr) {
     return DbStatus::kError;
   }
-  const auto current_expire = Expiration(key);
+  const int64_t* const existing = expires_->FindValue(hashed);
+  const auto current_expire =
+      existing == nullptr ? std::nullopt : std::optional<int64_t>(*existing);
   const bool condition_met = [&] {
     switch (condition) {
       case ExpireCondition::kNone:
@@ -115,10 +130,10 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
     return DbStatus::kError;
   }
   if (!loading_ && expire <= Now()) {
-    return DeleteKey(key);
+    return Delete(hashed);
   }
-  *expires_->FindOrInsert(key).first = expire;
-  TouchWatchedKey(key);
+  *expires_->FindOrInsert(hashed).first = expire;
+  TouchWatchedKey(hashed);
   return DbStatus::kOk;
 }
 
@@ -128,49 +143,51 @@ std::optional<int64_t> RedisDb::Expiration(std::string_view key) const {
 }
 
 DbStatus RedisDb::PersistKey(std::string_view key) {
-  if (LookupKey(key) == nullptr || expires_->FindValue(key) == nullptr) {
+  const HashedKey hashed(key);
+  // Delete fails when there is no TTL, so it doubles as the existence check.
+  if (Lookup(hashed) == nullptr || !expires_->Delete(hashed)) {
     return DbStatus::kError;
   }
-  if (!expires_->Delete(key)) {
-    return DbStatus::kError;
-  }
-  TouchWatchedKey(key);
+  TouchWatchedKey(hashed);
   return DbStatus::kOk;
 }
 
 DbStatus RedisDb::RenameKey(std::string_view old_key,
                             std::string_view new_key) {
-  if (LookupKey(old_key) == nullptr) {
+  const HashedKey old_hashed(old_key);
+  if (Lookup(old_hashed) == nullptr) {
     return DbStatus::kError;
   }
   if (old_key == new_key) {
     return DbStatus::kOk;
   }
 
-  // Extract moves the value and TTL out with one hash lookup each, instead of
+  // Extract moves the value and TTL out with one bucket walk each, instead of
   // finding and then deleting them separately.
-  std::optional<RedisObjectPtr> object = dict_->Extract(old_key);
+  std::optional<RedisObjectPtr> object = dict_->Extract(old_hashed);
   if (!object.has_value()) {
     return DbStatus::kError;
   }
   const std::optional<int64_t> expire =
-      expires_->Size() > 0 ? expires_->Extract(old_key) : std::nullopt;
-  *dict_->FindOrInsert(new_key).first = std::move(*object);
+      expires_->Size() > 0 ? expires_->Extract(old_hashed) : std::nullopt;
+  const HashedKey new_hashed(new_key);
+  *dict_->FindOrInsert(new_hashed).first = std::move(*object);
   if (expire.has_value()) {
-    *expires_->FindOrInsert(new_key).first = *expire;
+    *expires_->FindOrInsert(new_hashed).first = *expire;
   } else if (expires_->Size() > 0) {
-    expires_->Delete(new_key);
+    expires_->Delete(new_hashed);
   }
-  TouchWatchedKey(old_key);
-  TouchWatchedKey(new_key);
+  TouchWatchedKey(old_hashed);
+  TouchWatchedKey(new_hashed);
   return DbStatus::kOk;
 }
 
 int64_t RedisDb::TimeToLive(std::string_view key, TtlResolution resolution) {
-  if (LookupKey(key) == nullptr) {
+  const HashedKey hashed(key);
+  if (Lookup(hashed) == nullptr) {
     return -2;
   }
-  const auto* expire = expires_->FindValue(key);
+  const auto* expire = expires_->FindValue(hashed);
   if (expire == nullptr) {
     return -1;
   }
@@ -267,6 +284,13 @@ void RedisDb::TouchWatchedKey(std::string_view key) {
   if (watched_keys_->Size() == 0) {
     return;
   }
+  TouchWatchedKey(HashedKey(key));
+}
+
+void RedisDb::TouchWatchedKey(const HashedKey& key) {
+  if (watched_keys_->Size() == 0) {
+    return;
+  }
   auto* const watchers = watched_keys_->FindValue(key);
   if (watchers == nullptr) {
     return;
@@ -282,6 +306,13 @@ int64_t RedisDb::Now() const {
 }
 
 bool RedisDb::IsKeyExpired(std::string_view key) const {
+  if (loading_ || expires_->Size() == 0) {
+    return false;
+  }
+  return IsKeyExpired(HashedKey(key));
+}
+
+bool RedisDb::IsKeyExpired(const HashedKey& key) const {
   if (loading_ || expires_->Size() == 0) {
     return false;
   }
