@@ -193,6 +193,12 @@ std::optional<ZSetListPack::EntryView> ZSetListPack::EntryAt(
 }
 
 std::optional<double> ZSetListPack::ScoreAt(size_t idx) const {
+  // Integral scores are stored with integer encodings. Convert them directly
+  // instead of rendering them as text and parsing that text back; the text
+  // was formatted from a double, so both paths give the same score.
+  if (const auto integer = listpack_->IntegerAt(idx); integer.has_value()) {
+    return static_cast<double>(*integer);
+  }
   const auto value = ValueAt(idx);
   double score = 0;
   if (!value.has_value() || !utils::ToDouble(*value, &score)) {
