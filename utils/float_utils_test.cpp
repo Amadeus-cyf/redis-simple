@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <random>
 #include <string>
 #include <vector>
 
@@ -49,12 +48,23 @@ TEST(FloatUtilsTest, FormatsWholeNumbersAsPlainIntegers) {
                                  kMaxExact - 1,
                                  kMaxExact,
                                  -kMaxExact};
-  std::mt19937_64 random(20261102);
-  for (int round = 0; round < 20000; ++round) {
-    const int bits = static_cast<int>(random() % 54);
-    const auto magnitude =
-        static_cast<int64_t>(random() & ((uint64_t{1} << bits) - 1));
-    values.push_back((random() & 1) != 0 ? -magnitude : magnitude);
+  // Every power of two in range and its neighbors, then an even stride
+  // across the whole range, both with each sign.
+  for (int bits = 0; bits <= 53; ++bits) {
+    const int64_t power = int64_t{1} << bits;
+    for (int64_t delta = -3; delta <= 3; ++delta) {
+      const int64_t magnitude = power + delta;
+      if (magnitude >= 0 && magnitude <= kMaxExact) {
+        values.push_back(magnitude);
+        values.push_back(-magnitude);
+      }
+    }
+  }
+  constexpr int64_t kStride = kMaxExact / 9973;
+  for (int64_t magnitude = 0; magnitude <= kMaxExact - 7;
+       magnitude += kStride) {
+    values.push_back(magnitude + 7);
+    values.push_back(-magnitude - 7);
   }
   for (const int64_t value : values) {
     EXPECT_EQ(FloatToString(static_cast<double>(value)), std::to_string(value))
