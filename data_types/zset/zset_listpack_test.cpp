@@ -2,6 +2,12 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "data_types/zset/zset_storage_test_util.h"
 
 namespace redis_simple::zset {
@@ -27,6 +33,36 @@ TEST(ZSetListPackTest, PreservesNumericKeyWhileReadingScore) {
   ASSERT_EQ(entries.size(), 1);
   EXPECT_EQ(entries.front()->key, "0");
   EXPECT_EQ(entries.front()->score, 42.0);
+}
+
+TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {
+  // Integral scores take the listpack's integer encodings; the others are
+  // stored as text. Both must read back as the exact double inserted.
+  const std::vector<std::pair<std::string, double>> entries = {
+      {"min", -9007199254740992.0},
+      {"neg", -42.0},
+      {"zero", 0.0},
+      {"small", 7.0},
+      {"half", 7.5},
+      {"big", 1e15},
+      {"max", 9007199254740992.0},
+      {"huge", 1.5e300},
+  };
+  ZSetListPack zset;
+  for (const auto& [key, score] : entries) {
+    ASSERT_TRUE(zset.InsertOrUpdate(key, score));
+  }
+  for (const auto& [key, score] : entries) {
+    EXPECT_EQ(zset.Score(key), score) << key;
+  }
+  const RangeByRankSpec spec(0, static_cast<int64_t>(entries.size()) - 1, false,
+                             false);
+  const auto range = zset.RangeByRank(&spec);
+  ASSERT_EQ(range.size(), entries.size());
+  for (size_t index = 0; index < entries.size(); ++index) {
+    EXPECT_EQ(range[index]->key, entries[index].first);
+    EXPECT_EQ(range[index]->score, entries[index].second);
+  }
 }
 
 TEST(ZSetListPackTest, RangeByScore) {
