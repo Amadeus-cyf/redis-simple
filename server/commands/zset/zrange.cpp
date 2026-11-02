@@ -203,7 +203,7 @@ std::string EncodeZRangeReply(const ZSetEntryList& result, bool with_scores,
     }
     reply::AppendBulkString(entry->key, &encoded);
     if (with_scores) {
-      encoded.append(reply::FromFloat(entry->score, protocol));
+      reply::AppendFloat(entry->score, protocol, &encoded);
     }
   }
   return encoded;

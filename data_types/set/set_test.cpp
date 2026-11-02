@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace redis_simple::set {
@@ -127,5 +128,52 @@ TEST(SetTest, RemoveMembersFromEachEncoding) {
   ASSERT_TRUE(dict->Remove("member"));
   ASSERT_FALSE(dict->HasMember("member"));
   ASSERT_FALSE(dict->Remove("member"));
+}
+
+TEST(SetTest, MembershipWithStoredHashesMatchesPlainMembership) {
+  // One set per encoding: intset, listpack, and dict.
+  auto ints = Set::Create();
+  auto small = Set::Create();
+  auto large = Set::Create();
+  for (int index = 0; index < 300; ++index) {
+    ASSERT_TRUE(ints->Add(std::to_string(index)));
+    ASSERT_TRUE(large->Add("member:" + std::to_string(index)));
+    if (index < 50) {
+      ASSERT_TRUE(small->Add("member:" + std::to_string(index * 2)));
+    }
+  }
+  ASSERT_EQ(ints->Encoding(), Set::Encoding::kIntSet);
+  ASSERT_EQ(small->Encoding(), Set::Encoding::kListPack);
+  ASSERT_EQ(large->Encoding(), Set::Encoding::kDict);
+
+  const std::vector<const Set*> sets = {ints.get(), small.get(), large.get()};
+  for (const Set* source : sets) {
+    size_t visited = 0;
+    ASSERT_TRUE(source->ForEachMemberWithHash(
+        [&](std::string_view member, const in_memory::HashedKey* hashed) {
+          // Only dict-encoded sets store hashes.
+          EXPECT_EQ(hashed != nullptr,
+                    source->Encoding() == Set::Encoding::kDict);
+          if (hashed != nullptr) {
+            EXPECT_EQ(hashed->key, member);
+          }
+          for (const Set* other : sets) {
+            EXPECT_EQ(other->HasMember(member, hashed),
+                      other->HasMember(member))
+                << member;
+          }
+          ++visited;
+          return true;
+        }));
+    EXPECT_EQ(visited, source->Size());
+  }
+  // A visitor returning false stops the dict-encoded walk too.
+  size_t calls = 0;
+  EXPECT_FALSE(large->ForEachMemberWithHash(
+      [&calls](std::string_view, const in_memory::HashedKey*) {
+        ++calls;
+        return false;
+      }));
+  EXPECT_EQ(calls, 1);
 }
 }  // namespace redis_simple::set

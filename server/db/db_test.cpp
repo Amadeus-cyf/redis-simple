@@ -6,9 +6,11 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "server/db/key_watcher.h"
+#include "server/db/redis_obj.h"
 #include "utils/time_utils.h"
 
 namespace redis_simple::db {
@@ -72,6 +74,32 @@ TEST(RedisDbTest, ReplacingKeyCanClearOrKeepTtl) {
   ASSERT_EQ(redis_db->SetKey("key", RedisObject::CreateWithString("fresh"), 0),
             DbStatus::kOk);
   EXPECT_EQ(redis_db->TimeToLive("key", TtlResolution::kMilliseconds), -1);
+}
+
+TEST(RedisDbTest, SetStringKeyMatchesSetKeySemantics) {
+  auto redis_db = RedisDb::Create();
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  KeyWatcher watcher;
+
+  ASSERT_EQ(redis_db->SetStringKey("key", "old", future), DbStatus::kOk);
+  const RedisObject* const original = redis_db->LookupKey("key");
+  ASSERT_NE(original, nullptr);
+  EXPECT_GT(redis_db->TimeToLive("key", TtlResolution::kMilliseconds), 0);
+
+  redis_db->WatchKey("key", &watcher);
+  ASSERT_EQ(redis_db->SetStringKey("key", "new", 0, ExistingTtl::kKeep),
+            DbStatus::kOk);
+  EXPECT_TRUE(watcher.Dirty());
+  // The existing string object is updated in place.
+  EXPECT_EQ(redis_db->LookupKey("key"), original);
+  EXPECT_EQ(redis_db->LookupKey("key")->String(), "new");
+  EXPECT_GT(redis_db->TimeToLive("key", TtlResolution::kMilliseconds), 0);
+
+  ASSERT_EQ(redis_db->SetStringKey("key", "12", 0), DbStatus::kOk);
+  EXPECT_EQ(redis_db->LookupKey("key")->StringEncoding(),
+            RedisObject::Encoding::kInt);
+  EXPECT_EQ(redis_db->TimeToLive("key", TtlResolution::kMilliseconds), -1);
+  redis_db->UnwatchKeys(&watcher);
 }
 
 TEST(RedisDbTest, ExpireSamplingWorksWhenFewKeysHaveTtl) {

@@ -140,6 +140,29 @@ class ListPack {
   size_t Skip(size_t idx) const;
   EncodingType EncodingAt(size_t idx) const;
   size_t Backlen(size_t idx) const;
+  // Bytes of the element at `idx` before its backlen, given its encoding.
+  size_t EncodedBytes(size_t idx, EncodingType encoding_type) const;
+  // An element's value bytes and the offset just past it, which is the EOF
+  // byte for the last element.
+  struct DecodedEntry {
+    const unsigned char* data;
+    size_t length;
+    size_t next;
+  };
+  // Decodes the element at `idx`, which must not be EOF, reading its encoding
+  // once for both the value and the next offset. Integers are rendered into
+  // `int_buf`, which must hold kListPackIntBufSize bytes. Iterators use this
+  // instead of Get() followed by Next(), which decode each element twice.
+  DecodedEntry DecodeEntry(size_t idx, unsigned char* int_buf) const;
+  // Returns the offset of element `position`, which must be below `size`,
+  // the element count. Walks from whichever end is closer.
+  size_t Seek(size_t position, size_t size) const;
+  // Offset of the element before the one at `idx`, which may be the EOF
+  // byte; `idx` must not be the first element.
+  size_t PrevUnchecked(size_t idx) const;
+  static std::string_view ValueView(const DecodedEntry& entry) {
+    return {reinterpret_cast<const char*>(entry.data), entry.length};
+  }
   static uint8_t BacklenBytes(size_t backlen);
   static size_t EncodeString(unsigned char* buf, std::string_view ele);
   static size_t EncodeInteger(unsigned char* const buf, int64_t v);
@@ -162,21 +185,14 @@ bool ListPack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   }
   stop = std::min(stop, size - 1);
 
-  size_t index = 0;
-  auto listpack_index = First();
-  while (listpack_index.has_value() && index <= stop) {
-    if (index >= start) {
-      size_t len = 0;
-      const auto* data = Get(*listpack_index, &len);
-      if (data != nullptr) {
-        const std::string_view value(reinterpret_cast<const char*>(data), len);
-        if (!visitor(value)) {
-          return false;
-        }
-      }
+  size_t listpack_index = Seek(start, size);
+  for (size_t index = start;
+       index <= stop && lp_[listpack_index] != kListPackEof; ++index) {
+    const DecodedEntry entry = DecodeEntry(listpack_index, int_buf_.data());
+    if (!visitor(ValueView(entry))) {
+      return false;
     }
-    ++index;
-    listpack_index = Next(*listpack_index);
+    listpack_index = entry.next;
   }
   return true;
 }
@@ -190,21 +206,11 @@ bool ListPack::ForEachReverse(size_t start, size_t stop,
   }
   stop = std::min(stop, size - 1);
 
-  size_t index = 0;
-  auto listpack_index = First();
-  while (listpack_index.has_value() && index < stop) {
-    listpack_index = Next(*listpack_index);
-    ++index;
-  }
-
+  size_t index = stop;
+  std::optional<size_t> listpack_index = Seek(stop, size);
   while (listpack_index.has_value() && index >= start) {
-    size_t len = 0;
-    const auto* data = Get(*listpack_index, &len);
-    if (data != nullptr) {
-      const std::string_view value(reinterpret_cast<const char*>(data), len);
-      if (!visitor(value)) {
-        return false;
-      }
+    if (!visitor(ValueView(DecodeEntry(*listpack_index, int_buf_.data())))) {
+      return false;
     }
     if (index == 0) {
       break;
@@ -217,37 +223,25 @@ bool ListPack::ForEachReverse(size_t start, size_t stop,
 
 template <typename Visitor>
 bool ListPack::ForEachPair(Visitor&& visitor) const {
-  auto first_idx = First();
-  while (first_idx.has_value()) {
-    const auto second_idx = Next(*first_idx);
-    if (!second_idx.has_value()) {
+  const auto first = First();
+  if (!first.has_value()) {
+    return true;
+  }
+  std::array<unsigned char, kListPackIntBufSize> first_int_buf{};
+  std::array<unsigned char, kListPackIntBufSize> second_int_buf{};
+  size_t listpack_index = *first;
+  while (lp_[listpack_index] != kListPackEof) {
+    const DecodedEntry first_entry =
+        DecodeEntry(listpack_index, first_int_buf.data());
+    if (lp_[first_entry.next] == kListPackEof) {
       break;
     }
-
-    size_t first_len = 0;
-    size_t second_len = 0;
-    std::array<unsigned char, kListPackIntBufSize> first_int_buf{};
-    std::array<unsigned char, kListPackIntBufSize> second_int_buf{};
-    const EncodingType first_type = EncodingAt(*first_idx);
-    const EncodingType second_type = EncodingAt(*second_idx);
-    const auto* first = IsString(first_type)
-                            ? StringAt(*first_idx, &first_len, first_type)
-                            : IntegerAt(*first_idx, first_int_buf.data(),
-                                        &first_len, nullptr, first_type);
-    const auto* second = IsString(second_type)
-                             ? StringAt(*second_idx, &second_len, second_type)
-                             : IntegerAt(*second_idx, second_int_buf.data(),
-                                         &second_len, nullptr, second_type);
-    if (first != nullptr && second != nullptr) {
-      const std::string_view first_value(reinterpret_cast<const char*>(first),
-                                         first_len);
-      const std::string_view second_value(reinterpret_cast<const char*>(second),
-                                          second_len);
-      if (!visitor(first_value, second_value)) {
-        return false;
-      }
+    const DecodedEntry second_entry =
+        DecodeEntry(first_entry.next, second_int_buf.data());
+    if (!visitor(ValueView(first_entry), ValueView(second_entry))) {
+      return false;
     }
-    first_idx = Next(*second_idx);
+    listpack_index = second_entry.next;
   }
   return true;
 }

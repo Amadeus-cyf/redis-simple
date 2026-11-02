@@ -2,6 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <string>
+
 namespace redis_simple::reply {
 TEST(ReplyTest, FromSimpleString) {
   ASSERT_EQ(FromString("OK"), "+OK\r\n");
@@ -17,6 +20,45 @@ TEST(ReplyTest, FromBulkStringArray) {
   ASSERT_EQ(FromBulkStringArray({"one", "two"}),
             "*2\r\n$3\r\none\r\n$3\r\ntwo\r\n");
   ASSERT_EQ(FromBulkStringArray({}), "*0\r\n");
+}
+
+TEST(ReplyTest, AppendsBulkStringsAfterExistingContent) {
+  std::string encoded = "*3\r\n";
+  AppendBulkString("", &encoded);
+  const std::string binary("a\0\r\nb", 5);
+  AppendBulkString(binary, &encoded);
+  const std::string large(100000, 'x');
+  AppendBulkString(large, &encoded);
+  std::string expected = "*3\r\n$0\r\n\r\n$5\r\n";
+  expected.append(binary)
+      .append("\r\n$100000\r\n")
+      .append(large)
+      .append("\r\n");
+  EXPECT_EQ(encoded, expected);
+
+  // Many small appends reallocate geometrically, not once per element.
+  std::string many;
+  size_t reallocations = 0;
+  for (int index = 0; index < 10000; ++index) {
+    const size_t capacity = many.capacity();
+    AppendBulkString(std::to_string(index), &many);
+    reallocations += many.capacity() != capacity ? 1 : 0;
+  }
+  EXPECT_LT(reallocations, 32);
+  EXPECT_TRUE(many.starts_with("$1\r\n0\r\n$1\r\n1\r\n"));
+  EXPECT_TRUE(many.ends_with("$4\r\n9999\r\n"));
+}
+
+TEST(ReplyTest, AppendsFloatsForEachProtocol) {
+  std::string encoded = "*2\r\n";
+  AppendFloat(2.5, ProtocolVersion::kResp2, &encoded);
+  AppendFloat(-3, ProtocolVersion::kResp2, &encoded);
+  EXPECT_EQ(encoded, "*2\r\n$3\r\n2.5\r\n$2\r\n-3\r\n");
+  encoded.clear();
+  AppendFloat(2.5, ProtocolVersion::kResp3, &encoded);
+  AppendFloat(1e17, ProtocolVersion::kResp3, &encoded);
+  EXPECT_EQ(encoded, ",2.5\r\n,1e+17\r\n");
+  EXPECT_EQ(FromFloat(7, ProtocolVersion::kResp2), "$1\r\n7\r\n");
 }
 
 TEST(ReplyTest, AppendsArrayHeader) {

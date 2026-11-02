@@ -1,5 +1,6 @@
 #include "data_types/zset/zset_skiplist.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <memory>
@@ -65,7 +66,15 @@ ZSetEntryList ZSetSkiplist::RangeByRank(const RangeByRankSpec* spec) const {
       .limit = ToLimit(normalized->limit),
       .reverse = spec->reverse,
   };
+  // A rank range knows its size up front; reserve an upper bound so a
+  // large range does not regrow the result while it is filled.
+  size_t bound =
+      range.max >= range.min ? std::min(range.max - range.min + 1, Size()) : 0;
+  if (normalized->limit.has_value() && normalized->limit->count.has_value()) {
+    bound = std::min(bound, *normalized->limit->count);
+  }
   ZSetEntryList entries;
+  entries.reserve(bound);
   skiplist_->ForEachInRange(
       range, [&entries](const ZSetEntry& entry) { entries.push_back(&entry); });
   return entries;

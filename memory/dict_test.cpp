@@ -63,6 +63,65 @@ TEST(DictStrTest, FindOrInsertHashesOnceAndKeepsExistingValues) {
   EXPECT_EQ(dict->Size(), 1);
 }
 
+TEST(DictStrTest, HashedKeysMatchPlainLookupsAcrossDicts) {
+  auto values = Dict<std::string, std::string>::Create();
+  auto counts = Dict<std::string, int>::Create();
+  // Enough keys to resize and rehash both tables while they are used.
+  for (int index = 0; index < 200; ++index) {
+    const std::string key = "key:" + std::to_string(index);
+    const HashedKey hashed(key);
+    EXPECT_EQ(hashed.hash, DictHash<std::string>{}(std::string_view(key)));
+    auto [value, inserted] = values->FindOrInsert(hashed);
+    ASSERT_TRUE(inserted);
+    *value = key;
+    *counts->FindOrInsert(hashed).first = index;
+  }
+  for (int index = 0; index < 200; ++index) {
+    const std::string key = "key:" + std::to_string(index);
+    const HashedKey hashed(key);
+    ASSERT_EQ(values->FindValue(hashed), values->FindValue(key));
+    ASSERT_NE(values->FindValue(hashed), nullptr);
+    EXPECT_EQ(*values->FindValue(hashed), key);
+    ASSERT_NE(counts->FindValue(std::string_view(key)), nullptr);
+    EXPECT_EQ(*counts->FindValue(hashed), index);
+  }
+  EXPECT_EQ(values->FindValue(HashedKey("missing")), nullptr);
+
+  EXPECT_EQ(values->Extract(HashedKey("key:7")),
+            std::optional<std::string>("key:7"));
+  EXPECT_TRUE(counts->Delete(HashedKey("key:7")));
+  EXPECT_FALSE(counts->Delete(HashedKey("key:7")));
+  EXPECT_EQ(values->FindValue(std::string_view("key:7")), nullptr);
+  EXPECT_EQ(counts->FindValue(std::string_view("key:7")), nullptr);
+  EXPECT_EQ(values->Size(), 199);
+  EXPECT_EQ(counts->Size(), 199);
+}
+
+TEST(DictStrTest, IteratorExposesStoredHashes) {
+  auto source = Dict<std::string, int>::Create();
+  auto target = Dict<std::string, int>::Create();
+  // Enough keys that the source rehashes while being filled.
+  for (int index = 0; index < 300; ++index) {
+    const std::string key = "member:" + std::to_string(index);
+    ASSERT_TRUE(source->Insert(key, index));
+    if (index % 3 == 0) {
+      ASSERT_TRUE(target->Insert(key, index));
+    }
+  }
+  size_t visited = 0;
+  size_t found = 0;
+  auto it = Dict<std::string, int>::Iterator(source.get());
+  for (it.SeekToFirst(); it.Valid(); it.Next()) {
+    const HashedKey hashed = it.Hashed();
+    EXPECT_EQ(hashed.key, it.Key());
+    EXPECT_EQ(hashed.hash, HashedKey(it.Key()).hash);
+    found += target->FindValue(hashed) != nullptr ? 1 : 0;
+    ++visited;
+  }
+  EXPECT_EQ(visited, 300);
+  EXPECT_EQ(found, 100);
+}
+
 TEST(DictStrTest, ShrinksAfterMassDeletes) {
   auto dict = Dict<std::string, int>::Create();
   for (int i = 0; i < 4096; ++i) {

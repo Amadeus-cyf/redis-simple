@@ -52,13 +52,23 @@ TEST(RequestParserTest, ValidatesLengthFieldsInOnePass) {
   for (const std::string_view invalid :
        {"*\r\n", "*-1\r\n", "*+1\r\n", "*1 \r\n", "*1\rx", "*1\r\n$\r\n",
         "*1\r\n$3x\r\nGET\r\n", "*1\r\n$3\r\nGETxx",
-        "*1\r\n$18446744073709551616\r\n"}) {
+        "*1\r\n$18446744073709551616\r\n", "*1\r\n$18446744073709551620\r\n",
+        "*1\r\n$99999999999999999999\r\n"}) {
     EXPECT_EQ(status(invalid), ParseStatus::kInvalid) << invalid;
   }
-  // Leading zeros are accepted within the digit bound, not beyond it.
+  // Length fields are at most 19 digits, which always fit in a size_t, so
+  // longer fields are invalid even when their value would fit.
+  EXPECT_EQ(status("*1\r\n$1844674407370955161\r\nGET"),
+            ParseStatus::kIncomplete);
+  EXPECT_EQ(status("*1\r\n$18446744073709551615\r\nGET"),
+            ParseStatus::kInvalid);
+  EXPECT_EQ(status("*1\r\n$9999999999999999999\r\n"), ParseStatus::kIncomplete);
+  // Leading zeros count toward the bound.
   EXPECT_EQ(status("*01\r\n$003\r\nGET\r\n"), ParseStatus::kComplete);
   EXPECT_EQ(command, "GET");
-  EXPECT_EQ(status("*" + std::string(25, '0') + "1\r\n"),
+  EXPECT_EQ(status("*" + std::string(18, '0') + "1\r\n$3\r\nGET\r\n"),
+            ParseStatus::kComplete);
+  EXPECT_EQ(status("*" + std::string(19, '0') + "1\r\n"),
             ParseStatus::kInvalid);
   EXPECT_EQ(status("*" + std::string(1000, '0')), ParseStatus::kInvalid);
 }
@@ -96,6 +106,48 @@ TEST(RequestParserTest, ResumesSplitRequestFromSavedState) {
   EXPECT_EQ(args[0], "key");
   EXPECT_EQ(args[1], "hello world");
   EXPECT_EQ(state.element_count, 0);
+}
+
+TEST(RequestParserTest, HandsOffFromAnySplitPointToResume) {
+  constexpr std::string_view kRequest =
+      "*4\r\n$4\r\nHSET\r\n$1\r\nh\r\n$5\r\nfield\r\n$11\r\nhello "
+      "world\r\n";
+  for (size_t split = 1; split < kRequest.size(); ++split) {
+    ParseState state;
+    std::string_view command;
+    command::CommandArgs args;
+    const std::string first(kRequest.substr(0, split));
+    ASSERT_EQ(Parse(first, &state, &command, &args).status,
+              ParseStatus::kIncomplete)
+        << split;
+    EXPECT_TRUE(command.empty()) << split;
+    EXPECT_TRUE(args.empty()) << split;
+
+    // The rest arrives in a separate buffer at a different address.
+    const std::string full(kRequest);
+    const auto result = Parse(full, &state, &command, &args);
+    ASSERT_EQ(result.status, ParseStatus::kComplete) << split;
+    EXPECT_EQ(result.consumed, full.size());
+    EXPECT_EQ(command, "HSET");
+    ASSERT_EQ(args.size(), 3);
+    EXPECT_EQ(args[0], "h");
+    EXPECT_EQ(args[1], "field");
+    EXPECT_EQ(args[2], "hello world");
+    EXPECT_GE(command.data(), full.data());
+    EXPECT_LT(args[2].data(), full.data() + full.size());
+    EXPECT_EQ(state.element_count, 0);
+  }
+
+  // A large argument cut off on its first read still reports its pending
+  // payload so the reader can read the rest in bigger steps.
+  ParseState state;
+  std::string_view command;
+  command::CommandArgs args;
+  const std::string large_header = "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$100000\r\n";
+  const std::string partial = large_header + std::string(10, 'v');
+  ASSERT_EQ(Parse(partial, &state, &command, &args).status,
+            ParseStatus::kIncomplete);
+  EXPECT_EQ(state.PendingBulkBytes(partial.size()), 100000 - 10 + 2);
 }
 
 TEST(RequestParserTest, ReportsPendingBulkBytes) {

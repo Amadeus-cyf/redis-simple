@@ -27,6 +27,25 @@ struct DictHash {
   size_t operator()(const K& key) const { return std::hash<K>{}(key); }
 };
 
+// A string key with its DictHash<std::string> hash. Every Dict using that
+// policy shares one process-wide seed, so a caller can hash a key once and
+// look it up in several such Dicts. Other hash policies reject it at compile
+// time instead of mixing incompatible hashes.
+struct HashedKey {
+  explicit HashedKey(std::string_view key_view)
+      : key(key_view), hash(static_cast<size_t>(utils::SeededHash(key_view))) {}
+
+  std::string_view key;
+  size_t hash;
+
+ private:
+  // Dict iterators rebuild a key from the hash stored with its entry.
+  template <typename, typename, typename, typename>
+  friend class Dict;
+  HashedKey(std::string_view key_view, size_t stored_hash)
+      : key(key_view), hash(stored_hash) {}
+};
+
 // String keys usually come from clients, so they use the process-seeded
 // SipHash to resist hash-flooding attacks.
 template <>
@@ -34,6 +53,7 @@ struct DictHash<std::string> {
   size_t operator()(std::string_view key) const {
     return static_cast<size_t>(utils::SeededHash(key));
   }
+  size_t operator()(const HashedKey& key) const { return key.hash; }
 };
 
 template <typename K>
@@ -45,6 +65,9 @@ template <>
 struct DictKeyEqual<std::string> {
   bool operator()(std::string_view left, std::string_view right) const {
     return left == right;
+  }
+  bool operator()(const HashedKey& left, std::string_view right) const {
+    return left.key == right;
   }
 };
 
@@ -82,6 +105,7 @@ class Dict {
   V* FindValue(const K& key) { return FindValueImpl(key); }
   V* FindValue(std::string_view key) { return FindValueImpl(key); }
   V* FindValue(const char* key) { return FindValue(std::string_view(key)); }
+  V* FindValue(const HashedKey& key) { return FindValueImpl(key); }
   // Returns the value for `key`, inserting a value-initialized one if the
   // key is new. Hashes the key once and copies it only when inserting.
   template <typename Lookup>
@@ -94,11 +118,13 @@ class Dict {
   bool Delete(const K& key) { return DeleteImpl(key); }
   bool Delete(std::string_view key) { return DeleteImpl(key); }
   bool Delete(const char* key) { return Delete(std::string_view(key)); }
+  bool Delete(const HashedKey& key) { return DeleteImpl(key); }
   std::optional<V> Extract(const K& key) { return ExtractImpl(key); }
   std::optional<V> Extract(std::string_view key) { return ExtractImpl(key); }
   std::optional<V> Extract(const char* key) {
     return Extract(std::string_view(key));
   }
+  std::optional<V> Extract(const HashedKey& key) { return ExtractImpl(key); }
   // Visits one bucket position and returns the next cursor, or nullopt once
   // the scan is complete. Cursors use Redis' reverse-binary order, so every
   // element present for the whole scan is visited even if the table grows or
@@ -186,6 +212,13 @@ class Dict<K, V, Hash, KeyEqual>::Iterator {
   Iterator& operator++();
   const K& Key() const { return entry_->key; }
   const V& Value() const { return entry_->val; }
+  // The current key with the hash stored in its entry, so it can be looked
+  // up in other Dicts that share the seeded string hash without rehashing.
+  HashedKey Hashed() const
+    requires std::same_as<Hash, DictHash<std::string>>
+  {
+    return HashedKey(entry_->key, entry_->hash);
+  }
 
  private:
   void SeekToNextEntry();
@@ -508,7 +541,11 @@ template <typename Lookup>
 typename Dict<K, V, Hash, KeyEqual>::DictEntry*
 Dict<K, V, Hash, KeyEqual>::InsertNew(const Lookup& key, size_t hash) {
   auto entry = std::make_unique<DictEntry>();
-  entry->key = K(key);
+  if constexpr (std::same_as<Lookup, HashedKey>) {
+    entry->key = K(key.key);
+  } else {
+    entry->key = K(key);
+  }
   entry->hash = hash;
   DictEntry* const raw = entry.release();
   InsertEntry(raw, IsRehashing() ? 1 : 0);

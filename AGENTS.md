@@ -50,9 +50,9 @@ Guidance for AI coding agents working in this repository.
   avoid per-command headers unless a handler becomes a broader shared API.
 - Keep command names, arity, access mode, and key positions in the sorted
   metadata table in `server/commands/command.cpp`. Preserve its allocation-free,
-  case-insensitive lookup path: `Find` folds the name on the stack and probes a
-  compile-time hash index built from the table, whose names must be upper
-  case and at most 16 bytes.
+  case-insensitive lookup path: `Find` hashes the name with branch-free case
+  folding and probes a compile-time hash index built from the table, whose
+  names must be upper-case letters only and at most 16 bytes.
 - When adding or changing supported commands, update the README command
   coverage list and the relevant command-family integration test.
 - Keep reply encoding helpers directly under `server/`, and keep database
@@ -73,6 +73,10 @@ Guidance for AI coding agents working in this repository.
   object type and null database in each command.
 - Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
   only when it is new.
+- `RedisDb` operations hash their key once as an `in_memory::HashedKey` and
+  pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
+  hash. Keep operations that touch more than one of those dicts on that path
+  instead of looking the key up by `std::string_view` in each.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-3
   (`utils/siphash.h`) to resist hash flooding. Do not depend on iteration or
   `SCAN` order in tests; it changes between runs.
@@ -83,10 +87,20 @@ Guidance for AI coding agents working in this repository.
   bound and members by a `(score, string_view)` probe; do not reintroduce
   sentinel entries, member copies for lookups, or min/max member tracking.
   Change stored keys through `Skiplist::Update`, which repositions them.
+- `ListPack::ForEach`, `ForEachReverse`, and `ForEachPair` decode each
+  element once through `DecodeEntry`, which yields its value and the next
+  offset together. Prefer them over `Get` plus `Next` loops on read paths.
+  Listpack sorted sets read integer-encoded scores directly instead of
+  formatting and reparsing them.
 - Canonical integer strings are stored as `int64_t`. Read string objects
   through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
   `MutableString()` only to edit bytes in place, since it converts the value
   back to raw form.
+- Store whole string values through `RedisDb::SetStringKey`, which overwrites
+  an existing string object in place with `RedisObject::AssignString` instead
+  of allocating a new object. `AssignString` applies the same integer-encoding
+  rule as `CreateWithString` and releases a buffer much larger than the new
+  value.
 - Only commands marked `AllowBeforeAuth` in the command table run before a
   client authenticates when `--requirepass` is set.
 - Inside `MULTI`, every command is queued unless the command table marks it
