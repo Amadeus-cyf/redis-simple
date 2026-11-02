@@ -154,6 +154,12 @@ class ListPack {
   // `int_buf`, which must hold kListPackIntBufSize bytes. Iterators use this
   // instead of Get() followed by Next(), which decode each element twice.
   DecodedEntry DecodeEntry(size_t idx, unsigned char* int_buf) const;
+  // Returns the offset of element `position`, which must be below `size`,
+  // the element count. Walks from whichever end is closer.
+  size_t Seek(size_t position, size_t size) const;
+  // Offset of the element before the one at `idx`, which may be the EOF
+  // byte; `idx` must not be the first element.
+  size_t PrevUnchecked(size_t idx) const;
   static std::string_view ValueView(const DecodedEntry& entry) {
     return {reinterpret_cast<const char*>(entry.data), entry.length};
   }
@@ -179,17 +185,9 @@ bool ListPack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   }
   stop = std::min(stop, size - 1);
 
-  const auto first = First();
-  if (!first.has_value()) {
-    return true;
-  }
-  size_t listpack_index = *first;
-  for (size_t index = 0; index <= stop && lp_[listpack_index] != kListPackEof;
-       ++index) {
-    if (index < start) {
-      listpack_index = Skip(listpack_index);
-      continue;
-    }
+  size_t listpack_index = Seek(start, size);
+  for (size_t index = start;
+       index <= stop && lp_[listpack_index] != kListPackEof; ++index) {
     const DecodedEntry entry = DecodeEntry(listpack_index, int_buf_.data());
     if (!visitor(ValueView(entry))) {
       return false;
@@ -208,13 +206,8 @@ bool ListPack::ForEachReverse(size_t start, size_t stop,
   }
   stop = std::min(stop, size - 1);
 
-  size_t index = 0;
-  auto listpack_index = First();
-  while (listpack_index.has_value() && index < stop) {
-    listpack_index = Skip(*listpack_index);
-    ++index;
-  }
-
+  size_t index = stop;
+  std::optional<size_t> listpack_index = Seek(stop, size);
   while (listpack_index.has_value() && index >= start) {
     if (!visitor(ValueView(DecodeEntry(*listpack_index, int_buf_.data())))) {
       return false;
