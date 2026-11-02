@@ -7,9 +7,11 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "memory/dict.h"
 #include "server/db/async_reclaimer.h"
+#include "server/db/key_watcher.h"
 #include "server/db/redis_obj.h"
 
 namespace redis_simple::aof {
@@ -76,6 +78,14 @@ class RedisDb {
   // command sees a single consistent time and reads the clock only once.
   void SetCommandTime(int64_t now_ms) { command_time_ = now_ms; }
   void ClearCommandTime() { command_time_.reset(); }
+  // WATCH support. Key-level mutations made through this class (set, delete,
+  // expire, persist, rename, flush, and expiration itself) mark every watcher
+  // of the key dirty. Commands that edit a value in place call
+  // TouchWatchedKey after a successful mutation.
+  void WatchKey(std::string_view key, KeyWatcher* watcher);
+  void UnwatchKeys(KeyWatcher* watcher);
+  void TouchWatchedKey(std::string_view key);
+  bool HasWatchedKeys() const { return watched_keys_->Size() > 0; }
 
  private:
   friend class aof::Aof;
@@ -85,6 +95,8 @@ class RedisDb {
   int64_t Now() const;
   std::unique_ptr<in_memory::Dict<std::string, RedisObjectPtr>> dict_;
   std::unique_ptr<in_memory::Dict<std::string, int64_t>> expires_;
+  std::unique_ptr<in_memory::Dict<std::string, std::vector<KeyWatcher*>>>
+      watched_keys_;
   AsyncReclaimer reclaimer_;
   size_t expire_cursor_{};
   std::optional<int64_t> command_time_;

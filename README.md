@@ -116,9 +116,20 @@ including protocol errors such as `ERR wrong number of arguments` and
   `ZRANGEBYSCORE`, `ZCOUNT`, `ZSCORE`
 - Hashes: `HSET`, `HGET`, `HDEL`, `HLEN`, `HEXISTS`, `HGETALL`, `HMGET`,
   `HKEYS`, `HVALS`, `HINCRBY`
+- Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
 - Persistence: `BGREWRITEAOF`, `INFO [persistence]`
 - Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `PING`,
   `ECHO`, `QUIT`
+
+Transactions follow Redis semantics. After `MULTI`, commands are queued and
+answered with `QUEUED`; `EXEC` runs them back to back, with no other client's
+command in between, and returns their replies as one array. A command that
+fails at runtime reports its error in that array without stopping the rest. A
+command rejected while queueing (unknown name, wrong arity, or `NOAUTH`) makes
+`EXEC` fail with `EXECABORT`. `WATCH` provides optimistic locking: if a watched
+key is written, deleted, renamed, flushed, or expires before `EXEC`, `EXEC`
+returns a null reply and runs nothing. `EXEC` and `DISCARD` unwatch every key,
+and one transaction may queue at most 64 MiB of arguments.
 
 `UNLINK` detaches keys synchronously and releases their values on a background
 worker. Command names, arity, access mode, and key positions are held in one
@@ -126,7 +137,10 @@ allocation-free registry used for case-insensitive dispatch and early argument
 validation.
 
 When enabled, AOF records successful mutations as canonical RESP commands and
-replays them before the server accepts clients. Relative expirations are stored
+replays them before the server accepts clients. An `EXEC` that produces more
+than one record is written between `MULTI` and `EXEC` records, so replay
+applies the transaction as a whole; a transaction cut off at the end of the
+file is truncated rather than partially applied. Relative expirations are stored
 as absolute millisecond timestamps, incomplete final records are truncated,
 and corruption before the final record prevents startup. AOF rewrites traverse
 collection values through borrowed views, retain concurrent mutations in a
@@ -214,6 +228,8 @@ This runs:
 - `redis_simple_integration_command_zset`: sorted-set command integration
   checks.
 - `redis_simple_integration_command_hash`: hash command integration checks.
+- `redis_simple_integration_command_transaction`: `MULTI`/`EXEC` and `WATCH`
+  integration checks across two connections.
 
 For debugging a single executable directly:
 
@@ -239,7 +255,8 @@ scripts/run_redis_compatibility_check.sh build/debug/redis_simple
 ```
 
 The script uses `redis-cli` against both servers and covers RESP requests,
-spaces in arguments, expiration replies, and sorted-set range semantics.
+spaces in arguments, expiration replies, sorted-set range semantics, and
+transaction replies.
 
 ## Benchmarks
 

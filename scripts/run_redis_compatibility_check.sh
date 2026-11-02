@@ -58,6 +58,23 @@ compare() {
   fi
 }
 
+# Sends newline-separated commands over one connection to each server, for
+# behavior that spans commands, such as transactions.
+compare_session() {
+  local script="$1" expected received
+  expected="$(printf '%s\n' "${script}" |
+    "${redis_cli}" -h "${reference_host}" -p "${reference_port}" --raw)"
+  received="$(printf '%s\n' "${script}" |
+    "${redis_cli}" -h 127.0.0.1 -p "${server_port}" --raw)"
+  if [[ "${received}" != "${expected}" ]]; then
+    echo "Redis compatibility mismatch in session:" >&2
+    echo "${script}" >&2
+    echo "expected: ${expected}" >&2
+    echo "actual:   ${received}" >&2
+    return 1
+  fi
+}
+
 reference FLUSHDB >/dev/null
 actual FLUSHDB >/dev/null
 
@@ -112,6 +129,38 @@ compare ZRANGE ordered 3 1 BYSCORE REV
 compare ZRANGE ordered 1 3 BYSCORE LIMIT 1 1
 compare ZRANGE ordered 0 -1 WITHSCORES
 compare GET missing_key
+compare_session "MULTI
+SET tx_key 1
+INCR tx_key
+RPUSH tx_list a b
+LRANGE tx_list 0 -1
+EXEC
+MULTI
+SET tx_discarded 1
+DISCARD
+EXISTS tx_discarded
+EXEC
+DISCARD
+MULTI
+MULTI
+SET tx_key 5
+EXEC
+WATCH tx_key
+SET tx_key 2
+MULTI
+INCR tx_key
+EXEC
+GET tx_key
+WATCH tx_key tx_missing
+MULTI
+INCR tx_key
+EXEC
+WATCH tx_key
+SET tx_key 9
+UNWATCH
+MULTI
+GET tx_key
+EXEC"
 
 "${redis_cli}" -3 -h 127.0.0.1 -p "${server_port}" --raw \
   GET missing_resp3_key >/dev/null

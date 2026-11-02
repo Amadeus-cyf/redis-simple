@@ -24,11 +24,17 @@ inline constexpr std::string_view kWrongTypeError =
     "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
 inline constexpr std::string_view kNullResp2 = "$-1\r\n";
 inline constexpr std::string_view kNullResp3 = "_\r\n";
+inline constexpr std::string_view kNullArrayResp2 = "*-1\r\n";
 // Room for "$", a 64-bit length, and CRLF.
 inline constexpr size_t kBulkStringHeaderCapacity = 32;
 
 constexpr std::string_view NullView(ProtocolVersion protocol) {
   return protocol == ProtocolVersion::kResp2 ? kNullResp2 : kNullResp3;
+}
+
+// RESP3 has a single null type; RESP2 distinguishes null arrays.
+constexpr std::string_view NullArrayView(ProtocolVersion protocol) {
+  return protocol == ProtocolVersion::kResp2 ? kNullArrayResp2 : kNullResp3;
 }
 
 std::string FromString(std::string_view s);

@@ -111,9 +111,15 @@ ParseResult ParseAggregate(std::string_view resp, size_t start,
   if (header.status != ParseStatus::kComplete) {
     return header;
   }
+  const std::string_view length_text =
+      resp.substr(start + 1, header.consumed - start - 1);
+  if (length_text == "-1" && element_multiplier == 1 && resp[start] == '*') {
+    // RESP2 null array, as returned by an aborted EXEC.
+    reply->emplace_back(kNilReply);
+    return {ParseStatus::kComplete, header.consumed - start + 2};
+  }
   size_t length = 0;
-  if (!ParseSize(resp.substr(start + 1, header.consumed - start - 1),
-                 &length) ||
+  if (!ParseSize(length_text, &length) ||
       length > std::numeric_limits<size_t>::max() / element_multiplier) {
     return {ParseStatus::kInvalid, 0};
   }

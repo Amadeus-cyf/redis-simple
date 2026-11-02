@@ -53,6 +53,11 @@ constexpr Command AllowBeforeAuth(Command command) {
   return command;
 }
 
+constexpr Command RunsImmediatelyInMulti(Command command) {
+  command.queued_in_multi = false;
+  return command;
+}
+
 constexpr char FoldAsciiCase(char value) {
   return value >= 'a' && value <= 'z' ? static_cast<char>(value - ('a' - 'A'))
                                       : value;
@@ -82,7 +87,11 @@ constexpr std::array kCommandTable = {
     WriteCommand("DECR", strings::HandleDecr, FixedArity(1), OneKey()),
     WriteCommand("DECRBY", strings::HandleDecrBy, FixedArity(2), OneKey()),
     WriteCommand("DEL", key::HandleDel, VariableArity(1), AllKeys()),
+    RunsImmediatelyInMulti(ConnectionCommand(
+        "DISCARD", transaction::HandleDiscard, FixedArity(0))),
     ConnectionCommand("ECHO", session::HandleEcho, FixedArity(1)),
+    RunsImmediatelyInMulti(
+        ConnectionCommand("EXEC", transaction::HandleExec, FixedArity(0))),
     ReadCommand("EXISTS", key::HandleExists, VariableArity(1), AllKeys()),
     WriteCommand("EXPIRE", key::HandleExpire, VariableArity(2), OneKey()),
     WriteCommand("EXPIREAT", key::HandleExpireAt, VariableArity(2), OneKey()),
@@ -112,13 +121,15 @@ constexpr std::array kCommandTable = {
     WriteCommand("LTRIM", lists::HandleLTrim, FixedArity(3), OneKey()),
     ReadCommand("MGET", strings::HandleMGet, VariableArity(1), AllKeys()),
     WriteCommand("MSET", strings::HandleMSet, VariableArity(2), AllKeys(0, 2)),
+    RunsImmediatelyInMulti(
+        ConnectionCommand("MULTI", transaction::HandleMulti, FixedArity(0))),
     WriteCommand("PERSIST", key::HandlePersist, FixedArity(1), OneKey()),
     WriteCommand("PEXPIRE", key::HandlePExpire, VariableArity(2), OneKey()),
     WriteCommand("PEXPIREAT", key::HandlePExpireAt, VariableArity(2), OneKey()),
     ConnectionCommand("PING", session::HandlePing, {0, 1}),
     ReadCommand("PTTL", key::HandlePTtl, FixedArity(1), OneKey()),
-    AllowBeforeAuth(
-        ConnectionCommand("QUIT", session::HandleQuit, FixedArity(0))),
+    AllowBeforeAuth(RunsImmediatelyInMulti(
+        ConnectionCommand("QUIT", session::HandleQuit, FixedArity(0)))),
     WriteCommand("RENAME", key::HandleRename, FixedArity(2), {0, 1, 1}),
     WriteCommand("RPOP", lists::HandleRPop, FixedArity(1), OneKey()),
     WriteCommand("RPUSH", lists::HandleRPush, VariableArity(2), OneKey()),
@@ -136,6 +147,9 @@ constexpr std::array kCommandTable = {
     ReadCommand("TTL", key::HandleTtl, FixedArity(1), OneKey()),
     ReadCommand("TYPE", key::HandleType, FixedArity(1), OneKey()),
     WriteCommand("UNLINK", key::HandleUnlink, VariableArity(1), AllKeys()),
+    ConnectionCommand("UNWATCH", transaction::HandleUnwatch, FixedArity(0)),
+    RunsImmediatelyInMulti(
+        ConnectionCommand("WATCH", transaction::HandleWatch, VariableArity(1))),
     WriteCommand("ZADD", zsets::HandleZAdd, VariableArity(3), OneKey()),
     ReadCommand("ZCARD", zsets::HandleZCard, FixedArity(1), OneKey()),
     ReadCommand("ZCOUNT", zsets::HandleZCount, FixedArity(3), OneKey()),
