@@ -52,13 +52,23 @@ TEST(RequestParserTest, ValidatesLengthFieldsInOnePass) {
   for (const std::string_view invalid :
        {"*\r\n", "*-1\r\n", "*+1\r\n", "*1 \r\n", "*1\rx", "*1\r\n$\r\n",
         "*1\r\n$3x\r\nGET\r\n", "*1\r\n$3\r\nGETxx",
-        "*1\r\n$18446744073709551616\r\n"}) {
+        "*1\r\n$18446744073709551616\r\n", "*1\r\n$18446744073709551620\r\n",
+        "*1\r\n$99999999999999999999\r\n"}) {
     EXPECT_EQ(status(invalid), ParseStatus::kInvalid) << invalid;
   }
-  // Leading zeros are accepted within the digit bound, not beyond it.
+  // Length fields are at most 19 digits, which always fit in a size_t, so
+  // longer fields are invalid even when their value would fit.
+  EXPECT_EQ(status("*1\r\n$1844674407370955161\r\nGET"),
+            ParseStatus::kIncomplete);
+  EXPECT_EQ(status("*1\r\n$18446744073709551615\r\nGET"),
+            ParseStatus::kInvalid);
+  EXPECT_EQ(status("*1\r\n$9999999999999999999\r\n"), ParseStatus::kIncomplete);
+  // Leading zeros count toward the bound.
   EXPECT_EQ(status("*01\r\n$003\r\nGET\r\n"), ParseStatus::kComplete);
   EXPECT_EQ(command, "GET");
-  EXPECT_EQ(status("*" + std::string(25, '0') + "1\r\n"),
+  EXPECT_EQ(status("*" + std::string(18, '0') + "1\r\n$3\r\nGET\r\n"),
+            ParseStatus::kComplete);
+  EXPECT_EQ(status("*" + std::string(19, '0') + "1\r\n"),
             ParseStatus::kInvalid);
   EXPECT_EQ(status("*" + std::string(1000, '0')), ParseStatus::kInvalid);
 }

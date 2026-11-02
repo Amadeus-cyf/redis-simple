@@ -56,6 +56,28 @@ TEST(RedisObjectTest, MutableStringConvertsIntEncoding) {
   EXPECT_EQ(object->String(), "-9223372036854775808");
 }
 
+TEST(RedisObjectTest, AssignStringChoosesEncodingAndReusesBuffers) {
+  auto object = RedisObject::CreateWithString("initial value");
+  object->AssignString("42");
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kInt);
+  EXPECT_EQ(object->String(), "42");
+  object->AssignString("007");
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
+  EXPECT_EQ(object->String(), "007");
+
+  // A raw buffer is reused for a value that fills a fair share of it.
+  object->AssignString(std::string(1000, 'a'));
+  const char* const buffer = object->MutableString()->data();
+  object->AssignString(std::string(600, 'b'));
+  EXPECT_EQ(object->MutableString()->data(), buffer);
+  EXPECT_EQ(object->String(), std::string(600, 'b'));
+
+  // Shrinking a large value releases the oversized buffer.
+  object->AssignString("tiny");
+  EXPECT_EQ(object->String(), "tiny");
+  EXPECT_LT(object->MutableString()->capacity(), 1000);
+}
+
 TEST(RedisObjectTest, StringValueCopiesKeepIntegerBytes) {
   const auto object = RedisObject::CreateWithInt(123);
   StringValue copy = object->String();
@@ -97,5 +119,6 @@ TEST(RedisObjectDeathTest, StringAccessorsRequireAStringObject) {
   EXPECT_DEATH(object->String(), "Check failed");
   EXPECT_DEATH(object->Int(), "Check failed");
   EXPECT_DEATH(object->SetInt(1), "Check failed");
+  EXPECT_DEATH(object->AssignString("value"), "Check failed");
 }
 }  // namespace redis_simple::db

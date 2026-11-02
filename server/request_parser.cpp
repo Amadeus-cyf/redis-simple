@@ -12,18 +12,19 @@ constexpr size_t kMaxCommandElements = size_t{1024} * 1024;
 // PROTO_INLINE_MAX_SIZE. Larger lines are rejected instead of rescanned.
 constexpr size_t kMaxLineBytes = size_t{64} * 1024;
 constexpr size_t kMinimumBulkStringBytes = 6;
-// Longest accepted length field: every size_t, with a few leading zeros.
-constexpr size_t kMaxLengthDigits = 24;
+// Longest accepted length field. Any number this long fits in a size_t, so
+// digits accumulate without overflow checks. Longer fields, at least 10^19
+// bytes or elements, could never be satisfied and are rejected as invalid.
+constexpr size_t kMaxLengthDigits = std::numeric_limits<size_t>::digits10;
 constexpr std::string_view kCrlf = "\r\n";
 
 // Parses the decimal length that follows a RESP type byte, starting at
 // `start` and ending in CRLF, in one pass without searching for the CRLF
-// first. At most kMaxLengthDigits digits are read, so a peer cannot make each
-// read rescan a long run of leading zeros. On success, `*line_end` is the
-// offset of the CR.
+// first. At most kMaxLengthDigits digits are read, which also stops a peer
+// from making each read rescan a long run of digits. On success, `*line_end`
+// is the offset of the CR.
 ParseStatus ParseLengthLine(std::string_view input, size_t start,
                             size_t* const value, size_t* const line_end) {
-  constexpr size_t kMax = std::numeric_limits<size_t>::max();
   constexpr size_t kBase = 10;
   size_t parsed = 0;
   size_t position = start;
@@ -35,11 +36,7 @@ ParseStatus ParseLengthLine(std::string_view input, size_t start,
     if (position - start == kMaxLengthDigits) {
       return ParseStatus::kInvalid;
     }
-    const auto digit = static_cast<size_t>(character - '0');
-    if (parsed > (kMax - digit) / kBase) {
-      return ParseStatus::kInvalid;
-    }
-    parsed = (parsed * kBase) + digit;
+    parsed = (parsed * kBase) + static_cast<size_t>(character - '0');
   }
   if (position == input.size()) {
     return ParseStatus::kIncomplete;
