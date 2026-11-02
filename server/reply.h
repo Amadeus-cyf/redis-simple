@@ -49,6 +49,8 @@ void AppendBulkString(std::string_view s, std::string* reply);
 // kBulkStringHeaderCapacity bytes, and returns the encoded size.
 size_t EncodeBulkStringHeader(size_t length, char* buffer, size_t capacity);
 std::string FromFloat(double fl, ProtocolVersion protocol);
+// Appends `fl` as a RESP2 bulk string or a RESP3 double.
+void AppendFloat(double fl, ProtocolVersion protocol, std::string* reply);
 std::string FromError(std::string_view message);
 std::string WrongNumberOfArguments();
 std::string UnknownCommand(std::string_view command);
