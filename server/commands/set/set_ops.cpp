@@ -3,16 +3,17 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "data_types/set/set.h"
+#include "memory/dict.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
 #include "server/commands/lookup.h"
 #include "server/db/db.h"
 #include "server/reply.h"
+#include "utils/check.h"
 
 namespace redis_simple::command::sets {
 namespace {
@@ -83,11 +84,12 @@ std::optional<SetReply> SInter(db::RedisDb* const redis_db,
   auto smallest = std::ranges::min_element(sets, {}, &Set::Size);
   std::string body;
   size_t count = 0;
-  (*smallest)->ForEachMember(
-      [&sets, &body, &count, smallest](std::string_view member) {
+  (*smallest)->ForEachMemberWithHash(
+      [&sets, &body, &count, smallest](std::string_view member,
+                                       const in_memory::HashedKey* hashed) {
         bool present = true;
         for (const auto* set : sets) {
-          if (set != *smallest && !set->HasMember(member)) {
+          if (set != *smallest && !set->HasMember(member, hashed)) {
             present = false;
             break;
           }
@@ -114,7 +116,12 @@ std::optional<SetReply> SUnion(db::RedisDb* const redis_db,
     return EncodeMembers(*lookup.set);
   }
 
-  std::unordered_set<std::string> members;
+  // Dedupe through a Dict, which reuses the hashes stored by dict-encoded
+  // sources instead of hashing each member again.
+  using MemberDict = in_memory::Dict<std::string, std::nullptr_t>;
+  std::vector<const Set*> sets;
+  sets.reserve(keys.size());
+  size_t total = 0;
   for (std::string_view key : keys) {
     const SetLookup lookup = FindSet(redis_db, key);
     if (lookup.status == SetLookupStatus::kMissing) {
@@ -123,17 +130,29 @@ std::optional<SetReply> SUnion(db::RedisDb* const redis_db,
     if (lookup.status != SetLookupStatus::kOk) {
       return std::nullopt;
     }
-    members.reserve(members.size() + lookup.set->Size());
-    lookup.set->ForEachMember([&members](std::string_view member) {
-      members.emplace(member.data(), member.size());
+    sets.push_back(lookup.set);
+    total += lookup.set->Size();
+  }
+  const auto members = MemberDict::Create(total);
+  // Sizing fails only past the address space, which existing sets cannot reach.
+  RS_CHECK(members != nullptr);
+  for (const Set* set : sets) {
+    set->ForEachMemberWithHash([&members](std::string_view member,
+                                          const in_memory::HashedKey* hashed) {
+      if (hashed != nullptr) {
+        members->FindOrInsert(*hashed);
+      } else {
+        members->FindOrInsert(member);
+      }
       return true;
     });
   }
   std::string body;
-  for (const auto& member : members) {
-    reply::AppendBulkString(member, &body);
+  auto it = MemberDict::Iterator(members.get());
+  for (it.SeekToFirst(); it.Valid(); it.Next()) {
+    reply::AppendBulkString(it.Key(), &body);
   }
-  return SetReply{members.size(), std::move(body)};
+  return SetReply{members->Size(), std::move(body)};
 }
 
 std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
@@ -161,11 +180,12 @@ std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
 
   std::string body;
   size_t count = 0;
-  first.set->ForEachMember(
-      [&subtract_sets, &body, &count](std::string_view member) {
+  first.set->ForEachMemberWithHash(
+      [&subtract_sets, &body, &count](std::string_view member,
+                                      const in_memory::HashedKey* hashed) {
         bool removed = false;
         for (const auto* set : subtract_sets) {
-          if (set->HasMember(member)) {
+          if (set->HasMember(member, hashed)) {
             removed = true;
             break;
           }

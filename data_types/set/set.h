@@ -31,9 +31,18 @@ class Set {
   }
   bool Add(std::string_view value);
   bool HasMember(std::string_view value) const;
+  // As HasMember, but a dict-encoded set probes with `hashed`, when given, so
+  // the member is not hashed again. `hashed` must describe `value`.
+  bool HasMember(std::string_view value,
+                 const in_memory::HashedKey* hashed) const;
   std::vector<std::string> ListAllMembers() const;
   template <typename Visitor>
   bool ForEachMember(Visitor&& visitor) const;
+  // Like ForEachMember, but also passes each member's stored hash as a
+  // `const in_memory::HashedKey*` when the set is dict-encoded, or nullptr
+  // otherwise. Set operations hand it to HasMember on the other sets.
+  template <typename Visitor>
+  bool ForEachMemberWithHash(Visitor&& visitor) const;
   bool Remove(std::string_view value);
   size_t Size() const;
   Encoding Encoding() const { return encoding_; }
@@ -96,6 +105,25 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     return true;
   }
   utils::Unreachable();
+}
+
+template <typename Visitor>
+bool Set::ForEachMemberWithHash(Visitor&& visitor) const {
+  if (encoding_ != Encoding::kDict) {
+    return ForEachMember([&visitor](std::string_view member) {
+      return visitor(member, static_cast<const in_memory::HashedKey*>(nullptr));
+    });
+  }
+  auto it = in_memory::Dict<std::string, std::nullptr_t>::Iterator(dict_.get());
+  it.SeekToFirst();
+  while (it.Valid()) {
+    const in_memory::HashedKey hashed = it.Hashed();
+    if (!visitor(std::string_view(it.Key()), &hashed)) {
+      return false;
+    }
+    it.Next();
+  }
+  return true;
 }
 }  // namespace redis_simple::set
 
