@@ -23,8 +23,9 @@ constexpr std::string_view kCrlf = "\r\n";
 // first. At most kMaxLengthDigits digits are read, which also stops a peer
 // from making each read rescan a long run of digits. On success, `*line_end`
 // is the offset of the CR.
-ParseStatus ParseLengthLine(std::string_view input, size_t start,
-                            size_t* const value, size_t* const line_end) {
+inline ParseStatus ParseLengthLine(std::string_view input, size_t start,
+                                   size_t* const value,
+                                   size_t* const line_end) {
   constexpr size_t kBase = 10;
   size_t parsed = 0;
   size_t position = start;
@@ -64,8 +65,8 @@ struct BulkString {
 
 // Parses the bulk string at `start`. When only its header has arrived,
 // returns kIncomplete with `bulk->end` set to where the payload will end.
-ParseStatus ParseBulkString(std::string_view input, size_t start,
-                            BulkString* const bulk) {
+inline ParseStatus ParseBulkString(std::string_view input, size_t start,
+                                   BulkString* const bulk) {
   bulk->end = 0;
   if (start >= input.size()) {
     return ParseStatus::kIncomplete;
@@ -98,25 +99,66 @@ ParseStatus ParseBulkString(std::string_view input, size_t start,
   return ParseStatus::kComplete;
 }
 
-ParseResult ParseResp(std::string_view input, ParseState* const state) {
-  if (state->element_count == 0) {
-    size_t count = 0;
-    size_t header_end = 0;
-    const ParseStatus header = ParseLengthLine(input, 1, &count, &header_end);
-    if (header != ParseStatus::kComplete) {
-      return {header, 0};
-    }
-    if (count == 0 || count > kMaxCommandElements) {
-      return {ParseStatus::kInvalid, 0};
-    }
-    state->element_count = count;
-    state->offset = header_end + kCrlf.size();
-    // Bound the reservation by what the buffered bytes could hold.
-    state->elements.reserve(
-        std::min(count, (input.size() / kMinimumBulkStringBytes) + 1));
-  }
+// Upper bound for reserving `count` elements, given what the buffered bytes
+// could hold, so a forged count cannot force a huge allocation.
+size_t ReservableElements(std::string_view input, size_t count) {
+  return std::min(count, (input.size() / kMinimumBulkStringBytes) + 1);
+}
 
-  // Resume after the last complete element instead of re-parsing the request.
+// Parses a request that starts at the beginning of `input` and has not been
+// partially parsed before. Usually the whole request is buffered, so views
+// go straight into `command` and `args`. Otherwise the progress so far is
+// saved in `state` as offsets, since views would dangle once the caller's
+// buffer moves, and ResumeResp continues from there after more bytes arrive.
+ParseResult ParseFreshResp(std::string_view input, ParseState* const state,
+                           std::string_view* const command,
+                           command::CommandArgs* const args) {
+  size_t count = 0;
+  size_t header_end = 0;
+  const ParseStatus header = ParseLengthLine(input, 1, &count, &header_end);
+  if (header != ParseStatus::kComplete) {
+    return {header, 0};
+  }
+  if (count == 0 || count > kMaxCommandElements) {
+    return {ParseStatus::kInvalid, 0};
+  }
+  args->reserve(ReservableElements(input, count - 1));
+  size_t offset = header_end + kCrlf.size();
+  for (size_t index = 0; index < count; ++index) {
+    BulkString bulk;
+    const ParseStatus status = ParseBulkString(input, offset, &bulk);
+    if (status == ParseStatus::kInvalid) {
+      return {status, 0};
+    }
+    if (status == ParseStatus::kIncomplete) {
+      state->element_count = count;
+      state->offset = offset;
+      state->pending_bulk_end = bulk.end;
+      state->elements.reserve(ReservableElements(input, count));
+      const auto save = [input, state](std::string_view element) {
+        state->elements.emplace_back(element.data() - input.data(),
+                                     element.size());
+      };
+      if (index > 0) {
+        save(*command);
+        std::ranges::for_each(*args, save);
+      }
+      return {status, 0};
+    }
+    const std::string_view element = input.substr(bulk.offset, bulk.length);
+    if (index == 0) {
+      *command = element;
+    } else {
+      args->push_back(element);
+    }
+    offset = bulk.end;
+  }
+  return {ParseStatus::kComplete, offset};
+}
+
+// Continues a request that ParseFreshResp could not finish, after the last
+// complete element instead of re-parsing the request.
+ParseResult ResumeResp(std::string_view input, ParseState* const state) {
   while (state->elements.size() < state->element_count) {
     BulkString bulk;
     const ParseStatus status = ParseBulkString(input, state->offset, &bulk);
@@ -197,7 +239,19 @@ ParseResult Parse(std::string_view input, ParseState* const state,
     return result;
   }
 
-  const auto result = ParseResp(input, state);
+  if (state->element_count == 0) {
+    const auto result = ParseFreshResp(input, state, command, args);
+    if (result.status != ParseStatus::kComplete) {
+      *command = {};
+      args->clear();
+    }
+    if (result.status == ParseStatus::kInvalid) {
+      state->Reset();
+    }
+    return result;
+  }
+
+  const auto result = ResumeResp(input, state);
   if (result.status == ParseStatus::kIncomplete) {
     return result;
   }
