@@ -54,6 +54,24 @@ TEST(CommandRegistryTest, ReturnsNullForUnknownCommand) {
   EXPECT_EQ(Find("G\xc5T"), nullptr);
 }
 
+TEST(CommandRegistryTest, CaseFoldingMatchesOnlyTheSameLetter) {
+  for (const std::string_view name : {"GET", "ZADD", "BGREWRITEAOF"}) {
+    for (size_t position = 0; position < name.size(); ++position) {
+      for (int byte = 0; byte < 256; ++byte) {
+        std::string probe(name);
+        probe[position] = static_cast<char>(byte);
+        const char upper = name[position];
+        const char lower = static_cast<char>(upper - 'A' + 'a');
+        const bool same_letter =
+            probe[position] == upper || probe[position] == lower;
+        const auto* command = Find(probe);
+        EXPECT_EQ(command != nullptr && command->name == name, same_letter)
+            << name << " position " << position << " byte " << byte;
+      }
+    }
+  }
+}
+
 TEST(CommandRegistryTest, FindsEveryCaseVariant) {
   for (const std::string_view name :
        {"get", "Get", "gEt", "GET", "zRaNgEbYsCoRe", "bgrewriteaof", "Exec",

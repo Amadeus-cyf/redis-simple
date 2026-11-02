@@ -175,9 +175,11 @@ constexpr bool CommandTableIsSorted() {
 
 static_assert(CommandTableIsSorted(), "command table must remain sorted");
 
-// Find() folds the requested name into a stack buffer and probes a
-// compile-time open-addressing index over the table, so a lookup costs one
-// pass over the name and usually a single comparison.
+// Find() hashes the requested name in one pass and probes a compile-time
+// open-addressing index over the table, usually with a single comparison.
+// Table names are upper-case letters only, so setting bit 5 (`| 0x20`) folds
+// case without branches: for a letter L, `x | 0x20 == L | 0x20` holds only
+// when x is L or its lower-case form.
 constexpr size_t kMaxNameLength = 16;
 constexpr size_t kIndexSize = 256;
 constexpr size_t kIndexMask = kIndexSize - 1;
@@ -188,8 +190,29 @@ static_assert(kCommandTable.size() * 2 <= kIndexSize,
 constexpr uint32_t kFnvOffsetBasis = 2166136261U;
 constexpr uint32_t kFnvPrime = 16777619U;
 
-constexpr uint32_t HashStep(uint32_t hash, char folded) {
-  return (hash ^ static_cast<unsigned char>(folded)) * kFnvPrime;
+constexpr unsigned char kCaseBit = 0x20;
+
+constexpr unsigned char FoldForLookup(char value) {
+  return static_cast<unsigned char>(value) | kCaseBit;
+}
+
+// Case-insensitive comparison against a table name, which is upper-case
+// letters only.
+constexpr bool EqualsCommandName(std::string_view name,
+                                 std::string_view table_name) {
+  if (name.size() != table_name.size()) {
+    return false;
+  }
+  unsigned char difference = 0;
+  for (size_t position = 0; position < name.size(); ++position) {
+    difference |=
+        FoldForLookup(name[position]) ^ FoldForLookup(table_name[position]);
+  }
+  return difference == 0;
+}
+
+constexpr uint32_t HashStep(uint32_t hash, char value) {
+  return (hash ^ FoldForLookup(value)) * kFnvPrime;
 }
 
 constexpr bool CommandNamesAreIndexable() {
@@ -198,7 +221,7 @@ constexpr bool CommandNamesAreIndexable() {
       return false;
     }
     for (const char value : command.name) {
-      if (FoldAsciiCase(value) != value) {
+      if (value < 'A' || value > 'Z') {
         return false;
       }
     }
@@ -207,7 +230,8 @@ constexpr bool CommandNamesAreIndexable() {
 }
 
 static_assert(CommandNamesAreIndexable(),
-              "command names must be upper case and at most kMaxNameLength");
+              "command names must be upper-case letters, at most "
+              "kMaxNameLength of them");
 
 // Each slot holds a table index plus one; zero marks an empty slot.
 constexpr std::array<uint8_t, kIndexSize> BuildIndex() {
@@ -233,20 +257,17 @@ const Command* Find(std::string_view name) {
   if (name.empty() || name.size() > kMaxNameLength) {
     return nullptr;
   }
-  std::array<char, kMaxNameLength> folded{};
   uint32_t hash = kFnvOffsetBasis;
-  for (size_t position = 0; position < name.size(); ++position) {
-    folded[position] = FoldAsciiCase(name[position]);
-    hash = HashStep(hash, folded[position]);
+  for (const char value : name) {
+    hash = HashStep(hash, value);
   }
-  const std::string_view key(folded.data(), name.size());
   for (size_t slot = hash & kIndexMask;; slot = (slot + 1) & kIndexMask) {
     const uint8_t entry = kCommandIndex[slot];
     if (entry == 0) {
       return nullptr;
     }
     const Command& command = kCommandTable[entry - 1];
-    if (command.name == key) {
+    if (EqualsCommandName(name, command.name)) {
       return &command;
     }
   }
