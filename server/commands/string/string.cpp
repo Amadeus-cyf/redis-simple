@@ -162,9 +162,7 @@ void HandleMSet(Client* const client) {
     return;
   }
   for (size_t i = 0; i < args.size(); i += 2) {
-    client->Db()->SetKey(
-        args[i], db::RedisObject::CreateWithString(std::string(args[i + 1])),
-        0);
+    client->Db()->SetStringKey(args[i], args[i + 1], 0);
   }
   client->MarkModified();
   client->AddReply(reply::kOk);

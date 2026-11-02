@@ -56,6 +56,11 @@ class RedisDb {
   // `expire` is an absolute time in milliseconds, or 0 for none.
   DbStatus SetKey(std::string_view key, RedisObjectPtr object, int64_t expire,
                   ExistingTtl existing_ttl = ExistingTtl::kClear);
+  // Like SetKey with a string value, but overwrites an existing string
+  // object in place instead of allocating a new one.
+  DbStatus SetStringKey(std::string_view key, std::string_view value,
+                        int64_t expire,
+                        ExistingTtl existing_ttl = ExistingTtl::kClear);
   DbStatus DeleteKey(std::string_view key);
   DbStatus UnlinkKey(std::string_view key);
   DbStatus ExpireKeyAt(std::string_view key, int64_t expire,
@@ -94,6 +99,10 @@ class RedisDb {
   // Each public operation hashes its key once and passes the HashedKey to
   // the keyspace, TTL, and WATCH tables, which share one hash seed.
   RedisObject* Lookup(const in_memory::HashedKey& key);
+  // TTL and WATCH bookkeeping shared by SetKey and SetStringKey once the
+  // value is stored.
+  void FinishSet(const in_memory::HashedKey& key, int64_t expire,
+                 ExistingTtl existing_ttl);
   DbStatus Delete(const in_memory::HashedKey& key);
   void TouchWatchedKey(const in_memory::HashedKey& key);
   bool IsKeyExpired(std::string_view key) const;

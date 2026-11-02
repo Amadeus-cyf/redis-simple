@@ -3,6 +3,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -10,6 +11,16 @@
 namespace redis_simple::utils {
 std::string FloatToString(double fl) {
   std::array<char, 64> buffer{};
+  // Every integer of magnitude at most 2^53 is exactly representable, so its
+  // shortest round-trip text is its digits: format it as an integer, which
+  // is several times cheaper. Negative zero keeps the general path's "-0".
+  constexpr double kMaxExactInteger = 9007199254740992.0;
+  if (std::abs(fl) <= kMaxExactInteger && std::trunc(fl) == fl &&
+      (fl != 0 || !std::signbit(fl))) {
+    const auto integer =
+        std::to_chars(buffer.begin(), buffer.end(), static_cast<int64_t>(fl));
+    return {buffer.data(), integer.ptr};
+  }
   auto [end, error] = std::to_chars(buffer.begin(), buffer.end(), fl);
   if (error != std::errc()) {
     return {};

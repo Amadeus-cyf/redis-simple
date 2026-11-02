@@ -96,6 +96,11 @@ Guidance for AI coding agents working in this repository.
   through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
   `MutableString()` only to edit bytes in place, since it converts the value
   back to raw form.
+- Store whole string values through `RedisDb::SetStringKey`, which overwrites
+  an existing string object in place with `RedisObject::AssignString` instead
+  of allocating a new object. `AssignString` applies the same integer-encoding
+  rule as `CreateWithString` and releases a buffer much larger than the new
+  value.
 - Only commands marked `AllowBeforeAuth` in the command table run before a
   client authenticates when `--requirepass` is set.
 - Inside `MULTI`, every command is queued unless the command table marks it

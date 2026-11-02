@@ -110,6 +110,10 @@ class RedisObject {
   std::string* MutableString();
   // Replaces a string object's value with an integer-encoded one.
   void SetInt(int64_t value);
+  // Replaces a string object's value with the encoding CreateWithString would
+  // choose, reusing the existing buffer when the new value fills a fair share
+  // of it so that shrinking a large value releases its memory.
+  void AssignString(std::string_view value);
   Encoding StringEncoding() const;
   // Collection accessors return nullptr if the object holds another type.
   set::Set* Set() { return Held<SetPtr>(); }

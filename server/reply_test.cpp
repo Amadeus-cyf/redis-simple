@@ -49,6 +49,18 @@ TEST(ReplyTest, AppendsBulkStringsAfterExistingContent) {
   EXPECT_TRUE(many.ends_with("$4\r\n9999\r\n"));
 }
 
+TEST(ReplyTest, AppendsFloatsForEachProtocol) {
+  std::string encoded = "*2\r\n";
+  AppendFloat(2.5, ProtocolVersion::kResp2, &encoded);
+  AppendFloat(-3, ProtocolVersion::kResp2, &encoded);
+  EXPECT_EQ(encoded, "*2\r\n$3\r\n2.5\r\n$2\r\n-3\r\n");
+  encoded.clear();
+  AppendFloat(2.5, ProtocolVersion::kResp3, &encoded);
+  AppendFloat(1e17, ProtocolVersion::kResp3, &encoded);
+  EXPECT_EQ(encoded, ",2.5\r\n,1e+17\r\n");
+  EXPECT_EQ(FromFloat(7, ProtocolVersion::kResp2), "$1\r\n7\r\n");
+}
+
 TEST(ReplyTest, AppendsArrayHeader) {
   std::string encoded = "+OK\r\n";
   AppendArrayHeader(3, &encoded);
