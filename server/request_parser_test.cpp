@@ -108,6 +108,48 @@ TEST(RequestParserTest, ResumesSplitRequestFromSavedState) {
   EXPECT_EQ(state.element_count, 0);
 }
 
+TEST(RequestParserTest, HandsOffFromAnySplitPointToResume) {
+  constexpr std::string_view kRequest =
+      "*4\r\n$4\r\nHSET\r\n$1\r\nh\r\n$5\r\nfield\r\n$11\r\nhello "
+      "world\r\n";
+  for (size_t split = 1; split < kRequest.size(); ++split) {
+    ParseState state;
+    std::string_view command;
+    command::CommandArgs args;
+    const std::string first(kRequest.substr(0, split));
+    ASSERT_EQ(Parse(first, &state, &command, &args).status,
+              ParseStatus::kIncomplete)
+        << split;
+    EXPECT_TRUE(command.empty()) << split;
+    EXPECT_TRUE(args.empty()) << split;
+
+    // The rest arrives in a separate buffer at a different address.
+    const std::string full(kRequest);
+    const auto result = Parse(full, &state, &command, &args);
+    ASSERT_EQ(result.status, ParseStatus::kComplete) << split;
+    EXPECT_EQ(result.consumed, full.size());
+    EXPECT_EQ(command, "HSET");
+    ASSERT_EQ(args.size(), 3);
+    EXPECT_EQ(args[0], "h");
+    EXPECT_EQ(args[1], "field");
+    EXPECT_EQ(args[2], "hello world");
+    EXPECT_GE(command.data(), full.data());
+    EXPECT_LT(args[2].data(), full.data() + full.size());
+    EXPECT_EQ(state.element_count, 0);
+  }
+
+  // A large argument cut off on its first read still reports its pending
+  // payload so the reader can read the rest in bigger steps.
+  ParseState state;
+  std::string_view command;
+  command::CommandArgs args;
+  const std::string large_header = "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$100000\r\n";
+  const std::string partial = large_header + std::string(10, 'v');
+  ASSERT_EQ(Parse(partial, &state, &command, &args).status,
+            ParseStatus::kIncomplete);
+  EXPECT_EQ(state.PendingBulkBytes(partial.size()), 100000 - 10 + 2);
+}
+
 TEST(RequestParserTest, ReportsPendingBulkBytes) {
   constexpr std::string_view kRequest = "*2\r\n$3\r\nSET\r\n$100\r\nabc";
   ParseState state;

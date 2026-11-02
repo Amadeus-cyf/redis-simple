@@ -37,6 +37,13 @@ struct HashedKey {
 
   std::string_view key;
   size_t hash;
+
+ private:
+  // Dict iterators rebuild a key from the hash stored with its entry.
+  template <typename, typename, typename, typename>
+  friend class Dict;
+  HashedKey(std::string_view key_view, size_t stored_hash)
+      : key(key_view), hash(stored_hash) {}
 };
 
 // String keys usually come from clients, so they use the process-seeded
@@ -205,6 +212,13 @@ class Dict<K, V, Hash, KeyEqual>::Iterator {
   Iterator& operator++();
   const K& Key() const { return entry_->key; }
   const V& Value() const { return entry_->val; }
+  // The current key with the hash stored in its entry, so it can be looked
+  // up in other Dicts that share the seeded string hash without rehashing.
+  HashedKey Hashed() const
+    requires std::same_as<Hash, DictHash<std::string>>
+  {
+    return HashedKey(entry_->key, entry_->hash);
+  }
 
  private:
   void SeekToNextEntry();

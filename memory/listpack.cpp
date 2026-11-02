@@ -276,11 +276,14 @@ std::optional<size_t> ListPack::Prev(size_t idx) const {
   if (listpack_bytes <= kListPackHeaderSize + 1 || idx == kListPackHeaderSize) {
     return std::nullopt;
   }
+  return PrevUnchecked(idx);
+}
+
+size_t ListPack::PrevUnchecked(size_t idx) const {
   // Decode the backlen starting from the last byte of the previous element's
   // backlen.
-  size_t backlen = DecodeBacklen(--idx);
-  size_t backlen_bytes = BacklenBytes(backlen);
-  return idx - backlen - backlen_bytes + 1;
+  const size_t backlen = DecodeBacklen(idx - 1);
+  return idx - backlen - BacklenBytes(backlen);
 }
 
 unsigned char* ListPack::StringAt(size_t idx, size_t* const len,
@@ -688,6 +691,23 @@ size_t ListPack::EncodedBytes(size_t idx, EncodingType encoding_type) const {
     default:
       return 9;
   }
+}
+
+size_t ListPack::Seek(size_t position, size_t size) const {
+  RS_CHECK(position < size);
+  if (position < size - position) {
+    size_t idx = kListPackHeaderSize;
+    for (size_t index = 0; index < position; ++index) {
+      idx = Skip(idx);
+    }
+    return idx;
+  }
+  // Closer to the tail: step back from the last element over backlens.
+  size_t idx = TotalBytes() - 1;
+  for (size_t index = size; index > position; --index) {
+    idx = PrevUnchecked(idx);
+  }
+  return idx;
 }
 
 ListPack::DecodedEntry ListPack::DecodeEntry(

@@ -97,6 +97,31 @@ TEST(DictStrTest, HashedKeysMatchPlainLookupsAcrossDicts) {
   EXPECT_EQ(counts->Size(), 199);
 }
 
+TEST(DictStrTest, IteratorExposesStoredHashes) {
+  auto source = Dict<std::string, int>::Create();
+  auto target = Dict<std::string, int>::Create();
+  // Enough keys that the source rehashes while being filled.
+  for (int index = 0; index < 300; ++index) {
+    const std::string key = "member:" + std::to_string(index);
+    ASSERT_TRUE(source->Insert(key, index));
+    if (index % 3 == 0) {
+      ASSERT_TRUE(target->Insert(key, index));
+    }
+  }
+  size_t visited = 0;
+  size_t found = 0;
+  auto it = Dict<std::string, int>::Iterator(source.get());
+  for (it.SeekToFirst(); it.Valid(); it.Next()) {
+    const HashedKey hashed = it.Hashed();
+    EXPECT_EQ(hashed.key, it.Key());
+    EXPECT_EQ(hashed.hash, HashedKey(it.Key()).hash);
+    found += target->FindValue(hashed) != nullptr ? 1 : 0;
+    ++visited;
+  }
+  EXPECT_EQ(visited, 300);
+  EXPECT_EQ(found, 100);
+}
+
 TEST(DictStrTest, ShrinksAfterMassDeletes) {
   auto dict = Dict<std::string, int>::Create();
   for (int i = 0; i < 4096; ++i) {

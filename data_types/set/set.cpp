@@ -55,6 +55,14 @@ bool Set::HasMember(std::string_view value) const {
   utils::Unreachable();
 }
 
+bool Set::HasMember(std::string_view value,
+                    const in_memory::HashedKey* const hashed) const {
+  if (hashed != nullptr && encoding_ == Encoding::kDict) {
+    return dict_->FindValue(*hashed) != nullptr;
+  }
+  return HasMember(value);
+}
+
 std::vector<std::string> Set::ListAllMembers() const {
   std::vector<std::string> members;
   members.reserve(Size());
