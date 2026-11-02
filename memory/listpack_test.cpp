@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace redis_simple::in_memory {
@@ -574,6 +575,89 @@ TEST(ListPackTest, Iterate) {
   }
   ASSERT_EQ(previous, listpack->Last());
   ASSERT_EQ(len, listpack->Size());
+}
+
+TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
+  // One element per encoding: 7-, 13-, 16-, 24-, 32-, and 64-bit integers,
+  // and 6-, 12-, and 32-bit strings, including backlens of more than one byte.
+  const std::vector<std::string> expected = {
+      "7",
+      "-4000",
+      "30000",
+      "-8000000",
+      "2000000000",
+      "-9223372036854775808",
+      "short",
+      std::string(200, 'm'),
+      std::string(5000, 'l'),
+      "",
+  };
+  ListPack listpack;
+  for (const std::string& value : expected) {
+    ASSERT_TRUE(listpack.Append(value));
+  }
+  ASSERT_EQ(listpack.Size(), expected.size());
+
+  // Collect every value through Get() and Next() as the reference.
+  std::vector<std::string> by_index;
+  for (auto index = listpack.First(); index.has_value();
+       index = listpack.Next(*index)) {
+    by_index.push_back(StringAt(listpack, *index));
+  }
+  ASSERT_EQ(by_index, expected);
+  // Canonical integer strings must use the integer encodings above.
+  size_t position = 0;
+  for (auto index = listpack.First(); index.has_value();
+       index = listpack.Next(*index), ++position) {
+    EXPECT_EQ(listpack.IntegerAt(*index).has_value(), position < 6) << position;
+  }
+
+  for (size_t start = 0; start < expected.size(); ++start) {
+    for (size_t stop = start; stop < expected.size() + 2; ++stop) {
+      std::vector<std::string> forward;
+      ASSERT_TRUE(listpack.ForEach(start, stop, [&](std::string_view value) {
+        forward.emplace_back(value);
+        return true;
+      }));
+      const size_t last = std::min(stop, expected.size() - 1);
+      EXPECT_EQ(forward, std::vector<std::string>(
+                             expected.begin() + static_cast<long>(start),
+                             expected.begin() + static_cast<long>(last) + 1))
+          << start << ".." << stop;
+
+      std::vector<std::string> reverse;
+      ASSERT_TRUE(
+          listpack.ForEachReverse(start, stop, [&](std::string_view value) {
+            reverse.emplace_back(value);
+            return true;
+          }));
+      std::ranges::reverse(reverse);
+      EXPECT_EQ(reverse, forward) << start << ".." << stop;
+    }
+  }
+
+  std::vector<std::pair<std::string, std::string>> pairs;
+  ASSERT_TRUE(listpack.ForEachPair(
+      [&](std::string_view first, std::string_view second) {
+        pairs.emplace_back(first, second);
+        return true;
+      }));
+  ASSERT_EQ(pairs.size(), expected.size() / 2);
+  for (size_t index = 0; index < pairs.size(); ++index) {
+    EXPECT_EQ(pairs[index].first, expected[2 * index]);
+    EXPECT_EQ(pairs[index].second, expected[(2 * index) + 1]);
+  }
+
+  // A visitor returning false stops each iterator after one call.
+  size_t calls = 0;
+  const auto stop_now = [&calls](auto&&...) {
+    ++calls;
+    return false;
+  };
+  EXPECT_FALSE(listpack.ForEach(0, expected.size() - 1, stop_now));
+  EXPECT_FALSE(listpack.ForEachReverse(0, expected.size() - 1, stop_now));
+  EXPECT_FALSE(listpack.ForEachPair(stop_now));
+  EXPECT_EQ(calls, 3);
 }
 
 TEST(ListPackTest, IndexAt) {

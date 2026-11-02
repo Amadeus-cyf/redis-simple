@@ -664,7 +664,11 @@ ListPack::EncodingType ListPack::EncodingAt(size_t idx) const {
  * provided is the beginning of the element.
  */
 size_t ListPack::Backlen(size_t idx) const {
-  switch (EncodingAt(idx)) {
+  return EncodedBytes(idx, EncodingAt(idx));
+}
+
+size_t ListPack::EncodedBytes(size_t idx, EncodingType encoding_type) const {
+  switch (encoding_type) {
     case EncodingType::k7BitUnsignedInteger:
       return 1;
     case EncodingType::k6BitString:
@@ -684,6 +688,19 @@ size_t ListPack::Backlen(size_t idx) const {
     default:
       return 9;
   }
+}
+
+ListPack::DecodedEntry ListPack::DecodeEntry(
+    size_t idx, unsigned char* const int_buf) const {
+  const EncodingType encoding_type = EncodingAt(idx);
+  DecodedEntry entry{};
+  entry.data =
+      IsString(encoding_type)
+          ? StringAt(idx, &entry.length, encoding_type)
+          : IntegerAt(idx, int_buf, &entry.length, nullptr, encoding_type);
+  const size_t encoded_bytes = EncodedBytes(idx, encoding_type);
+  entry.next = idx + encoded_bytes + BacklenBytes(encoded_bytes);
+  return entry;
 }
 
 /*

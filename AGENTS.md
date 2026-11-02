@@ -87,6 +87,11 @@ Guidance for AI coding agents working in this repository.
   bound and members by a `(score, string_view)` probe; do not reintroduce
   sentinel entries, member copies for lookups, or min/max member tracking.
   Change stored keys through `Skiplist::Update`, which repositions them.
+- `ListPack::ForEach`, `ForEachReverse`, and `ForEachPair` decode each
+  element once through `DecodeEntry`, which yields its value and the next
+  offset together. Prefer them over `Get` plus `Next` loops on read paths.
+  Listpack sorted sets read integer-encoded scores directly instead of
+  formatting and reparsing them.
 - Canonical integer strings are stored as `int64_t`. Read string objects
   through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
   `MutableString()` only to edit bytes in place, since it converts the value

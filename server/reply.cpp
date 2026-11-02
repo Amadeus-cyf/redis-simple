@@ -1,8 +1,10 @@
 #include "server/reply.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -85,11 +87,27 @@ void AppendArrayHeader(size_t size, std::string* const reply) {
 }
 
 void AppendBulkString(std::string_view s, std::string* const reply) {
-  reply->push_back(kBulkStringPrefix);
-  AppendInteger(s.size(), reply);
-  reply->append(kCrlf.data(), kCrlf.size())
-      .append(s.data(), s.size())
-      .append(kCrlf.data(), kCrlf.size());
+  std::array<char, kBulkStringHeaderCapacity> header{};
+  const size_t header_size =
+      EncodeBulkStringHeader(s.size(), header.data(), header.size());
+  const size_t old_size = reply->size();
+  const size_t new_size = old_size + header_size + s.size() + kCrlf.size();
+  // Grow geometrically so a reply built element by element stays linear,
+  // then write the whole element with one size update.
+  if (new_size > reply->capacity()) {
+    reply->reserve(std::max(new_size, 2 * reply->capacity()));
+  }
+  reply->resize_and_overwrite(new_size, [&](char* const data, size_t) {
+    char* out = data + old_size;
+    std::memcpy(out, header.data(), header_size);
+    out += header_size;
+    if (!s.empty()) {
+      std::memcpy(out, s.data(), s.size());
+      out += s.size();
+    }
+    std::memcpy(out, kCrlf.data(), kCrlf.size());
+    return new_size;
+  });
 }
 
 size_t EncodeBulkStringHeader(size_t length, char* const buffer,
