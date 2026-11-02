@@ -57,6 +57,31 @@ void RedisObject::SetInt(int64_t value) {
   value_.emplace<int64_t>(value);
 }
 
+void RedisObject::AssignString(std::string_view value) {
+  RS_CHECK(Type() == ObjectType::kString);
+  int64_t integer = 0;
+  if (utils::ToCanonicalInt64(value, &integer)) {
+    value_.emplace<int64_t>(integer);
+    return;
+  }
+  // Short strings live inline, so any buffer up to this size is cheap to keep.
+  constexpr size_t kAlwaysReusableBytes = 64;
+  auto* const current = std::get_if<std::string>(&value_);
+  if (current == nullptr) {
+    value_.emplace<std::string>(value);
+    return;
+  }
+  if (current->capacity() <= kAlwaysReusableBytes ||
+      current->capacity() / 2 <= value.size()) {
+    current->assign(value);
+    return;
+  }
+  // Assigning, or emplacing the same alternative, would copy into the
+  // oversized buffer and keep it; swapping in a new string frees it.
+  std::string fresh(value);
+  current->swap(fresh);
+}
+
 RedisObject::Encoding RedisObject::StringEncoding() const {
   if (std::holds_alternative<int64_t>(value_)) {
     return Encoding::kInt;

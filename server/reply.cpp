@@ -123,14 +123,20 @@ size_t EncodeBulkStringHeader(size_t length, char* const buffer,
 }
 
 std::string FromFloat(double fl, ProtocolVersion protocol) {
+  std::string reply;
+  AppendFloat(fl, protocol, &reply);
+  return reply;
+}
+
+void AppendFloat(double fl, ProtocolVersion protocol,
+                 std::string* const reply) {
   const std::string value = utils::FloatToString(fl);
   if (protocol == ProtocolVersion::kResp2) {
-    return FromBulkString(value);
+    AppendBulkString(value, reply);
+    return;
   }
-  std::string reply;
-  reply.push_back(kDoublePrefix);
-  reply.append(value).append(kCrlf.data(), kCrlf.size());
-  return reply;
+  reply->push_back(kDoublePrefix);
+  reply->append(value).append(kCrlf.data(), kCrlf.size());
 }
 
 std::string FromError(std::string_view message) {

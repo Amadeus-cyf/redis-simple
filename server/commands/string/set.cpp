@@ -156,9 +156,8 @@ void HandleSet(Client* const client) {
       (args->condition == SetCondition::kIfMissing && exists) ||
       (args->condition == SetCondition::kIfExists && !exists);
   if (!blocked) {
-    auto value = db::RedisObject::CreateWithString(std::string(args->value));
-    redis_db->SetKey(args->key, std::move(value), args->expire,
-                     args->existing_ttl);
+    redis_db->SetStringKey(args->key, args->value, args->expire,
+                           args->existing_ttl);
     client->MarkModified();
   }
   if (!blocked && !args->return_old_value) {

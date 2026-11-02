@@ -55,16 +55,34 @@ DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
   // FindOrInsert copies the key only for a new entry.
   const HashedKey hashed(key);
   *dict_->FindOrInsert(hashed).first = std::move(object);
-  TouchWatchedKey(hashed);
+  FinishSet(hashed, expire, existing_ttl);
+  return DbStatus::kOk;
+}
+
+DbStatus RedisDb::SetStringKey(std::string_view key, std::string_view value,
+                               int64_t expire, ExistingTtl existing_ttl) {
+  const HashedKey hashed(key);
+  RedisObjectPtr& slot = *dict_->FindOrInsert(hashed).first;
+  if (slot != nullptr && slot->Type() == RedisObject::ObjectType::kString) {
+    slot->AssignString(value);
+  } else {
+    slot = RedisObject::CreateWithString(std::string(value));
+  }
+  FinishSet(hashed, expire, existing_ttl);
+  return DbStatus::kOk;
+}
+
+void RedisDb::FinishSet(const HashedKey& key, int64_t expire,
+                        ExistingTtl existing_ttl) {
+  TouchWatchedKey(key);
   if (existing_ttl == ExistingTtl::kClear && expire == 0 &&
       expires_->Size() > 0) {
-    expires_->Delete(hashed);
+    expires_->Delete(key);
   }
   if (expire > 0) {
-    *expires_->FindOrInsert(hashed).first = expire;
+    *expires_->FindOrInsert(key).first = expire;
     RS_LOG_DEBUG("add expire %" PRId64 "\n", expire);
   }
-  return DbStatus::kOk;
 }
 
 DbStatus RedisDb::DeleteKey(std::string_view key) {

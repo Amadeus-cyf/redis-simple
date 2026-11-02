@@ -484,4 +484,26 @@ TEST(ClientTest, UnwatchAndDisconnectReleaseWatchedKeys) {
   redis_db->DeleteKey("tx-a");
   redis_db->DeleteKey("tx-b");
 }
+
+TEST(ClientTest, SetOverwritesStringsInPlaceAndReplacesOtherTypes) {
+  auto [client, peer] = CreateClient();
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"SET", "overwrite-key", "first"}) +
+                          EncodeRequest({"SET", "overwrite-key", "2"}) +
+                          EncodeRequest({"INCR", "overwrite-key"}) +
+                          EncodeRequest({"MSET", "overwrite-key", "third",
+                                         "overwrite-list", "x"}) +
+                          EncodeRequest({"GET", "overwrite-key"})),
+            "+OK\r\n+OK\r\n:3\r\n+OK\r\n$5\r\nthird\r\n");
+  // SET replaces a key holding another type with a string.
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"DEL", "overwrite-list"}) +
+                          EncodeRequest({"RPUSH", "overwrite-list", "a"}) +
+                          EncodeRequest({"SET", "overwrite-list", "text"}) +
+                          EncodeRequest({"TYPE", "overwrite-list"}) +
+                          EncodeRequest({"GET", "overwrite-list"})),
+            ":1\r\n:1\r\n+OK\r\n+string\r\n$4\r\ntext\r\n");
+  client->Db()->DeleteKey("overwrite-key");
+  client->Db()->DeleteKey("overwrite-list");
+}
 }  // namespace redis_simple

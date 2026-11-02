@@ -4,8 +4,11 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <random>
 #include <string>
+#include <vector>
 
 namespace redis_simple::utils {
 TEST(FloatUtilsTest, FormatsCommonValuesConcise) {
@@ -29,6 +32,41 @@ TEST(FloatUtilsTest, PreservesDoubleValuesExactly) {
     ASSERT_TRUE(ToDouble(text, &parsed)) << text;
     EXPECT_EQ(parsed, value) << text;
   }
+}
+
+TEST(FloatUtilsTest, FormatsWholeNumbersAsPlainIntegers) {
+  // Every integer of magnitude at most 2^53 is exactly representable, so its
+  // shortest round-trip text is just its digits.
+  constexpr int64_t kMaxExact = int64_t{1} << 53;
+  std::vector<int64_t> values = {0,
+                                 1,
+                                 -1,
+                                 10,
+                                 100,
+                                 1000000,
+                                 123456789,
+                                 1000000000000000,
+                                 kMaxExact - 1,
+                                 kMaxExact,
+                                 -kMaxExact};
+  std::mt19937_64 random(20261102);
+  for (int round = 0; round < 20000; ++round) {
+    const int bits = static_cast<int>(random() % 54);
+    const auto magnitude =
+        static_cast<int64_t>(random() & ((uint64_t{1} << bits) - 1));
+    values.push_back((random() & 1) != 0 ? -magnitude : magnitude);
+  }
+  for (const int64_t value : values) {
+    EXPECT_EQ(FloatToString(static_cast<double>(value)), std::to_string(value))
+        << value;
+  }
+  // Negative zero and values just past the exact range keep their formats.
+  EXPECT_EQ(FloatToString(-0.0), "-0");
+  EXPECT_EQ(FloatToString(9007199254740994.0), "9007199254740994");
+  EXPECT_EQ(FloatToString(72057594037927936.0), "72057594037927936");
+  EXPECT_EQ(FloatToString(1e17), "1e+17");
+  EXPECT_EQ(FloatToString(1.5), "1.5");
+  EXPECT_EQ(FloatToString(-2.25), "-2.25");
 }
 
 TEST(FloatUtilsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {
