@@ -141,6 +141,8 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
         return current_expire.has_value() && expire > *current_expire;
       case ExpireCondition::kLessThan:
         return !current_expire.has_value() || expire < *current_expire;
+      case ExpireCondition::kIfHasExpiryAndLessThan:
+        return current_expire.has_value() && expire < *current_expire;
     }
     return false;
   }();

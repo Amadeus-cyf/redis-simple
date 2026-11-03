@@ -241,12 +241,12 @@ Client::RequestStatus Client::ParseRequest() {
   const auto* command = command::Find(name);
   if (command == nullptr) {
     RS_LOG_DEBUG("command not found\n");
-    AddReply(reply::UnknownCommand(name));
+    AddReply(reply::UnknownCommand(name, args_));
     multi_error_ = in_multi_;
     return RequestStatus::kRejected;
   }
   if (!command->arity.Accepts(args_.size())) {
-    AddReply(reply::kWrongNumberOfArguments);
+    AddReply(reply::WrongNumberOfArguments(command->name));
     multi_error_ = in_multi_;
     return RequestStatus::kRejected;
   }

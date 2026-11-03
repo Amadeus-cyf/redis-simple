@@ -261,6 +261,17 @@ std::unique_ptr<ListPack> QuickList::ReleaseListPack() {
   return listpack;
 }
 
+bool QuickList::AdoptListPack(std::unique_ptr<ListPack> listpack) {
+  RS_CHECK(head_ == nullptr && listpack != nullptr);
+  if (listpack->Size() == 0) {
+    return true;
+  }
+  size_ = listpack->Size();
+  Node* const node = AppendNode();
+  node->listpack = std::move(listpack);
+  return NormalizeNodeSizes(node);
+}
+
 bool QuickList::PushToHeadNode(std::string_view value) {
   return head_ && head_->listpack->Prepend(value);
 }

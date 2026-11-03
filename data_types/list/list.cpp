@@ -203,18 +203,11 @@ bool List::WouldExceedListpackLimit(std::string_view value) const {
 bool List::ConvertListPackToQuickList() {
   auto quicklist =
       std::make_unique<in_memory::QuickList>(list_max_listpack_bytes_);
-  const size_t size = listpack_->Size();
-  const bool converted =
-      size == 0 ||
-      listpack_->ForEach(0, size - 1, [&quicklist](std::string_view value) {
-        return quicklist->RPush(value);
-      });
-  if (!converted) {
-    return false;
-  }
+  // The elements stay in the quicklist even if splitting an oversized node
+  // fails, so the list is never left without its contents.
+  const bool adopted = quicklist->AdoptListPack(std::move(listpack_));
   quicklist_ = std::move(quicklist);
-  listpack_.reset();
-  return true;
+  return adopted;
 }
 
 void List::TryConvertQuickListToListPack() {

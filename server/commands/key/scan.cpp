@@ -55,8 +55,14 @@ ParseStatus ParseScanArgs(const CommandArgs& args, ScanArgs* scan_args) {
     }
     if (utils::EqualsIgnoreCase(args[index], "COUNT")) {
       int64_t count = 0;
-      if (!utils::ToInt64(args[index + 1], &count) || count <= 0 ||
-          !FitsInSizeT(count)) {
+      if (!utils::ToInt64(args[index + 1], &count)) {
+        return ParseStatus::kInvalidCount;
+      }
+      // Redis reports a count below 1 as a syntax error.
+      if (count < 1) {
+        return ParseStatus::kSyntaxError;
+      }
+      if (!FitsInSizeT(count)) {
         return ParseStatus::kInvalidCount;
       }
       scan_args->count = static_cast<size_t>(count);
@@ -73,8 +79,7 @@ void AddParseError(Client* const client, ParseStatus status) {
       client->AddReply(reply::FromError("ERR invalid cursor"));
       return;
     case ParseStatus::kInvalidCount:
-      client->AddReply(
-          reply::FromError("ERR value is not an integer or out of range"));
+      client->AddReply(reply::kNotAnIntegerError);
       return;
     case ParseStatus::kSyntaxError:
       client->AddReply(reply::kSyntaxError);

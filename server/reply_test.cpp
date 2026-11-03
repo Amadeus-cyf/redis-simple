@@ -4,6 +4,8 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace redis_simple::reply {
 TEST(ReplyTest, FromSimpleString) {
@@ -90,9 +92,33 @@ TEST(ReplyTest, FromArray) {
 
 TEST(ReplyTest, FromError) {
   ASSERT_EQ(FromError("ERR syntax error"), "-ERR syntax error\r\n");
-  ASSERT_EQ(WrongNumberOfArguments(), "-ERR wrong number of arguments\r\n");
-  ASSERT_EQ(UnknownCommand("NOTACOMMAND"),
-            "-ERR unknown command 'NOTACOMMAND'\r\n");
+  ASSERT_EQ(WrongNumberOfArguments("GET"),
+            "-ERR wrong number of arguments for 'get' command\r\n");
+  ASSERT_EQ(UnknownCommand("NOTACOMMAND", {}),
+            "-ERR unknown command 'NOTACOMMAND', with args beginning with: "
+            "\r\n");
+  const std::vector<std::string_view> args = {"a", "b c"};
+  ASSERT_EQ(UnknownCommand("foo", args),
+            "-ERR unknown command 'foo', with args beginning with: 'a' 'b c' "
+            "\r\n");
+}
+
+TEST(ReplyTest, UnknownCommandMatchesRedisTruncation) {
+  // Redis quotes the name up to 128 bytes, and arguments until 128 bytes of
+  // the list are used, cutting the argument that crosses the limit.
+  const std::string long_name(200, 'n');
+  const std::string long_arg(200, 'x');
+  const std::vector<std::string_view> args = {"ab", long_arg, "unused"};
+  const std::string expected = "-ERR unknown command '" +
+                               std::string(128, 'n') +
+                               "', with args beginning with: 'ab' '" +
+                               std::string(128 - 5, 'x') + "' \r\n";
+  EXPECT_EQ(UnknownCommand(long_name, args), expected);
+  // Newlines from the client cannot end the error line early.
+  const std::vector<std::string_view> newline = {"a\r\nb"};
+  EXPECT_EQ(UnknownCommand("x\ny", newline),
+            "-ERR unknown command 'x y', with args beginning with: 'a  b' "
+            "\r\n");
 }
 TEST(ReplyDeathTest, FromArrayRequiresEncodedElements) {
   EXPECT_DEATH(FromArray({":123\r\n", "\r", "$13\r\nhello world"}),

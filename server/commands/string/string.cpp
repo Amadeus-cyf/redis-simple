@@ -55,15 +55,14 @@ void UpdateInteger(Client* const client, std::string_view key, int64_t operand,
   if (object != nullptr) {
     const std::optional<int64_t> current = object->Int();
     if (!current.has_value()) {
-      client->AddReply(reply::FromError("ERR value is not an integer"));
+      client->AddReply(reply::kNotAnIntegerError);
       return;
     }
     value = *current;
   }
   int64_t next = 0;
   if (!ApplyIntegerOperation(value, operand, operation, &next)) {
-    client->AddReply(
-        reply::FromError("ERR increment or decrement would overflow"));
+    client->AddReply(reply::kOverflowError);
     return;
   }
   if (object != nullptr) {
@@ -79,7 +78,13 @@ void HandleIncrementBy(Client* const client, IntegerOperation operation) {
   const auto& args = client->Args();
   int64_t operand = 0;
   if (!utils::ToInt64(args[1], &operand)) {
-    client->AddReply(reply::FromError("ERR value is not an integer"));
+    client->AddReply(reply::kNotAnIntegerError);
+    return;
+  }
+  // Redis negates the DECRBY operand first, which INT64_MIN would overflow.
+  if (operation == IntegerOperation::kSubtract &&
+      operand == std::numeric_limits<int64_t>::min()) {
+    client->AddReply(reply::FromError("ERR decrement would overflow"));
     return;
   }
   UpdateInteger(client, args[0], operand, operation);
@@ -158,7 +163,7 @@ void HandleMGet(Client* const client) {
 void HandleMSet(Client* const client) {
   const auto& args = client->Args();
   if (args.size() % 2 != 0) {
-    client->AddReply(reply::kWrongNumberOfArguments);
+    client->AddReply(reply::WrongNumberOfArguments("mset"));
     return;
   }
   for (size_t i = 0; i < args.size(); i += 2) {

@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <string_view>
 
 #include "server/client.h"
@@ -23,33 +25,56 @@ struct ExpireArgs {
 enum class ParseExpireStatus : uint8_t {
   kOk,
   kInvalidInteger,
-  kSyntaxError,
+  kUnsupportedOption,
+  kNxIncompatible,
+  kGtLtIncompatible,
 };
 
+// Parses options before the time, in Redis' order, so an unsupported or
+// conflicting option is reported ahead of a bad time. `*bad_option` names
+// an unsupported option.
 ParseExpireStatus ParseExpireArgs(const CommandArgs& args,
-                                  ExpireArgs* expire_args) {
+                                  ExpireArgs* const expire_args,
+                                  std::string_view* const bad_option) {
+  bool nx = false;
+  bool xx = false;
+  bool gt = false;
+  bool lt = false;
+  for (size_t i = 2; i < args.size(); ++i) {
+    const std::string_view option = args[i];
+    if (utils::EqualsIgnoreCase(option, "NX")) {
+      nx = true;
+    } else if (utils::EqualsIgnoreCase(option, "XX")) {
+      xx = true;
+    } else if (utils::EqualsIgnoreCase(option, "GT")) {
+      gt = true;
+    } else if (utils::EqualsIgnoreCase(option, "LT")) {
+      lt = true;
+    } else {
+      *bad_option = option;
+      return ParseExpireStatus::kUnsupportedOption;
+    }
+  }
+  if (nx && (xx || gt || lt)) {
+    return ParseExpireStatus::kNxIncompatible;
+  }
+  if (gt && lt) {
+    return ParseExpireStatus::kGtLtIncompatible;
+  }
   if (!utils::ToInt64(args[1], &expire_args->ttl)) {
     return ParseExpireStatus::kInvalidInteger;
   }
   expire_args->key = args[0];
-  if (args.size() == 2) {
-    return ParseExpireStatus::kOk;
-  }
-  if (args.size() != 3) {
-    return ParseExpireStatus::kSyntaxError;
-  }
-
-  const std::string_view option = args[2];
-  if (utils::EqualsIgnoreCase(option, "NX")) {
+  // GT already requires an existing TTL, so XX adds nothing to it.
+  if (nx) {
     expire_args->condition = db::ExpireCondition::kIfNoExpiry;
-  } else if (utils::EqualsIgnoreCase(option, "XX")) {
-    expire_args->condition = db::ExpireCondition::kIfHasExpiry;
-  } else if (utils::EqualsIgnoreCase(option, "GT")) {
+  } else if (gt) {
     expire_args->condition = db::ExpireCondition::kGreaterThan;
-  } else if (utils::EqualsIgnoreCase(option, "LT")) {
-    expire_args->condition = db::ExpireCondition::kLessThan;
-  } else {
-    return ParseExpireStatus::kSyntaxError;
+  } else if (lt) {
+    expire_args->condition = xx ? db::ExpireCondition::kIfHasExpiryAndLessThan
+                                : db::ExpireCondition::kLessThan;
+  } else if (xx) {
+    expire_args->condition = db::ExpireCondition::kIfHasExpiry;
   }
   return ParseExpireStatus::kOk;
 }
@@ -81,17 +106,32 @@ bool ScaleAbsoluteExpiration(int64_t expiration, int64_t multiplier,
   return true;
 }
 
-void AddExpireReply(Client* const client, int64_t multiplier, bool absolute) {
+void AddExpireReply(Client* const client, int64_t multiplier, bool absolute,
+                    std::string_view command) {
   ExpireArgs args;
-  switch (ParseExpireArgs(client->Args(), &args)) {
+  std::string_view bad_option;
+  switch (ParseExpireArgs(client->Args(), &args, &bad_option)) {
     case ParseExpireStatus::kOk:
       break;
     case ParseExpireStatus::kInvalidInteger:
-      client->AddReply(
-          reply::FromError("ERR value is not an integer or out of range"));
+      client->AddReply(reply::kNotAnIntegerError);
       return;
-    case ParseExpireStatus::kSyntaxError:
-      client->AddReply(reply::kSyntaxError);
+    case ParseExpireStatus::kUnsupportedOption: {
+      std::string message = "ERR Unsupported option ";
+      message.append(bad_option);
+      std::ranges::replace(message, '\r', ' ');
+      std::ranges::replace(message, '\n', ' ');
+      client->AddReply(reply::FromError(message));
+      return;
+    }
+    case ParseExpireStatus::kNxIncompatible:
+      client->AddReply(reply::FromError(
+          "ERR NX and XX, GT or LT options at the same time are not "
+          "compatible"));
+      return;
+    case ParseExpireStatus::kGtLtIncompatible:
+      client->AddReply(reply::FromError(
+          "ERR GT and LT options at the same time are not compatible"));
       return;
   }
   int64_t expire = 0;
@@ -100,7 +140,9 @@ void AddExpireReply(Client* const client, int64_t multiplier, bool absolute) {
                : ExpireAtFromTtl(args.ttl, multiplier,
                                  utils::NowInMilliseconds(), &expire);
   if (!valid_expire) {
-    client->AddReply(reply::FromError("ERR invalid expire time"));
+    std::string message = "ERR invalid expire time in '";
+    message.append(command).append("' command");
+    client->AddReply(reply::FromError(message));
     return;
   }
   const auto status =
@@ -118,16 +160,20 @@ void AddTtlReply(Client* const client, db::TtlResolution resolution) {
 }  // namespace
 
 void HandleExpire(Client* const client) {
-  AddExpireReply(client, kMillisecondsPerSecond, false);
+  AddExpireReply(client, kMillisecondsPerSecond, false, "expire");
 }
 
 void HandleExpireAt(Client* const client) {
-  AddExpireReply(client, kMillisecondsPerSecond, true);
+  AddExpireReply(client, kMillisecondsPerSecond, true, "expireat");
 }
 
-void HandlePExpire(Client* const client) { AddExpireReply(client, 1, false); }
+void HandlePExpire(Client* const client) {
+  AddExpireReply(client, 1, false, "pexpire");
+}
 
-void HandlePExpireAt(Client* const client) { AddExpireReply(client, 1, true); }
+void HandlePExpireAt(Client* const client) {
+  AddExpireReply(client, 1, true, "pexpireat");
+}
 
 void HandleTtl(Client* const client) {
   AddTtlReply(client, db::TtlResolution::kSeconds);
@@ -164,6 +210,15 @@ void HandleDbSize(Client* const client) {
 }
 
 void HandleFlushDb(Client* const client) {
+  // FLUSHDB [ASYNC | SYNC]. Flushing is always synchronous here, so both
+  // modes behave the same.
+  const auto& args = client->Args();
+  if (args.size() > 1 ||
+      (args.size() == 1 && !utils::EqualsIgnoreCase(args[0], "ASYNC") &&
+       !utils::EqualsIgnoreCase(args[0], "SYNC"))) {
+    client->AddReply(reply::kSyntaxError);
+    return;
+  }
   db::RedisDb* const redis_db = client->Db();
   if (redis_db->KeyCount() > 0) {
     client->MarkModified();

@@ -98,13 +98,14 @@ In another terminal, run a mock command client or your own TCP client against
 
 ## Command Coverage
 
-The server supports Redis-style RESP replies for the implemented command set,
-including protocol errors such as `ERR wrong number of arguments` and
-`WRONGTYPE`.
+The server supports Redis-style RESP replies for the implemented command set.
+Error replies use Redis 7's wording, such as
+`ERR wrong number of arguments for 'get' command` and `WRONGTYPE`.
 
 - Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `EXPIRE`, `EXPIREAT`, `PEXPIRE`,
-  `PEXPIREAT` with `NX`, `XX`, `GT`, and `LT`, `TTL`, `PTTL`, `PERSIST`,
-  `RENAME`, `DBSIZE`, `FLUSHDB`, `SCAN` with `MATCH` and `COUNT`
+  `PEXPIREAT` with `NX`, `XX`, `GT`, and `LT` (and `XX` combined with `GT` or
+  `LT`), `TTL`, `PTTL`, `PERSIST`, `RENAME`, `DBSIZE`, `FLUSHDB [ASYNC|SYNC]`
+  (always synchronous), `SCAN` with `MATCH` and `COUNT`
 - Strings: `GET`, `SET` with `NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT`,
   and `KEEPTTL`, `INCR`, `INCRBY`, `DECR`, `DECRBY`, `APPEND`, `STRLEN`,
   `MGET`, `MSET`

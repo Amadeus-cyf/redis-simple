@@ -100,7 +100,8 @@ int Run() {
   }
 
   const std::vector<Case> setup_cases = {
-      {"NOTACOMMAND\r\n", "ERR unknown command 'NOTACOMMAND'\n"},
+      {"NOTACOMMAND\r\n",
+       "ERR unknown command 'NOTACOMMAND', with args beginning with: \n"},
       {"TYPE missing_key\r\n", "none\n"},
       {"EXISTS missing_key\r\n", "0\n"},
       {"SET key_string value\r\n", "OK\n"},
@@ -134,7 +135,9 @@ int Run() {
 
   const std::vector<Case> cases = {
       {"SCAN invalid\r\n", "ERR invalid cursor\n"},
-      {"SCAN 0 COUNT 0\r\n", "ERR value is not an integer or out of range\n"},
+      {"SCAN 0 COUNT 0\r\n", "ERR syntax error\n"},
+      {"SCAN 0 COUNT invalid\r\n",
+       "ERR value is not an integer or out of range\n"},
       {"SCAN 0 UNKNOWN value\r\n", "ERR syntax error\n"},
       {"DEL key_string missing_key\r\n", "1\n"},
       {"TYPE key_string\r\n", "none\n"},
@@ -166,12 +169,25 @@ int Run() {
       {"PEXPIREAT conditional_expire_key 4102444799000 XX\r\n", "1\n"},
       {"EXPIREAT conditional_expire_key 4102444800 GT\r\n", "1\n"},
       {"PEXPIREAT conditional_expire_key 4102444799000 LT\r\n", "1\n"},
+      // XX with LT or GT also requires an existing TTL.
+      {"PEXPIREAT conditional_expire_key 4102444798000 XX LT\r\n", "1\n"},
+      {"PERSIST conditional_expire_key\r\n", "1\n"},
+      {"PEXPIRE conditional_expire_key 1000000 XX LT\r\n", "0\n"},
+      {"PEXPIRE conditional_expire_key 1000000 GT XX\r\n", "0\n"},
+      {"PEXPIREAT conditional_expire_key 4102444799000 NX\r\n", "1\n"},
       {"EXPIRE conditional_expire_key invalid\r\n",
        "ERR value is not an integer or out of range\n"},
-      {"EXPIRE conditional_expire_key 10 UNKNOWN\r\n", "ERR syntax error\n"},
-      {"EXPIRE conditional_expire_key 10 NX XX\r\n", "ERR syntax error\n"},
+      {"EXPIRE conditional_expire_key 10 UNKNOWN\r\n",
+       "ERR Unsupported option UNKNOWN\n"},
+      {"EXPIRE conditional_expire_key 10 NX XX\r\n",
+       "ERR NX and XX, GT or LT options at the same time are not compatible\n"},
+      {"EXPIRE conditional_expire_key 10 GT LT\r\n",
+       "ERR GT and LT options at the same time are not compatible\n"},
+      // Options are checked before the time, as in Redis.
+      {"EXPIRE conditional_expire_key invalid BADOPT\r\n",
+       "ERR Unsupported option BADOPT\n"},
       {"EXPIREAT conditional_expire_key 9223372036854775807\r\n",
-       "ERR invalid expire time\n"},
+       "ERR invalid expire time in 'expireat' command\n"},
       {"SET absolute_expire_key value\r\n", "OK\n"},
       {"PEXPIREAT absolute_expire_key 1\r\n", "1\n"},
       {"GET absolute_expire_key\r\n", "(nil)\n"},
@@ -212,7 +228,12 @@ int Run() {
   if (!ExpectReply(&cli, {"DBSIZE\r\n", "3\n"})) {
     return EXIT_FAILURE;
   }
-  if (!ExpectReply(&cli, {"FLUSHDB\r\n", "OK\n"})) {
+  if (!ExpectReply(&cli, {"FLUSHDB NOW\r\n", "ERR syntax error\n"}) ||
+      !ExpectReply(&cli, {"FLUSHDB SYNC ASYNC\r\n", "ERR syntax error\n"}) ||
+      !ExpectReply(&cli, {"DBSIZE\r\n", "3\n"})) {
+    return EXIT_FAILURE;
+  }
+  if (!ExpectReply(&cli, {"FLUSHDB ASYNC\r\n", "OK\n"})) {
     return EXIT_FAILURE;
   }
   if (!ExpectReply(&cli, {"DBSIZE\r\n", "0\n"})) {

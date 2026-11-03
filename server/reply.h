@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,9 +16,15 @@ enum class ProtocolVersion {
 
 // Fixed replies, for Client::AddReply(std::string_view) without allocating.
 inline constexpr std::string_view kOk = "+OK\r\n";
-inline constexpr std::string_view kWrongNumberOfArguments =
-    "-ERR wrong number of arguments\r\n";
 inline constexpr std::string_view kSyntaxError = "-ERR syntax error\r\n";
+inline constexpr std::string_view kNotAnIntegerError =
+    "-ERR value is not an integer or out of range\r\n";
+inline constexpr std::string_view kNotAFloatError =
+    "-ERR value is not a valid float\r\n";
+inline constexpr std::string_view kMinMaxNotFloatError =
+    "-ERR min or max is not a float\r\n";
+inline constexpr std::string_view kOverflowError =
+    "-ERR increment or decrement would overflow\r\n";
 inline constexpr std::string_view kNoAuthError =
     "-NOAUTH Authentication required.\r\n";
 inline constexpr std::string_view kWrongTypeError =
@@ -52,8 +59,12 @@ std::string FromFloat(double fl, ProtocolVersion protocol);
 // Appends `fl` as a RESP2 bulk string or a RESP3 double.
 void AppendFloat(double fl, ProtocolVersion protocol, std::string* reply);
 std::string FromError(std::string_view message);
-std::string WrongNumberOfArguments();
-std::string UnknownCommand(std::string_view command);
+// Redis' arity error, which names the command in lower case.
+std::string WrongNumberOfArguments(std::string_view command);
+// Redis' unknown-command error, which quotes the name and the start of its
+// arguments, each cut to fit 128 bytes.
+std::string UnknownCommand(std::string_view command,
+                           std::span<const std::string_view> args);
 std::string SyntaxError();
 std::string WrongTypeError();
 std::string Null(ProtocolVersion protocol);

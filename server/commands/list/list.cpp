@@ -20,8 +20,6 @@ namespace redis_simple::command::lists {
 namespace {
 using List = ::redis_simple::list::List;
 constexpr auto kList = db::RedisObject::ObjectType::kList;
-constexpr std::string_view kNotAnInteger =
-    "-ERR value is not an integer or out of range\r\n";
 
 enum class Side : std::uint8_t {
   kLeft,
@@ -64,7 +62,7 @@ void DeleteIfEmpty(Client* const client, std::string_view key,
 bool ParseInteger(Client* const client, std::string_view text,
                   int64_t* const value) {
   if (!utils::ToInt64(text, value)) {
-    client->AddReply(kNotAnInteger);
+    client->AddReply(reply::kNotAnIntegerError);
     return false;
   }
   return true;

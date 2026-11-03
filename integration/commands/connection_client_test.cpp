@@ -49,7 +49,22 @@ int Run() {
     return EXIT_FAILURE;
   }
   if (!ExpectReply(&cli, {"PING", "too", "many"},
-                   "ERR wrong number of arguments\n")) {
+                   "ERR wrong number of arguments for 'ping' command\n")) {
+    return EXIT_FAILURE;
+  }
+  if (!ExpectReply(
+          &cli, {"HELLO", "three"},
+          "ERR Protocol version is not an integer or out of range\n") ||
+      !ExpectReply(&cli, {"HELLO", "4"},
+                   "NOPROTO unsupported protocol version\n")) {
+    return EXIT_FAILURE;
+  }
+  // Without a password, the default user accepts any password, as Redis'
+  // nopass default user does, and other users do not exist.
+  if (!ExpectReply(&cli, {"AUTH", "default", "anything"}, "OK\n") ||
+      !ExpectReply(&cli, {"AUTH", "someone", "anything"},
+                   "WRONGPASS invalid username-password pair or user is "
+                   "disabled.\n")) {
     return EXIT_FAILURE;
   }
   if (!ExpectReply(&cli, {"AUTH", "secret"},
@@ -58,10 +73,12 @@ int Run() {
                    "configuration is correct?\n")) {
     return EXIT_FAILURE;
   }
-  if (!ExpectReply(&cli, {"ECHO"}, "ERR wrong number of arguments\n")) {
+  if (!ExpectReply(&cli, {"ECHO"},
+                   "ERR wrong number of arguments for 'echo' command\n")) {
     return EXIT_FAILURE;
   }
-  if (!ExpectReply(&cli, {"QUIT", "now"}, "ERR wrong number of arguments\n")) {
+  if (!ExpectReply(&cli, {"QUIT", "now"},
+                   "ERR wrong number of arguments for 'quit' command\n")) {
     return EXIT_FAILURE;
   }
   if (!ExpectReply(&cli, {"BGREWRITEAOF"},

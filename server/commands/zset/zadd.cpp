@@ -22,7 +22,7 @@ void HandleZAdd(Client* const client) {
   for (size_t i = 1; i < args.size(); i += 2) {
     double score = 0.0;
     if (!utils::ToDouble(args[i], &score)) {
-      client->AddReply(reply::kSyntaxError);
+      client->AddReply(reply::kNotAFloatError);
       return;
     }
   }
