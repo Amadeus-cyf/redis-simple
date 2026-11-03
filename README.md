@@ -260,12 +260,34 @@ transaction replies.
 
 ## Benchmarks
 
+Benchmarks use Google Benchmark and build into one `memory_benchmark`
+executable. Build it with the release preset, since debug timings are not
+representative:
+
 ```sh
-./build/debug/memory_benchmark
+cmake --preset release
+cmake --build --preset release --target memory_benchmark
+./build/release/memory_benchmark
 ```
 
-Google Benchmark's own tests are disabled in this project; the benchmark target
-above is the project benchmark executable.
+Run one group with `--benchmark_filter`, for example
+`--benchmark_filter=ListIndex`. The groups cover:
+
+- `Dict*`, `DynamicBuffer*`, `ReplyBuffer*`: core containers and buffers.
+- `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, and ranges.
+- `ListIndex`, `ListRange`: quicklist `LINDEX` and `LRANGE` at the head,
+  middle, and tail of a 300,000-element list.
+- `ParseCompleteRequest`, `ParseSplitRequest`, `FindCommand`: request
+  decoding and command lookup.
+- `AppendBulkStrings`, `FormatScore`, `AppendScores`: collection reply and
+  score encoding.
+- `SetIntersect`: set intersection with and without reusing stored hashes.
+- `DbLookup`, `DbOverwriteString`: keyspace lookups with and without a TTL,
+  and `SET` overwrites in place or with a new object.
+
+Benchmarks that take a 0 or 1 argument compare two ways of doing the same
+work in one run. They are not part of CTest or CI, because timings vary
+between machines. Google Benchmark's own tests are disabled in this project.
 
 ## Project Layout
 
@@ -284,7 +306,7 @@ server/               Server, client connection glue, commands, replies, DB
 data_types/           Redis hash, list, set, and sorted-set implementations
 tcp/                  TCP helpers
 utils/                Small shared utilities
-benchmarks/           Memory/data-structure benchmarks
+benchmarks/           Google Benchmark microbenchmarks
 ```
 
 Command handler declarations are grouped in `server/commands/handlers.h`; the
