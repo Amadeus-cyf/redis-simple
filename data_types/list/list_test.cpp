@@ -220,4 +220,48 @@ TEST(ListEncodingTest, RemoveFromTailKeepsOriginalOrderWithoutRangeCopy) {
             (std::vector<std::string>{value + "1", value + "2", value + "3",
                                       value + "4"}));
 }
+
+TEST(ListEncodingTest, ConvertsBackToListPackAfterTrimRemoveOrSet) {
+  const std::string value(32, 'y');
+  const auto make_quicklist = [&value] {
+    auto list = List::Create(96);
+    for (int index = 0; index < 4; ++index) {
+      EXPECT_TRUE(list->RPush(value + std::to_string(index)));
+    }
+    EXPECT_EQ(list->Encoding(), List::Encoding::kQuickList);
+    return list;
+  };
+
+  auto trimmed = make_quicklist();
+  ASSERT_TRUE(trimmed->Trim(1, 1));
+  EXPECT_EQ(trimmed->Encoding(), List::Encoding::kListPack);
+  EXPECT_EQ(trimmed->Range(0, 0), std::vector<std::string>{value + "1"});
+
+  auto removed = make_quicklist();
+  for (int index = 1; index < 4; ++index) {
+    ASSERT_EQ(removed->Remove(value + std::to_string(index), 0,
+                              List::RemoveDirection::kFromHead),
+              1);
+  }
+  EXPECT_EQ(removed->Encoding(), List::Encoding::kListPack);
+  EXPECT_EQ(removed->Range(0, 0), std::vector<std::string>{value + "0"});
+
+  // Shrinking values with LSET converts once the list fits in half the
+  // limit, and not before.
+  auto set = List::Create(96);
+  const std::string large(60, 'L');
+  ASSERT_TRUE(set->RPush(large));
+  ASSERT_TRUE(set->RPush(large));
+  ASSERT_EQ(set->Encoding(), List::Encoding::kQuickList);
+  ASSERT_TRUE(set->Set(0, "a"));
+  EXPECT_EQ(set->Encoding(), List::Encoding::kQuickList);
+  ASSERT_TRUE(set->Set(1, "b"));
+  EXPECT_EQ(set->Encoding(), List::Encoding::kListPack);
+  EXPECT_EQ(set->Range(0, 1), (std::vector<std::string>{"a", "b"}));
+
+  // A list still above half the limit stays a quicklist.
+  auto kept = make_quicklist();
+  ASSERT_TRUE(kept->Trim(0, 2));
+  EXPECT_EQ(kept->Encoding(), List::Encoding::kQuickList);
+}
 }  // namespace redis_simple::list

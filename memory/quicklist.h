@@ -59,12 +59,15 @@ class QuickList {
     size_t local_index;
   };
 
-  std::optional<EntryLocation> Locate(size_t index);
+  // Finds the node holding element `index`, walking from whichever end of
+  // the list is closer, as Redis' quicklistInitIteratorAtIdx does.
+  std::optional<EntryLocation> Locate(size_t index) const;
   bool PushToHeadNode(std::string_view value);
   bool PushToTailNode(std::string_view value);
   bool CanAppendToNode(const Node* node, std::string_view value) const;
   bool CanMergeNodes(const Node* left, const Node* right) const;
-  bool NormalizeNodeSizesFrom(Node* node);
+  // Splits `node` until every piece fits the node size limit.
+  bool NormalizeNodeSizes(Node* node);
   Node* SplitNode(Node* node);
   Node* InsertNodeAfter(Node* node, std::unique_ptr<Node> new_node);
   void MergeNext(Node* left);
@@ -89,27 +92,24 @@ bool QuickList::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   }
   stop = std::min(stop, size_ - 1);
 
-  size_t index = 0;
-  for (const Node* node = head_.get(); node != nullptr;
+  const auto location = Locate(start);
+  if (!location.has_value()) {
+    return true;
+  }
+  // `index` is the list position of the current node's first element.
+  size_t index = start - location->local_index;
+  for (const Node* node = location->node; node != nullptr && index <= stop;
        node = node->next.get()) {
     const size_t node_size = node->listpack->Size();
     if (node_size == 0) {
       continue;
     }
-    if (index + node_size <= start) {
-      index += node_size;
-      continue;
-    }
-
     const size_t local_start = start > index ? start - index : 0;
     const size_t local_stop = std::min(stop - index, node_size - 1);
     if (!node->listpack->ForEach(local_start, local_stop, visitor)) {
       return false;
     }
     index += node_size;
-    if (index > stop) {
-      break;
-    }
   }
   return true;
 }
@@ -122,28 +122,31 @@ bool QuickList::ForEachReverse(size_t start, size_t stop,
   }
   stop = std::min(stop, size_ - 1);
 
-  size_t node_start = size_;
-  for (const Node* node = tail_; node != nullptr; node = node->prev) {
-    const size_t node_size = node->listpack->Size();
-    if (node_size == 0) {
-      continue;
-    }
-    node_start -= node_size;
-    const size_t node_stop = node_start + node_size - 1;
-    if (node_start > stop) {
-      continue;
-    }
-    if (node_stop < start) {
-      break;
-    }
-
+  const auto location = Locate(stop);
+  if (!location.has_value()) {
+    return true;
+  }
+  const Node* node = location->node;
+  // List position of the current node's first element.
+  size_t node_start = stop - location->local_index;
+  while (true) {
+    const size_t node_stop = node_start + node->listpack->Size() - 1;
     const size_t local_start = start > node_start ? start - node_start : 0;
     const size_t local_stop = std::min(stop, node_stop) - node_start;
     if (!node->listpack->ForEachReverse(local_start, local_stop, visitor)) {
       return false;
     }
+    if (node_start <= start) {
+      return true;
+    }
+    do {
+      node = node->prev;
+    } while (node != nullptr && node->listpack->Size() == 0);
+    if (node == nullptr) {
+      return true;
+    }
+    node_start -= node->listpack->Size();
   }
-  return true;
 }
 }  // namespace redis_simple::in_memory
 

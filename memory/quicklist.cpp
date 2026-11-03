@@ -117,7 +117,7 @@ bool QuickList::Set(size_t index, std::string_view value) {
       !location->node->listpack->Replace(*listpack_index, value)) {
     return false;
   }
-  if (!NormalizeNodeSizesFrom(location->node)) {
+  if (!NormalizeNodeSizes(location->node)) {
     return false;
   }
   MergeAround(location->node);
@@ -212,7 +212,7 @@ bool QuickList::Trim(size_t start, size_t stop) {
   return true;
 }
 
-std::optional<QuickList::EntryLocation> QuickList::Locate(size_t index) {
+std::optional<QuickList::EntryLocation> QuickList::Locate(size_t index) const {
   if (index >= size_) {
     return std::nullopt;
   }
@@ -289,9 +289,11 @@ bool QuickList::CanMergeNodes(const Node* left, const Node* right) const {
   return merged_bytes <= node_max_bytes_;
 }
 
-bool QuickList::NormalizeNodeSizesFrom(Node* node) {
-  for (Node* current = node; current != nullptr;
-       current = current->next.get()) {
+bool QuickList::NormalizeNodeSizes(Node* node) {
+  // Only `node` changed, and splitting it inserts the pieces before its
+  // original successor, so the scan stops there instead of at the tail.
+  const Node* const end = node->next.get();
+  for (Node* current = node; current != end; current = current->next.get()) {
     while (current->listpack->TotalBytes() > node_max_bytes_ &&
            current->listpack->Size() > 1) {
       if (SplitNode(current) == nullptr) {

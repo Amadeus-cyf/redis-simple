@@ -92,6 +92,10 @@ Guidance for AI coding agents working in this repository.
   offset together. Prefer them over `Get` plus `Next` loops on read paths.
   Listpack sorted sets read integer-encoded scores directly instead of
   formatting and reparsing them.
+- Keep `QuickList` aligned with Redis' quicklist: index seeks walk nodes from
+  the closer end (`Locate`), an `LSET` that overflows its node splits only
+  that node, and `List` converts back to a listpack after pops, `LSET`,
+  `LREM`, and `LTRIM` once one node holds at most half the size limit.
 - Canonical integer strings are stored as `int64_t`. Read string objects
   through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
   `MutableString()` only to edit bytes in place, since it converts the value

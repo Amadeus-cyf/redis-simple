@@ -59,7 +59,12 @@ bool List::Set(size_t index, std::string_view value) {
     return true;
   }
 
-  return quicklist_->Set(index, value);
+  if (!quicklist_->Set(index, value)) {
+    return false;
+  }
+  // A smaller value can shrink the list enough to use a listpack again.
+  TryConvertQuickListToListPack();
+  return true;
 }
 
 std::optional<size_t> List::Remove(std::string_view value, size_t limit,
@@ -73,8 +78,10 @@ std::optional<size_t> List::Remove(std::string_view value, size_t limit,
     return RemoveFromListPack(value, limit, direction);
   }
 
-  return quicklist_->Remove(value, limit,
-                            ToQuickListRemoveDirection(direction));
+  const auto removed =
+      quicklist_->Remove(value, limit, ToQuickListRemoveDirection(direction));
+  TryConvertQuickListToListPack();
+  return removed;
 }
 
 bool List::Trim(size_t start, size_t stop) {
@@ -92,7 +99,11 @@ bool List::Trim(size_t start, size_t stop) {
     return true;
   }
 
-  return quicklist_->Trim(start, stop);
+  if (!quicklist_->Trim(start, stop)) {
+    return false;
+  }
+  TryConvertQuickListToListPack();
+  return true;
 }
 
 std::optional<size_t> List::RemoveFromListPack(std::string_view value,
