@@ -41,10 +41,9 @@ TEST(ZSetListPackTest, StoresNegativeZeroAsZero) {
   // as 0; the skiplist encoding keeps the sign.
   ZSetListPack zset;
   ASSERT_TRUE(zset.InsertOrUpdate("member", -0.0));
-  const auto score = zset.Score("member");
-  ASSERT_TRUE(score.has_value());
-  EXPECT_EQ(*score, 0.0);
-  EXPECT_FALSE(std::signbit(*score));
+  const double score = zset.Score("member").value_or(1.0);
+  EXPECT_EQ(score, 0.0);
+  EXPECT_FALSE(std::signbit(score));
 }
 
 TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {

@@ -839,7 +839,7 @@ TEST(ListPackTest, DeleteMatchingMatchesModelForEveryEncoding) {
 
 TEST(ListPackTest, DeleteMatchingKeepsSaturatedCount) {
   ListPack listpack;
-  constexpr size_t kSize = size_t{70'000};
+  constexpr size_t kSize = 70'000;
   for (size_t i = 0; i < kSize; ++i) {
     ASSERT_TRUE(listpack.Append(i % 10 == 0 ? "x" : "y"));
   }
