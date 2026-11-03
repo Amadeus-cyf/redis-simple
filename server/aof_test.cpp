@@ -15,7 +15,6 @@
 #include <iterator>
 #include <limits>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,6 +22,7 @@
 #include "server/db/db.h"
 #include "server/db/redis_obj.h"
 #include "server/reply.h"
+#include "utils/check.h"
 #include "utils/time_utils.h"
 
 namespace redis_simple::aof {
@@ -34,9 +34,7 @@ class TempFile {
     std::array<char, kTemplate.size() + 1> path{};
     std::ranges::copy(kTemplate, path.begin());
     const int fd = mkstemp(path.data());
-    if (fd < 0) {
-      throw std::runtime_error("failed to create temporary AOF");
-    }
+    RS_CHECK(fd >= 0);
     close(fd);
     path_ = path.data();
   }

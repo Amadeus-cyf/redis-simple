@@ -1,7 +1,6 @@
 #include "data_types/set/set.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -153,14 +152,14 @@ bool Set::DictAdd(std::string_view value) {
 }
 
 void Set::MaybeConvertIntsetToDict() {
-  assert(encoding_ == Encoding::kIntSet);
+  RS_CHECK(encoding_ == Encoding::kIntSet);
   if (intset_ && intset_->Size() > kIntSetMaxEntries) {
     ConvertIntSetToDict(intset_->Size());
   }
 }
 
 void Set::ConvertIntSetToDict(size_t capacity) {
-  assert(encoding_ == Encoding::kIntSet);
+  RS_CHECK(encoding_ == Encoding::kIntSet);
   encoding_ = Encoding::kDict;
   dict_ = in_memory::Dict<std::string, std::nullptr_t>::Create(capacity);
   if (!intset_) {
@@ -205,7 +204,7 @@ bool Set::MaybeConvertIntSetToListPack(std::string_view val) {
 }
 
 void Set::ConvertIntSetToListPack(std::string_view val) {
-  assert(encoding_ == Encoding::kIntSet);
+  RS_CHECK(encoding_ == Encoding::kIntSet);
   encoding_ = Encoding::kListPack;
   listpack_ = std::make_unique<in_memory::ListPack>();
   if (intset_) {
@@ -219,7 +218,7 @@ void Set::ConvertIntSetToListPack(std::string_view val) {
 }
 
 void Set::ConvertListPackToDict(size_t capacity) {
-  assert(encoding_ == Encoding::kListPack);
+  RS_CHECK(encoding_ == Encoding::kListPack);
   encoding_ = Encoding::kDict;
   dict_ = in_memory::Dict<std::string, std::nullptr_t>::Create(capacity);
   if (!listpack_) {

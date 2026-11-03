@@ -1,11 +1,12 @@
 #include "memory/reply_buffer.h"
 
 #include <algorithm>
-#include <cassert>
 #include <cstring>
 #include <memory>
 #include <utility>
 #include <vector>
+
+#include "utils/check.h"
 
 namespace redis_simple::in_memory {
 ReplyBuffer::ReplyBuffer(size_t buffer_size, size_t chunk_size)
@@ -73,7 +74,7 @@ void ReplyBuffer::AppendToList(const char* s, size_t len) {
 }
 
 void ReplyBuffer::FillBlocks(std::vector<iovec>* const blocks) {
-  assert(blocks != nullptr);
+  RS_CHECK(blocks != nullptr);
   blocks->clear();
   blocks->reserve(node_count_ + (size_ > 0 ? 1 : 0));
   if (size_ > 0) {
@@ -110,7 +111,7 @@ size_t ReplyBuffer::ConsumeBuffer(size_t nwritten) {
 
 void ReplyBuffer::ConsumeList(size_t nwritten) {
   while (nwritten > 0 && reply_head_ != nullptr) {
-    assert(sent_ <= reply_head_->used);
+    RS_CHECK(sent_ <= reply_head_->used);
     const size_t remaining = reply_head_->used - sent_;
     if (nwritten < remaining) {
       sent_ += nwritten;
