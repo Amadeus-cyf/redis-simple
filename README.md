@@ -324,7 +324,9 @@ Project management files are checked in:
 
 - `CMakePresets.json` for reproducible configure/build/test commands.
 - `.clang-format` for Google-style formatting with clang-format 22.
-- `.clang-tidy` for static-analysis defaults.
+- `.clang-tidy` for static-analysis defaults, including the `google-*` checks
+  and Google naming rules (`kConstant` names for constants and `const`
+  statics, `member_` suffixes for private members).
 - `.editorconfig` for editor consistency.
 - `.github/workflows/ci.yml` for CI on push and pull request.
 - `CLAUDE.md` for AI coding-agent project guidance; `AGENTS.md` points to it

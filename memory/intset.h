@@ -14,30 +14,30 @@ class IntSet {
   IntSet(const IntSet&) = delete;
   IntSet& operator=(const IntSet&) = delete;
   bool Add(int64_t value);
-  int64_t Get(unsigned int index) const;
+  int64_t Get(uint32_t index) const;
   bool Find(int64_t value) const;
   bool Remove(int64_t value);
   int64_t Max() const;
   int64_t Min() const;
-  unsigned int Size() const { return length_; }
+  uint32_t Size() const { return length_; }
   ~IntSet() = default;
 
  private:
-  static constexpr unsigned kInitSize = 1;
+  static constexpr uint32_t kInitSize = 1;
   enum EncodingType {
     kInt16 = sizeof(int16_t),
     kInt32 = sizeof(int32_t),
     kInt64 = sizeof(int64_t),
   };
   static EncodingType ValueEncoding(int64_t value);
-  void Resize(unsigned int length_);
-  int64_t EncodedValue(unsigned int index, EncodingType encoding) const;
+  void Resize(uint32_t length);
+  int64_t EncodedValue(uint32_t index, EncodingType encoding) const;
   void UpgradeAndAdd(int64_t value);
-  bool Search(int64_t value, unsigned int* const index) const;
-  void Set(unsigned int index, int64_t value);
-  void MoveTail(unsigned int from, unsigned int to);
+  bool Search(int64_t value, uint32_t* index) const;
+  void Set(uint32_t index, int64_t value);
+  void MoveTail(uint32_t from, uint32_t to);
   std::unique_ptr<unsigned char[]> contents_;
-  unsigned int length_;
+  uint32_t length_;
   EncodingType encoding_;
 };
 

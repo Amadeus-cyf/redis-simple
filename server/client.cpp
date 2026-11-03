@@ -174,7 +174,7 @@ ssize_t Client::SendBufferReply() {
   const size_t reply_length = reply_buf_.UnsentLength();
   const int logged_length = static_cast<int>(std::min(
       reply_length, static_cast<size_t>(std::numeric_limits<int>::max())));
-  RS_LOG_DEBUG("_sendReply %.*s %zu\n", logged_length,
+  RS_LOG_DEBUG("SendBufferReply %.*s %zu\n", logged_length,
                reply_buf_.UnsentBuffer(), reply_length);
   ssize_t nwritten = connection_->Write(
       {reply_buf_.UnsentBuffer(), reply_buf_.UnsentLength()});
@@ -186,7 +186,7 @@ ssize_t Client::SendBufferReply() {
 }
 
 ssize_t Client::SendListReply() {
-  RS_LOG_DEBUG("_sendvReply\n");
+  RS_LOG_DEBUG("SendListReply\n");
   reply_buf_.FillBlocks(&reply_blocks_);
   ssize_t nwritten = connection_->WriteVector(reply_blocks_);
   if (nwritten < 0) {

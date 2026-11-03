@@ -27,7 +27,7 @@ class ListPack {
   ListPack();
   ListPack(const ListPack&) = delete;
   ListPack& operator=(const ListPack&) = delete;
-  unsigned char* Get(size_t idx, size_t* const len) const;
+  unsigned char* Get(size_t idx, size_t* len) const;
   std::optional<std::string> Get(size_t idx) const;
   std::optional<int64_t> IntegerAt(size_t idx) const;
   std::optional<size_t> Find(std::string_view val) const;
@@ -65,7 +65,7 @@ class ListPack {
   size_t Size() const;
   static size_t EstimateEntryBytes(std::string_view value);
   static size_t EstimateBytes(int64_t lval, size_t repeat);
-  static bool SafeToAdd(const ListPack* const lp, size_t bytes);
+  static bool SafeToAdd(const ListPack* lp, size_t bytes);
   ~ListPack() = default;
 
  private:
@@ -122,9 +122,9 @@ class ListPack {
     EncodingGeneralType encoding_type;
     size_t backlen_bytes;
   };
-  unsigned char* StringAt(size_t idx, size_t* const len,
+  unsigned char* StringAt(size_t idx, size_t* len,
                           EncodingType encoding_type) const;
-  unsigned char* IntegerAt(size_t idx, unsigned char* dst, size_t* const len,
+  unsigned char* IntegerAt(size_t idx, unsigned char* dst, size_t* len,
                            int64_t* val, EncodingType encoding_type) const;
   bool Insert(size_t idx, ListPack::Position where,
               const std::string_view* element_string,
@@ -165,8 +165,8 @@ class ListPack {
   }
   static uint8_t BacklenBytes(size_t backlen);
   static size_t EncodeString(unsigned char* buf, std::string_view ele);
-  static size_t EncodeInteger(unsigned char* const buf, int64_t v);
-  static void EncodeBacklen(unsigned char* const buf, size_t backlen);
+  static size_t EncodeInteger(unsigned char* buf, int64_t v);
+  static void EncodeBacklen(unsigned char* buf, size_t backlen);
   size_t DecodeBacklen(size_t idx) const;
   size_t DecodeStringLength(size_t idx) const;
   static bool IsString(EncodingType encoding_type);

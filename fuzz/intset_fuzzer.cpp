@@ -13,7 +13,7 @@ void Verify(const in_memory::IntSet& intset, const std::set<int64_t>& model) {
   Require(intset.Size() == model.size());
   size_t index = 0;
   for (const int64_t value : model) {
-    Require(intset.Get(static_cast<unsigned int>(index)) == value);
+    Require(intset.Get(static_cast<uint32_t>(index)) == value);
     Require(intset.Find(value));
     ++index;
   }

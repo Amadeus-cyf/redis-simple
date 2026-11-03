@@ -1,6 +1,5 @@
 #include "data_types/zset/zset.h"
 
-#include <cassert>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -9,6 +8,7 @@
 
 #include "data_types/zset/zset_listpack.h"
 #include "data_types/zset/zset_skiplist.h"
+#include "utils/check.h"
 
 namespace redis_simple::zset {
 ZSet::ZSet()
@@ -72,7 +72,7 @@ bool ZSet::ShouldConvertToSkiplist(std::string_view key, bool inserted) const {
 }
 
 void ZSet::ConvertAndExpand() {
-  assert(encoding_ == Encoding::kListPack);
+  RS_CHECK(encoding_ == Encoding::kListPack);
   auto zset_skiplist = std::make_unique<ZSetSkiplist>();
   if (!storage_->ForEachEntry(
           [&zset_skiplist](std::string_view key, double score) {

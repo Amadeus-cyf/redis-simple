@@ -1,13 +1,14 @@
 #include "memory/quicklist.h"
 
 #include <algorithm>
-#include <cassert>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "utils/check.h"
 
 namespace redis_simple::in_memory {
 namespace {
@@ -392,10 +393,7 @@ QuickList::Node* QuickList::AppendNode() {
     head_ = std::move(node);
     tail_ = node_ptr;
   } else {
-    assert(tail_ != nullptr);
-    if (tail_ == nullptr) {
-      return nullptr;
-    }
+    RS_CHECK(tail_ != nullptr);
     node->prev = tail_;
     tail_->next = std::move(node);
     tail_ = node_ptr;
@@ -433,10 +431,7 @@ void QuickList::DeleteNode(Node* node) {
     }
   } else {
     Node* prev = node->prev;
-    assert(prev != nullptr);
-    if (prev == nullptr) {
-      return;
-    }
+    RS_CHECK(prev != nullptr);
     prev->next = std::move(node->next);
     if (prev->next) {
       prev->next->prev = prev;

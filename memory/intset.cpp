@@ -18,12 +18,12 @@ IntSet::IntSet()
       length_(0),
       encoding_(kInt16) {}
 bool IntSet::Add(int64_t value) {
-  unsigned int value_encode = ValueEncoding(value);
+  uint32_t value_encode = ValueEncoding(value);
   if (value_encode > encoding_) {
     UpgradeAndAdd(value);
     return true;
   }
-  unsigned int index = 0;
+  uint32_t index = 0;
   if (Search(value, &index)) {
     return false;
   }
@@ -36,7 +36,7 @@ bool IntSet::Add(int64_t value) {
   return true;
 }
 
-int64_t IntSet::Get(unsigned int index) const {
+int64_t IntSet::Get(uint32_t index) const {
   return EncodedValue(index, encoding_);
 }
 
@@ -46,7 +46,7 @@ bool IntSet::Find(int64_t value) const {
 }
 
 bool IntSet::Remove(int64_t value) {
-  unsigned int index = 0;
+  uint32_t index = 0;
   bool exist = Search(value, &index);
   if (!exist) {
     return false;
@@ -71,7 +71,7 @@ IntSet::EncodingType IntSet::ValueEncoding(int64_t value) {
   return kInt16;
 }
 
-void IntSet::Resize(unsigned int length) {
+void IntSet::Resize(uint32_t length) {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
   auto new_contents = std::make_unique<unsigned char[]>(
       static_cast<size_t>(length) * encoding_);
@@ -83,15 +83,15 @@ void IntSet::Resize(unsigned int length) {
 
 void IntSet::UpgradeAndAdd(int64_t value) {
   const EncodingType old_encoding = encoding_;
-  const unsigned int old_length = length_;
+  const uint32_t old_length = length_;
   auto old_contents = std::move(contents_);
   encoding_ = ValueEncoding(value);
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
   contents_ = std::make_unique<unsigned char[]>(
       static_cast<size_t>(old_length + 1) * encoding_);
-  const unsigned int prepend = value < 0 ? 1 : 0;
-  for (unsigned int idx = old_length; idx > 0; --idx) {
-    const unsigned int old_idx = idx - 1;
+  const uint32_t prepend = value < 0 ? 1 : 0;
+  for (uint32_t idx = old_length; idx > 0; --idx) {
+    const uint32_t old_idx = idx - 1;
     int64_t old_value = 0;
     const unsigned char* src =
         old_contents.get() + (static_cast<size_t>(old_idx * old_encoding));
@@ -116,7 +116,7 @@ void IntSet::UpgradeAndAdd(int64_t value) {
   length_ = old_length + 1;
 }
 
-bool IntSet::Search(int64_t value, unsigned int* const index) const {
+bool IntSet::Search(int64_t value, uint32_t* const index) const {
   if (length_ > 0 && value < EncodedValue(0, encoding_)) {
     if (index != nullptr) {
       *index = 0;
@@ -129,10 +129,10 @@ bool IntSet::Search(int64_t value, unsigned int* const index) const {
     }
     return false;
   }
-  unsigned int min_idx = 0;
-  unsigned int max_idx = length_;
+  uint32_t min_idx = 0;
+  uint32_t max_idx = length_;
   while (min_idx < max_idx) {
-    const unsigned int mid = min_idx + ((max_idx - min_idx) / 2);
+    const uint32_t mid = min_idx + ((max_idx - min_idx) / 2);
     int64_t val = EncodedValue(mid, encoding_);
     if (val == value) {
       if (index != nullptr) {
@@ -152,7 +152,7 @@ bool IntSet::Search(int64_t value, unsigned int* const index) const {
   return false;
 }
 
-int64_t IntSet::EncodedValue(unsigned int index, EncodingType encoding) const {
+int64_t IntSet::EncodedValue(uint32_t index, EncodingType encoding) const {
   RS_CHECK(index < length_);
   const unsigned char* src =
       contents_.get() + (static_cast<size_t>(index * encoding));
@@ -171,7 +171,7 @@ int64_t IntSet::EncodedValue(unsigned int index, EncodingType encoding) const {
   return v16;
 }
 
-void IntSet::Set(unsigned int index, int64_t value) {
+void IntSet::Set(uint32_t index, int64_t value) {
   unsigned char* dst =
       contents_.get() + (static_cast<size_t>(index * encoding_));
   if (encoding_ == kInt64) {
@@ -185,7 +185,7 @@ void IntSet::Set(unsigned int index, int64_t value) {
   }
 }
 
-void IntSet::MoveTail(unsigned int from, unsigned int to) {
+void IntSet::MoveTail(uint32_t from, uint32_t to) {
   const size_t bytes = static_cast<size_t>(length_ - from) * encoding_;
   const unsigned char* src =
       contents_.get() + (static_cast<size_t>(from * encoding_));

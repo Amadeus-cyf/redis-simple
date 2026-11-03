@@ -289,8 +289,8 @@ timespec Loop::PollTimeout() const {
 
   timespec timeout{};
   timeout.tv_sec = static_cast<time_t>(timeout_ms / kMillisecondsPerSecond);
-  timeout.tv_nsec = static_cast<long>((timeout_ms % kMillisecondsPerSecond) *
-                                      kNanosecondsPerMillisecond);
+  timeout.tv_nsec = static_cast<decltype(timeout.tv_nsec)>(
+      (timeout_ms % kMillisecondsPerSecond) * kNanosecondsPerMillisecond);
   return timeout;
 }
 

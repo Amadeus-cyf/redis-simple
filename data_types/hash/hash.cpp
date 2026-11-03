@@ -1,6 +1,5 @@
 #include "data_types/hash/hash.h"
 
-#include <cassert>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -101,7 +100,7 @@ bool Hash::CanAppendToListPack(std::string_view field,
 }
 
 bool Hash::SetListPack(std::string_view field, std::string_view value) {
-  assert(encoding_ == Encoding::kListPack);
+  RS_CHECK(encoding_ == Encoding::kListPack);
   const auto field_idx = FindListPackField(field);
   if (field_idx.has_value()) {
     if (!CanStoreInListPack(field, value)) {
@@ -126,7 +125,7 @@ bool Hash::SetListPack(std::string_view field, std::string_view value) {
 }
 
 bool Hash::SetDict(std::string_view field, std::string_view value) {
-  assert(encoding_ == Encoding::kDict);
+  RS_CHECK(encoding_ == Encoding::kDict);
   if (dict_ == nullptr) {
     dict_ = in_memory::Dict<std::string, std::string>::Create();
   }
@@ -136,7 +135,7 @@ bool Hash::SetDict(std::string_view field, std::string_view value) {
 }
 
 void Hash::ConvertListPackToDict(size_t capacity) {
-  assert(encoding_ == Encoding::kListPack);
+  RS_CHECK(encoding_ == Encoding::kListPack);
   dict_ = in_memory::Dict<std::string, std::string>::Create(capacity);
   if (listpack_ != nullptr) {
     listpack_->ForEachPair(
@@ -150,7 +149,7 @@ void Hash::ConvertListPackToDict(size_t capacity) {
 }
 
 std::optional<size_t> Hash::FindListPackField(std::string_view field) const {
-  assert(encoding_ == Encoding::kListPack);
+  RS_CHECK(encoding_ == Encoding::kListPack);
   return listpack_->FindAndSkip(field, 1);
 }
 }  // namespace redis_simple::hash

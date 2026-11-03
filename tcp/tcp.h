@@ -32,7 +32,7 @@ int TcpBindAndConnect(const TcpAddrInfo& remote,
                       bool non_block = true);
 int TcpBind(int socket_fd, const TcpAddrInfo& addr_info);
 int TcpListen(int socket_fd);
-int TcpAccept(int socket_fd, TcpAddrInfo* const addr_info);
+int TcpAccept(int socket_fd, TcpAddrInfo* addr_info);
 int Block(int fd);
 int NonBlock(int fd);
 bool IsSocketError(int fd);
