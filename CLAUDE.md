@@ -6,7 +6,11 @@ Guidance for AI coding agents working in this repository.
 
 - Keep this a modern C++23 project. `.clang-format` stays at `c++20`, the
   newest value clang-format accepts; the formatting rules are the same.
-- Follow Google C++ style and the checked-in `.clang-format`.
+- Follow Google C++ style and the checked-in `.clang-format`. `.clang-tidy`
+  enables the `google-*` checks and Google naming: `kName` for constexpr,
+  `const` static, and global constants (function-local `static const`
+  included), and sized integer types (`int64_t`, `uint32_t`) instead of
+  `long` or `unsigned int`, except where a system API defines the type.
 - Prefer clear, simple modern C++ over legacy patterns. Use the standard
   library where it fits (`std::span`, `std::source_location`,
   `starts_with`/`ends_with`, `<bit>`, concepts, `std::ranges` algorithms
@@ -23,7 +27,9 @@ Guidance for AI coding agents working in this repository.
   `utils/check.h`, which abort and stay enabled in release builds. Test them
   with `EXPECT_DEATH` in suites named `<Suite>DeathTest`, which the macOS leak
   check skips. The only `catch` blocks are where `std::thread` reports a
-  failure to start.
+  failure to start, and the catch-all in each integration test's `main`,
+  which turns an escaping standard-library exception into a failing exit
+  code.
 - Spell project includes from the repository root (`"server/db/db.h"`), and
   include GoogleTest as `<gtest/gtest.h>`.
 - Keep objects with static storage duration trivially destructible. When one
@@ -96,6 +102,10 @@ Guidance for AI coding agents working in this repository.
   the closer end (`Locate`), an `LSET` that overflows its node splits only
   that node, and `List` converts back to a listpack after pops, `LSET`,
   `LREM`, and `LTRIM` once one node holds at most half the size limit.
+  One deliberate difference: after pops, `LSET`, `LREM`, and `LTRIM`,
+  `QuickList` merges neighboring nodes that fit together, where Redis leaves
+  them. This server is I/O bound, so fewer, fuller nodes are worth the merge
+  cost; keep the merges.
 - Canonical integer strings are stored as `int64_t`. Read string objects
   through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
   `MutableString()` only to edit bytes in place, since it converts the value
