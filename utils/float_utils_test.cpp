@@ -3,10 +3,14 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <charconv>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace redis_simple::utils {
@@ -77,6 +81,78 @@ TEST(FloatUtilsTest, FormatsWholeNumbersAsPlainIntegers) {
   EXPECT_EQ(FloatToString(1e17), "1e+17");
   EXPECT_EQ(FloatToString(1.5), "1.5");
   EXPECT_EQ(FloatToString(-2.25), "-2.25");
+}
+
+namespace {
+// The general path: shortest round-trip digits, printed in fixed notation for
+// exponents from -4 to 16.
+std::string ReferenceFormat(double value) {
+  std::array<char, 64> buffer{};
+  auto [end, error] =
+      std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+  EXPECT_EQ(error, std::errc());
+  std::string text(buffer.data(), end);
+  const size_t exponent_position = text.find('e');
+  if (exponent_position != std::string::npos) {
+    const int exponent = std::stoi(text.substr(exponent_position + 1));
+    if (exponent >= -4 && exponent <= 16) {
+      end = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
+                          std::chars_format::fixed)
+                .ptr;
+      text.assign(buffer.data(), end);
+    }
+  }
+  return text;
+}
+}  // namespace
+
+TEST(FloatUtilsTest, ShortDecimalsMatchShortestRoundTripText) {
+  std::vector<double> values = {0.0001,
+                                0.00011,
+                                0.1,
+                                0.25,
+                                1.5,
+                                -2.25,
+                                99.95,
+                                0.3,
+                                1e-4,
+                                9.999e-5,
+                                0.1 + 0.2,
+                                1.0 / 3,
+                                2251799813.6855,
+                                2251799813.685248,
+                                2251799813.68,
+                                123456.789012,
+                                -0.000123,
+                                0.0001234567};
+  // A fixed linear congruential sequence keeps the cases reproducible.
+  uint64_t state = 11;
+  const auto random = [&state] {
+    state = (state * 6364136223846793005U) + 1442695040888963407U;
+    return state >> 11;
+  };
+  for (int i = 0; i < 300'000; ++i) {
+    // Decimals with up to 8 places across magnitudes, plus raw bit patterns.
+    const auto places = static_cast<int>(random() % 9);
+    const auto mantissa = static_cast<double>(random() % 10'000'000'000'000U);
+    const auto shift = static_cast<int>(random() % 16);
+    double value = mantissa / std::pow(10.0, places + shift);
+    if (random() % 2 == 0) {
+      value = -value;
+    }
+    values.push_back(value);
+    values.push_back(std::nextafter(value, 0.0));
+  }
+  for (const double value : values) {
+    EXPECT_EQ(FloatToString(value), ReferenceFormat(value)) << value;
+  }
+}
+
+TEST(FloatUtilsTest, FormatFloatWritesIntoTheBuffer) {
+  FloatBuffer buffer;
+  const std::string_view text = FormatFloat(-12.75, &buffer);
+  EXPECT_EQ(text, "-12.75");
+  EXPECT_EQ(text.data(), buffer.data());
 }
 
 TEST(FloatUtilsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {

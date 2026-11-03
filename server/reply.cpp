@@ -130,13 +130,14 @@ std::string FromFloat(double fl, ProtocolVersion protocol) {
 
 void AppendFloat(double fl, ProtocolVersion protocol,
                  std::string* const reply) {
-  const std::string value = utils::FloatToString(fl);
+  utils::FloatBuffer buffer;
+  const std::string_view value = utils::FormatFloat(fl, &buffer);
   if (protocol == ProtocolVersion::kResp2) {
     AppendBulkString(value, reply);
     return;
   }
   reply->push_back(kDoublePrefix);
-  reply->append(value).append(kCrlf.data(), kCrlf.size());
+  reply->append(value.data(), value.size()).append(kCrlf.data(), kCrlf.size());
 }
 
 std::string FromError(std::string_view message) {

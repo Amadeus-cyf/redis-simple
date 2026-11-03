@@ -55,10 +55,11 @@ void FormatScore(benchmark::State& state) {
 
 // Encodes ZRANGE WITHSCORES scores straight into a RESP2 reply.
 void AppendScores(benchmark::State& state) {
+  const bool fractional = state.range(0) != 0;
   std::vector<double> scores;
   scores.reserve(100);
   for (int i = 0; i < 100; ++i) {
-    scores.push_back(i * 3.0);
+    scores.push_back(fractional ? (i * 3.0) + 0.25 : i * 3.0);
   }
   for (auto _ : state) {
     (void)_;
@@ -76,6 +77,6 @@ void AppendScores(benchmark::State& state) {
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 BENCHMARK(AppendBulkStrings)->Arg(100)->Arg(1000);
 BENCHMARK(FormatScore)->Arg(0)->Arg(1)->ArgName("fractional");
-BENCHMARK(AppendScores);
+BENCHMARK(AppendScores)->Arg(0)->Arg(1)->ArgName("fractional");
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple
