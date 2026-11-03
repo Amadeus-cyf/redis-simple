@@ -25,6 +25,32 @@ inline uint64_t LoadLittleEndian64(std::span<const uint8_t, 8> bytes) {
   return value;
 }
 
+// The 0 to 7 trailing bytes as a little-endian word, read with at most two
+// loads instead of a byte loop. Overlapping loads read some bytes twice;
+// OR-ing a byte into its own position again leaves the word unchanged.
+inline uint64_t LoadTail(std::span<const uint8_t> tail) {
+  const size_t size = tail.size();
+  if (size >= 4) {
+    uint32_t low = 0;
+    uint32_t high = 0;
+    std::memcpy(&low, tail.data(), sizeof(low));
+    std::memcpy(&high, tail.data() + size - 4, sizeof(high));
+    if constexpr (std::endian::native != std::endian::little) {
+      low = std::byteswap(low);
+      high = std::byteswap(high);
+    }
+    return static_cast<uint64_t>(low) |
+           (static_cast<uint64_t>(high) << (8 * (size - 4)));
+  }
+  if (size == 0) {
+    return 0;
+  }
+  // Bytes 0, size / 2, and size - 1 cover every byte of a 1- to 3-byte tail.
+  return static_cast<uint64_t>(tail[0]) |
+         (static_cast<uint64_t>(tail[size / 2]) << (8 * (size / 2))) |
+         (static_cast<uint64_t>(tail[size - 1]) << (8 * (size - 1)));
+}
+
 class State {
  public:
   State(uint64_t k0, uint64_t k1)
@@ -96,9 +122,7 @@ uint64_t SipHash(std::string_view data, const SipHashKey& key) {
 
   uint64_t last = static_cast<uint64_t>(input.size() & 0xff) << 56;
   const std::span<const uint8_t> tail = input.subspan(full_words * 8);
-  for (size_t index = 0; index < tail.size(); ++index) {
-    last |= static_cast<uint64_t>(tail[index]) << (8 * index);
-  }
+  last |= siphash_internal::LoadTail(tail);
   state.Absorb<kCompressionRounds>(last);
   return state.Finish<kFinalizationRounds>();
 }

@@ -162,6 +162,20 @@ std::optional<int64_t> RedisDb::Expiration(std::string_view key) const {
   return expire == nullptr ? std::nullopt : std::optional<int64_t>(*expire);
 }
 
+RedisDb::KeyWithExpiration RedisDb::LookupKeyWithExpiration(
+    std::string_view key) {
+  const HashedKey hashed(key);
+  KeyWithExpiration result;
+  result.object = Lookup(hashed);
+  if (result.object != nullptr) {
+    if (const int64_t* const expire = expires_->FindValue(hashed);
+        expire != nullptr) {
+      result.expire = *expire;
+    }
+  }
+  return result;
+}
+
 DbStatus RedisDb::PersistKey(std::string_view key) {
   const HashedKey hashed(key);
   // Delete fails when there is no TTL, so it doubles as the existence check.

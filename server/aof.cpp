@@ -1010,14 +1010,13 @@ bool Aof::Encode(std::string_view command,
     if (args.empty()) {
       return false;
     }
-    const auto* object = db->LookupKey(args[0]);
+    const auto [object, expire] = db->LookupKeyWithExpiration(args[0]);
     if (object == nullptr) {
       return AppendSingleKeyCommand("DEL", args[0], output);
     }
     if (object->Type() != db::RedisObject::ObjectType::kString) {
       return false;
     }
-    const auto expire = db->Expiration(args[0]);
     if (!ReserveSetRecord(args[0], object->String(), expire.has_value(),
                           output)) {
       return false;

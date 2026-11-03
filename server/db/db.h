@@ -70,6 +70,12 @@ class RedisDb {
   DbStatus PersistKey(std::string_view key);
   DbStatus RenameKey(std::string_view old_key, std::string_view new_key);
   std::optional<int64_t> Expiration(std::string_view key) const;
+  // A live key's object and TTL, hashing the key once for both lookups.
+  struct KeyWithExpiration {
+    const RedisObject* object{nullptr};
+    std::optional<int64_t> expire;
+  };
+  KeyWithExpiration LookupKeyWithExpiration(std::string_view key);
   int64_t TimeToLive(std::string_view key, TtlResolution resolution);
   size_t KeyCount() const { return dict_->Size(); }
   // Key views and object references remain valid only until the database is

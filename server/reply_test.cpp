@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -95,6 +97,23 @@ TEST(ReplyTest, AppendsArrayHeader) {
 
 TEST(ReplyTest, From64BitsInt) {
   ASSERT_EQ(FromInt64(1234567), ":1234567\r\n");
+  // Every digit count, both signs, and the extremes.
+  int64_t value = 1;
+  for (int digits = 1; digits <= 18; ++digits, value *= 10) {
+    for (const int64_t candidate : {value - 1, value, value + 1}) {
+      EXPECT_EQ(FromInt64(candidate), ":" + std::to_string(candidate) + "\r\n");
+      EXPECT_EQ(FromInt64(-candidate),
+                ":" + std::to_string(-candidate) + "\r\n");
+    }
+  }
+  EXPECT_EQ(FromInt64(std::numeric_limits<int64_t>::max()),
+            ":9223372036854775807\r\n");
+  EXPECT_EQ(FromInt64(std::numeric_limits<int64_t>::min()),
+            ":-9223372036854775808\r\n");
+  EXPECT_EQ(FromArrayHeader(std::numeric_limits<size_t>::max()),
+            "*18446744073709551615\r\n");
+  EXPECT_EQ(FromMapHeader(12, ProtocolVersion::kResp3), "%12\r\n");
+  EXPECT_EQ(FromSetHeader(0, ProtocolVersion::kResp3), "~0\r\n");
 }
 
 TEST(ReplyTest, EncodesVersionSpecificTypes) {
