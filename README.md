@@ -305,7 +305,8 @@ Project management files are checked in:
 - `.clang-tidy` for static-analysis defaults.
 - `.editorconfig` for editor consistency.
 - `.github/workflows/ci.yml` for CI on push and pull request.
-- `AGENTS.md` for AI coding-agent project guidance.
+- `CLAUDE.md` for AI coding-agent project guidance; `AGENTS.md` points to it
+  for agents that look for that file.
 
 Format project C++ files with:
 
