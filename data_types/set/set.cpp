@@ -165,7 +165,7 @@ void Set::ConvertIntSetToDict(size_t capacity) {
   if (!intset_) {
     return;
   }
-  for (unsigned int i = 0; i < intset_->Size(); ++i) {
+  for (uint32_t i = 0; i < intset_->Size(); ++i) {
     int64_t value = intset_->Get(i);
     dict_->Set(std::to_string(value), nullptr);
   }
@@ -208,7 +208,7 @@ void Set::ConvertIntSetToListPack(std::string_view val) {
   encoding_ = Encoding::kListPack;
   listpack_ = std::make_unique<in_memory::ListPack>();
   if (intset_) {
-    for (unsigned int i = 0; i < intset_->Size(); ++i) {
+    for (uint32_t i = 0; i < intset_->Size(); ++i) {
       int64_t value = intset_->Get(i);
       listpack_->Append(value);
     }

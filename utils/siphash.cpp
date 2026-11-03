@@ -18,7 +18,7 @@ SipHashKey GenerateKey() {
 }  // namespace
 
 const SipHashKey& HashSeed() {
-  static const SipHashKey key = GenerateKey();
-  return key;
+  static const SipHashKey kSeed = GenerateKey();
+  return kSeed;
 }
 }  // namespace redis_simple::utils

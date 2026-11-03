@@ -69,14 +69,14 @@ std::shared_ptr<FileOps> DefaultFileOps() {
 }
 
 size_t MaxIovCount() {
-  static const size_t max_iov_count = [] {
-    const long system_limit = sysconf(_SC_IOV_MAX);
+  static const size_t kMaxIovCount = [] {
+    const auto system_limit = sysconf(_SC_IOV_MAX);
     const size_t limit =
         system_limit > 0 ? static_cast<size_t>(system_limit) : 1024;
     return std::min(limit,
                     static_cast<size_t>(std::numeric_limits<int>::max()));
   }();
-  return max_iov_count;
+  return kMaxIovCount;
 }
 
 bool WriteAll(FileOps* const file_ops, int fd, std::string_view data) {
