@@ -2,7 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 
 namespace redis_simple::utils {
@@ -31,6 +34,22 @@ TEST(SipHashTest, MatchesReferenceVectors) {
   EXPECT_EQ((SipHash<2, 4>(SequentialMessage(0), key)), 0x726fdb47dd0e0e31ULL);
   EXPECT_EQ((SipHash<2, 4>(SequentialMessage(1), key)), 0x74f839c593dc67fdULL);
   EXPECT_EQ((SipHash<2, 4>(SequentialMessage(15), key)), 0xa129ca6149be45e5ULL);
+}
+
+TEST(SipHashTest, TailLoadsMatchTheByteLoop) {
+  // Every tail length, with distinct bytes so a misplaced byte shows.
+  for (size_t size = 0; size < 8; ++size) {
+    std::array<uint8_t, 8> bytes{};
+    uint64_t expected = 0;
+    for (size_t index = 0; index < size; ++index) {
+      bytes[index] = static_cast<uint8_t>(0xa1 + (index * 0x13));
+      expected |= static_cast<uint64_t>(bytes[index]) << (8 * index);
+    }
+    EXPECT_EQ(siphash_internal::LoadTail(
+                  std::span<const uint8_t>(bytes.data(), size)),
+              expected)
+        << size;
+  }
 }
 
 TEST(SipHashTest, DependsOnKey) {

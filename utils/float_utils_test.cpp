@@ -148,6 +148,84 @@ TEST(FloatUtilsTest, ShortDecimalsMatchShortestRoundTripText) {
   }
 }
 
+TEST(FloatUtilsTest, PlainDecimalsParseLikeTheGeneralParser) {
+  // The plain-decimal fast path must return exactly what std::from_chars
+  // does, and leave every other form to it.
+  const auto reference = [](std::string_view text, double* value) {
+    if (!text.empty() && text.front() == '+') {
+      text.remove_prefix(1);
+    }
+    const auto result = std::from_chars(text.data(), text.data() + text.size(),
+                                        *value, std::chars_format::general);
+    return !text.empty() && result.ec == std::errc() &&
+           result.ptr == text.data() + text.size() && !std::isnan(*value);
+  };
+  std::vector<std::string> inputs = {"0",
+                                     "-0",
+                                     "+0",
+                                     "1",
+                                     "-1",
+                                     "0.5",
+                                     "-0.5",
+                                     "+12.25",
+                                     "007.50",
+                                     "99.95",
+                                     "5.",
+                                     ".5",
+                                     "-.5",
+                                     "+-5",
+                                     "-+5",
+                                     "-",
+                                     "+",
+                                     "1e3",
+                                     "1.5e-3",
+                                     "inf",
+                                     "-inf",
+                                     "nan",
+                                     "1..2",
+                                     "1.2.3",
+                                     "1 ",
+                                     " 1",
+                                     "0x10",
+                                     "1_0",
+                                     "123456789012345",
+                                     "1234567890123456",
+                                     "0.000000000000001",
+                                     "9007199254740993",
+                                     "999999999999999.9",
+                                     "3.14159265358979"};
+  // A fixed linear congruential sequence keeps the cases reproducible.
+  uint64_t state = 5;
+  const auto random = [&state] {
+    state = (state * 6364136223846793005U) + 1442695040888963407U;
+    return state >> 11;
+  };
+  for (int i = 0; i < 200'000; ++i) {
+    const auto digits = 1 + static_cast<size_t>(random() % 17);
+    std::string text = random() % 3 == 0 ? "-" : "";
+    for (size_t d = 0; d < digits; ++d) {
+      text.push_back(static_cast<char>('0' + (random() % 10)));
+    }
+    const auto point = random() % (digits + 2);
+    if (point > 0 && point < digits) {
+      text.insert(text.size() - point, ".");
+    }
+    inputs.push_back(text);
+  }
+  for (const std::string& input : inputs) {
+    double expected = 0;
+    double actual = 0;
+    const bool expected_ok = reference(input, &expected);
+    ASSERT_EQ(ToDouble(input, &actual), expected_ok) << input;
+    if (expected_ok) {
+      EXPECT_EQ(std::signbit(actual), std::signbit(expected)) << input;
+      EXPECT_TRUE(actual == expected ||
+                  (std::isinf(actual) && std::isinf(expected)))
+          << input;
+    }
+  }
+}
+
 TEST(FloatUtilsTest, FormatFloatWritesIntoTheBuffer) {
   FloatBuffer buffer;
   const std::string_view text = FormatFloat(-12.75, &buffer);

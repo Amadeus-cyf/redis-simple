@@ -342,6 +342,11 @@ std::optional<V> Dict<K, V, Hash, KeyEqual>::Get(const K& key) {
 template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 V* Dict<K, V, Hash, KeyEqual>::FindValueImpl(const Lookup& key) {
+  // Like Redis' dictFind, an empty dict answers without hashing the key,
+  // which keeps lookups in an empty TTL table nearly free.
+  if (Size() == 0) {
+    return nullptr;
+  }
   RehashStepIfNeeded();
   DictEntry* const entry = FindEntry(key, KeyHash(key));
   return entry == nullptr ? nullptr : &entry->val;
@@ -515,6 +520,9 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 typename Dict<K, V, Hash, KeyEqual>::DictEntry*
 Dict<K, V, Hash, KeyEqual>::Unlink(const Lookup& key) {
+  if (Size() == 0) {
+    return nullptr;
+  }
   RehashStepIfNeeded();
   const size_t hash = KeyHash(key);
   for (int table = 0; table <= 1; ++table) {

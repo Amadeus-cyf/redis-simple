@@ -1,6 +1,5 @@
 #include "utils/float_utils.h"
 
-#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -32,38 +31,42 @@ size_t FormatShortDecimal(double fl, char* const out) {
   }
   for (int decimals = 1; decimals <= kMaxFastDecimals; ++decimals) {
     const double scale = kPowersOfTen[static_cast<size_t>(decimals)];
-    const double scaled = std::round(magnitude * scale);
+    // Rounds without a libm call. A wrong candidate cannot slip through:
+    // the check below rejects it, and the general path prints the value.
+    // NOLINTNEXTLINE(bugprone-incorrect-roundings): verified below.
+    const auto scaled = static_cast<uint64_t>((magnitude * scale) + 0.5);
     // Both operands are exact, so the quotient is the correctly rounded value
     // of the decimal, which is also what parsing that decimal yields.
-    if (scaled / scale != magnitude) {
+    if (static_cast<double>(scaled) / scale != magnitude) {
       continue;
     }
-    std::array<char, 24> digits{};
-    const auto [digits_end, error] =
-        std::to_chars(digits.data(), digits.data() + digits.size(),
-                      static_cast<int64_t>(scaled));
-    if (error != std::errc()) {
-      return 0;
+    // Size the text first, then write it backward straight into `out`: the
+    // decimals, the point, then the integer part, which is at least "0".
+    uint64_t integer_part = scaled;
+    for (int i = 0; i < decimals; ++i) {
+      integer_part /= 10;
     }
-    const auto digit_count = static_cast<size_t>(digits_end - digits.data());
-    const auto decimal_count = static_cast<size_t>(decimals);
-    char* cursor = out;
+    size_t integer_digits = 1;
+    for (uint64_t rest = integer_part; rest >= 10; rest /= 10) {
+      ++integer_digits;
+    }
+    const size_t length =
+        (fl < 0 ? 1 : 0) + integer_digits + 1 + static_cast<size_t>(decimals);
+    char* cursor = out + length;
+    uint64_t remaining = scaled;
+    for (int i = 0; i < decimals; ++i) {
+      *--cursor = static_cast<char>('0' + (remaining % 10));
+      remaining /= 10;
+    }
+    *--cursor = '.';
+    for (size_t i = 0; i < integer_digits; ++i) {
+      *--cursor = static_cast<char>('0' + (remaining % 10));
+      remaining /= 10;
+    }
     if (fl < 0) {
-      *cursor++ = '-';
+      *--cursor = '-';
     }
-    if (digit_count <= decimal_count) {
-      // 0.00ddd: pad with zeros after the point.
-      *cursor++ = '0';
-      *cursor++ = '.';
-      cursor = std::fill_n(cursor, decimal_count - digit_count, '0');
-      cursor = std::copy(digits.data(), digits_end, cursor);
-    } else {
-      char* const point = digits_end - decimal_count;
-      cursor = std::copy(digits.data(), point, cursor);
-      *cursor++ = '.';
-      cursor = std::copy(point, digits_end, cursor);
-    }
-    return static_cast<size_t>(cursor - out);
+    return length;
   }
   return 0;
 }
@@ -76,7 +79,10 @@ std::string_view FormatFloat(double fl, FloatBuffer* const buffer) {
   // shortest round-trip text is its digits: format it as an integer, which
   // is several times cheaper. Negative zero keeps the general path's "-0".
   constexpr double kMaxExactInteger = 9007199254740992.0;
-  if (std::abs(fl) <= kMaxExactInteger && std::trunc(fl) == fl &&
+  // The cast is in range below 2^53, and converting back compares the value
+  // with its integer part without a libm trunc call.
+  if (std::abs(fl) <= kMaxExactInteger &&
+      static_cast<double>(static_cast<int64_t>(fl)) == fl &&
       (fl != 0 || !std::signbit(fl))) {
     const auto integer = std::to_chars(begin, limit, static_cast<int64_t>(fl));
     return {begin, integer.ptr};
@@ -117,9 +123,64 @@ std::string FloatToString(double fl) {
   return std::string(FormatFloat(fl, &buffer));
 }
 
+namespace {
+// Parses plain decimals such as "12", "-0.5", or "99.95", with at most 15
+// significant digits and no exponent, without the general parser. Such a
+// number is n / 10^k with n below 2^53 and k at most 15, and both are exact
+// doubles, so the correctly rounded quotient is exactly the value
+// std::from_chars returns (Clinger's fast path). Returns false to fall back
+// to the general parser, never for a valid number it cannot handle.
+bool ParsePlainDecimal(std::string_view value, double* const result) {
+  constexpr size_t kMaxDigits = 15;
+  constexpr std::array<double, kMaxDigits + 1> kPowersOfTen = {
+      1e0, 1e1, 1e2,  1e3,  1e4,  1e5,  1e6,  1e7,
+      1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15};
+  size_t position = 0;
+  const bool negative = value[0] == '-';
+  if (negative || value[0] == '+') {
+    position = 1;
+  }
+  uint64_t mantissa = 0;
+  size_t digits = 0;
+  size_t decimals = 0;
+  bool seen_point = false;
+  bool digit_before_point = false;
+  for (; position < value.size(); ++position) {
+    const char character = value[position];
+    if (character >= '0' && character <= '9') {
+      if (++digits > kMaxDigits) {
+        return false;
+      }
+      mantissa = (mantissa * 10) + static_cast<uint64_t>(character - '0');
+      decimals += seen_point ? 1 : 0;
+      digit_before_point |= !seen_point;
+    } else if (character == '.' && !seen_point && digit_before_point) {
+      seen_point = true;
+    } else {
+      return false;
+    }
+  }
+  // Require digits on both sides of a point, leaving forms such as "5." to
+  // the general parser.
+  if (!digit_before_point || (seen_point && decimals == 0)) {
+    return false;
+  }
+  double parsed = static_cast<double>(mantissa) / kPowersOfTen[decimals];
+  *result = negative ? -parsed : parsed;
+  return true;
+}
+}  // namespace
+
 bool ToDouble(std::string_view value, double* const result) {
   if (value.empty()) {
     return false;
+  }
+  double fast = 0;
+  if (ParsePlainDecimal(value, &fast)) {
+    if (result != nullptr) {
+      *result = fast;
+    }
+    return true;
   }
   const char* begin = value.data();
   const char* const end = begin + value.size();
