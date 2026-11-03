@@ -66,7 +66,7 @@ DbStatus RedisDb::SetStringKey(std::string_view key, std::string_view value,
   if (slot != nullptr && slot->Type() == RedisObject::ObjectType::kString) {
     slot->AssignString(value);
   } else {
-    slot = RedisObject::CreateWithString(std::string(value));
+    slot = RedisObject::CreateWithStringCopy(value);
   }
   FinishSet(hashed, expire, existing_ttl);
   return DbStatus::kOk;
