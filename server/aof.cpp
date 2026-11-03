@@ -43,6 +43,19 @@ constexpr size_t kRespElementOverhead = 32;
 constexpr std::string_view kLongestInt64 = "-9223372036854775808";
 constexpr auto kSyncInterval = std::chrono::seconds(1);
 constexpr std::string_view kMultiRecord = "*1\r\n$5\r\nMULTI\r\n";
+
+// The full 128-bit product of two 64-bit values, as {high, low} words.
+std::pair<uint64_t, uint64_t> WideMultiply(uint64_t left, uint64_t right) {
+  constexpr uint64_t kLowHalf = 0xffffffff;
+  const uint64_t low_low = (left & kLowHalf) * (right & kLowHalf);
+  const uint64_t low_high = (left & kLowHalf) * (right >> 32);
+  const uint64_t high_low = (left >> 32) * (right & kLowHalf);
+  const uint64_t high_high = (left >> 32) * (right >> 32);
+  const uint64_t middle =
+      (low_low >> 32) + (low_high & kLowHalf) + (high_low & kLowHalf);
+  return {high_high + (low_high >> 32) + (high_low >> 32) + (middle >> 32),
+          (middle << 32) | (low_low & kLowHalf)};
+}
 constexpr std::string_view kExecRecord = "*1\r\n$4\r\nEXEC\r\n";
 constexpr auto kRewriteRetryDelay = std::chrono::seconds(5);
 
@@ -555,7 +568,7 @@ std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
   if (fd < 0) {
     return nullptr;
   }
-  struct stat file_info{};
+  struct stat file_info {};
   if (fstat(fd, &file_info) < 0 || file_info.st_size < 0 ||
       static_cast<uintmax_t>(file_info.st_size) >
           std::numeric_limits<size_t>::max()) {
@@ -764,7 +777,7 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
   }
 #endif
 
-  struct stat file_info{};
+  struct stat file_info {};
   const mode_t mode = fstat(fd_, &file_info) == 0
                           ? static_cast<mode_t>(file_info.st_mode & 0777)
                           : static_cast<mode_t>(0644);
@@ -826,9 +839,10 @@ bool Aof::ShouldAutoRewrite() const {
     return true;
   }
   const size_t growth = current_size - std::min(current_size, base_size_);
-  return static_cast<long double>(growth) * 100.0L >=
-         static_cast<long double>(base_size_) *
-             static_cast<long double>(auto_rewrite_percentage_);
+  // Compare growth / base_size_ with the percentage exactly, without overflow.
+  constexpr uint64_t kPercent = 100;
+  return WideMultiply(growth, kPercent) >=
+         WideMultiply(base_size_, auto_rewrite_percentage_);
 }
 
 AofState Aof::State() const {
@@ -1236,7 +1250,7 @@ void Aof::RunRewrite(int rewrite_fd, const std::string& temp_path) {
       continue;
     }
 
-    struct stat file_info{};
+    struct stat file_info {};
     if (fstat(rewrite_fd, &file_info) < 0 || file_info.st_size < 0) {
       succeeded = false;
       error = AofError::kWrite;
