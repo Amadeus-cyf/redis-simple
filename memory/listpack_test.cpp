@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -766,6 +767,88 @@ TEST(ListPackTest, DeleteMatchingHonorsDirectionAndLimit) {
   EXPECT_EQ(listpack.DeleteMatching("x", 0), 2);
   EXPECT_EQ(listpack.Size(), 2);
 }
+TEST(ListPackTest, DeleteMatchingMatchesModelForEveryEncoding) {
+  // Integers and strings of every length class, so matches and kept runs
+  // cover each encoding and backlen width.
+  const std::vector<std::string> values = {"x",
+                                           "",
+                                           "7",
+                                           "-129",
+                                           "12345678901",
+                                           std::string(70, 'm'),
+                                           std::string(5000, 'l')};
+  // A fixed linear congruential sequence keeps the cases reproducible.
+  uint32_t state = 7;
+  const auto random = [&state] {
+    state = (state * 1664525U) + 1013904223U;
+    return state >> 8;
+  };
+  for (int round = 0; round < 300; ++round) {
+    ListPack listpack;
+    std::vector<std::string> model;
+    const size_t size = random() % 40;
+    for (size_t i = 0; i < size; ++i) {
+      model.push_back(values[random() % values.size()]);
+      ASSERT_TRUE(listpack.Append(model.back()));
+    }
+    const std::string& target = values[random() % values.size()];
+    const size_t limit = random() % 4;
+    const bool from_tail = random() % 2 == 0;
+
+    size_t expected = 0;
+    if (from_tail && limit != 0) {
+      for (size_t i = model.size(); i > 0 && expected < limit; --i) {
+        if (model[i - 1] == target) {
+          model.erase(model.begin() + static_cast<std::ptrdiff_t>(i - 1));
+          ++expected;
+        }
+      }
+    } else {
+      for (size_t i = 0;
+           i < model.size() && (limit == 0 || expected < limit);) {
+        if (model[i] == target) {
+          model.erase(model.begin() + static_cast<std::ptrdiff_t>(i));
+          ++expected;
+        } else {
+          ++i;
+        }
+      }
+    }
+    ASSERT_EQ(listpack.DeleteMatching(target, limit, from_tail), expected);
+    ASSERT_EQ(listpack.Size(), model.size());
+
+    // Walk both ways so every moved element's encoding and backlen is used.
+    std::vector<std::string> forward;
+    for (auto index = listpack.First(); index.has_value();
+         index = listpack.Next(*index)) {
+      forward.push_back(listpack.Get(*index).value_or("<missing>"));
+    }
+    EXPECT_EQ(forward, model) << round;
+    std::vector<std::string> backward;
+    for (auto index = listpack.Last(); index.has_value();
+         index = listpack.Prev(*index)) {
+      backward.push_back(listpack.Get(*index).value_or("<missing>"));
+    }
+    std::ranges::reverse(backward);
+    EXPECT_EQ(backward, model) << round;
+    // The listpack stays appendable after compaction.
+    ASSERT_TRUE(listpack.Append("tail"));
+    EXPECT_EQ(listpack.Get(RequireIndex(listpack.Last())), "tail");
+  }
+}
+
+TEST(ListPackTest, DeleteMatchingKeepsSaturatedCount) {
+  ListPack listpack;
+  constexpr size_t kSize = size_t{70'000};
+  for (size_t i = 0; i < kSize; ++i) {
+    ASSERT_TRUE(listpack.Append(i % 10 == 0 ? "x" : "y"));
+  }
+  EXPECT_EQ(listpack.DeleteMatching("x", 0), kSize / 10);
+  EXPECT_EQ(listpack.Size(), kSize - (kSize / 10));
+  EXPECT_EQ(listpack.DeleteMatching("y", 3, true), 3);
+  EXPECT_EQ(listpack.Size(), kSize - (kSize / 10) - 3);
+}
+
 TEST(ListPackDeathTest, RejectsOutOfBoundsIndexes) {
   auto listpack = std::make_unique<ListPack>();
   ASSERT_TRUE(listpack->Append("value"));

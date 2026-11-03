@@ -44,6 +44,10 @@ class QuickList {
   size_t NodeCount() const { return node_count_; }
   std::optional<size_t> ListPackBytes() const;
   std::unique_ptr<ListPack> ReleaseListPack();
+  // Takes `listpack` as the only node of this empty list without re-encoding
+  // its elements, splitting it if it exceeds the node size limit. This is the
+  // inverse of ReleaseListPack, like Redis' quicklistAppendListpack.
+  bool AdoptListPack(std::unique_ptr<ListPack> listpack);
 
  private:
   struct Node {

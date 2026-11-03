@@ -195,51 +195,66 @@ size_t ListPack::DeleteRange(size_t idx, size_t count) {
 size_t ListPack::DeleteMatching(std::string_view value, size_t limit,
                                 bool from_tail) {
   const bool limited = limit != 0;
+  // Byte spans [first, second) of matching elements, merged when adjacent.
+  std::vector<std::pair<size_t, size_t>> spans;
+  size_t match_count = 0;
+  const auto add_span = [&spans](size_t begin, size_t end) {
+    if (!spans.empty() && spans.back().second == begin) {
+      spans.back().second = end;
+    } else {
+      spans.emplace_back(begin, end);
+    }
+  };
   if (from_tail && limited) {
-    std::vector<size_t> matches;
-    matches.reserve(limit);
-    for (auto index = Last(); index.has_value() && matches.size() < limit;
+    std::array<unsigned char, kListPackIntBufSize> int_buf{};
+    for (auto index = Last(); index.has_value() && match_count < limit;
          index = Prev(*index)) {
-      size_t length = 0;
-      const auto* data = Get(*index, &length);
-      if (data != nullptr &&
-          std::string_view(reinterpret_cast<const char*>(data), length) ==
-              value) {
-        matches.push_back(*index);
+      const DecodedEntry entry = DecodeEntry(*index, int_buf.data());
+      if (ValueView(entry) == value) {
+        if (!spans.empty() && spans.back().first == entry.next) {
+          spans.back().first = *index;
+        } else {
+          spans.emplace_back(*index, entry.next);
+        }
+        ++match_count;
       }
     }
-    // Matches were collected from the tail, so indices are descending and
-    // deleting one never shifts a match still waiting to be deleted.
-    for (const size_t match : matches) {
-      DeleteRange(match, 1);
+    std::ranges::reverse(spans);
+  } else {
+    std::array<unsigned char, kListPackIntBufSize> int_buf{};
+    size_t index = kListPackHeaderSize;
+    while (lp_[index] != kListPackEof && (!limited || match_count < limit)) {
+      const DecodedEntry entry = DecodeEntry(index, int_buf.data());
+      if (ValueView(entry) == value) {
+        add_span(index, entry.next);
+        ++match_count;
+      }
+      index = entry.next;
     }
-    return matches.size();
+  }
+  if (spans.empty()) {
+    return 0;
   }
 
-  std::vector<std::pair<size_t, size_t>> ranges;
-  size_t match_count = 0;
-  std::optional<size_t> previous_match;
-  for (auto index = First(); index.has_value(); index = Next(*index)) {
-    size_t length = 0;
-    const auto* data = Get(*index, &length);
-    if (data == nullptr || std::string_view(reinterpret_cast<const char*>(data),
-                                            length) != value) {
-      continue;
-    }
-    if (previous_match.has_value() && Next(*previous_match) == index) {
-      ++ranges.back().second;
-    } else {
-      ranges.emplace_back(*index, 1);
-    }
-    previous_match = index;
-    ++match_count;
-    if (limited && match_count == limit) {
-      break;
-    }
+  // Slide each kept run down over the deleted spans in one pass. Backlens
+  // describe their own element, so moved elements stay valid.
+  const size_t listpack_bytes = TotalBytes();
+  size_t write = spans.front().first;
+  for (size_t i = 0; i < spans.size(); ++i) {
+    const size_t keep_begin = spans[i].second;
+    // The last run includes the EOF byte.
+    const size_t keep_end =
+        i + 1 < spans.size() ? spans[i + 1].first : listpack_bytes;
+    std::memmove(lp_.get() + write, lp_.get() + keep_begin,
+                 keep_end - keep_begin);
+    write += keep_end - keep_begin;
   }
-  // Delete from the back so earlier ranges keep their indices.
-  for (const auto& [index, count] : std::views::reverse(ranges)) {
-    DeleteRange(index, count);
+  const uint16_t num_of_elements = ElementCount();
+  // Shrink after the moves so every source range remains valid.
+  Realloc(write);
+  SetTotalBytes(write);
+  if (num_of_elements != kListPackNumEleUnknown) {
+    SetNumOfElements(static_cast<uint16_t>(num_of_elements - match_count));
   }
   return match_count;
 }
