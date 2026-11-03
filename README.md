@@ -32,6 +32,13 @@ cmake --preset release
 cmake --build --preset release
 ```
 
+The server allocates its objects with the bundled
+[mimalloc](https://github.com/microsoft/mimalloc) (`third_party/mimalloc`,
+v2.5.2). It replaces global `operator new` and `delete` in the server
+executable only, not libc `malloc`, so it behaves the same on Linux and macOS.
+Sanitizer builds keep the default allocator. Configure with
+`-DREDIS_SIMPLE_USE_MIMALLOC=OFF` to use the system allocator.
+
 ## Run
 
 Start the server:

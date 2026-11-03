@@ -253,6 +253,12 @@ Before committing, run the relevant build and tests.
   explicitly when they do not belong in a library target.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
+- The `redis_simple` executable links the bundled mimalloc submodule and
+  replaces global `operator new`/`delete` through `mimalloc-new-delete.h` in
+  `server/main.cpp`, its only allowed include site. Keep libc `malloc`
+  unoverridden, keep sanitizer builds on the default allocator, and keep
+  `REDIS_SIMPLE_USE_MIMALLOC=OFF` building. Allocate with `new` (containers,
+  `std::make_unique`), never `malloc`, so allocations go through mimalloc.
 - Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
   `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project
   conventions.

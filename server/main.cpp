@@ -4,6 +4,13 @@
 #include "server/server.h"
 #include "server/server_options.h"
 
+#ifdef REDIS_SIMPLE_USE_MIMALLOC
+// Replaces the global operator new and delete, which every container and
+// object allocation in the server goes through, with mimalloc. Include it
+// in exactly one translation unit.
+#include <mimalloc-new-delete.h>
+#endif
+
 int main(int argc, char* argv[]) {
   const auto result = redis_simple::ParseServerOptions(argc, argv);
   if (result.status == redis_simple::OptionsStatus::kHelp) {
