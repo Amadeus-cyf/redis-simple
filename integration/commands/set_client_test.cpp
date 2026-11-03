@@ -146,11 +146,17 @@ int Run() {
   if (!ExpectMembers(&cli, "SINTER integration_set missing_set\r\n", {})) {
     return EXIT_FAILURE;
   }
-  if (!ExpectReply(
-          &cli, {"SUNION integration_set set_wrong_type\r\n",
-                 "WRONGTYPE Operation against a key holding the wrong kind of "
-                 "value\n"})) {
-    return EXIT_FAILURE;
+  // A missing key does not hide a wrong-type key after it.
+  for (const std::string_view command :
+       {"SUNION integration_set set_wrong_type\r\n",
+        "SINTER missing_set set_wrong_type\r\n",
+        "SINTER integration_set missing_set set_wrong_type\r\n",
+        "SDIFF missing_set set_wrong_type\r\n"}) {
+    if (!ExpectReply(&cli, {std::string(command),
+                            "WRONGTYPE Operation against a key holding the "
+                            "wrong kind of value\n"})) {
+      return EXIT_FAILURE;
+    }
   }
 
   const std::vector<Case> remove_cases = {

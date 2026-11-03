@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -33,6 +34,17 @@ TEST(ZSetListPackTest, PreservesNumericKeyWhileReadingScore) {
   ASSERT_EQ(entries.size(), 1);
   EXPECT_EQ(entries.front()->key, "0");
   EXPECT_EQ(entries.front()->score, 42.0);
+}
+
+TEST(ZSetListPackTest, StoresNegativeZeroAsZero) {
+  // Redis stores whole-number listpack scores as integers, so -0 reads back
+  // as 0; the skiplist encoding keeps the sign.
+  ZSetListPack zset;
+  ASSERT_TRUE(zset.InsertOrUpdate("member", -0.0));
+  const auto score = zset.Score("member");
+  ASSERT_TRUE(score.has_value());
+  EXPECT_EQ(*score, 0.0);
+  EXPECT_FALSE(std::signbit(*score));
 }
 
 TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {

@@ -74,13 +74,21 @@ int Run() {
        "WRONGTYPE Operation against a key holding the wrong kind of value\n"},
       {"ZRANGE integration_zset 0 1 WTHSCORES\r\n", "ERR syntax error\n"},
       {"ZRANGE integration_zset 0 1 LIMIT 0\r\n", "ERR syntax error\n"},
-      {"ZRANGE integration_zset 0 1 LIMIT -1 1\r\n", "ERR syntax error\n"},
-      {"ZRANGE integration_zset 0 1 LIMIT 0 -1\r\n", "ERR syntax error\n"},
-      {"ZRANGE integration_zset (0 1\r\n", "ERR syntax error\n"},
-      {"ZADD integration_zset 1junk invalid\r\n", "ERR syntax error\n"},
-      {"ZADD integration_zset nan invalid\r\n", "ERR syntax error\n"},
-      {"ZRANGE integration_zset 1junk 2 BYSCORE\r\n", "ERR syntax error\n"},
+      {"ZRANGE integration_zset 0 1 LIMIT -1 1\r\n",
+       "ERR syntax error, LIMIT is only supported in combination with either "
+       "BYSCORE or BYLEX\n"},
+      {"ZRANGE integration_zset (0 1\r\n",
+       "ERR value is not an integer or out of range\n"},
+      {"ZADD integration_zset 1junk invalid\r\n",
+       "ERR value is not a valid float\n"},
+      {"ZADD integration_zset nan invalid\r\n",
+       "ERR value is not a valid float\n"},
+      {"ZRANGE integration_zset 1junk 2 BYSCORE\r\n",
+       "ERR min or max is not a float\n"},
       {"ZCARD integration_zset\r\n", "2\n"},
+      // Like Redis, the listpack encoding stores -0 as the integer 0.
+      {"ZADD zset_negative_zero -0 member\r\n", "1\n"},
+      {"ZSCORE zset_negative_zero member\r\n", "0\n"},
   };
   for (const Case& test_case : cases) {
     if (!ExpectReply(&cli, test_case)) {
@@ -90,6 +98,16 @@ int Run() {
 
   if (!ExpectMembersInOrder(&cli, "ZRANGE integration_zset 0 1\r\n",
                             {"ele1", "ele2"})) {
+    return EXIT_FAILURE;
+  }
+  // Like Redis, a rank range ignores LIMIT with a count of -1.
+  if (!ExpectMembersInOrder(&cli, "ZRANGE integration_zset 0 1 LIMIT 0 -1\r\n",
+                            {"ele1", "ele2"})) {
+    return EXIT_FAILURE;
+  }
+  // A negative LIMIT offset selects nothing.
+  if (!ExpectMembersInOrder(
+          &cli, "ZRANGE integration_zset 1 2 BYSCORE LIMIT -1 1\r\n", {})) {
     return EXIT_FAILURE;
   }
   if (!ExpectMembersInOrder(

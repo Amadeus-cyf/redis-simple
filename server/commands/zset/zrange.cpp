@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -35,6 +36,9 @@ enum class RangeMode : std::uint8_t {
 enum class RangeStatus : std::uint8_t {
   kOk,
   kSyntaxError,
+  kLimitWithoutScore,
+  kNotAnInteger,
+  kNotAFloat,
   kWrongType,
 };
 
@@ -42,22 +46,28 @@ struct RangeOptions {
   bool by_score{false};
   bool reverse{false};
   bool with_scores{false};
+  // A negative LIMIT offset, which Redis answers with an empty range.
+  bool empty{false};
   std::optional<LimitSpec> limit;
 };
 
-bool ParseRangeOptions(const CommandArgs& args, RangeMode mode, bool reverse,
-                       RangeOptions* const options) {
+// Parses options in Redis' order: syntax errors and LIMIT values first, then
+// a LIMIT used without BYSCORE. WITHSCORES and LIMIT may repeat, and the last
+// LIMIT wins; BYSCORE and REV may not.
+RangeStatus ParseRangeOptions(const CommandArgs& args, RangeMode mode,
+                              bool reverse, RangeOptions* const options) {
   RangeOptions parsed;
   parsed.by_score = mode == RangeMode::kScore;
   parsed.reverse = reverse;
   bool has_by_score = parsed.by_score;
   bool has_reverse = parsed.reverse;
+  bool limit_requires_score = false;
 
   for (size_t i = 3; i < args.size();) {
     const std::string_view option = args[i];
     if (utils::EqualsIgnoreCase(option, kFlagByScore)) {
       if (has_by_score) {
-        return false;
+        return RangeStatus::kSyntaxError;
       }
       has_by_score = true;
       parsed.by_score = true;
@@ -66,7 +76,7 @@ bool ParseRangeOptions(const CommandArgs& args, RangeMode mode, bool reverse,
     }
     if (utils::EqualsIgnoreCase(option, kFlagReverse)) {
       if (has_reverse) {
-        return false;
+        return RangeStatus::kSyntaxError;
       }
       has_reverse = true;
       parsed.reverse = true;
@@ -74,37 +84,41 @@ bool ParseRangeOptions(const CommandArgs& args, RangeMode mode, bool reverse,
       continue;
     }
     if (utils::EqualsIgnoreCase(option, kFlagWithScores)) {
-      if (parsed.with_scores) {
-        return false;
-      }
       parsed.with_scores = true;
       ++i;
       continue;
     }
-    if (!utils::EqualsIgnoreCase(option, kFlagLimit) ||
-        parsed.limit.has_value() || i + 2 >= args.size()) {
-      return false;
+    if (!utils::EqualsIgnoreCase(option, kFlagLimit) || i + 2 >= args.size()) {
+      return RangeStatus::kSyntaxError;
     }
 
     int64_t offset = 0;
     int64_t count = 0;
-    if (!utils::ToInt64(args[i + 1], &offset) || offset < 0 ||
+    if (!utils::ToInt64(args[i + 1], &offset) ||
         !utils::ToInt64(args[i + 2], &count)) {
-      return false;
+      return RangeStatus::kNotAnInteger;
     }
+    parsed.empty = offset < 0;
+    // Like Redis, only a count other than -1 conflicts with a rank range.
+    limit_requires_score = count != -1;
     parsed.limit.emplace(
-        static_cast<size_t>(offset),
+        static_cast<size_t>(std::max<int64_t>(offset, 0)),
         count < 0 ? std::nullopt
                   : std::optional<size_t>(static_cast<size_t>(count)));
     i += 3;
   }
 
   if (parsed.limit.has_value() && !parsed.by_score) {
-    return false;
+    if (limit_requires_score) {
+      return RangeStatus::kLimitWithoutScore;
+    }
+    // A rank range ignores LIMIT entirely, including its offset.
+    parsed.limit.reset();
+    parsed.empty = false;
   }
 
   *options = parsed;
-  return true;
+  return RangeStatus::kOk;
 }
 
 bool ParseRankRange(std::string_view start, std::string_view end,
@@ -151,7 +165,7 @@ RangeStatus RangeByRank(Client* const client, const CommandArgs& args,
                         ZSetEntryList* const result) {
   RangeByRankSpec spec;
   if (!ParseRankRange(args[1], args[2], &spec)) {
-    return RangeStatus::kSyntaxError;
+    return RangeStatus::kNotAnInteger;
   }
   ApplyRangeOptions(options, &spec);
 
@@ -174,7 +188,7 @@ RangeStatus RangeByScore(Client* const client, const CommandArgs& args,
   const std::string_view start = options.reverse ? args[2] : args[1];
   const std::string_view stop = options.reverse ? args[1] : args[2];
   if (!ParseScoreRange(start, stop, &spec)) {
-    return RangeStatus::kSyntaxError;
+    return RangeStatus::kNotAFloat;
   }
   ApplyRangeOptions(options, &spec);
 
@@ -210,18 +224,36 @@ std::string EncodeZRangeReply(const ZSetEntryList& result, bool with_scores,
 }
 
 void AddRangeError(Client* const client, RangeStatus status) {
-  if (status == RangeStatus::kWrongType) {
-    client->AddReply(reply::kWrongTypeError);
-  } else {
-    client->AddReply(reply::kSyntaxError);
+  switch (status) {
+    case RangeStatus::kOk:
+      return;
+    case RangeStatus::kSyntaxError:
+      client->AddReply(reply::kSyntaxError);
+      return;
+    case RangeStatus::kLimitWithoutScore:
+      client->AddReply(reply::FromError(
+          "ERR syntax error, LIMIT is only supported in combination with "
+          "either BYSCORE or BYLEX"));
+      return;
+    case RangeStatus::kNotAnInteger:
+      client->AddReply(reply::kNotAnIntegerError);
+      return;
+    case RangeStatus::kNotAFloat:
+      client->AddReply(reply::kMinMaxNotFloatError);
+      return;
+    case RangeStatus::kWrongType:
+      client->AddReply(reply::kWrongTypeError);
+      return;
   }
 }
 
 void AddRangeReply(Client* const client, RangeMode mode, bool reverse) {
   const auto& args = client->Args();
   RangeOptions options;
-  if (!ParseRangeOptions(args, mode, reverse, &options)) {
-    client->AddReply(reply::kSyntaxError);
+  if (const RangeStatus parsed =
+          ParseRangeOptions(args, mode, reverse, &options);
+      parsed != RangeStatus::kOk) {
+    AddRangeError(client, parsed);
     return;
   }
 
@@ -232,6 +264,9 @@ void AddRangeReply(Client* const client, RangeMode mode, bool reverse) {
   if (status != RangeStatus::kOk) {
     AddRangeError(client, status);
     return;
+  }
+  if (options.empty) {
+    entries.clear();
   }
   client->AddReply(
       EncodeZRangeReply(entries, options.with_scores, client->Protocol()));
@@ -261,7 +296,7 @@ void HandleZCount(Client* const client) {
   const auto& args = client->Args();
   RangeByScoreSpec spec;
   if (!ParseScoreRange(args[1], args[2], &spec)) {
-    client->AddReply(reply::kSyntaxError);
+    client->AddReply(reply::kMinMaxNotFloatError);
     return;
   }
 

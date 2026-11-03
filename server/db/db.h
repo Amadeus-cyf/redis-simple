@@ -41,6 +41,8 @@ enum class ExpireCondition {
   kIfHasExpiry,
   kGreaterThan,
   kLessThan,
+  // XX and LT together: the key must have a TTL, and the new one is earlier.
+  kIfHasExpiryAndLessThan,
 };
 
 struct ExpireSampleResult {

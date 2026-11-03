@@ -248,7 +248,7 @@ TEST(ClientTest, RejectsInvalidArityBeforeDispatch) {
   ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(request.size()));
   EXPECT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
   EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()),
-            "-ERR wrong number of arguments\r\n+PONG\r\n");
+            "-ERR wrong number of arguments for 'get' command\r\n+PONG\r\n");
 }
 
 TEST(ClientTest, RequiresAuthWhenPasswordIsSet) {
@@ -378,22 +378,24 @@ TEST(ClientTest, ExecReportsRuntimeErrorsAndKeepsGoing) {
 
 TEST(ClientTest, RejectedCommandsAbortTransaction) {
   auto [client, peer] = CreateClient();
-  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
-                      EncodeRequest({"MULTI"}) +
-                          EncodeRequest({"SET", "tx-aborted", "1"}) +
-                          EncodeRequest({"GET"}) + EncodeRequest({"EXEC"})),
-            "+OK\r\n+QUEUED\r\n-ERR wrong number of arguments\r\n"
-            "-EXECABORT Transaction discarded because of previous "
-            "errors.\r\n");
+  EXPECT_EQ(
+      Roundtrip(client.get(), peer.Get(),
+                EncodeRequest({"MULTI"}) +
+                    EncodeRequest({"SET", "tx-aborted", "1"}) +
+                    EncodeRequest({"GET"}) + EncodeRequest({"EXEC"})),
+      "+OK\r\n+QUEUED\r\n-ERR wrong number of arguments for 'get' command\r\n"
+      "-EXECABORT Transaction discarded because of previous "
+      "errors.\r\n");
   EXPECT_FALSE(client->InTransaction());
   EXPECT_EQ(client->Db()->LookupKey("tx-aborted"), nullptr);
 
-  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
-                      EncodeRequest({"MULTI"}) + EncodeRequest({"NOSUCH"}) +
-                          EncodeRequest({"EXEC"})),
-            "+OK\r\n-ERR unknown command 'NOSUCH'\r\n"
-            "-EXECABORT Transaction discarded because of previous "
-            "errors.\r\n");
+  EXPECT_EQ(
+      Roundtrip(client.get(), peer.Get(),
+                EncodeRequest({"MULTI"}) + EncodeRequest({"NOSUCH"}) +
+                    EncodeRequest({"EXEC"})),
+      "+OK\r\n-ERR unknown command 'NOSUCH', with args beginning with: \r\n"
+      "-EXECABORT Transaction discarded because of previous "
+      "errors.\r\n");
 }
 
 TEST(ClientTest, TransactionCommandsValidateState) {

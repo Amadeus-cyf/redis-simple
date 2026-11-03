@@ -67,7 +67,7 @@ int Run() {
       // Commands rejected while queueing abort the transaction.
       {a, {"MULTI"}, "OK\n"},
       {a, {"INCR", "tx_counter"}, "QUEUED\n"},
-      {a, {"GET"}, "ERR wrong number of arguments\n"},
+      {a, {"GET"}, "ERR wrong number of arguments for 'get' command\n"},
       {a,
        {"EXEC"},
        "EXECABORT Transaction discarded because of previous "

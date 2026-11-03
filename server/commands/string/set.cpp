@@ -10,6 +10,7 @@
 #include "server/commands/handlers.h"
 #include "server/db/db.h"
 #include "server/reply.h"
+#include "utils/check.h"
 #include "utils/string_utils.h"
 #include "utils/time_utils.h"
 
@@ -54,92 +55,144 @@ bool MillisecondsFromSeconds(int64_t seconds, int64_t* milliseconds) {
   return true;
 }
 
-// Parses the option at `*idx` and advances past it.
+enum class ExpireUnit : uint8_t {
+  kNone,
+  kRelativeSeconds,
+  kRelativeMilliseconds,
+  kAbsoluteSeconds,
+  kAbsoluteMilliseconds,
+};
+
+enum class ParseStatus : uint8_t {
+  kOk,
+  kSyntaxError,
+  kNotAnInteger,
+  kInvalidExpire,
+};
+
+// Parses the option at `*idx` and advances past it. An expiration's value is
+// only recorded here, so syntax errors win over value errors, as in Redis.
 bool ParseSetOption(const CommandArgs& args, size_t* const idx,
-                    SetArgs* const set_args) {
+                    SetArgs* const set_args, ExpireUnit* const unit,
+                    std::string_view* const expire_arg) {
   const std::string_view option = args[*idx];
   const bool if_missing = utils::EqualsIgnoreCase(option, "NX");
   const bool if_exists = utils::EqualsIgnoreCase(option, "XX");
+  // As in Redis, any option may repeat; only conflicting options are errors.
   if (if_missing || if_exists) {
-    if (set_args->condition != SetCondition::kNone) {
+    const SetCondition condition =
+        if_missing ? SetCondition::kIfMissing : SetCondition::kIfExists;
+    if (set_args->condition != SetCondition::kNone &&
+        set_args->condition != condition) {
       return false;
     }
-    set_args->condition =
-        if_missing ? SetCondition::kIfMissing : SetCondition::kIfExists;
+    set_args->condition = condition;
     ++(*idx);
     return true;
   }
   if (utils::EqualsIgnoreCase(option, "GET")) {
-    if (set_args->return_old_value) {
-      return false;
-    }
     set_args->return_old_value = true;
     ++(*idx);
     return true;
   }
   const bool keep_ttl = set_args->existing_ttl == db::ExistingTtl::kKeep;
   if (utils::EqualsIgnoreCase(option, "KEEPTTL")) {
-    if (set_args->expire > 0 || keep_ttl) {
+    if (*unit != ExpireUnit::kNone) {
       return false;
     }
     set_args->existing_ttl = db::ExistingTtl::kKeep;
     ++(*idx);
     return true;
   }
-  const bool relative_seconds = utils::EqualsIgnoreCase(option, "EX");
-  const bool relative_milliseconds = utils::EqualsIgnoreCase(option, "PX");
-  const bool absolute_seconds = utils::EqualsIgnoreCase(option, "EXAT");
-  const bool absolute_milliseconds = utils::EqualsIgnoreCase(option, "PXAT");
-  if (!relative_seconds && !relative_milliseconds && !absolute_seconds &&
-      !absolute_milliseconds) {
-    return false;
-  }
-  if (keep_ttl || set_args->expire > 0 || *idx + 1 >= args.size()) {
-    return false;
-  }
-  int64_t expiration = 0;
-  if (!utils::ToInt64(args[*idx + 1], &expiration) || expiration <= 0) {
-    return false;
-  }
-  if (relative_seconds || relative_milliseconds) {
-    const int64_t multiplier = relative_seconds ? kMillisecondsPerSecond : 1;
-    if (!ExpireAtFromTtl(expiration, multiplier, utils::NowInMilliseconds(),
-                         &set_args->expire)) {
-      return false;
-    }
-  } else if (absolute_seconds) {
-    if (!MillisecondsFromSeconds(expiration, &set_args->expire)) {
-      return false;
-    }
+  ExpireUnit option_unit = ExpireUnit::kNone;
+  if (utils::EqualsIgnoreCase(option, "EX")) {
+    option_unit = ExpireUnit::kRelativeSeconds;
+  } else if (utils::EqualsIgnoreCase(option, "PX")) {
+    option_unit = ExpireUnit::kRelativeMilliseconds;
+  } else if (utils::EqualsIgnoreCase(option, "EXAT")) {
+    option_unit = ExpireUnit::kAbsoluteSeconds;
+  } else if (utils::EqualsIgnoreCase(option, "PXAT")) {
+    option_unit = ExpireUnit::kAbsoluteMilliseconds;
   } else {
-    set_args->expire = expiration;
-  }
-  if (set_args->expire <= 0) {
     return false;
   }
+  // Repeating the same expiration option is allowed, and the last one wins.
+  if (keep_ttl || (*unit != ExpireUnit::kNone && *unit != option_unit) ||
+      *idx + 1 >= args.size()) {
+    return false;
+  }
+  *unit = option_unit;
+  *expire_arg = args[*idx + 1];
   *idx += 2;
   return true;
 }
 
-std::optional<SetArgs> ParseArgs(const CommandArgs& args) {
-  SetArgs set_args;
-  set_args.key = args[0];
-  set_args.value = args[1];
+// Converts the expiration option's value to an absolute time in milliseconds.
+ParseStatus ResolveExpire(ExpireUnit unit, std::string_view expire_arg,
+                          int64_t* const expire) {
+  int64_t expiration = 0;
+  if (!utils::ToInt64(expire_arg, &expiration)) {
+    return ParseStatus::kNotAnInteger;
+  }
+  if (expiration <= 0) {
+    return ParseStatus::kInvalidExpire;
+  }
+  bool valid = false;
+  switch (unit) {
+    case ExpireUnit::kRelativeSeconds:
+    case ExpireUnit::kRelativeMilliseconds:
+      valid = ExpireAtFromTtl(
+          expiration,
+          unit == ExpireUnit::kRelativeSeconds ? kMillisecondsPerSecond : 1,
+          utils::NowInMilliseconds(), expire);
+      break;
+    case ExpireUnit::kAbsoluteSeconds:
+      valid = MillisecondsFromSeconds(expiration, expire);
+      break;
+    case ExpireUnit::kAbsoluteMilliseconds:
+      *expire = expiration;
+      valid = true;
+      break;
+    case ExpireUnit::kNone:
+      utils::Unreachable();
+  }
+  return valid && *expire > 0 ? ParseStatus::kOk : ParseStatus::kInvalidExpire;
+}
+
+ParseStatus ParseArgs(const CommandArgs& args, SetArgs* const set_args) {
+  set_args->key = args[0];
+  set_args->value = args[1];
+  ExpireUnit unit = ExpireUnit::kNone;
+  std::string_view expire_arg;
   for (size_t i = 2; i < args.size();) {
-    if (!ParseSetOption(args, &i, &set_args)) {
-      return std::nullopt;
+    if (!ParseSetOption(args, &i, set_args, &unit, &expire_arg)) {
+      return ParseStatus::kSyntaxError;
     }
   }
-  return set_args;
+  if (unit == ExpireUnit::kNone) {
+    return ParseStatus::kOk;
+  }
+  return ResolveExpire(unit, expire_arg, &set_args->expire);
 }
 }  // namespace
 
 void HandleSet(Client* const client) {
-  const auto args = ParseArgs(client->Args());
-  if (!args.has_value()) {
-    client->AddReply(reply::kSyntaxError);
-    return;
+  SetArgs parsed;
+  switch (ParseArgs(client->Args(), &parsed)) {
+    case ParseStatus::kOk:
+      break;
+    case ParseStatus::kSyntaxError:
+      client->AddReply(reply::kSyntaxError);
+      return;
+    case ParseStatus::kNotAnInteger:
+      client->AddReply(reply::kNotAnIntegerError);
+      return;
+    case ParseStatus::kInvalidExpire:
+      client->AddReply(
+          reply::FromError("ERR invalid expire time in 'set' command"));
+      return;
   }
+  const SetArgs* const args = &parsed;
   db::RedisDb* const redis_db = client->Db();
   const db::RedisObject* const existing = redis_db->LookupKey(args->key);
   std::optional<std::string> old_value;

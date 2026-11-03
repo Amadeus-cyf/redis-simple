@@ -85,7 +85,7 @@ void AddHashListReply(Client* const client, Visit visit) {
 void HandleHSet(Client* const client) {
   const auto& args = client->Args();
   if (args.size() % 2 == 0) {
-    client->AddReply(reply::kWrongNumberOfArguments);
+    client->AddReply(reply::WrongNumberOfArguments("hset"));
     return;
   }
   Hash* hash = nullptr;
@@ -214,8 +214,7 @@ void HandleHIncrBy(Client* const client) {
   const auto& args = client->Args();
   int64_t increment = 0;
   if (!utils::ToInt64(args[2], &increment)) {
-    client->AddReply(
-        reply::FromError("ERR value is not an integer or out of range"));
+    client->AddReply(reply::kNotAnIntegerError);
     return;
   }
   Hash* hash = nullptr;
@@ -227,10 +226,13 @@ void HandleHIncrBy(Client* const client) {
   hash->VisitValue(args[1], [&current, &parsed](std::string_view value) {
     parsed = utils::ToInt64(value, &current);
   });
+  if (!parsed) {
+    client->AddReply(reply::FromError("ERR hash value is not an integer"));
+    return;
+  }
   int64_t next = 0;
-  if (!parsed || !AddWithOverflowCheck(current, increment, &next)) {
-    client->AddReply(
-        reply::FromError("ERR hash value is not an integer or out of range"));
+  if (!AddWithOverflowCheck(current, increment, &next)) {
+    client->AddReply(reply::kOverflowError);
     return;
   }
   hash->Set(args[1], std::to_string(next));

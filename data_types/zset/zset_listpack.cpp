@@ -32,7 +32,9 @@ bool ZSetListPack::InsertOrUpdate(std::string_view key, double score) {
     }
     DeleteKeyScorePair(*key_idx);
   }
-  const std::string score_str = utils::FloatToString(score);
+  // Like Redis, the listpack encoding stores a whole-number score as an
+  // integer, which drops the sign of negative zero. The skiplist keeps it.
+  const std::string score_str = utils::FloatToString(score == 0 ? 0.0 : score);
   auto idx = listpack_->First();
   while (idx.has_value()) {
     const auto entry = EntryAt(*idx);

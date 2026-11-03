@@ -70,15 +70,22 @@ std::optional<SetReply> SInter(db::RedisDb* const redis_db,
                                const CommandArgs& keys) {
   std::vector<const Set*> sets;
   sets.reserve(keys.size());
+  bool any_missing = false;
+  // Like Redis, check every key's type before a missing key empties the
+  // result, so a later wrong-type key still fails the command.
   for (std::string_view key : keys) {
     const SetLookup lookup = FindSet(redis_db, key);
-    if (lookup.status == SetLookupStatus::kMissing) {
-      return SetReply{};
-    }
-    if (lookup.status != SetLookupStatus::kOk) {
+    if (lookup.status == SetLookupStatus::kWrongType) {
       return std::nullopt;
     }
+    if (lookup.status == SetLookupStatus::kMissing) {
+      any_missing = true;
+      continue;
+    }
     sets.push_back(lookup.set);
+  }
+  if (any_missing) {
+    return SetReply{};
   }
 
   auto smallest = std::ranges::min_element(sets, {}, &Set::Size);
@@ -158,10 +165,7 @@ std::optional<SetReply> SUnion(db::RedisDb* const redis_db,
 std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
                               const CommandArgs& keys) {
   const SetLookup first = FindSet(redis_db, keys.front());
-  if (first.status == SetLookupStatus::kMissing) {
-    return SetReply{};
-  }
-  if (first.status != SetLookupStatus::kOk) {
+  if (first.status == SetLookupStatus::kWrongType) {
     return std::nullopt;
   }
 
@@ -176,6 +180,11 @@ std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
       return std::nullopt;
     }
     subtract_sets.push_back(lookup.set);
+  }
+  // Every key's type is checked first, as in Redis, even when the first set
+  // is missing and the difference is empty.
+  if (first.status == SetLookupStatus::kMissing) {
+    return SetReply{};
   }
 
   std::string body;

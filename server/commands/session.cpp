@@ -33,6 +33,18 @@ std::string EncodeHello(reply::ProtocolVersion protocol) {
 void HandleAuth(Client* const client) {
   const auto& args = client->Args();
   const std::string_view password = client->RequiredPassword();
+  if (password.empty() && args.size() == 2) {
+    // Without a password the default user accepts any password, as in Redis'
+    // nopass default user; other user names do not exist.
+    if (args[0] == "default") {
+      client->SetAuthenticated(true);
+      client->AddReply(reply::kOk);
+    } else {
+      client->AddReply(reply::FromError(
+          "WRONGPASS invalid username-password pair or user is disabled."));
+    }
+    return;
+  }
   if (password.empty()) {
     client->AddReply(reply::FromError(
         "ERR AUTH <password> called without any password configured for the "
@@ -55,7 +67,12 @@ void HandleHello(Client* const client) {
   auto protocol = client->Protocol();
   if (!args.empty()) {
     int64_t version = 0;
-    if (!utils::ToInt64(args[0], &version) || (version != 2 && version != 3)) {
+    if (!utils::ToInt64(args[0], &version)) {
+      client->AddReply(reply::FromError(
+          "ERR Protocol version is not an integer or out of range"));
+      return;
+    }
+    if (version != 2 && version != 3) {
       client->AddReply(
           reply::FromError("NOPROTO unsupported protocol version"));
       return;

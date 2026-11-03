@@ -95,7 +95,7 @@ constexpr std::array kCommandTable = {
     ReadCommand("EXISTS", key::HandleExists, VariableArity(1), AllKeys()),
     WriteCommand("EXPIRE", key::HandleExpire, VariableArity(2), OneKey()),
     WriteCommand("EXPIREAT", key::HandleExpireAt, VariableArity(2), OneKey()),
-    WriteCommand("FLUSHDB", key::HandleFlushDb, FixedArity(0)),
+    WriteCommand("FLUSHDB", key::HandleFlushDb, VariableArity(0)),
     ReadCommand("GET", strings::HandleGet, FixedArity(1), OneKey()),
     WriteCommand("HDEL", hashes::HandleHDel, VariableArity(2), OneKey()),
     ConnectionCommand("HELLO", session::HandleHello, {0, 1}),

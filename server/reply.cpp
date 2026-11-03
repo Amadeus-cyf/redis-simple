@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -148,13 +151,36 @@ std::string FromError(std::string_view message) {
   return reply;
 }
 
-std::string WrongNumberOfArguments() {
-  return std::string(kWrongNumberOfArguments);
+std::string WrongNumberOfArguments(std::string_view command) {
+  std::string message = "ERR wrong number of arguments for '";
+  std::ranges::transform(command, std::back_inserter(message), [](char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  });
+  message.append("' command");
+  return FromError(message);
 }
 
-std::string UnknownCommand(std::string_view command) {
+std::string UnknownCommand(std::string_view command,
+                           std::span<const std::string_view> args) {
+  // Matches Redis' "'%.128s'" name and its argument list, which stops once
+  // 128 bytes are used and cuts the argument that crosses that limit.
+  constexpr size_t kLimit = 128;
+  std::string quoted_args;
+  for (const std::string_view arg : args) {
+    if (quoted_args.size() >= kLimit) {
+      break;
+    }
+    quoted_args.push_back('\'');
+    quoted_args.append(arg.substr(0, kLimit - (quoted_args.size() - 1)));
+    quoted_args.append("' ");
+  }
   std::string message = "ERR unknown command '";
-  message.append(command.data(), command.size()).push_back('\'');
+  message.append(command.substr(0, kLimit))
+      .append("', with args beginning with: ")
+      .append(quoted_args);
+  // Like Redis, keep client-supplied newlines from breaking the protocol.
+  std::ranges::replace(message, '\r', ' ');
+  std::ranges::replace(message, '\n', ' ');
   return FromError(message);
 }
 

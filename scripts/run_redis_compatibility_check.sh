@@ -162,6 +162,35 @@ MULTI
 GET tx_key
 EXEC"
 
+# Error replies match Redis' wording exactly.
+compare SET error_string text
+compare SADD error_set member
+compare HSET error_hash text value
+compare ZADD error_zset 1 member
+compare GET
+compare NOTACOMMAND first "second arg"
+compare INCR error_string
+compare DECRBY error_string -9223372036854775808
+compare SET error_key value EX 0
+compare SET error_key value EX soon
+compare EXPIRE error_string 10 SOON
+compare EXPIRE error_string 10 NX GT
+compare EXPIRE error_string 10 GT LT
+compare EXPIREAT error_string 9223372036854775807
+compare SCAN 0 COUNT 0
+compare HINCRBY error_hash text 1
+compare ZADD error_zset soon member
+compare ZRANGE error_zset soon 1
+compare ZRANGE error_zset 0 1 LIMIT 0 1
+compare ZRANGEBYSCORE error_zset soon 1
+compare ZCOUNT error_zset 0 soon
+compare HELLO three
+compare FLUSHDB NOW
+compare SINTER missing_set error_string
+compare SDIFF missing_set error_string
+compare ZADD negative_zero -0 member
+compare ZSCORE negative_zero member
+
 "${redis_cli}" -3 -h 127.0.0.1 -p "${server_port}" --raw \
   GET missing_resp3_key >/dev/null
 
