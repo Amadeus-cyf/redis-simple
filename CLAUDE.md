@@ -1,6 +1,249 @@
 # CLAUDE.md
 
-Project guidance for Claude lives in `AGENTS.md`, shared with other coding
-agents. Read and follow it:
+Guidance for AI coding agents working in this repository.
 
-@AGENTS.md
+## Project Style
+
+- Keep this a modern C++23 project. `.clang-format` stays at `c++20`, the
+  newest value clang-format accepts; the formatting rules are the same.
+- Follow Google C++ style and the checked-in `.clang-format`.
+- Prefer clear, simple modern C++ over legacy patterns. Use the standard
+  library where it fits (`std::span`, `std::source_location`,
+  `starts_with`/`ends_with`, `<bit>`, concepts, `std::ranges` algorithms
+  with projections, `std::cmp_*` for mixed-sign comparisons), but avoid
+  `std::format` and `std::print`, which need newer standard libraries than
+  the minimum compilers in `README.md`. CI runs clang-tidy 22, which
+  checks more of these than older local versions do.
+- Keep naming consistent with nearby code.
+- Use `#define` header guards named `REDIS_SIMPLE_<PATH>_<FILE>_H_`, not
+  `#pragma once`.
+- Do not use exceptions. Report recoverable failures through return values
+  (`bool`, `std::optional`, status enums, or `nullptr`), and guard
+  programming errors with `RS_CHECK` / `utils::Unreachable()` from
+  `utils/check.h`, which abort and stay enabled in release builds. Test them
+  with `EXPECT_DEATH` in suites named `<Suite>DeathTest`, which the macOS leak
+  check skips. The only `catch` blocks are where `std::thread` reports a
+  failure to start.
+- Spell project includes from the repository root (`"server/db/db.h"`), and
+  include GoogleTest as `<gtest/gtest.h>`.
+- Keep objects with static storage duration trivially destructible. When one
+  must hold a non-trivial type, leak it (`static T& t = *new T;`).
+- Use `Create()` for owning factory functions and return `std::unique_ptr`
+  instead of owning raw pointers.
+- Prefer concise accessor names such as `Type()`, `Encoding()`, and
+  `TotalBytes()` over Java-style `Get...` names for new or renamed APIs.
+- Prefer `std::string_view` for read-only string inputs and visitor-style
+  traversal for hot paths; keep vector-returning helpers for convenience APIs
+  and tests, not command execution paths that can stream replies directly.
+- Command handlers should read arguments through `CommandArgs`
+  (`std::string_view`s into the client query buffer). Copy arguments only at an
+  ownership boundary, such as storing a key/value in the DB or data structure.
+- Keep request decoding incremental and zero-copy. Standard RESP arrays are the
+  primary wire format; inline commands remain a compatibility path.
+- Keep protocol-sensitive replies based on the client's negotiated RESP
+  version. Connections default to RESP2 and may switch through `HELLO`.
+- Pass `CommandArgs` by const reference instead of copying its view vector.
+  Move completed `std::string` replies into `Client::AddReply`; use the
+  `std::string_view` overload only for borrowed reply data.
+- Add comments only when they clarify non-obvious behavior.
+- Keep command handler declarations grouped in `server/commands/handlers.h`;
+  avoid per-command headers unless a handler becomes a broader shared API.
+- Keep command names, arity, access mode, and key positions in the sorted
+  metadata table in `server/commands/command.cpp`. Preserve its allocation-free,
+  case-insensitive lookup path: `Find` hashes the name with branch-free case
+  folding and probes a compile-time hash index built from the table, whose
+  names must be upper-case letters only and at most 16 bytes.
+- When adding or changing supported commands, update the README command
+  coverage list and the relevant command-family integration test.
+- Keep reply encoding helpers directly under `server/`, and keep database
+  state and Redis object wrappers under `server/db/`.
+- Keep production and command integration servers on the shared `Server::Run`
+  lifecycle. Signal handlers may only update signal-safe state; cleanup belongs
+  on the event-loop thread.
+- Keep AOF propagation at the successful command-mutation boundary. Preserve
+  command order, encode relative TTLs as absolute `PEXPIREAT` records, and do
+  not copy argument payloads beyond the owned persistence record.
+- `Aof::Append` only encodes into the pending batch. The read handler calls
+  `Aof::Flush` once per batch of commands, before any replies are written;
+  call `Flush` before arming test failures that depend on file-write order.
+- Reply directly after processing a client's input; install a write callback
+  only while output remains unsent. Read once per readable event.
+- Rely on the command table for arity in handlers, and use
+  `server/commands/lookup.h` for typed lookups instead of re-checking the
+  object type and null database in each command.
+- Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
+  only when it is new.
+- `RedisDb` operations hash their key once as an `in_memory::HashedKey` and
+  pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
+  hash. Keep operations that touch more than one of those dicts on that path
+  instead of looking the key up by `std::string_view` in each.
+- String-keyed `Dict`s hash with process-seeded SipHash-1-3
+  (`utils/siphash.h`) to resist hash flooding. Do not depend on iteration or
+  `SCAN` order in tests; it changes between runs.
+- `Skiplist` stores keys by value, orders them with a three-way comparison,
+  and searches by any probe type its comparator can compare a key against. A
+  lookup probe must identify at most one key; a range-bound probe may match
+  many. The sorted-set skiplist searches score ranges by a bare `double`
+  bound and members by a `(score, string_view)` probe; do not reintroduce
+  sentinel entries, member copies for lookups, or min/max member tracking.
+  Change stored keys through `Skiplist::Update`, which repositions them.
+- `ListPack::ForEach`, `ForEachReverse`, and `ForEachPair` decode each
+  element once through `DecodeEntry`, which yields its value and the next
+  offset together. Prefer them over `Get` plus `Next` loops on read paths.
+  Listpack sorted sets read integer-encoded scores directly instead of
+  formatting and reparsing them.
+- Canonical integer strings are stored as `int64_t`. Read string objects
+  through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
+  `MutableString()` only to edit bytes in place, since it converts the value
+  back to raw form.
+- Store whole string values through `RedisDb::SetStringKey`, which overwrites
+  an existing string object in place with `RedisObject::AssignString` instead
+  of allocating a new object. `AssignString` applies the same integer-encoding
+  rule as `CreateWithString` and releases a buffer much larger than the new
+  value.
+- Only commands marked `AllowBeforeAuth` in the command table run before a
+  client authenticates when `--requirepass` is set.
+- Inside `MULTI`, every command is queued unless the command table marks it
+  `RunsImmediatelyInMulti` (`EXEC`, `DISCARD`, `MULTI`, `WATCH`, `QUIT`).
+  Queued arguments are copied once into the client's transaction buffer, the
+  ownership boundary for arguments that outlive a read. `EXEC` runs the queue
+  under the `EXEC` command's pinned clock.
+- `WATCH` invalidation lives in `RedisDb`: its key-level mutations (set,
+  delete, unlink, expire, persist, rename, flush, and expiration) touch watched
+  keys. Commands that edit a value in place are covered by `Client`, which
+  touches a single-key command's key after it calls `MarkModified()`. Keep new
+  key-level `RedisDb` mutations touching watchers, and keep
+  `TouchWatchedKey` a single branch when nothing is watched.
+- Wrap an `EXEC`'s AOF records with `Aof::BeginTransaction` and
+  `Aof::EndTransaction`, which add `MULTI`/`EXEC` records when there is more
+  than one. Replay applies a `MULTI` block only at its `EXEC` and truncates a
+  block cut off at the end of the file.
+- Keep AOF rewrite snapshots visitor-based and preserve the original AOF until
+  the snapshot and buffered mutation delta have been synced and atomically
+  installed. The normal append path should pay no copy cost when no rewrite is
+  active.
+- Bound AOF snapshot memory and replay command sizes together. Split large
+  strings into replay-safe commands and batch collections by encoded bytes, not
+  only element count.
+- Complete durable AOF replacement in this order: sync the temporary file,
+  rename it, then sync the parent directory. Keep failed rewrites observable
+  through `INFO persistence` without disabling a still-healthy original AOF.
+
+## Build And Test
+
+Use CMake presets:
+
+```sh
+cmake --preset debug
+cmake --build --preset debug
+```
+
+Run unit and integration tests separately:
+
+```sh
+ctest --preset debug -L unit --output-on-failure
+ctest --preset debug -L integration --output-on-failure
+```
+
+When changing behavior shared with Redis and a reference server is available,
+run:
+
+```sh
+scripts/run_redis_compatibility_check.sh build/debug/redis_simple
+```
+
+Run release and sanitizer checks after changes to ownership, memory layout,
+assertions, or low-level data structures:
+
+```sh
+cmake --preset release
+cmake --build --preset release
+ctest --preset release --output-on-failure
+cmake --preset sanitizer
+cmake --build --preset sanitizer
+ctest --preset sanitizer --output-on-failure
+scripts/run_leak_check.sh
+```
+
+Build and run the bounded Clang libFuzzer smoke tests after changes to request
+parsing, Redis data types, core containers, buffers, expiration, persistence,
+or event-loop behavior:
+
+```sh
+cmake --preset fuzz
+cmake --build --preset fuzz --target redis_simple_fuzzers
+ctest --preset fuzz -L fuzz --output-on-failure
+```
+
+On macOS, configure the fuzz preset with Homebrew LLVM on `PATH`; Apple Clang
+does not include the libFuzzer runtime.
+
+The leak-check script uses Apple `leaks` for the macOS unit-test binary and
+explicit LeakSanitizer options for the complete Linux sanitizer test suite.
+
+Use Docker for a local Linux build and test check from macOS:
+
+```sh
+scripts/run_linux_docker_check.sh
+```
+
+The helper prepares its cached Ubuntu toolchain without mounting the
+repository. Its build and test container has networking disabled and mounts the
+repository read-only.
+
+Before committing, run the relevant build and tests.
+
+## Test Layout
+
+- Unit tests stay colocated with implementation files as `*_test.cpp`.
+- Register unit tests in CTest by GoogleTest suite through
+  `redis_simple_add_gtest_suite`, so failures identify the affected suite while
+  preserving same-suite fixture behavior.
+- Integration tests live under `integration/`.
+- Stateful libFuzzer harnesses live under `fuzz/`, compare operations against
+  simple reference models where practical, and use bounded CTest smoke runs
+  for CI.
+- Current integration coverage should stay focused:
+  - `integration/commands/`
+  - `integration/aof_client_test.cpp`
+  - `integration/tcp/`
+- Keep server option and graceful shutdown coverage in the lifecycle integration
+  test rather than introducing a separate command-test server implementation.
+- Keep AOF restart, manual and automatic rewrite compaction, shutdown flush,
+  expiration, and cross-data-type recovery in the dedicated AOF integration
+  test. Use injected file operations for deterministic write, sync, rename, and
+  directory-sync failure unit tests.
+- Keep command-family integration tests split by area, including key, string,
+  set, list, zset, hash, connection, and transaction commands.
+- Register integration command tests as separate CTest entries by command
+  family, so failures identify the affected area without log digging.
+- Keep exact ordering assertions for ordered command results such as sorted-set
+  ranges; do not sort actual output in compatibility tests.
+- Project runner scripts live under `scripts/`.
+- Do not add manual log-inspection tests. Tests should assert behavior and
+  return nonzero on failure.
+
+## Project Management
+
+- Run clang-format 22 on changed C/C++ files before committing or pushing. The
+  format script rejects other major versions to keep local and CI output equal.
+- Use `scripts/format.sh --check` and `scripts/run_clang_tidy.sh` for local
+  quality checks; clang-tidy warnings are treated as errors.
+- Never put required side effects inside `assert`; release builds must preserve
+  behavior when assertions are disabled.
+- Always update relevant docs, including `README.md` and this `CLAUDE.md`, when
+  changing build, test, workflow, or project conventions. `AGENTS.md` only
+  points here, so keep the guidance in this file.
+- Keep CMake target-based. Source files are discovered by scoped directory
+  globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
+  explicitly when they do not belong in a library target.
+- Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
+  macOS and `epoll` for Linux.
+- Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
+  `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project
+  conventions.
+- Keep CI branch pushes limited to `main`; validate feature branches through
+  pull requests targeting `main`, and cancel superseded runs for the same ref.
+- Avoid unrelated refactors while making focused changes.
+- Do not reintroduce stale mock targets that are not part of CTest or normal
+  project workflows.
