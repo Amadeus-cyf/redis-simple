@@ -727,6 +727,22 @@ size_t ListPack::Seek(size_t position, size_t size) const {
 
 ListPack::DecodedEntry ListPack::DecodeEntry(
     size_t idx, unsigned char* const int_buf) const {
+  const unsigned char* const buf = lp_.get() + idx;
+  // Short strings are the common case: read their length from the encoding
+  // byte once instead of classifying the encoding for each field. Their
+  // encoded size is at most 64 bytes, so the backlen is one byte.
+  if ((buf[0] & EncodingTypeMask::kType6BitStrMask) ==
+      EncodingType::k6BitString) {
+    const size_t length = buf[0] & 0x3f;
+    static_assert(1 + 0x3f <= BacklenThreshold::kSize1ByteBacklenMax);
+    return {buf + 1, length, idx + 1 + length + 1};
+  }
+  if ((buf[0] & EncodingTypeMask::kType12BitStrMask) ==
+      EncodingType::k12BitString) {
+    const size_t length = (static_cast<size_t>(buf[0] & 0xf) << 8) | buf[1];
+    const size_t encoded_bytes = 2 + length;
+    return {buf + 2, length, idx + encoded_bytes + BacklenBytes(encoded_bytes)};
+  }
   const EncodingType encoding_type = EncodingAt(idx);
   DecodedEntry entry{};
   entry.data =

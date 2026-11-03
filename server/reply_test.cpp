@@ -51,6 +51,30 @@ TEST(ReplyTest, AppendsBulkStringsAfterExistingContent) {
   EXPECT_TRUE(many.ends_with("$4\r\n9999\r\n"));
 }
 
+TEST(ReplyTest, AppendsBulkStringsOfEveryLengthClass) {
+  // Short values take fixed-size copies and lengths below 100 count their
+  // digits without a loop, so cover every length around those boundaries
+  // and the digit-count changes beyond them.
+  std::vector<size_t> lengths;
+  for (size_t length = 0; length <= 40; ++length) {
+    lengths.push_back(length);
+  }
+  for (const size_t length : {99, 100, 101, 999, 1000, 10000, 123456}) {
+    lengths.push_back(length);
+  }
+  for (const size_t length : lengths) {
+    std::string value(length, '\0');
+    for (size_t i = 0; i < length; ++i) {
+      value[i] = static_cast<char>('a' + (i % 26));
+    }
+    std::string encoded = "prefix";
+    AppendBulkString(value, &encoded);
+    EXPECT_EQ(encoded,
+              "prefix$" + std::to_string(length) + "\r\n" + value + "\r\n")
+        << length;
+  }
+}
+
 TEST(ReplyTest, AppendsFloatsForEachProtocol) {
   std::string encoded = "*2\r\n";
   AppendFloat(2.5, ProtocolVersion::kResp2, &encoded);
