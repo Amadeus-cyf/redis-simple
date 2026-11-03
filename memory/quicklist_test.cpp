@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -226,5 +228,80 @@ TEST(QuickListTest, ReleasesSingleListPackWithoutRebuilding) {
   ASSERT_TRUE(last.has_value());
   EXPECT_EQ(listpack->Get(first.value_or(0)), "one");
   EXPECT_EQ(listpack->Get(last.value_or(0)), "two");
+}
+
+TEST(QuickListTest, RangesFromEitherEndMatchAModel) {
+  // Small nodes give a long chain, so ranges near the tail are reached by
+  // walking from the tail and ranges near the head from the head.
+  QuickList quicklist(48);
+  std::vector<std::string> model;
+  model.reserve(40);
+  for (int index = 0; index < 40; ++index) {
+    model.push_back("value:" + std::to_string(index));
+    ASSERT_TRUE(quicklist.RPush(model.back()));
+  }
+  ASSERT_GT(quicklist.NodeCount(), 8);
+
+  for (size_t start = 0; start < model.size(); ++start) {
+    for (size_t stop = start; stop < model.size() + 2; ++stop) {
+      const size_t last = std::min(stop, model.size() - 1);
+      const std::vector<std::string> expected(
+          model.begin() + static_cast<std::ptrdiff_t>(start),
+          model.begin() + static_cast<std::ptrdiff_t>(last) + 1);
+      std::vector<std::string> forward;
+      ASSERT_TRUE(quicklist.ForEach(start, stop, [&](std::string_view value) {
+        forward.emplace_back(value);
+        return true;
+      }));
+      EXPECT_EQ(forward, expected) << start << ".." << stop;
+
+      std::vector<std::string> reverse;
+      ASSERT_TRUE(
+          quicklist.ForEachReverse(start, stop, [&](std::string_view value) {
+            reverse.emplace_back(value);
+            return true;
+          }));
+      EXPECT_EQ(reverse,
+                std::vector<std::string>(expected.rbegin(), expected.rend()))
+          << start << ".." << stop;
+    }
+  }
+
+  // A visitor returning false stops both walks after one call.
+  size_t calls = 0;
+  const auto stop_now = [&calls](std::string_view) {
+    ++calls;
+    return false;
+  };
+  EXPECT_FALSE(quicklist.ForEach(30, 39, stop_now));
+  EXPECT_FALSE(quicklist.ForEachReverse(0, 9, stop_now));
+  EXPECT_EQ(calls, 2);
+}
+
+TEST(QuickListTest, SetSplitsOnlyTheReplacedNode) {
+  QuickList quicklist(96);
+  const std::string value(30, 'v');
+  for (int index = 0; index < 9; ++index) {
+    ASSERT_TRUE(quicklist.RPush(value + std::to_string(index)));
+  }
+  const size_t nodes = quicklist.NodeCount();
+  ASSERT_GE(nodes, 3);
+
+  // Replacing a middle element with an oversized value splits its node; the
+  // nodes after it are left as they were.
+  const std::string large(200, 'L');
+  ASSERT_TRUE(quicklist.Set(4, large));
+  std::vector<std::string> expected;
+  expected.reserve(9);
+  for (int index = 0; index < 9; ++index) {
+    expected.push_back(index == 4 ? large : value + std::to_string(index));
+  }
+  EXPECT_EQ(quicklist.Range(0, 8), expected);
+  EXPECT_GT(quicklist.NodeCount(), nodes);
+
+  // The same at the tail, where the replaced node has no successor.
+  ASSERT_TRUE(quicklist.Set(8, large));
+  expected[8] = large;
+  EXPECT_EQ(quicklist.Range(0, 8), expected);
 }
 }  // namespace redis_simple::in_memory
