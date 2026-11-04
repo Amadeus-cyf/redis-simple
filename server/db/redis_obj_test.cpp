@@ -2,9 +2,12 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace redis_simple::db {
 TEST(RedisObjectTest, StringObjectExposesStringValue) {
@@ -29,14 +32,69 @@ TEST(RedisObjectTest, CanonicalIntegersUseIntEncoding) {
   }
 }
 
-TEST(RedisObjectTest, NonCanonicalIntegersStayRaw) {
+TEST(RedisObjectTest, NonCanonicalIntegersAreNotIntEncoded) {
   for (const std::string text :
        {"", "007", "+5", "-0", " 5", "5 ", "1.0", "9223372036854775808",
         "123456789012345678901"}) {
     const auto object = RedisObject::CreateWithString(text);
-    EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw) << text;
+    EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kEmbedded)
+        << text;
     EXPECT_EQ(object->String(), text);
   }
+}
+
+TEST(RedisObjectTest, ShortStringsAreEmbeddedAndLongerOnesRaw) {
+  // Embedding adds one word to every object, no more.
+  EXPECT_LE(sizeof(RedisObject), sizeof(std::string) + 16);
+  for (size_t length = 0; length <= EmbeddedString::kCapacity + 2; ++length) {
+    std::string text(length, 'x');
+    if (!text.empty()) {
+      text.front() = 'a';
+      text.back() = 'z';
+    }
+    const auto expected = length <= EmbeddedString::kCapacity
+                              ? RedisObject::Encoding::kEmbedded
+                              : RedisObject::Encoding::kRaw;
+    const auto created = RedisObject::CreateWithString(text);
+    EXPECT_EQ(created->StringEncoding(), expected) << length;
+    EXPECT_EQ(created->String(), text) << length;
+    const auto copied = RedisObject::CreateWithStringCopy(text);
+    EXPECT_EQ(copied->StringEncoding(), expected) << length;
+    EXPECT_EQ(copied->String(), text) << length;
+    EXPECT_EQ(copied->Type(), RedisObject::ObjectType::kString);
+  }
+  EXPECT_EQ(RedisObject::CreateWithStringCopy("-12")->StringEncoding(),
+            RedisObject::Encoding::kInt);
+  EXPECT_EQ(RedisObject::CreateWithString("12x")->Int(), std::nullopt);
+}
+
+TEST(RedisObjectTest, MutableStringConvertsEmbeddedEncoding) {
+  const auto object = RedisObject::CreateWithString("embedded");
+  ASSERT_EQ(object->StringEncoding(), RedisObject::Encoding::kEmbedded);
+  object->MutableString()->append(" and edited");
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
+  EXPECT_EQ(object->String(), "embedded and edited");
+}
+
+TEST(RedisObjectTest, AssignStringFromItsOwnRawBytes) {
+  // A short value viewing a large raw buffer is embedded, which frees the
+  // buffer, so it must be copied out first.
+  const auto object =
+      RedisObject::CreateWithString(std::string(500, 'r') + "tail");
+  ASSERT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
+  object->AssignString(object->String().View().substr(500));
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kEmbedded);
+  EXPECT_EQ(object->String(), "tail");
+}
+
+TEST(RedisObjectTest, AssignStringFromItsOwnEmbeddedBytes) {
+  const auto object = RedisObject::CreateWithString("prefix-suffix");
+  ASSERT_EQ(object->StringEncoding(), RedisObject::Encoding::kEmbedded);
+  // The view points into the object, which re-embedding resets first.
+  const std::string_view own = object->String().View().substr(7);
+  object->AssignString(own);
+  EXPECT_EQ(object->String(), "suffix");
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kEmbedded);
 }
 
 TEST(RedisObjectTest, IntReadsBothEncodings) {
@@ -62,7 +120,7 @@ TEST(RedisObjectTest, AssignStringChoosesEncodingAndReusesBuffers) {
   EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kInt);
   EXPECT_EQ(object->String(), "42");
   object->AssignString("007");
-  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kEmbedded);
   EXPECT_EQ(object->String(), "007");
 
   // A raw buffer is reused for a value that fills a fair share of it.
@@ -72,9 +130,18 @@ TEST(RedisObjectTest, AssignStringChoosesEncodingAndReusesBuffers) {
   EXPECT_EQ(object->MutableString()->data(), buffer);
   EXPECT_EQ(object->String(), std::string(600, 'b'));
 
-  // Shrinking a large value releases the oversized buffer.
+  // Shrinking a large value to a short one embeds it, which releases the
+  // oversized buffer.
   object->AssignString("tiny");
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kEmbedded);
   EXPECT_EQ(object->String(), "tiny");
+
+  // A small raw buffer is overwritten in place rather than re-embedded.
+  object->AssignString(std::string(50, 'c'));
+  ASSERT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
+  object->AssignString("short");
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
+  EXPECT_EQ(object->String(), "short");
   EXPECT_LT(object->MutableString()->capacity(), 1000);
 }
 

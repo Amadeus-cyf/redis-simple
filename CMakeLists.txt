@@ -3,6 +3,8 @@ project(redis_simple LANGUAGES C CXX)
 
 option(REDIS_SIMPLE_WARNINGS_AS_ERRORS "Treat project warnings as errors" OFF)
 option(REDIS_SIMPLE_BUILD_FUZZERS "Build Clang libFuzzer targets" OFF)
+option(REDIS_SIMPLE_USE_MIMALLOC
+  "Allocate the server's C++ objects with the bundled mimalloc" ON)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -119,6 +121,22 @@ target_link_libraries(redis_simple_cli PRIVATE redis_simple_core)
 
 redis_simple_add_executable(redis_simple "server/main.cpp")
 target_link_libraries(redis_simple PRIVATE redis_simple_core)
+
+# Sanitizers replace the allocator themselves, so their builds keep the
+# default one.
+string(FIND "${CMAKE_CXX_FLAGS}" "-fsanitize" REDIS_SIMPLE_SANITIZED)
+if(REDIS_SIMPLE_USE_MIMALLOC AND REDIS_SIMPLE_SANITIZED EQUAL -1)
+  # Static library only. The server replaces global operator new and delete
+  # in server/main.cpp instead of overriding libc malloc, which works the
+  # same way on Linux and macOS.
+  set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
+  set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
+  set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  add_subdirectory("third_party/mimalloc" EXCLUDE_FROM_ALL)
+  target_link_libraries(redis_simple PRIVATE mimalloc-static)
+  target_compile_definitions(redis_simple PRIVATE REDIS_SIMPLE_USE_MIMALLOC)
+endif()
 
 add_subdirectory("third_party/googletest")
 enable_testing()

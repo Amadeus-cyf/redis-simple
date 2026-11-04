@@ -122,8 +122,7 @@ void HandleAppend(Client* const client) {
   size_t length = value_to_append.size();
   if (object == nullptr) {
     client->Db()->SetKey(
-        key, db::RedisObject::CreateWithString(std::string(value_to_append)),
-        0);
+        key, db::RedisObject::CreateWithStringCopy(value_to_append), 0);
   } else {
     std::string* const value = object->MutableString();
     value->append(value_to_append);

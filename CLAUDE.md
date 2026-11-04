@@ -106,15 +106,19 @@ Guidance for AI coding agents working in this repository.
   `QuickList` merges neighboring nodes that fit together, where Redis leaves
   them. This server is I/O bound, so fewer, fuller nodes are worth the merge
   cost; keep the merges.
-- Canonical integer strings are stored as `int64_t`. Read string objects
-  through `RedisObject::String()` (a `StringValue` view) or `Int()`, and call
-  `MutableString()` only to edit bytes in place, since it converts the value
-  back to raw form.
+- Canonical integer strings are stored as `int64_t`, and other values of at
+  most `EmbeddedString::kCapacity` bytes (39 with libstdc++) inside the
+  `RedisObject`, like Redis' embstr, so they need no allocation of their own.
+  Read string objects through `RedisObject::String()` (a `StringValue` view)
+  or `Int()`, and call `MutableString()` only to edit bytes in place, since it
+  converts the value back to raw form. Create objects from borrowed bytes with
+  `CreateWithStringCopy`, which embeds without a temporary `std::string`.
 - Store whole string values through `RedisDb::SetStringKey`, which overwrites
   an existing string object in place with `RedisObject::AssignString` instead
-  of allocating a new object. `AssignString` applies the same integer-encoding
-  rule as `CreateWithString` and releases a buffer much larger than the new
-  value.
+  of allocating a new object. `AssignString` applies the same encoding rules
+  as `CreateWithString`, overwrites embedded values in place, reuses a small
+  or well-filled raw buffer, and releases a buffer much larger than the new
+  value. It accepts a value that views the object's own bytes.
 - Only commands marked `AllowBeforeAuth` in the command table run before a
   client authenticates when `--requirepass` is set.
 - Inside `MULTI`, every command is queued unless the command table marks it
@@ -253,6 +257,12 @@ Before committing, run the relevant build and tests.
   explicitly when they do not belong in a library target.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
+- The `redis_simple` executable links the bundled mimalloc submodule and
+  replaces global `operator new`/`delete` through `mimalloc-new-delete.h` in
+  `server/main.cpp`, its only allowed include site. Keep libc `malloc`
+  unoverridden, keep sanitizer builds on the default allocator, and keep
+  `REDIS_SIMPLE_USE_MIMALLOC=OFF` building. Allocate with `new` (containers,
+  `std::make_unique`), never `malloc`, so allocations go through mimalloc.
 - Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
   `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project
   conventions.

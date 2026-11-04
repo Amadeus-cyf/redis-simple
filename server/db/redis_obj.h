@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -52,16 +53,39 @@ class StringValue {
   std::array<char, kInt64BufferSize> buffer_{};
 };
 
+// A short string stored inside its RedisObject, like Redis' embstr, so the
+// value needs no allocation of its own. Its size matches std::string's plus
+// one word, which grows each object by 8 bytes and moves values from
+// std::string's inline limit (15 bytes in libstdc++) up to kCapacity bytes
+// into the object's single allocation.
+struct EmbeddedString {
+  static constexpr size_t kCapacity = sizeof(std::string) + 7;
+
+  // Copies only the value's bytes; the rest of `data` is never read.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+  explicit EmbeddedString(std::string_view value)
+      : size(static_cast<uint8_t>(value.size())) {
+    std::memcpy(data.data(), value.data(), value.size());
+  }
+
+  std::string_view View() const { return {data.data(), size}; }
+
+  std::array<char, kCapacity> data;
+  uint8_t size;
+};
+static_assert(EmbeddedString::kCapacity <= UINT8_MAX);
+static_assert(sizeof(EmbeddedString) == sizeof(std::string) + 8);
+
 class RedisObject {
  private:
   using SetPtr = std::unique_ptr<set::Set>;
   using ListPtr = std::unique_ptr<list::List>;
   using ZSetPtr = std::unique_ptr<zset::ZSet>;
   using HashPtr = std::unique_ptr<hash::Hash>;
-  // Integer-encoded strings are last so the other alternatives keep indices
-  // that map directly onto ObjectType.
-  using Value =
-      std::variant<std::string, SetPtr, ListPtr, ZSetPtr, HashPtr, int64_t>;
+  // Integer- and embedded-encoded strings are last so the other alternatives
+  // keep indices that map directly onto ObjectType.
+  using Value = std::variant<std::string, SetPtr, ListPtr, ZSetPtr, HashPtr,
+                             int64_t, EmbeddedString>;
 
  public:
   enum class ObjectType {
@@ -75,12 +99,18 @@ class RedisObject {
   enum class Encoding {
     kRaw,
     kInt,
+    kEmbedded,
     kOther,
   };
 
   // Stores canonical decimal integers (such as "42" but not "042" or "+42")
-  // as int64_t so counters avoid parsing and formatting on every update.
+  // as int64_t so counters avoid parsing and formatting on every update, and
+  // other values of at most EmbeddedString::kCapacity bytes inline.
   static std::unique_ptr<RedisObject> CreateWithString(std::string value);
+  // Like CreateWithString, but copies the value only when it does not fit
+  // inline, so short values need no temporary std::string.
+  static std::unique_ptr<RedisObject> CreateWithStringCopy(
+      std::string_view value);
   static std::unique_ptr<RedisObject> CreateWithInt(int64_t value) {
     return Create<int64_t>(value);
   }
@@ -105,7 +135,8 @@ class RedisObject {
   // Returns the integer value if the string is integer-encoded or holds a
   // decimal integer.
   std::optional<int64_t> Int() const;
-  // Converts an integer-encoded string to raw form so it can be edited.
+  // Converts an integer- or embedded-encoded string to raw form so it can be
+  // edited.
   // Returns nullptr if this is not a string object.
   std::string* MutableString();
   // Replaces a string object's value with an integer-encoded one.
@@ -126,7 +157,7 @@ class RedisObject {
   const hash::Hash* Hash() const { return Held<HashPtr>(); }
   // ObjectType values follow the variant's alternative order, offset by one.
   ObjectType Type() const {
-    if (std::holds_alternative<int64_t>(value_)) {
+    if (value_.index() >= kFirstStringEncodingIndex) {
       return ObjectType::kString;
     }
     return static_cast<ObjectType>(value_.index() + 1);
@@ -144,6 +175,11 @@ class RedisObject {
   explicit RedisObject(std::in_place_type_t<T> type, Args&&... args)
       : value_(type, std::forward<Args>(args)...) {}
 
+  static std::unique_ptr<RedisObject> CreateEmbedded(std::string_view value);
+  // Replaces the value with an embedded copy of `value`, which must fit and
+  // may view this object's current bytes.
+  void EmbedString(std::string_view value);
+
   template <typename Ptr>
   typename Ptr::element_type* Held() const {
     const auto* holder = std::get_if<Ptr>(&value_);
@@ -158,6 +194,12 @@ class RedisObject {
   static_assert(std::is_same_v<Alternative<ObjectType::kList>, ListPtr>);
   static_assert(std::is_same_v<Alternative<ObjectType::kZSet>, ZSetPtr>);
   static_assert(std::is_same_v<Alternative<ObjectType::kHash>, HashPtr>);
+  // The alternatives from here on are other encodings of a string.
+  static constexpr size_t kFirstStringEncodingIndex = 5;
+  static_assert(std::is_same_v<
+                std::variant_alternative_t<kFirstStringEncodingIndex, Value>,
+                int64_t>);
+  static_assert(std::variant_size_v<Value> == kFirstStringEncodingIndex + 2);
 
   Value value_;
 };
