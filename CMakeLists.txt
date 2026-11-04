@@ -5,6 +5,8 @@ option(REDIS_SIMPLE_WARNINGS_AS_ERRORS "Treat project warnings as errors" OFF)
 option(REDIS_SIMPLE_BUILD_FUZZERS "Build Clang libFuzzer targets" OFF)
 option(REDIS_SIMPLE_USE_MIMALLOC
   "Allocate the server's C++ objects with the bundled mimalloc" ON)
+option(REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC
+  "Build memory_benchmark with mimalloc, to compare allocators" OFF)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -125,15 +127,22 @@ target_link_libraries(redis_simple PRIVATE redis_simple_core)
 # Sanitizers replace the allocator themselves, so their builds keep the
 # default one.
 string(FIND "${CMAKE_CXX_FLAGS}" "-fsanitize" REDIS_SIMPLE_SANITIZED)
-if(REDIS_SIMPLE_USE_MIMALLOC AND REDIS_SIMPLE_SANITIZED EQUAL -1)
-  # Static library only. The server replaces global operator new and delete
-  # in server/main.cpp instead of overriding libc malloc, which works the
-  # same way on Linux and macOS.
+set(REDIS_SIMPLE_MIMALLOC_ALLOWED OFF)
+if(REDIS_SIMPLE_SANITIZED EQUAL -1)
+  set(REDIS_SIMPLE_MIMALLOC_ALLOWED ON)
+endif()
+if(REDIS_SIMPLE_MIMALLOC_ALLOWED AND
+   (REDIS_SIMPLE_USE_MIMALLOC OR REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC))
+  # Static library only. Executables replace global operator new and delete
+  # instead of overriding libc malloc, which works the same way on Linux and
+  # macOS.
   set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
   set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
   set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
   set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   add_subdirectory("third_party/mimalloc" EXCLUDE_FROM_ALL)
+endif()
+if(REDIS_SIMPLE_MIMALLOC_ALLOWED AND REDIS_SIMPLE_USE_MIMALLOC)
   target_link_libraries(redis_simple PRIVATE mimalloc-static)
   target_compile_definitions(redis_simple PRIVATE REDIS_SIMPLE_USE_MIMALLOC)
 endif()
@@ -406,6 +415,9 @@ set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable benchmark's tests" FORCE)
 add_subdirectory("third_party/benchmark")
 
 redis_simple_collect_sources(REDIS_SIMPLE_BENCHMARK_SOURCES benchmarks)
+# Replaces operator new and delete, so it is built only on request.
+redis_simple_exclude_sources(REDIS_SIMPLE_BENCHMARK_SOURCES
+  "/benchmarks/mimalloc_new_delete\\.cpp$")
 
 redis_simple_add_executable(memory_benchmark ${REDIS_SIMPLE_BENCHMARK_SOURCES})
 target_link_libraries(
@@ -414,6 +426,11 @@ target_link_libraries(
     redis_simple_core
     benchmark::benchmark
 )
+if(REDIS_SIMPLE_MIMALLOC_ALLOWED AND REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC)
+  target_sources(memory_benchmark
+    PRIVATE "${CMAKE_SOURCE_DIR}/benchmarks/mimalloc_new_delete.cpp")
+  target_link_libraries(memory_benchmark PRIVATE mimalloc-static)
+endif()
 
 if(REDIS_SIMPLE_BUILD_FUZZERS)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$")

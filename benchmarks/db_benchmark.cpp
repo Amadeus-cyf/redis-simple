@@ -11,7 +11,7 @@
 #include "utils/time_utils.h"
 
 // Keyspace benchmarks: lookups that also consult the TTL table, and string
-// overwrites as SET does them.
+// SETs by value size, as new keys and as overwrites.
 namespace redis_simple {
 namespace {
 constexpr size_t kKeyCount = 100'000;
@@ -67,10 +67,43 @@ void DbOverwriteString(benchmark::State& state) {
   }
   state.SetItemsProcessed(state.iterations());
 }
+
+// SET of string values by size: 3 bytes fits std::string's inline buffer,
+// 36 fits an embedded string, and 100 needs its own allocation. Argument
+// `overwrite` 0 inserts new keys, which allocate an object (and, for long
+// values, a buffer) each; 1 overwrites existing keys in place.
+void DbSetString(benchmark::State& state) {
+  const auto value_size = static_cast<size_t>(state.range(0));
+  const bool overwrite = state.range(1) != 0;
+  const std::string value(value_size, 'v');
+  const auto keys = Keys();
+  auto db = db::RedisDb::Create();
+  if (overwrite) {
+    for (const std::string& key : keys) {
+      db->SetStringKey(key, value, 0);
+    }
+  }
+  size_t next = 0;
+  for (auto _ : state) {
+    (void)_;
+    db->SetStringKey(keys[next], value, 0);
+    next = (next + 1) % keys.size();
+    if (next == 0 && !overwrite) {
+      // Start the next pass from an empty keyspace so every SET inserts.
+      state.PauseTiming();
+      db->Flush();
+      state.ResumeTiming();
+    }
+  }
+  state.SetItemsProcessed(state.iterations());
+}
 }  // namespace
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 BENCHMARK(DbLookup)->Arg(0)->Arg(1)->ArgName("with_ttl");
 BENCHMARK(DbOverwriteString)->Arg(0)->Arg(1)->ArgName("in_place");
+BENCHMARK(DbSetString)
+    ->ArgsProduct({{3, 36, 100}, {0, 1}})
+    ->ArgNames({"value_bytes", "overwrite"});
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple
