@@ -258,11 +258,21 @@ Before committing, run the relevant build and tests.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
-  replaces global `operator new`/`delete` through `mimalloc-new-delete.h` in
-  `server/main.cpp`, its only allowed include site. Keep libc `malloc`
-  unoverridden, keep sanitizer builds on the default allocator, and keep
-  `REDIS_SIMPLE_USE_MIMALLOC=OFF` building. Allocate with `new` (containers,
-  `std::make_unique`), never `malloc`, so allocations go through mimalloc.
+  replaces global `operator new`/`delete` through `mimalloc-new-delete.h`.
+  Its only include sites are `server/main.cpp` and
+  `benchmarks/mimalloc_new_delete.cpp`, which `memory_benchmark` builds only
+  with `REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC`. Each executable includes it at
+  most once. Keep libc `malloc` unoverridden, keep sanitizer builds on the
+  default allocator, and keep `REDIS_SIMPLE_USE_MIMALLOC=OFF` building.
+  Allocate with `new` (containers, `std::make_unique`), never `malloc`, so
+  allocations go through mimalloc.
+- Measure performance changes to the server with
+  `scripts/profile_server.sh` (callgrind instruction counts per workload)
+  and memory changes with `scripts/measure_server_memory.sh` (RSS per key),
+  passing the previous build as the baseline. Use `memory_benchmark` for
+  changes to one component. Report instruction counts, not
+  `redis-benchmark` throughput from a small or shared machine, which varies
+  more than the effects being measured.
 - Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
   `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project
   conventions.
