@@ -16,6 +16,7 @@
 #include "server/commands/command.h"
 #include "server/db/db.h"
 #include "server/db/key_watcher.h"
+#include "server/io_threads.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
 
@@ -70,7 +71,18 @@ class Client {
   reply::ProtocolVersion Protocol() const { return protocol_; }
   void SetProtocol(reply::ProtocolVersion protocol) { protocol_ = protocol; }
   ClientStatus ProcessInputBuffer();
-  void Free() { connection_->Close(); }
+  void Free() {
+    connection_->Close();
+    freed_ = true;
+  }
+  // Whether the server has removed this client; it is destroyed later.
+  bool Freed() const { return freed_; }
+  // The server's threaded I/O counters for INFO; null without a server.
+  const IoStats* ThreadedIoStats() const { return io_stats_; }
+  void SetThreadedIoStats(const IoStats* stats) { io_stats_ = stats; }
+  // Threaded I/O: the client is queued to read on the next I/O batch.
+  bool PendingRead() const { return pending_read_; }
+  void SetPendingRead(bool pending) { pending_read_ = pending; }
   const command::CommandArgs& Args() const { return args_; }
   // Requires AUTH before most commands. `password` must outlive the client.
   void RequirePassword(std::string_view password) {
@@ -137,6 +149,9 @@ class Client {
   OutputBufferLimits output_limits_;
   reply::ProtocolVersion protocol_{reply::ProtocolVersion::kResp2};
   bool reads_paused_{};
+  bool freed_{};
+  bool pending_read_{};
+  const IoStats* io_stats_{nullptr};
   bool close_after_reply_{};
   bool modified_{};
   bool propagation_failed_{};

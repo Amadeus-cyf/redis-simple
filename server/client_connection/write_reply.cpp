@@ -18,16 +18,26 @@ constexpr size_t kMaxBytesPerEvent = size_t{64} * 1024;
 }  // namespace
 
 void WriteToClient(Server* const server, Client* const client) {
-  connection::Connection* const conn = client->Connection();
+  FinishWrite(server, client, WritePendingReplies(client));
+}
+
+ssize_t WritePendingReplies(Client* const client) {
   size_t total_written = 0;
-  ssize_t written = 0;
   while (client->HasPendingReplies() && total_written < kMaxBytesPerEvent) {
-    written = client->SendReply();
-    if (written <= 0) {
+    const ssize_t written = client->SendReply();
+    if (written < 0) {
+      return -1;
+    }
+    if (written == 0) {
       break;
     }
     total_written += static_cast<size_t>(written);
   }
+  return static_cast<ssize_t>(total_written);
+}
+
+void FinishWrite(Server* const server, Client* const client, ssize_t written) {
+  connection::Connection* const conn = client->Connection();
   if (written < 0 && conn->State() != connection::ConnectionState::kConnected) {
     server->RemoveClient(client);
     return;

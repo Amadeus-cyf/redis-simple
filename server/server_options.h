@@ -16,6 +16,9 @@ struct ServerOptions {
   std::string require_pass;
   // Without a password, refuse clients that do not connect over loopback.
   bool protected_mode{true};
+  // Threads that read requests and write replies, counting the main thread,
+  // which still runs every command. 1 does all I/O on the main thread.
+  int io_threads{1};
 };
 
 enum class OptionsStatus {

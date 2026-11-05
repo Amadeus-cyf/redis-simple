@@ -16,8 +16,9 @@
 
 namespace redis_simple::tcp {
 namespace {
-// Keep the listen queue small for this single-threaded test server.
-constexpr int kBacklog = 3;
+// Redis' default tcp-backlog, so bursts of new connections queue instead of
+// timing out. The kernel caps it at net.core.somaxconn.
+constexpr int kBacklog = 511;
 
 int SetCloseOnExec(int fd);
 

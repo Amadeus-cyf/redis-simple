@@ -74,6 +74,17 @@ Guidance for AI coding agents working in this repository.
   call `Flush` before arming test failures that depend on file-write order.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
+- With `--io-threads` above 1, readable events only queue the client, and
+  `Server::HandlePendingIo` (the loop's before-sleep hook) reads the queued
+  sockets on `IoThreads`, runs every command on the main thread, flushes the
+  AOF once, then writes replies on `IoThreads`. Work given to the I/O threads
+  must touch only that client's socket and buffers (`Client::ReadQuery`,
+  `client_connection::WritePendingReplies`); keep commands, the database,
+  the AOF, and event-loop registration on the main thread. `RemoveClient`
+  takes a client off the read queue, and later batch steps skip clients that
+  are `Freed()`. Run the threaded integration variants (`*_io_threads`) and a
+  ThreadSanitizer build of the concurrent-clients test after changing this
+  path.
 - Rely on the command table for arity in handlers, and use
   `server/commands/lookup.h` for typed lookups instead of re-checking the
   object type and null database in each command.
@@ -224,6 +235,7 @@ Before committing, run the relevant build and tests.
 - Current integration coverage should stay focused:
   - `integration/commands/`
   - `integration/aof_client_test.cpp`
+  - `integration/io_threads_client_test.cpp`
   - `integration/tcp/`
 - Keep server option and graceful shutdown coverage in the lifecycle integration
   test rather than introducing a separate command-test server implementation.

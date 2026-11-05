@@ -11,6 +11,8 @@ namespace redis_simple {
 namespace {
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
+// Matches Redis' io-threads limit.
+constexpr int kMaxIoThreads = 128;
 
 bool ParsePort(std::string_view value, int* const port) {
   if (value.empty()) {
@@ -24,6 +26,19 @@ bool ParsePort(std::string_view value, int* const port) {
     return false;
   }
   *port = parsed;
+  return true;
+}
+
+bool ParseIoThreads(std::string_view value, int* const io_threads) {
+  int parsed = 0;
+  const auto result =
+      std::from_chars(value.data(), value.data() + value.size(), parsed);
+  if (value.empty() || result.ec != std::errc() ||
+      result.ptr != value.data() + value.size() || parsed < 1 ||
+      parsed > kMaxIoThreads) {
+    return false;
+  }
+  *io_threads = parsed;
   return true;
 }
 
@@ -132,6 +147,12 @@ constexpr auto kOptionSpecs = std::to_array<OptionSpec>({
            return ParseYesNo(value, &options->protected_mode);
          },
      .error = "protected-mode must be yes or no"},
+    {.name = "--io-threads",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseIoThreads(value, &options->io_threads);
+         },
+     .error = "io-threads must be between 1 and 128"},
 });
 
 const OptionSpec* FindOption(std::string_view name) {
@@ -176,6 +197,7 @@ std::string_view ServerUsage() {
          "[--appendfsync <always|everysec|no>] "
          "[--auto-aof-rewrite-min-size <bytes>] "
          "[--auto-aof-rewrite-percentage <percent>] "
-         "[--requirepass <password>] [--protected-mode <yes|no>]\n";
+         "[--requirepass <password>] [--protected-mode <yes|no>] "
+         "[--io-threads <count>]\n";
 }
 }  // namespace redis_simple

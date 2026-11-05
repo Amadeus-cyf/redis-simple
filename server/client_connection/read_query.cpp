@@ -12,16 +12,13 @@
 namespace redis_simple::client_connection {
 namespace {
 void ReadQuery(Server* const server, Client* const client) {
-  connection::Connection* const conn = client->Connection();
-  const ssize_t nread = client->ReadQuery();
-  if (nread <= 0) {
-    if (conn->State() != connection::ConnectionState::kConnected) {
-      server->RemoveClient(client);
-    }
+  // With I/O threads, the read happens with the next batch.
+  if (server->ThreadedIo()) {
+    server->QueueRead(client);
     return;
   }
-  if (client->ProcessInputBuffer() == ClientStatus::kError) {
-    RS_LOG_DEBUG("process query buffer failed\n");
+  if (!RunQueries(server, client, client->ReadQuery())) {
+    return;
   }
   // Persist this batch of mutations before any of its replies are sent.
   if (aof::Aof* const append_only_file = server->Aof();
@@ -30,6 +27,26 @@ void ReadQuery(Server* const server, Client* const client) {
     server->RemoveClient(client);
     return;
   }
+  FinishQueries(server, client);
+}
+}  // namespace
+
+bool RunQueries(Server* const server, Client* const client, ssize_t nread) {
+  if (nread <= 0) {
+    if (client->Connection()->State() !=
+        connection::ConnectionState::kConnected) {
+      server->RemoveClient(client);
+    }
+    return false;
+  }
+  if (client->ProcessInputBuffer() == ClientStatus::kError) {
+    RS_LOG_DEBUG("process query buffer failed\n");
+  }
+  return true;
+}
+
+void FinishQueries(Server* const server, Client* const client) {
+  connection::Connection* const conn = client->Connection();
   if (conn->State() != connection::ConnectionState::kConnected) {
     server->RemoveClient(client);
     return;
@@ -37,9 +54,12 @@ void ReadQuery(Server* const server, Client* const client) {
   if (client->ShouldPauseReads() && conn->UnsetReadCallback()) {
     client->SetReadsPaused(true);
   }
-  WriteToClient(server, client);
+  if (server->ThreadedIo()) {
+    server->QueueWrite(client);
+  } else {
+    WriteToClient(server, client);
+  }
 }
-}  // namespace
 
 connection::ConnectionCallback CreateReadQueryCallback(Server* const server,
                                                        Client* const client) {

@@ -5,6 +5,7 @@
 #include "server/aof.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
+#include "server/io_threads.h"
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
@@ -45,38 +46,61 @@ void HandleBgRewriteAof(Client* const client) {
   }
 }
 
-void HandleInfo(Client* const client) {
-  const auto& args = client->Args();
-  if (!args.empty() && !utils::EqualsIgnoreCase(args[0], "persistence") &&
-      !utils::EqualsIgnoreCase(args[0], "all") &&
-      !utils::EqualsIgnoreCase(args[0], "default")) {
-    client->AddBulkReply("");
-    return;
-  }
-
-  std::string info = "# Persistence\r\n";
-  const auto* const append_only_file = client->Aof();
-  AppendField("aof_enabled", append_only_file == nullptr ? "0" : "1", &info);
+namespace {
+void AppendPersistenceSection(const aof::Aof* const append_only_file,
+                              std::string* const info) {
+  info->append("# Persistence\r\n");
+  AppendField("aof_enabled", append_only_file == nullptr ? "0" : "1", info);
   if (append_only_file == nullptr) {
-    AppendField("aof_rewrite_in_progress", "0", &info);
-    AppendField("aof_last_bgrewrite_status", "none", &info);
-    AppendField("aof_last_error", "none", &info);
-    AppendField("aof_current_size", size_t{0}, &info);
-    AppendField("aof_base_size", size_t{0}, &info);
-    AppendField("aof_pending_bytes", size_t{0}, &info);
-    client->AddBulkReply(info);
+    AppendField("aof_rewrite_in_progress", "0", info);
+    AppendField("aof_last_bgrewrite_status", "none", info);
+    AppendField("aof_last_error", "none", info);
+    AppendField("aof_current_size", size_t{0}, info);
+    AppendField("aof_base_size", size_t{0}, info);
+    AppendField("aof_pending_bytes", size_t{0}, info);
     return;
   }
-
   const auto state = append_only_file->State();
   AppendField("aof_rewrite_in_progress", state.rewrite_in_progress ? "1" : "0",
-              &info);
+              info);
   AppendField("aof_last_bgrewrite_status",
-              aof::RewriteStatusName(state.rewrite_status), &info);
-  AppendField("aof_last_error", aof::ErrorName(state.last_error), &info);
-  AppendField("aof_current_size", state.current_size, &info);
-  AppendField("aof_base_size", state.base_size, &info);
-  AppendField("aof_pending_bytes", state.pending_bytes, &info);
+              aof::RewriteStatusName(state.rewrite_status), info);
+  AppendField("aof_last_error", aof::ErrorName(state.last_error), info);
+  AppendField("aof_current_size", state.current_size, info);
+  AppendField("aof_base_size", state.base_size, info);
+  AppendField("aof_pending_bytes", state.pending_bytes, info);
+}
+
+// Threaded I/O fields of Redis' stats section.
+void AppendStatsSection(const IoStats* const stats, std::string* const info) {
+  const IoStats empty;
+  const IoStats& io = stats == nullptr ? empty : *stats;
+  info->append("# Stats\r\n");
+  AppendField("io_threads_active", io.active ? "1" : "0", info);
+  AppendField("io_threaded_reads_processed",
+              static_cast<size_t>(io.threaded_reads), info);
+  AppendField("io_threaded_writes_processed",
+              static_cast<size_t>(io.threaded_writes), info);
+}
+}  // namespace
+
+void HandleInfo(Client* const client) {
+  const auto& args = client->Args();
+  const bool all = args.empty() || utils::EqualsIgnoreCase(args[0], "all") ||
+                   utils::EqualsIgnoreCase(args[0], "default");
+  const bool persistence =
+      all || utils::EqualsIgnoreCase(args[0], "persistence");
+  const bool stats = all || utils::EqualsIgnoreCase(args[0], "stats");
+  std::string info;
+  if (persistence) {
+    AppendPersistenceSection(client->Aof(), &info);
+  }
+  if (stats) {
+    if (!info.empty()) {
+      info.append("\r\n");
+    }
+    AppendStatsSection(client->ThreadedIoStats(), &info);
+  }
   client->AddBulkReply(info);
 }
 }  // namespace redis_simple::command::persistence

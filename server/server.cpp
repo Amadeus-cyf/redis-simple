@@ -3,13 +3,17 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "event_loop/file_event.h"
 #include "event_loop/time_event.h"
 #include "logging/logger.h"
 #include "server/client_connection/client_connection.h"
+#include "server/client_connection/read_query.h"
+#include "server/client_connection/write_reply.h"
 #include "server/db/db.h"
 #include "server/expire.h"
 #include "server/shutdown.h"
@@ -28,6 +32,7 @@ bool Server::Run(const ServerOptions& options) {
     return false;
   }
   aof_.reset();
+  io_stats_ = IoStats{};
   require_pass_ = options.require_pass;
   protected_mode_ = options.protected_mode;
   db_ = db::RedisDb::Create();
@@ -48,7 +53,19 @@ bool Server::Run(const ServerOptions& options) {
     return false;
   }
   fd_ = conn.Descriptor();
+  if (options.io_threads > 1) {
+    io_threads_ = IoThreads::Create(static_cast<size_t>(options.io_threads));
+    if (io_threads_ == nullptr) {
+      RS_LOG_WARN("failed to start %d I/O threads\n", options.io_threads);
+      fd_ = -1;
+      aof_.reset();
+      return false;
+    }
+    loop_->SetBeforeSleep([this] { HandlePendingIo(); });
+  }
   if (!InstallAcceptCallback()) {
+    loop_->SetBeforeSleep(nullptr);
+    io_threads_.reset();
     fd_ = -1;
     aof_.reset();
     return false;
@@ -57,7 +74,11 @@ bool Server::Run(const ServerOptions& options) {
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
+  loop_->SetBeforeSleep(nullptr);
   fd_ = -1;
+  pending_reads_.clear();
+  pending_writes_.clear();
+  io_threads_.reset();
   clients_.clear();
   aof_.reset();
   return true;
@@ -73,10 +94,105 @@ bool Server::RemoveClient(Client* c) {
   if (c == nullptr) {
     return false;
   }
+  // The client is destroyed before the next batch, so it must leave the
+  // queue. Clients in the batch being handled are skipped once freed.
+  if (c->PendingRead()) {
+    std::erase(pending_reads_, c);
+    c->SetPendingRead(false);
+  }
   c->Free();
   // Destroy the client after the current event, which may still use it.
   loop_->Defer([this, c] { clients_.erase(c); });
   return true;
+}
+
+void Server::QueueRead(Client* const client) {
+  if (!client->PendingRead()) {
+    client->SetPendingRead(true);
+    pending_reads_.push_back(client);
+  }
+}
+
+void Server::QueueWrite(Client* const client) {
+  // A client with a write callback is waiting for its socket to drain and
+  // writes from that event instead.
+  if (client->HasPendingReplies() &&
+      !client->Connection()->HasWriteCallback()) {
+    pending_writes_.push_back(client);
+  }
+}
+
+void Server::HandlePendingIo() {
+  if (!pending_reads_.empty()) {
+    ReadPendingClients();
+  }
+  if (!pending_writes_.empty()) {
+    WritePendingClients();
+  }
+}
+
+void Server::ReadPendingClients() {
+  io_batch_.clear();
+  io_batch_.swap(pending_reads_);
+  for (Client* const client : io_batch_) {
+    client->SetPendingRead(false);
+  }
+  io_results_.assign(io_batch_.size(), 0);
+  auto read = [this](size_t index) {
+    io_results_[index] = io_batch_[index]->ReadQuery();
+  };
+  if (io_threads_->Run(io_batch_.size(), read)) {
+    io_stats_.threaded_reads += io_batch_.size();
+  }
+  io_stats_.active = io_threads_->Active();
+
+  // Commands run here, one client after another in arrival order.
+  size_t ran = 0;
+  for (size_t index = 0; index < io_batch_.size(); ++index) {
+    Client* const client = io_batch_[index];
+    if (client_connection::RunQueries(this, client, io_results_[index])) {
+      io_batch_[ran++] = client;
+    }
+  }
+  io_batch_.resize(ran);
+  // Persist the whole batch's mutations before any of its replies are sent.
+  if (aof_ != nullptr && !io_batch_.empty() && !aof_->Flush()) {
+    Stop();
+    for (Client* const client : io_batch_) {
+      if (!client->Freed()) {
+        RemoveClient(client);
+      }
+    }
+    io_batch_.clear();
+    return;
+  }
+  for (Client* const client : io_batch_) {
+    if (!client->Freed()) {
+      client_connection::FinishQueries(this, client);
+    }
+  }
+  io_batch_.clear();
+}
+
+void Server::WritePendingClients() {
+  io_batch_.clear();
+  io_batch_.swap(pending_writes_);
+  io_results_.assign(io_batch_.size(), 0);
+  auto write = [this](size_t index) {
+    io_results_[index] =
+        client_connection::WritePendingReplies(io_batch_[index]);
+  };
+  if (io_threads_->Run(io_batch_.size(), write)) {
+    io_stats_.threaded_writes += io_batch_.size();
+  }
+  io_stats_.active = io_threads_->Active();
+  for (size_t index = 0; index < io_batch_.size(); ++index) {
+    Client* const client = io_batch_[index];
+    if (!client->Freed()) {
+      client_connection::FinishWrite(this, client, io_results_[index]);
+    }
+  }
+  io_batch_.clear();
 }
 
 bool Server::InstallAcceptCallback() {

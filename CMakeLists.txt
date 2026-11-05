@@ -193,6 +193,7 @@ redis_simple_add_gtest_suite(RedisObjectDeathTest)
 redis_simple_add_gtest_suite(AsyncReclaimerTest)
 redis_simple_add_gtest_suite(AofTest)
 redis_simple_add_gtest_suite(ServerOptionsTest)
+redis_simple_add_gtest_suite(IoThreadsTest)
 redis_simple_add_gtest_suite(ShutdownTest)
 redis_simple_add_gtest_suite(ReplyTest)
 redis_simple_add_gtest_suite(ReplyDeathTest)
@@ -277,6 +278,12 @@ redis_simple_add_executable(
   "integration/aof_client_test.cpp"
 )
 target_link_libraries(mock_aof_client PRIVATE redis_simple_cli)
+
+redis_simple_add_executable(
+  mock_io_threads_client
+  "integration/io_threads_client_test.cpp"
+)
+target_link_libraries(mock_io_threads_client PRIVATE redis_simple_cli)
 
 add_test(
   NAME redis_simple_integration_tcp
@@ -375,6 +382,49 @@ add_test(
     $<TARGET_FILE:redis_simple>
     $<TARGET_FILE:mock_transaction_client>
 )
+
+# Many concurrent pipelined clients, against a server without I/O threads and
+# one whose batches are large enough to share across them.
+foreach(variant IN ITEMS plain io_threads)
+  add_test(
+    NAME redis_simple_integration_concurrent_clients_${variant}
+    COMMAND
+      /bin/sh
+      "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
+      $<TARGET_FILE:redis_simple>
+      $<TARGET_FILE:mock_io_threads_client>
+  )
+  set_tests_properties(
+    redis_simple_integration_concurrent_clients_${variant}
+    PROPERTIES
+      LABELS integration
+      RESOURCE_LOCK redis_simple_port_8080
+  )
+endforeach()
+set_tests_properties(
+  redis_simple_integration_concurrent_clients_io_threads
+  PROPERTIES ENVIRONMENT "REDIS_SIMPLE_SERVER_ARGS=--io-threads 4"
+)
+
+# The command families again against a server with I/O threads, which defers
+# every read and write to batches handled before the event loop waits.
+foreach(family IN ITEMS key connection string set list zset hash transaction)
+  add_test(
+    NAME redis_simple_integration_command_${family}_io_threads
+    COMMAND
+      /bin/sh
+      "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
+      $<TARGET_FILE:redis_simple>
+      $<TARGET_FILE:mock_${family}_client>
+  )
+  set_tests_properties(
+    redis_simple_integration_command_${family}_io_threads
+    PROPERTIES
+      ENVIRONMENT "REDIS_SIMPLE_SERVER_ARGS=--io-threads 4"
+      LABELS integration
+      RESOURCE_LOCK redis_simple_port_8080
+  )
+endforeach()
 
 set_tests_properties(
   redis_simple_integration_tcp

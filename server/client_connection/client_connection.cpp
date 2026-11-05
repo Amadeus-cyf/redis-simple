@@ -44,6 +44,7 @@ bool AcceptOne(int listener_fd, Server* const server) {
   }
   auto client = Client::Create(std::move(conn), server->Db(), server->Aof());
   client->RequirePassword(server->RequirePass());
+  client->SetThreadedIoStats(server->ThreadedIoStats());
   Client* const client_ptr = client.get();
   if (!client_ptr->Connection()->SetReadCallback(
           CreateCallback(CallbackType::kReadQuery, server, client_ptr))) {

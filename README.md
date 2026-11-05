@@ -100,6 +100,29 @@ RESP3, including native null, map, set, and double replies. Request buffers are
 capped at 64 MiB. Pending output pauses reads at 8 MiB, resumes below 4 MiB,
 and closes the connection before exceeding 64 MiB.
 
+Threaded I/O, like Redis 6's `io-threads`, is off by default:
+
+```sh
+./build/release/redis_simple --io-threads 4
+```
+
+The count includes the main thread, from 1 (the default) to 128. With more
+than one, a readable client is queued instead of read right away. Before the
+event loop waits again, the server handles the queue in four steps:
+
+1. Read every queued client's socket on the I/O threads.
+2. Run all their commands on the main thread, in arrival order, so commands
+   and data structures stay single-threaded.
+3. Flush the AOF once for the batch.
+4. Write the replies on the I/O threads.
+
+Batches with fewer than two clients per thread stay on the main thread, and
+the idle I/O threads park until load returns. `INFO stats` reports
+`io_threads_active`, `io_threaded_reads_processed`, and
+`io_threaded_writes_processed`. As with Redis, threads help only on machines
+with cores to spare. Use at most one fewer thread than the server's cores; on
+a 2-core machine, `--io-threads 2` is about 20% slower than the default.
+
 In another terminal, run a mock command client or your own TCP client against
 `localhost:8080`.
 
@@ -125,7 +148,7 @@ Error replies use Redis 7's wording, such as
 - Hashes: `HSET`, `HGET`, `HDEL`, `HLEN`, `HEXISTS`, `HGETALL`, `HMGET`,
   `HKEYS`, `HVALS`, `HINCRBY`
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
-- Persistence: `BGREWRITEAOF`, `INFO [persistence]`
+- Persistence and stats: `BGREWRITEAOF`, `INFO [persistence|stats]`
 - Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `PING`,
   `ECHO`, `QUIT`
 
@@ -238,6 +261,12 @@ This runs:
 - `redis_simple_integration_command_hash`: hash command integration checks.
 - `redis_simple_integration_command_transaction`: `MULTI`/`EXEC` and `WATCH`
   integration checks across two connections.
+- `redis_simple_integration_command_*_io_threads`: each command family again,
+  against a server started with `--io-threads 4`.
+- `redis_simple_integration_concurrent_clients_plain` and
+  `..._io_threads`: 32 concurrent pipelined clients, with replies, totals,
+  and `INFO stats` checked. The threaded variant requires batches shared
+  across the I/O threads.
 
 For debugging a single executable directly:
 
@@ -349,6 +378,7 @@ event_loop/           Event loop with kqueue and epoll pollers
 fuzz/                 Stateful libFuzzer harnesses and reference models
 integration/commands/ Server/client command integration tests
 integration/aof_client_test.cpp  AOF restart integration client
+integration/io_threads_client_test.cpp  Concurrent-clients integration client
 integration/tcp/      TCP client/server integration tests
 logging/              Project logging wrapper
 memory/               Core in-memory data structures
