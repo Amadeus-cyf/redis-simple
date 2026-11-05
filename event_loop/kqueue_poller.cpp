@@ -125,7 +125,7 @@ const std::vector<ReadyEvent>& KqueuePoller::Poll(
         static_cast<uintptr_t>(std::numeric_limits<int>::max())) {
       continue;
     }
-    const int fd = static_cast<int>(events_[i].ident);
+    const auto fd = static_cast<int>(events_[i].ident);
     int mask = 0;
     if (events_[i].filter == EVFILT_READ) {
       RS_LOG_DEBUG("kqueue: poll read\n");

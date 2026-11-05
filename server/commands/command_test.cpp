@@ -61,7 +61,7 @@ TEST(CommandRegistryTest, CaseFoldingMatchesOnlyTheSameLetter) {
         std::string probe(name);
         probe[position] = static_cast<char>(byte);
         const char upper = name[position];
-        const char lower = static_cast<char>(upper - 'A' + 'a');
+        const auto lower = static_cast<char>(upper - 'A' + 'a');
         const bool same_letter =
             probe[position] == upper || probe[position] == lower;
         const auto* command = Find(probe);

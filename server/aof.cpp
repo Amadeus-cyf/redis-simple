@@ -1340,7 +1340,7 @@ void Aof::FinishRewriteLocked(RewriteStatus status, AofError error) {
 bool Aof::SyncFile(int fd) const { return aof::SyncFile(file_ops_.get(), fd); }
 
 bool Aof::SyncParentDirectory() const {
-  std::filesystem::path parent = std::filesystem::path(path_).parent_path();
+  auto parent = std::filesystem::path(path_).parent_path();
   if (parent.empty()) {
     parent = ".";
   }

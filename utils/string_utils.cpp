@@ -296,7 +296,7 @@ int Uint64ToString(std::span<char> dst, uint64_t value) {
   uint32_t next = length - 1;
   dst[next + 1] = '\0';
   while (value >= 100) {
-    const int i = static_cast<int>((value % 100) * 2);
+    const auto i = static_cast<int>((value % 100) * 2);
     value /= 100;
     dst[next] = kDigits[i + 1];
     dst[next - 1] = kDigits[i];
@@ -306,7 +306,7 @@ int Uint64ToString(std::span<char> dst, uint64_t value) {
   if (value < 10) {
     dst[next] = static_cast<char>('0' + static_cast<uint32_t>(value));
   } else {
-    const int i = static_cast<int>(static_cast<uint32_t>(value) * 2);
+    const auto i = static_cast<int>(static_cast<uint32_t>(value) * 2);
     dst[next] = kDigits[i + 1];
     dst[next - 1] = kDigits[i];
   }
