@@ -70,12 +70,12 @@ enum class ParseStatus : uint8_t {
   kInvalidExpire,
 };
 
-// Parses the option at `*idx` and advances past it. An expiration's value is
+// Parses the option at `*index` and advances past it. An expiration's value is
 // only recorded here, so syntax errors win over value errors, as in Redis.
-bool ParseSetOption(const CommandArgs& args, size_t* const idx,
+bool ParseSetOption(const CommandArgs& args, size_t* const index,
                     SetArgs* const set_args, ExpireUnit* const unit,
                     std::string_view* const expire_arg) {
-  const std::string_view option = args[*idx];
+  const std::string_view option = args[*index];
   const bool if_missing = utils::EqualsIgnoreCase(option, "NX");
   const bool if_exists = utils::EqualsIgnoreCase(option, "XX");
   // As in Redis, any option may repeat; only conflicting options are errors.
@@ -87,12 +87,12 @@ bool ParseSetOption(const CommandArgs& args, size_t* const idx,
       return false;
     }
     set_args->condition = condition;
-    ++(*idx);
+    ++(*index);
     return true;
   }
   if (utils::EqualsIgnoreCase(option, "GET")) {
     set_args->return_old_value = true;
-    ++(*idx);
+    ++(*index);
     return true;
   }
   const bool keep_ttl = set_args->existing_ttl == db::ExistingTtl::kKeep;
@@ -101,7 +101,7 @@ bool ParseSetOption(const CommandArgs& args, size_t* const idx,
       return false;
     }
     set_args->existing_ttl = db::ExistingTtl::kKeep;
-    ++(*idx);
+    ++(*index);
     return true;
   }
   ExpireUnit option_unit = ExpireUnit::kNone;
@@ -118,12 +118,12 @@ bool ParseSetOption(const CommandArgs& args, size_t* const idx,
   }
   // Repeating the same expiration option is allowed, and the last one wins.
   if (keep_ttl || (*unit != ExpireUnit::kNone && *unit != option_unit) ||
-      *idx + 1 >= args.size()) {
+      *index + 1 >= args.size()) {
     return false;
   }
   *unit = option_unit;
-  *expire_arg = args[*idx + 1];
-  *idx += 2;
+  *expire_arg = args[*index + 1];
+  *index += 2;
   return true;
 }
 

@@ -23,26 +23,27 @@ constexpr std::string_view kProtectedModeError =
 
 // Returns false once the listener has no more pending connections.
 bool AcceptOne(int listener_fd, Server* const server) {
-  auto conn = std::make_unique<connection::Connection>(
+  auto connection = std::make_unique<connection::Connection>(
       connection::Context{.loop = server->Loop(), .fd = -1});
-  conn->SetState(connection::ConnectionState::kAccepting);
-  connection::AddressInfo addr_info;
-  if (conn->Accept(listener_fd, &addr_info) ==
+  connection->SetState(connection::ConnectionState::kAccepting);
+  connection::AddressInfo address;
+  if (connection->Accept(listener_fd, &address) ==
       connection::ConnectionStatus::kError) {
     return false;
   }
   RS_LOG_DEBUG("accept connection from %s:%d with fd = %d\n",
-               addr_info.ip.c_str(), addr_info.port, conn->Descriptor());
+               address.ip.c_str(), address.port, connection->Descriptor());
   if (RejectedByProtectedMode(server->ProtectedMode(), server->RequirePass(),
-                              addr_info.ip)) {
-    RS_LOG_WARN("rejected %s:%d: protected mode\n", addr_info.ip.c_str(),
-                addr_info.port);
+                              address.ip)) {
+    RS_LOG_WARN("rejected %s:%d: protected mode\n", address.ip.c_str(),
+                address.port);
     // Best effort: the socket is new and empty, so one write normally fits.
-    // Dropping `conn` closes it.
-    conn->Write(kProtectedModeError);
+    // Dropping `connection` closes it.
+    connection->Write(kProtectedModeError);
     return true;
   }
-  auto client = Client::Create(std::move(conn), server->Db(), server->Aof());
+  std::unique_ptr<Client> client =
+      Client::Create(std::move(connection), server->Db(), server->Aof());
   client->RequirePassword(server->RequirePass());
   client->SetThreadedIoStats(server->ThreadedIoStats());
   Client* const client_ptr = client.get();

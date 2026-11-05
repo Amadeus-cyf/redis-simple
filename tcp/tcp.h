@@ -19,20 +19,20 @@ constexpr bool operator==(int value, TcpStatusCode status) {
   return value == ToInt(status);
 }
 
-struct TcpAddrInfo {
+struct TcpAddress {
   std::string ip;
   int port{-1};
-  TcpAddrInfo() = default;
-  TcpAddrInfo(std::string_view ip, int port) : ip(ip), port(port) {}
+  TcpAddress() = default;
+  TcpAddress(std::string_view ip, int port) : ip(ip), port(port) {}
 };
 
 int TcpCreateSocket(int domain, bool non_block);
-int TcpBindAndConnect(const TcpAddrInfo& remote,
-                      const std::optional<TcpAddrInfo>& local,
+int TcpBindAndConnect(const TcpAddress& remote,
+                      const std::optional<TcpAddress>& local,
                       bool non_block = true);
-int TcpBind(int socket_fd, const TcpAddrInfo& addr_info);
+int TcpBind(int socket_fd, const TcpAddress& address);
 int TcpListen(int socket_fd);
-int TcpAccept(int socket_fd, TcpAddrInfo* addr_info);
+int TcpAccept(int socket_fd, TcpAddress* address);
 int Block(int fd);
 int NonBlock(int fd);
 bool IsSocketError(int fd);

@@ -25,7 +25,7 @@ TEST(SetTest, IntegerMembersUseIntSet) {
   ASSERT_TRUE(set->HasMember("4294967295"));
   ASSERT_FALSE(set->Add("1"));
 
-  const auto members = set->ListAllMembers();
+  const std::vector<std::string> members = set->ListAllMembers();
   ASSERT_EQ(members, std::vector<std::string>(
                          {"-9223372036854775808", "-4294967296", "-65536", "1",
                           "65535", "4294967295", "9223372036854775807"}));

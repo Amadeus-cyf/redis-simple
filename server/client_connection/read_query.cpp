@@ -46,12 +46,12 @@ bool RunQueries(Server* const server, Client* const client, ssize_t nread) {
 }
 
 void FinishQueries(Server* const server, Client* const client) {
-  connection::Connection* const conn = client->Connection();
-  if (conn->State() != connection::ConnectionState::kConnected) {
+  connection::Connection* const connection = client->Connection();
+  if (connection->State() != connection::ConnectionState::kConnected) {
     server->RemoveClient(client);
     return;
   }
-  if (client->ShouldPauseReads() && conn->UnsetReadCallback()) {
+  if (client->ShouldPauseReads() && connection->UnsetReadCallback()) {
     client->SetReadsPaused(true);
   }
   if (server->ThreadedIo()) {
@@ -63,7 +63,7 @@ void FinishQueries(Server* const server, Client* const client) {
 
 connection::ConnectionCallback CreateReadQueryCallback(Server* const server,
                                                        Client* const client) {
-  return [server, client](connection::Connection* /*conn*/) {
+  return [server, client](connection::Connection* /*connection*/) {
     ReadQuery(server, client);
   };
 }

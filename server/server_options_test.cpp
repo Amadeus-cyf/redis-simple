@@ -8,7 +8,7 @@ namespace redis_simple {
 TEST(ServerOptionsTest, UsesDefaults) {
   constexpr std::array kArgv = {"redis_simple"};
 
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_EQ(result.options.bind_address, "127.0.0.1");
@@ -26,7 +26,7 @@ TEST(ServerOptionsTest, UsesDefaults) {
 
 TEST(ServerOptionsTest, ParsesIoThreads) {
   constexpr std::array kArgv = {"redis_simple", "--io-threads", "4"};
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_EQ(result.options.io_threads, 4);
 
@@ -45,7 +45,7 @@ TEST(ServerOptionsTest, ParsesSecurityOptions) {
   constexpr std::array kArgv = {"redis_simple", "--requirepass", "s3cret",
                                 "--protected-mode", "no"};
 
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_EQ(result.options.require_pass, "s3cret");
@@ -60,7 +60,7 @@ TEST(ServerOptionsTest, ParsesBindAddressAndPort) {
   constexpr std::array kArgv = {"redis_simple", "--bind", "0.0.0.0", "--port",
                                 "6380"};
 
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_EQ(result.options.bind_address, "0.0.0.0");
@@ -80,7 +80,7 @@ TEST(ServerOptionsTest, ParsesAofOptions) {
                                 "--auto-aof-rewrite-percentage",
                                 "50"};
 
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_TRUE(result.options.append_only);

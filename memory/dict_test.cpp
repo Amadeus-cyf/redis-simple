@@ -157,7 +157,7 @@ TEST(DictStrTest, ScanVisitsEveryKeyWhileTheTableResizes) {
   size_t cursor = 0;
   int step = 0;
   while (true) {
-    const auto next =
+    const std::optional<size_t> next =
         dict->Scan(cursor, [&seen](const std::string&, const int& v) {
           ++seen[static_cast<size_t>(v)];
         });
@@ -185,7 +185,7 @@ TEST(DictStrTest, ScanVisitsEveryKeyWhileTheTableResizes) {
 
 TEST(DictStrTest, Insert) {
   auto dict_str = Dict<std::string, std::string>::Create();
-  auto status = dict_str->Insert("key", "val");
+  bool status = dict_str->Insert("key", "val");
   ASSERT_TRUE(status);
   ASSERT_EQ(dict_str->Size(), 1);
 
@@ -232,7 +232,7 @@ TEST(DictStrTest, Delete) {
   auto dict_str = Dict<std::string, std::string>::Create();
   ASSERT_TRUE(dict_str->Insert("key", "val"));
 
-  auto status = dict_str->Delete("key");
+  bool status = dict_str->Delete("key");
   ASSERT_TRUE(status);
   ASSERT_EQ(dict_str->Size(), 0);
 
@@ -248,7 +248,7 @@ TEST(DictStrTest, ExtractTransfersMoveOnlyValue) {
 
   auto value = dict->Extract(std::string_view("key"));
 
-  auto extracted = std::move(value).value_or(nullptr);
+  std::unique_ptr<int> extracted = std::move(value).value_or(nullptr);
   ASSERT_NE(extracted, nullptr);
   EXPECT_EQ(*extracted, 42);
   EXPECT_EQ(dict->Size(), 0);
@@ -274,7 +274,7 @@ TEST(DictIntTest, Init) {
 TEST(DictIntTest, BatchInsert) {
   auto dict_int = MakeIntDictWithEntries();
   ASSERT_EQ(dict_int->Size(), 129);
-  const auto result = dict_int->Get(96);
+  const std::optional<int> result = dict_int->Get(96);
   ASSERT_TRUE(result.has_value());
   ASSERT_EQ(result.value_or(0), 96);
 }
@@ -303,7 +303,7 @@ TEST(DictIntTest, Clear) {
   dict_int->Clear();
   ASSERT_EQ(dict_int->Size(), 0);
 
-  const auto result = dict_int->Get(96);
+  const std::optional<int> result = dict_int->Get(96);
   ASSERT_FALSE(result.has_value());
   ASSERT_EQ(result, std::nullopt);
 

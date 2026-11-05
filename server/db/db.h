@@ -12,7 +12,7 @@
 #include "memory/dict.h"
 #include "server/db/async_reclaimer.h"
 #include "server/db/key_watcher.h"
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 
 namespace redis_simple::aof {
 class Aof;

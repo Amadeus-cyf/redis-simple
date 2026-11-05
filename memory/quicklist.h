@@ -96,7 +96,7 @@ bool QuickList::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   }
   stop = std::min(stop, size_ - 1);
 
-  const auto location = Locate(start);
+  const std::optional<EntryLocation> location = Locate(start);
   if (!location.has_value()) {
     return true;
   }
@@ -126,7 +126,7 @@ bool QuickList::ForEachReverse(size_t start, size_t stop,
   }
   stop = std::min(stop, size_ - 1);
 
-  const auto location = Locate(stop);
+  const std::optional<EntryLocation> location = Locate(stop);
   if (!location.has_value()) {
     return true;
   }

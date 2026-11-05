@@ -25,8 +25,8 @@ constexpr std::string_view kFlagByScore = "BYSCORE";
 constexpr std::string_view kFlagLimit = "LIMIT";
 constexpr std::string_view kFlagReverse = "REV";
 constexpr std::string_view kFlagWithScores = "WITHSCORES";
-constexpr std::string_view kMaxVal = "+inf";
-constexpr std::string_view kMinVal = "-inf";
+constexpr std::string_view kMaxValue = "+inf";
+constexpr std::string_view kMinValue = "-inf";
 
 enum class RangeMode : std::uint8_t {
   kRank,
@@ -130,15 +130,16 @@ bool ParseScoreTerm(std::string_view term, double* const value) {
   if (term.empty()) {
     return false;
   }
-  if (utils::EqualsIgnoreCase(term, kMinVal)) {
+  if (utils::EqualsIgnoreCase(term, kMinValue)) {
     *value = -std::numeric_limits<double>::infinity();
     return true;
   }
-  if (utils::EqualsIgnoreCase(term, kMaxVal)) {
+  if (utils::EqualsIgnoreCase(term, kMaxValue)) {
     *value = std::numeric_limits<double>::infinity();
     return true;
   }
-  const auto number = term[0] == '(' ? term.substr(1) : term;
+  const std::basic_string_view<char> number =
+      term[0] == '(' ? term.substr(1) : term;
   return utils::ToDouble(number, value);
 }
 
@@ -248,7 +249,7 @@ void AddRangeError(Client* const client, RangeStatus status) {
 }
 
 void AddRangeReply(Client* const client, RangeMode mode, bool reverse) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   RangeOptions options;
   if (const RangeStatus parsed =
           ParseRangeOptions(args, mode, reverse, &options);
@@ -293,7 +294,7 @@ void HandleZRangeByScore(Client* const client) {
 }
 
 void HandleZCount(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   RangeByScoreSpec spec;
   if (!ParseScoreRange(args[1], args[2], &spec)) {
     client->AddReply(reply::kMinMaxNotFloatError);
@@ -310,7 +311,8 @@ void HandleZCount(Client* const client) {
     client->AddReply(reply::FromInt64(0));
     return;
   }
-  const auto count = ToReplyInteger(object->ZSet()->Count(&spec));
+  const std::optional<int64_t> count =
+      ToReplyInteger(object->ZSet()->Count(&spec));
   client->AddReply(count.has_value()
                        ? reply::FromInt64(*count)
                        : reply::FromError("ERR zset count out of range"));

@@ -18,7 +18,12 @@ Guidance for AI coding agents working in this repository.
   `std::format` and `std::print`, which need newer standard libraries than
   the minimum compilers in `README.md`. CI runs clang-tidy 22, which
   checks more of these than older local versions do.
-- Keep naming consistent with nearby code.
+- Keep naming consistent with nearby code. Name things with whole words, as
+  Google style asks: `index`, `length`, `value`, `buffer`, `connection`, not
+  `idx`, `len`, `val`, `buf`, `conn`. Universally known short names (`i`, `n`,
+  `fd`, `it`) and Redis or POSIX terms (`backlen`, `iov_len`) are fine. In
+  listpack code, `offset` is a byte position in the buffer, and `index` or
+  `position` is an element's place in the list.
 - Use `#define` header guards named `REDIS_SIMPLE_<PATH>_<FILE>_H_`, not
   `#pragma once`.
 - Do not use exceptions. Report recoverable failures through return values

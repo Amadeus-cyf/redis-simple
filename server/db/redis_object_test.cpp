@@ -1,4 +1,4 @@
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 
 #include <gtest/gtest.h>
 
@@ -52,9 +52,9 @@ TEST(RedisObjectTest, ShortStringsAreEmbeddedAndLongerOnesRaw) {
       text.front() = 'a';
       text.back() = 'z';
     }
-    const auto expected = length <= EmbeddedString::kCapacity
-                              ? RedisObject::Encoding::kEmbedded
-                              : RedisObject::Encoding::kRaw;
+    const redis_simple::db::RedisObject::Encoding expected =
+        length <= EmbeddedString::kCapacity ? RedisObject::Encoding::kEmbedded
+                                            : RedisObject::Encoding::kRaw;
     const auto created = RedisObject::CreateWithString(text);
     EXPECT_EQ(created->StringEncoding(), expected) << length;
     EXPECT_EQ(created->String(), text) << length;
@@ -79,7 +79,7 @@ TEST(RedisObjectTest, MutableStringConvertsEmbeddedEncoding) {
 TEST(RedisObjectTest, AssignStringFromItsOwnRawBytes) {
   // A short value viewing a large raw buffer is embedded, which frees the
   // buffer, so it must be copied out first.
-  const auto object =
+  const std::unique_ptr<RedisObject> object =
       RedisObject::CreateWithString(std::string(500, 'r') + "tail");
   ASSERT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
   object->AssignString(object->String().View().substr(500));

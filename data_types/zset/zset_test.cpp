@@ -28,7 +28,7 @@ TEST(ZSetTest, InsertAndConvert) {
   spec.maxex = false;
   spec.limit.emplace(0, std::nullopt);
   spec.reverse = false;
-  const auto entries = zset->RangeByRank(&spec);
+  const ZSetEntryList entries = zset->RangeByRank(&spec);
   ASSERT_EQ(entries.size(), 256);
   ASSERT_EQ(entries.front()->key, "key_0");
   ASSERT_EQ(entries.back()->key, "key_255");

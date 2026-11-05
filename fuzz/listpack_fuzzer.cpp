@@ -37,10 +37,10 @@ void Verify(const ListPack& listpack, const std::vector<std::string>& model) {
   Require(reverse == expected_reverse);
 
   for (size_t index = 0; index < model.size(); ++index) {
-    const auto listpack_index = listpack.IndexAt(index);
+    const auto listpack_index = listpack.OffsetAt(index);
     Require(listpack.Get(ValueOrAbort(listpack_index)) == model[index]);
   }
-  Require(!listpack.IndexAt(model.size()).has_value());
+  Require(!listpack.OffsetAt(model.size()).has_value());
 }
 
 void RunOperations(FuzzInput* input) {
@@ -76,7 +76,7 @@ void RunOperations(FuzzInput* input) {
       }
       case 4:
         if (index < model.size()) {
-          const auto listpack_index = listpack.IndexAt(index);
+          const auto listpack_index = listpack.OffsetAt(index);
           Require(listpack.Insert(ValueOrAbort(listpack_index), value));
           model.insert(model.begin() + static_cast<std::ptrdiff_t>(index),
                        value);
@@ -84,21 +84,21 @@ void RunOperations(FuzzInput* input) {
         break;
       case 5:
         if (index < model.size()) {
-          const auto listpack_index = listpack.IndexAt(index);
+          const auto listpack_index = listpack.OffsetAt(index);
           Require(listpack.Replace(ValueOrAbort(listpack_index), value));
           model[index] = value;
         }
         break;
       case 6:
         if (index < model.size()) {
-          const auto listpack_index = listpack.IndexAt(index);
+          const auto listpack_index = listpack.OffsetAt(index);
           listpack.Delete(ValueOrAbort(listpack_index));
           model.erase(model.begin() + static_cast<std::ptrdiff_t>(index));
         }
         break;
       case 7:
         if (index < model.size()) {
-          const auto listpack_index = listpack.IndexAt(index);
+          const auto listpack_index = listpack.OffsetAt(index);
           const size_t expected = std::min(limit, model.size() - index);
           Require(listpack.DeleteRange(ValueOrAbort(listpack_index), limit) ==
                   expected);
@@ -136,7 +136,7 @@ void RunOperations(FuzzInput* input) {
           const std::string second = input->ReadValue(96);
           const std::vector<ListPack::ListPackEntry> entries = {
               {value, 0, false}, {second, 0, false}};
-          const auto listpack_index = listpack.IndexAt(index);
+          const auto listpack_index = listpack.OffsetAt(index);
           Require(listpack.BatchInsert(ValueOrAbort(listpack_index), entries));
           model.insert(model.begin() + static_cast<std::ptrdiff_t>(index),
                        {value, second});

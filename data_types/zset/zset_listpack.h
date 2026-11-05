@@ -36,18 +36,18 @@ class ZSetListPack : public ZSetStorage {
     size_t score_index;
   };
 
-  void DeleteKeyScorePair(size_t idx);
-  std::optional<std::string_view> ValueAt(size_t idx) const;
-  std::optional<EntryView> EntryAt(size_t key_idx) const;
-  std::optional<double> ScoreAt(size_t idx) const;
+  void DeleteKeyScorePair(size_t offset);
+  std::optional<std::string_view> ValueAt(size_t offset) const;
+  std::optional<EntryView> EntryAt(size_t key_offset) const;
+  std::optional<double> ScoreAt(size_t offset) const;
   ZSetEntryList RangeByRankUtil(const RangeByRankSpec* spec) const;
   ZSetEntryList RevRangeByRankUtil(const RangeByRankSpec* spec) const;
   ZSetEntryList RangeByScoreUtil(const RangeByScoreSpec* spec) const;
   ZSetEntryList RevRangeByScoreUtil(const RangeByScoreSpec* spec) const;
   const ZSetEntry* AddRangeResult(std::string_view key, double score) const;
-  std::optional<size_t> NextKeyAfterScore(size_t score_idx) const;
-  std::optional<size_t> PrevScoreBeforeKey(size_t key_idx) const;
-  std::optional<size_t> PrevKeyBeforeKey(size_t key_idx) const;
+  std::optional<size_t> NextKeyAfterScore(size_t score_offset) const;
+  std::optional<size_t> PrevScoreBeforeKey(size_t key_offset) const;
+  std::optional<size_t> PrevKeyBeforeKey(size_t key_offset) const;
   std::optional<size_t> FindKeyGreaterOrEqual(
       const RangeByScoreSpec* spec) const;
   std::optional<size_t> FindKeyLessOrEqual(const RangeByScoreSpec* spec) const;

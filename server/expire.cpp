@@ -14,7 +14,7 @@ void ActiveExpireCycle(db::RedisDb* const db) {
   constexpr size_t kContinueExpirePercent = 25;
   const int64_t start = utils::MonotonicMilliseconds();
   while (utils::MonotonicMilliseconds() - start < kTimeBudgetMilliseconds) {
-    const auto sample =
+    const db::ExpireSampleResult sample =
         db->ExpireSome(kSampleCount, utils::NowInMilliseconds());
     if (sample.sampled == 0 ||
         sample.expired * 100 <= sample.sampled * kContinueExpirePercent) {

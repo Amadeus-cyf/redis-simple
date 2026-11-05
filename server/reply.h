@@ -127,9 +127,9 @@ inline void AppendBulkString(std::string_view s, std::string* const reply) {
 // Writes "$<length>\r\n" to `buffer`, which must hold at least
 // kBulkStringHeaderCapacity bytes, and returns the encoded size.
 size_t EncodeBulkStringHeader(size_t length, char* buffer, size_t capacity);
-std::string FromFloat(double fl, ProtocolVersion protocol);
-// Appends `fl` as a RESP2 bulk string or a RESP3 double.
-void AppendFloat(double fl, ProtocolVersion protocol, std::string* reply);
+std::string FromFloat(double value, ProtocolVersion protocol);
+// Appends `value` as a RESP2 bulk string or a RESP3 double.
+void AppendFloat(double value, ProtocolVersion protocol, std::string* reply);
 std::string FromError(std::string_view message);
 // Redis' arity error, which names the command in lower case.
 std::string WrongNumberOfArguments(std::string_view command);

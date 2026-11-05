@@ -57,12 +57,12 @@ std::optional<std::string> QuickList::LPop() {
     return std::nullopt;
   }
 
-  const auto idx = head_->listpack->First();
-  if (!idx.has_value()) {
+  const std::optional<size_t> offset = head_->listpack->First();
+  if (!offset.has_value()) {
     return std::nullopt;
   }
-  auto value = head_->listpack->Get(*idx);
-  head_->listpack->Delete(*idx);
+  std::optional<std::string> value = head_->listpack->Get(*offset);
+  head_->listpack->Delete(*offset);
   --size_;
   if (head_->listpack->Size() == 0) {
     DeleteNode(head_.get());
@@ -77,12 +77,12 @@ std::optional<std::string> QuickList::RPop() {
   }
 
   Node* node = tail_;
-  const auto idx = node->listpack->Last();
-  if (!idx.has_value()) {
+  const std::optional<size_t> offset = node->listpack->Last();
+  if (!offset.has_value()) {
     return std::nullopt;
   }
-  auto value = node->listpack->Get(*idx);
-  node->listpack->Delete(*idx);
+  std::optional<std::string> value = node->listpack->Get(*offset);
+  node->listpack->Delete(*offset);
   --size_;
   if (node->listpack->Size() == 0) {
     DeleteNode(node);
@@ -108,14 +108,14 @@ std::vector<std::string> QuickList::Range(size_t start, size_t stop) const {
 }
 
 bool QuickList::Set(size_t index, std::string_view value) {
-  const auto location = Locate(index);
+  const std::optional<EntryLocation> location = Locate(index);
   if (!location.has_value()) {
     return false;
   }
-  const auto listpack_index =
-      location->node->listpack->IndexAt(location->local_index);
-  if (!listpack_index.has_value() ||
-      !location->node->listpack->Replace(*listpack_index, value)) {
+  const std::optional<size_t> offset =
+      location->node->listpack->OffsetAt(location->local_index);
+  if (!offset.has_value() ||
+      !location->node->listpack->Replace(*offset, value)) {
     return false;
   }
   if (!NormalizeNodeSizes(location->node)) {
@@ -181,8 +181,8 @@ bool QuickList::Trim(size_t start, size_t stop) {
     DeleteNode(tail_);
   }
   if (suffix_count > 0) {
-    const auto first_deleted =
-        tail_->listpack->IndexAt(tail_->listpack->Size() - suffix_count);
+    const std::optional<size_t> first_deleted =
+        tail_->listpack->OffsetAt(tail_->listpack->Size() - suffix_count);
     if (!first_deleted.has_value() ||
         tail_->listpack->DeleteRange(*first_deleted, suffix_count) !=
             suffix_count) {
@@ -199,7 +199,7 @@ bool QuickList::Trim(size_t start, size_t stop) {
     DeleteNode(head_.get());
   }
   if (prefix_count > 0) {
-    const auto first = head_->listpack->First();
+    const std::optional<size_t> first = head_->listpack->First();
     if (!first.has_value() ||
         head_->listpack->DeleteRange(*first, prefix_count) != prefix_count) {
       return false;
@@ -332,9 +332,9 @@ QuickList::Node* QuickList::SplitNode(Node* node) {
     return nullptr;
   }
 
-  const auto idx = node->listpack->IndexAt(split_index);
-  if (!idx.has_value() ||
-      node->listpack->DeleteRange(*idx, node_size - split_index) !=
+  const std::optional<size_t> offset = node->listpack->OffsetAt(split_index);
+  if (!offset.has_value() ||
+      node->listpack->DeleteRange(*offset, node_size - split_index) !=
           node_size - split_index) {
     return nullptr;
   }

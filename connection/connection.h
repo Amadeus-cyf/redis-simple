@@ -48,7 +48,7 @@ struct AddressInfo {
 
 class Connection {
  public:
-  explicit Connection(const Context& ctx);
+  explicit Connection(const Context& context);
   Connection(const Connection&) = delete;
   Connection& operator=(const Connection&) = delete;
   Connection(Connection&&) = delete;
@@ -58,8 +58,8 @@ class Connection {
   ConnectionStatus BindAndBlockingConnect(
       const AddressInfo& remote, const std::optional<AddressInfo>& local,
       int64_t timeout_ms);
-  ConnectionStatus BindAndListen(const AddressInfo& addr_info);
-  ConnectionStatus Accept(int listener_fd, AddressInfo* addr_info);
+  ConnectionStatus BindAndListen(const AddressInfo& address);
+  ConnectionStatus Accept(int listener_fd, AddressInfo* address);
   bool SetReadCallback(ConnectionCallback callback);
   bool UnsetReadCallback();
   bool HasReadCallback() const { return static_cast<bool>(read_callback_); }
@@ -80,9 +80,9 @@ class Connection {
 
  private:
   static event_loop::CallbackStatus ReadableEventCallback(
-      event_loop::Loop* loop, int fd, Connection* conn, int mask);
+      event_loop::Loop* loop, int fd, Connection* connection, int mask);
   static event_loop::CallbackStatus WritableEventCallback(
-      event_loop::Loop* loop, int fd, Connection* conn, int mask);
+      event_loop::Loop* loop, int fd, Connection* connection, int mask);
   int WaitRead(int64_t timeout_ms) const {
     return Wait(event_loop::EventFlag::kReadable, timeout_ms);
   }

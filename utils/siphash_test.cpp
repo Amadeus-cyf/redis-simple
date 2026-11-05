@@ -29,7 +29,7 @@ std::string SequentialMessage(size_t length) {
 
 TEST(SipHashTest, MatchesReferenceVectors) {
   // Vectors from the SipHash paper and reference implementation (SipHash-2-4,
-  // key 00..0f, message 00..len-1).
+  // key 00..0f, message 00..length-1).
   const SipHashKey key = SequentialKey();
   EXPECT_EQ((SipHash<2, 4>(SequentialMessage(0), key)), 0x726fdb47dd0e0e31ULL);
   EXPECT_EQ((SipHash<2, 4>(SequentialMessage(1), key)), 0x74f839c593dc67fdULL);

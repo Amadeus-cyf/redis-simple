@@ -43,23 +43,23 @@ class IntSet {
 
 class IntSet::Iterator {
  public:
-  explicit Iterator(const IntSet* intset) : intset_(intset), idx_(0) {}
+  explicit Iterator(const IntSet* intset) : intset_(intset), index_(0) {}
   bool operator==(const Iterator& it) const = default;
   // Return true if the iterator is positioned at a valid element.
-  bool Valid() const { return idx_ < intset_->Size(); }
+  bool Valid() const { return index_ < intset_->Size(); }
   // Position at the first element.
-  void SeekToFirst() { idx_ = 0; }
+  void SeekToFirst() { index_ = 0; }
   // Position at the last element.
-  void SeekToLast() { idx_ = intset_->Size() - 1; }
+  void SeekToLast() { index_ = intset_->Size() - 1; }
   // Advance to the next element.
-  void Next() { ++idx_; }
+  void Next() { ++index_; }
   // Advance to the previous element.
-  void Prev() { --idx_; }
-  int64_t Value() { return intset_->Get(idx_); }
+  void Prev() { --index_; }
+  int64_t Value() { return intset_->Get(index_); }
 
  private:
   const IntSet* intset_;
-  size_t idx_;
+  size_t index_;
 };
 }  // namespace redis_simple::in_memory
 

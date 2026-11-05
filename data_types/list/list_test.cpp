@@ -232,12 +232,12 @@ TEST(ListEncodingTest, ConvertsBackToListPackAfterTrimRemoveOrSet) {
     return list;
   };
 
-  auto trimmed = make_quicklist();
+  std::unique_ptr<List> trimmed = make_quicklist();
   ASSERT_TRUE(trimmed->Trim(1, 1));
   EXPECT_EQ(trimmed->Encoding(), List::Encoding::kListPack);
   EXPECT_EQ(trimmed->Range(0, 0), std::vector<std::string>{value + "1"});
 
-  auto removed = make_quicklist();
+  std::unique_ptr<List> removed = make_quicklist();
   for (int index = 1; index < 4; ++index) {
     ASSERT_EQ(removed->Remove(value + std::to_string(index), 0,
                               List::RemoveDirection::kFromHead),
@@ -260,7 +260,7 @@ TEST(ListEncodingTest, ConvertsBackToListPackAfterTrimRemoveOrSet) {
   EXPECT_EQ(set->Range(0, 1), (std::vector<std::string>{"a", "b"}));
 
   // A list still above half the limit stays a quicklist.
-  auto kept = make_quicklist();
+  std::unique_ptr<List> kept = make_quicklist();
   ASSERT_TRUE(kept->Trim(0, 2));
   EXPECT_EQ(kept->Encoding(), List::Encoding::kQuickList);
 }

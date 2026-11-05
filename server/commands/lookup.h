@@ -4,7 +4,7 @@
 #include <string_view>
 
 #include "server/db/db.h"
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 
 namespace redis_simple::command {
 // Result of looking up a key that must hold one object type. `object` is null

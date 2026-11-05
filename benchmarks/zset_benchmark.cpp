@@ -35,7 +35,7 @@ std::vector<std::string> MemberNames(size_t count) {
 
 std::unique_ptr<zset::ZSet> FilledZSet(const std::vector<std::string>& names) {
   auto zset = zset::ZSet::Create();
-  auto rng = SeededRng(0);
+  std::mt19937 rng = SeededRng(0);
   std::uniform_real_distribution<double> score(0, 1'000'000);
   for (const auto& name : names) {
     zset->InsertOrUpdate(name, score(rng));
@@ -58,7 +58,7 @@ void ZSetInsert(benchmark::State& state) {
 void ZSetUpdateScore(benchmark::State& state) {
   const auto names = MemberNames(static_cast<size_t>(state.range(0)));
   auto zset = FilledZSet(names);
-  auto rng = SeededRng(1);
+  std::mt19937 rng = SeededRng(1);
   std::uniform_int_distribution<size_t> member(0, names.size() - 1);
   std::uniform_real_distribution<double> score(0, 1'000'000);
   for (auto _ : state) {
@@ -73,7 +73,7 @@ void ZSetUpdateScore(benchmark::State& state) {
 void ZSetDeleteRandom(benchmark::State& state) {
   const auto names = MemberNames(static_cast<size_t>(state.range(0)));
   auto zset = FilledZSet(names);
-  auto rng = SeededRng(2);
+  std::mt19937 rng = SeededRng(2);
   std::uniform_int_distribution<size_t> member(0, names.size() - 1);
   for (auto _ : state) {
     (void)_;
@@ -103,7 +103,7 @@ void ZSetDeleteSmallestName(benchmark::State& state) {
 void ZSetRank(benchmark::State& state) {
   const auto names = MemberNames(static_cast<size_t>(state.range(0)));
   auto zset = FilledZSet(names);
-  auto rng = SeededRng(3);
+  std::mt19937 rng = SeededRng(3);
   std::uniform_int_distribution<size_t> member(0, names.size() - 1);
   for (auto _ : state) {
     (void)_;
@@ -116,10 +116,10 @@ void ZSetRank(benchmark::State& state) {
 // exclusive lower bound.
 void ZSetRangeByScore(benchmark::State& state) {
   const auto size = static_cast<size_t>(state.range(0));
-  const auto names = MemberNames(size);
+  const std::vector<std::string> names = MemberNames(size);
   auto zset = FilledZSet(names);
   const double width = 1'000'000.0 * 100 / static_cast<double>(size);
-  auto rng = SeededRng(4);
+  std::mt19937 rng = SeededRng(4);
   std::uniform_real_distribution<double> start(0, 1'000'000 - width);
   for (auto _ : state) {
     (void)_;

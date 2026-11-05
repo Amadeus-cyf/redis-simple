@@ -41,7 +41,7 @@ constexpr size_t kSnapshotBatchSize = 64;
 // Covers a bulk-string frame or array header, including a size_t decimal value.
 constexpr size_t kRespElementOverhead = 32;
 constexpr std::string_view kLongestInt64 = "-9223372036854775808";
-constexpr auto kSyncInterval = std::chrono::seconds(1);
+constexpr const std::chrono::seconds kSyncInterval = std::chrono::seconds(1);
 constexpr std::string_view kMultiRecord = "*1\r\n$5\r\nMULTI\r\n";
 
 // The full 128-bit product of two 64-bit values, as {high, low} words.
@@ -57,7 +57,8 @@ std::pair<uint64_t, uint64_t> WideMultiply(uint64_t left, uint64_t right) {
           (middle << 32) | (low_low & kLowHalf)};
 }
 constexpr std::string_view kExecRecord = "*1\r\n$4\r\nEXEC\r\n";
-constexpr auto kRewriteRetryDelay = std::chrono::seconds(5);
+constexpr const std::chrono::seconds kRewriteRetryDelay =
+    std::chrono::seconds(5);
 
 class SystemFileOps final : public FileOps {
  public:
@@ -83,7 +84,7 @@ std::shared_ptr<FileOps> DefaultFileOps() {
 
 size_t MaxIovCount() {
   static const size_t kMaxIovCount = [] {
-    const auto system_limit = sysconf(_SC_IOV_MAX);
+    const int64_t system_limit = sysconf(_SC_IOV_MAX);
     const size_t limit =
         system_limit > 0 ? static_cast<size_t>(system_limit) : 1024;
     return std::min(limit,
@@ -400,7 +401,7 @@ bool AppendSnapshotRecord(std::string_view key, const db::RedisObject& object,
       encoded = EmitString(key, object.String(), limits, sink);
       break;
     case db::RedisObject::ObjectType::kSet: {
-      const auto* set = object.Set();
+      const set::Set* set = object.Set();
       SnapshotBatch batch("SADD", key, 1, limits, sink);
       encoded = set->ForEachMember([&batch](std::string_view member) {
         return batch.Append({member});
@@ -408,7 +409,7 @@ bool AppendSnapshotRecord(std::string_view key, const db::RedisObject& object,
       break;
     }
     case db::RedisObject::ObjectType::kList: {
-      const auto* list = object.List();
+      const list::List* list = object.List();
       const size_t size = list->Size();
       if (size == 0) {
         encoded = true;
@@ -421,7 +422,7 @@ bool AppendSnapshotRecord(std::string_view key, const db::RedisObject& object,
       break;
     }
     case db::RedisObject::ObjectType::kZSet: {
-      const auto* zset = object.ZSet();
+      const zset::ZSet* zset = object.ZSet();
       SnapshotBatch batch("ZADD", key, 2, limits, sink);
       encoded = zset->ForEachEntry([&batch](std::string_view member,
                                             double score) {
@@ -431,7 +432,7 @@ bool AppendSnapshotRecord(std::string_view key, const db::RedisObject& object,
       break;
     }
     case db::RedisObject::ObjectType::kHash: {
-      const auto* hash = object.Hash();
+      const hash::Hash* hash = object.Hash();
       SnapshotBatch batch("HSET", key, 2, limits, sink);
       encoded = hash->ForEachEntry([&batch](std::string_view field,
                                             std::string_view value) {
@@ -575,7 +576,7 @@ std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
     close(fd);
     return nullptr;
   }
-  auto aof = std::unique_ptr<Aof>(
+  std::unique_ptr<Aof> aof = std::unique_ptr<Aof>(
       new Aof(fd, options, static_cast<size_t>(file_info.st_size)));
   if (!aof->SyncParentDirectory() || !aof->Replay(db) ||
       lseek(fd, 0, SEEK_END) < 0 || fstat(fd, &file_info) < 0 ||
@@ -936,7 +937,8 @@ bool Aof::Replay(db::RedisDb* const db) {
           return false;
         }
         std::string_view name;
-        const auto parsed = request_parser::Parse(remaining, &name, &args);
+        const request_parser::ParseResult parsed =
+            request_parser::Parse(remaining, &name, &args);
         if (parsed.status == request_parser::ParseStatus::kIncomplete) {
           break;
         }
@@ -961,7 +963,7 @@ bool Aof::Replay(db::RedisDb* const db) {
           }
           transaction_start.reset();
         } else {
-          const auto* metadata = command::Find(name);
+          const command::Command* metadata = command::Find(name);
           if (metadata == nullptr ||
               metadata->access != command::CommandAccess::kWrite ||
               !metadata->arity.Accepts(args.size())) {
@@ -1032,7 +1034,7 @@ bool Aof::Encode(std::string_view command,
     if (args.empty()) {
       return false;
     }
-    const auto expire = db->Expiration(args[0]);
+    const std::optional<int64_t> expire = db->Expiration(args[0]);
     if (expire.has_value()) {
       return AppendExpireAt(args[0], *expire, output);
     }
@@ -1106,7 +1108,7 @@ bool Aof::WriteBatch(int fd, RecordQueue& batch,
       }
       auto consumed = static_cast<size_t>(written);
       while (consumed > 0) {
-        auto& block = (*blocks)[index];
+        iovec& block = (*blocks)[index];
         if (consumed < block.iov_len) {
           auto* data = static_cast<char*>(block.iov_base);
           block.iov_base = data + consumed;

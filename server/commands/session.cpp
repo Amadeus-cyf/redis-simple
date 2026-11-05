@@ -31,7 +31,7 @@ std::string EncodeHello(reply::ProtocolVersion protocol) {
 }  // namespace
 
 void HandleAuth(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   const std::string_view password = client->RequiredPassword();
   if (password.empty() && args.size() == 2) {
     // Without a password the default user accepts any password, as in Redis'
@@ -63,8 +63,8 @@ void HandleAuth(Client* const client) {
 }
 
 void HandleHello(Client* const client) {
-  const auto& args = client->Args();
-  auto protocol = client->Protocol();
+  const command::CommandArgs& args = client->Args();
+  reply::ProtocolVersion protocol = client->Protocol();
   if (!args.empty()) {
     int64_t version = 0;
     if (!utils::ToInt64(args[0], &version)) {
@@ -86,7 +86,7 @@ void HandleHello(Client* const client) {
 
 void HandlePing(Client* const client) {
   constexpr std::string_view kPong = "+PONG\r\n";
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   if (args.empty()) {
     client->AddReply(kPong);
   } else {

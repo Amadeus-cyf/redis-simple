@@ -19,7 +19,7 @@ constexpr size_t kInitialCapacity = 4096;
 DynamicBuffer::DynamicBuffer()
     // Bytes are always written before they are read, so skip zero-filling.
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
-    : buf_(new char[kInitialCapacity]),
+    : buffer_(new char[kInitialCapacity]),
       capacity_(kInitialCapacity),
       size_(0),
       processed_(0) {}
@@ -30,13 +30,13 @@ void DynamicBuffer::Append(const char* buffer, size_t n) {
   }
   RS_CHECK(buffer != nullptr);
   Reserve(n);
-  std::memcpy(buf_.get() + size_, buffer, n);
+  std::memcpy(buffer_.get() + size_, buffer, n);
   size_ += n;
 }
 
 char* DynamicBuffer::WritableTail(size_t n) {
   Reserve(n);
-  return buf_.get() + size_;
+  return buffer_.get() + size_;
 }
 
 void DynamicBuffer::Commit(size_t n) {
@@ -63,7 +63,7 @@ void DynamicBuffer::Compact() {
     return;
   }
   const size_t unread = UnreadSize();
-  std::memmove(buf_.get(), buf_.get() + processed_, unread);
+  std::memmove(buffer_.get(), buffer_.get() + processed_, unread);
   size_ = unread;
   processed_ = 0;
 }
@@ -71,24 +71,24 @@ void DynamicBuffer::Compact() {
 std::optional<std::string_view> DynamicBuffer::ReadLineView() {
   const size_t readable = UnreadSize();
   const auto* newline = static_cast<const char*>(
-      std::memchr(buf_.get() + processed_, '\n', readable));
+      std::memchr(buffer_.get() + processed_, '\n', readable));
   if (newline == nullptr) {
     return std::nullopt;
   }
   const char* line_end = newline;
   size_t delimiter_length = 1;
-  if (line_end > buf_.get() + processed_ && *(line_end - 1) == '\r') {
+  if (line_end > buffer_.get() + processed_ && *(line_end - 1) == '\r') {
     --line_end;
     ++delimiter_length;
   }
-  const size_t line_length = line_end - buf_.get() - processed_;
-  std::string_view line(buf_.get() + processed_, line_length);
+  const size_t line_length = line_end - buffer_.get() - processed_;
+  std::string_view line(buffer_.get() + processed_, line_length);
   processed_ += line_length + delimiter_length;
   return line;
 }
 
 std::string DynamicBuffer::ReadLine() {
-  const auto line = ReadLineView();
+  const std::optional<std::string_view> line = ReadLineView();
   return line.has_value() ? std::string(*line) : "";
 }
 
@@ -99,9 +99,9 @@ void DynamicBuffer::Resize(size_t n) {
                              : capacity_ * 2;
   const size_t new_capacity = std::max(n, doubled);
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
-  std::unique_ptr<char[]> new_buf(new char[new_capacity]);
-  std::memcpy(new_buf.get(), buf_.get(), size_);
-  buf_ = std::move(new_buf);
+  std::unique_ptr<char[]> new_buffer(new char[new_capacity]);
+  std::memcpy(new_buffer.get(), buffer_.get(), size_);
+  buffer_ = std::move(new_buffer);
   capacity_ = new_capacity;
 }
 

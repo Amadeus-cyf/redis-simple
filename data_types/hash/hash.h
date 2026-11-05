@@ -63,20 +63,20 @@ class Hash {
 template <typename Visitor>
 bool Hash::VisitValue(std::string_view field, Visitor&& visitor) const {
   if (encoding_ == Encoding::kListPack) {
-    const auto field_idx = FindListPackField(field);
-    if (!field_idx.has_value()) {
+    const std::optional<size_t> field_offset = FindListPackField(field);
+    if (!field_offset.has_value()) {
       return false;
     }
-    const auto value_idx = listpack_->Next(*field_idx);
-    if (!value_idx.has_value()) {
+    const std::optional<size_t> value_offset = listpack_->Next(*field_offset);
+    if (!value_offset.has_value()) {
       return false;
     }
-    size_t len = 0;
-    const auto* data = listpack_->Get(*value_idx, &len);
+    size_t length = 0;
+    const unsigned char* data = listpack_->Get(*value_offset, &length);
     if (data == nullptr) {
       return false;
     }
-    visitor(std::string_view(reinterpret_cast<const char*>(data), len));
+    visitor(std::string_view(reinterpret_cast<const char*>(data), length));
     return true;
   }
   if (encoding_ == Encoding::kDict) {

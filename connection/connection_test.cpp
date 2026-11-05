@@ -70,12 +70,13 @@ TEST(ConnectionTest, CallbackCanCloseConnection) {
   Connection connection({loop.get(), sockets[0].Release()});
   connection.SetState(ConnectionState::kConnected);
   int callback_count = 0;
-  ASSERT_TRUE(connection.SetReadCallback([&callback_count](Connection* conn) {
-    char byte = '\0';
-    EXPECT_EQ(conn->Read({&byte, 1}), 1);
-    ++callback_count;
-    conn->Close();
-  }));
+  ASSERT_TRUE(
+      connection.SetReadCallback([&callback_count](Connection* readable) {
+        char byte = '\0';
+        EXPECT_EQ(readable->Read({&byte, 1}), 1);
+        ++callback_count;
+        readable->Close();
+      }));
   ASSERT_EQ(write(sockets[1].Get(), "x", 1), 1);
 
   loop->ProcessEvents();
@@ -122,9 +123,9 @@ TEST(ConnectionTest, WriteBarrierRunsCallbacksOnceInWriteFirstOrder) {
   Connection connection({loop.get(), sockets[0].Release()});
   connection.SetState(ConnectionState::kConnected);
   std::vector<int> order;
-  ASSERT_TRUE(connection.SetReadCallback([&order](Connection* conn) {
+  ASSERT_TRUE(connection.SetReadCallback([&order](Connection* readable) {
     char byte = '\0';
-    EXPECT_EQ(conn->Read({&byte, 1}), 1);
+    EXPECT_EQ(readable->Read({&byte, 1}), 1);
     order.push_back(2);
   }));
   ASSERT_TRUE(connection.SetWriteCallback(

@@ -127,7 +127,7 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
     return DbStatus::kError;
   }
   const int64_t* const existing = expires_->FindValue(hashed);
-  const auto current_expire =
+  const std::optional<int64_t> current_expire =
       existing == nullptr ? std::nullopt : std::optional<int64_t>(*existing);
   const bool condition_met = [&] {
     switch (condition) {
@@ -158,7 +158,7 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
 }
 
 std::optional<int64_t> RedisDb::Expiration(std::string_view key) const {
-  const auto* expire = expires_->FindValue(key);
+  const int64_t* expire = expires_->FindValue(key);
   return expire == nullptr ? std::nullopt : std::optional<int64_t>(*expire);
 }
 
@@ -221,7 +221,7 @@ int64_t RedisDb::TimeToLive(std::string_view key, TtlResolution resolution) {
   if (Lookup(hashed) == nullptr) {
     return -2;
   }
-  const auto* expire = expires_->FindValue(hashed);
+  const int64_t* expire = expires_->FindValue(hashed);
   if (expire == nullptr) {
     return -1;
   }
@@ -266,7 +266,7 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
   expired_keys.reserve(max_samples);
   bool scan_complete = false;
   while (result.sampled < max_samples && !scan_complete) {
-    const auto next_cursor = expires_->Scan(
+    const std::optional<size_t> next_cursor = expires_->Scan(
         expire_cursor_, [&result, &expired_keys, max_samples, now](
                             const std::string& key, const int64_t& expire) {
           if (result.sampled >= max_samples) {
@@ -350,7 +350,7 @@ bool RedisDb::IsKeyExpired(const HashedKey& key) const {
   if (loading_ || expires_->Size() == 0) {
     return false;
   }
-  const auto* result = expires_->FindValue(key);
+  const int64_t* result = expires_->FindValue(key);
   if (result == nullptr) {
     return false;
   }

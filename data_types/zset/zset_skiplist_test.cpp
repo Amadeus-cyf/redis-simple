@@ -49,7 +49,7 @@ TEST(ZSetSkiplistStandaloneTest, DeleteRecomputesRangeBoundaries) {
   ASSERT_TRUE(zset_skiplist.Delete("c"));
 
   const RangeByScoreSpec spec(0.0, 10.0, false, false);
-  const auto pairs =
+  const std::vector<KeyScorePair> pairs =
       zset_storage_test::ToKeyScorePairs(zset_skiplist.RangeByScore(&spec));
   ASSERT_EQ(pairs, std::vector<KeyScorePair>({{"b", 2.0}}));
   ASSERT_EQ(zset_skiplist.Count(&spec), 1);

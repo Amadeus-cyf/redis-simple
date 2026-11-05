@@ -20,7 +20,7 @@ namespace {
 constexpr std::string_view kRequest = "ping";
 constexpr std::string_view kResponse = "pong";
 
-ssize_t ReadWithTimeout(int fd, char* buffer, size_t len) {
+ssize_t ReadWithTimeout(int fd, char* buffer, size_t length) {
   pollfd pfd{};
   pfd.fd = fd;
   pfd.events = POLLIN;
@@ -28,7 +28,7 @@ ssize_t ReadWithTimeout(int fd, char* buffer, size_t len) {
   if (poll(&pfd, 1, 1000) <= 0) {
     return -1;
   }
-  return read(fd, buffer, len);
+  return read(fd, buffer, length);
 }
 }  // namespace
 
@@ -40,7 +40,7 @@ int Run(std::string_view port_file) {
     return EXIT_FAILURE;
   }
   constexpr int kPort = 0;
-  const tcp::TcpAddrInfo local("localhost", kPort);
+  const tcp::TcpAddress local("localhost", kPort);
   if (tcp::TcpBind(s, local) != tcp::TcpStatusCode::kOk) {
     std::cerr << "failed to bind TCP integration socket: "
               << std::strerror(errno) << '\n';
@@ -72,16 +72,16 @@ int Run(std::string_view port_file) {
     return EXIT_FAILURE;
   }
 
-  tcp::TcpAddrInfo remote_addr;
-  const int remote_fd = tcp::TcpAccept(s, &remote_addr);
+  tcp::TcpAddress remote_address;
+  const int remote_fd = tcp::TcpAccept(s, &remote_address);
   if (remote_fd < 0) {
     std::cerr << "failed to accept TCP integration client\n";
     RS_LOG_DEBUG("failed to accept tcp integration client\n");
     close(s);
     return EXIT_FAILURE;
   }
-  RS_LOG_DEBUG("accept connection from %s:%d\n", remote_addr.ip.c_str(),
-               remote_addr.port);
+  RS_LOG_DEBUG("accept connection from %s:%d\n", remote_address.ip.c_str(),
+               remote_address.port);
 
   std::array<char, 16> buffer{};
   const ssize_t nread =

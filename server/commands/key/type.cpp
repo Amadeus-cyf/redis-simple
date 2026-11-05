@@ -3,7 +3,7 @@
 #include "server/client.h"
 #include "server/commands/handlers.h"
 #include "server/db/db.h"
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 #include "server/reply.h"
 
 namespace redis_simple::command::key {

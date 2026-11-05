@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "server/db/key_watcher.h"
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 #include "utils/time_utils.h"
 
 namespace redis_simple::db {
@@ -19,7 +19,7 @@ TEST(RedisDbTest, SetLookupAndDeleteKey) {
 
   ASSERT_EQ(redis_db->SetKey("key", RedisObject::CreateWithString("value"), 0),
             DbStatus::kOk);
-  const auto* object = redis_db->LookupKey("key");
+  const RedisObject* object = redis_db->LookupKey("key");
   ASSERT_NE(object, nullptr);
   EXPECT_EQ(object->Type(), RedisObject::ObjectType::kString);
   EXPECT_EQ(object->String(), "value");
@@ -113,7 +113,7 @@ TEST(RedisDbTest, ExpireSamplingWorksWhenFewKeysHaveTtl) {
       redis_db->SetKey("expired", RedisObject::CreateWithString("gone"), 1),
       DbStatus::kOk);
 
-  const auto sample = redis_db->ExpireSome(20, 2);
+  const ExpireSampleResult sample = redis_db->ExpireSome(20, 2);
 
   EXPECT_EQ(sample.sampled, 1);
   EXPECT_EQ(sample.expired, 1);

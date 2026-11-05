@@ -57,8 +57,8 @@ class Set {
   bool DictAdd(std::string_view value);
   void MaybeConvertIntsetToDict();
   void ConvertIntSetToDict(size_t capacity);
-  bool MaybeConvertIntSetToListPack(std::string_view val);
-  void ConvertIntSetToListPack(std::string_view val);
+  bool MaybeConvertIntSetToListPack(std::string_view value);
+  void ConvertIntSetToListPack(std::string_view value);
   void ConvertListPackToDict(size_t capacity);
   enum Encoding encoding_;
   std::unique_ptr<in_memory::IntSet> intset_;

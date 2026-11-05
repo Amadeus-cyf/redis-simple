@@ -215,7 +215,8 @@ void Loop::ProcessEvents() {
 
 void Loop::ProcessFileEvents() {
   timespec timeout_spec = PollTimeout();
-  const auto& ready_events = event_poller_->Poll(&timeout_spec);
+  const std::vector<ReadyEvent>& ready_events =
+      event_poller_->Poll(&timeout_spec);
   processing_file_events_ = true;
   for (const auto& ready_event : ready_events) {
     const int fd = ready_event.fd;

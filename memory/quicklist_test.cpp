@@ -216,14 +216,14 @@ TEST(QuickListTest, ReleasesSingleListPackWithoutRebuilding) {
   ASSERT_TRUE(quicklist.RPush("two"));
   ASSERT_EQ(quicklist.NodeCount(), 1);
 
-  auto listpack = quicklist.ReleaseListPack();
+  std::unique_ptr<ListPack> listpack = quicklist.ReleaseListPack();
 
   ASSERT_NE(listpack, nullptr);
   EXPECT_TRUE(quicklist.Empty());
   EXPECT_EQ(quicklist.NodeCount(), 0);
   ASSERT_EQ(listpack->Size(), 2);
-  const auto first = listpack->First();
-  const auto last = listpack->Last();
+  const std::optional<size_t> first = listpack->First();
+  const std::optional<size_t> last = listpack->Last();
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(last.has_value());
   EXPECT_EQ(listpack->Get(first.value_or(0)), "one");

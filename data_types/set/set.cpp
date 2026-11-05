@@ -39,11 +39,11 @@ bool Set::HasMember(std::string_view value) const {
     return false;
   }
   if (encoding_ == Encoding::kIntSet) {
-    int64_t int_val = 0;
-    if (!utils::ToCanonicalInt64(value, &int_val)) {
+    int64_t int_value = 0;
+    if (!utils::ToCanonicalInt64(value, &int_value)) {
       return false;
     }
-    return intset_->Find(int_val);
+    return intset_->Find(int_value);
   }
   if (encoding_ == Encoding::kListPack) {
     return listpack_->Find(value).has_value();
@@ -77,18 +77,18 @@ bool Set::Remove(std::string_view value) {
     return false;
   }
   if (encoding_ == Encoding::kIntSet) {
-    int64_t int_val = 0;
-    if (utils::ToCanonicalInt64(value, &int_val)) {
-      return intset_->Remove(int_val);
+    int64_t int_value = 0;
+    if (utils::ToCanonicalInt64(value, &int_value)) {
+      return intset_->Remove(int_value);
     }
     return false;
   }
   if (encoding_ == Encoding::kListPack) {
-    const auto idx = listpack_->Find(value);
-    if (!idx.has_value()) {
+    const std::optional<size_t> offset = listpack_->Find(value);
+    if (!offset.has_value()) {
       return false;
     }
-    listpack_->Delete(*idx);
+    listpack_->Delete(*offset);
     return true;
   }
   if (encoding_ == Encoding::kDict) {
@@ -111,12 +111,12 @@ size_t Set::Size() const {
 }
 
 bool Set::IntSetAddAndMaybeConvert(std::string_view value) {
-  int64_t int_val = 0;
-  if (utils::ToCanonicalInt64(value, &int_val)) {
+  int64_t int_value = 0;
+  if (utils::ToCanonicalInt64(value, &int_value)) {
     if (!intset_) {
       intset_ = std::make_unique<in_memory::IntSet>();
     }
-    bool success = intset_->Add(int_val);
+    bool success = intset_->Add(int_value);
     if (success) {
       MaybeConvertIntsetToDict();
     }
@@ -130,12 +130,12 @@ bool Set::IntSetAddAndMaybeConvert(std::string_view value) {
 }
 
 bool Set::ListPackAddAndMaybeConvert(std::string_view value) {
-  const size_t len = value.size();
+  const size_t length = value.size();
   if (listpack_->Find(value).has_value()) {
     return false;
   }
   if (listpack_->Size() < kListPackMaxEntries &&
-      len <= kListPackElementMaxLength &&
+      length <= kListPackElementMaxLength &&
       in_memory::ListPack::SafeToAdd(
           listpack_.get(), in_memory::ListPack::EstimateEntryBytes(value))) {
     return listpack_->Append(value);
@@ -172,14 +172,14 @@ void Set::ConvertIntSetToDict(size_t capacity) {
   intset_.reset();
 }
 
-bool Set::MaybeConvertIntSetToListPack(std::string_view val) {
+bool Set::MaybeConvertIntSetToListPack(std::string_view value) {
   if (encoding_ != Encoding::kIntSet) {
     return false;
   }
-  size_t len = val.size();
+  size_t length = value.size();
   size_t max_integer_length = 0;
   size_t estimated_bytes = 0;
-  const size_t entry_bytes = in_memory::ListPack::EstimateEntryBytes(val);
+  const size_t entry_bytes = in_memory::ListPack::EstimateEntryBytes(value);
   int64_t estimated_integer = 0;
   if (intset_) {
     int64_t max_integer = intset_->Max();
@@ -193,27 +193,27 @@ bool Set::MaybeConvertIntSetToListPack(std::string_view val) {
         in_memory::ListPack::EstimateBytes(estimated_integer, intset_->Size());
   }
   const size_t current_size = intset_ ? intset_->Size() : 0;
-  if (current_size < kListPackMaxEntries && len <= kListPackElementMaxLength &&
+  if (current_size < kListPackMaxEntries &&
+      length <= kListPackElementMaxLength &&
       max_integer_length <= kListPackElementMaxLength &&
       estimated_bytes <= std::numeric_limits<size_t>::max() - entry_bytes &&
       in_memory::ListPack::SafeToAdd(nullptr, estimated_bytes + entry_bytes)) {
-    ConvertIntSetToListPack(val);
+    ConvertIntSetToListPack(value);
     return true;
   }
   return false;
 }
 
-void Set::ConvertIntSetToListPack(std::string_view val) {
+void Set::ConvertIntSetToListPack(std::string_view value) {
   RS_CHECK(encoding_ == Encoding::kIntSet);
   encoding_ = Encoding::kListPack;
   listpack_ = std::make_unique<in_memory::ListPack>();
   if (intset_) {
     for (uint32_t i = 0; i < intset_->Size(); ++i) {
-      int64_t value = intset_->Get(i);
-      listpack_->Append(value);
+      listpack_->Append(intset_->Get(i));
     }
   }
-  listpack_->Append(val);
+  listpack_->Append(value);
   intset_.reset();
 }
 
@@ -224,13 +224,13 @@ void Set::ConvertListPackToDict(size_t capacity) {
   if (!listpack_) {
     return;
   }
-  auto idx = listpack_->First();
-  while (idx.has_value()) {
-    auto string_result = listpack_->Get(*idx);
+  std::optional<size_t> offset = listpack_->First();
+  while (offset.has_value()) {
+    std::optional<std::string> string_result = listpack_->Get(*offset);
     if (string_result.has_value()) {
       dict_->Set(std::move(*string_result), nullptr);
     }
-    idx = listpack_->Next(*idx);
+    offset = listpack_->Next(*offset);
   }
   listpack_.reset();
 }

@@ -45,14 +45,15 @@ bool Server::Run(const ServerOptions& options) {
       return false;
     }
   }
-  connection::Connection conn(
+  connection::Connection connection(
       connection::Context{.loop = loop_.get(), .fd = -1});
-  const connection::AddressInfo addr_info(options.bind_address, options.port);
-  if (conn.BindAndListen(addr_info) == connection::ConnectionStatus::kError) {
+  const connection::AddressInfo address(options.bind_address, options.port);
+  if (connection.BindAndListen(address) ==
+      connection::ConnectionStatus::kError) {
     aof_.reset();
     return false;
   }
-  fd_ = conn.Descriptor();
+  fd_ = connection.Descriptor();
   if (options.io_threads > 1) {
     io_threads_ = IoThreads::Create(static_cast<size_t>(options.io_threads));
     if (io_threads_ == nullptr) {

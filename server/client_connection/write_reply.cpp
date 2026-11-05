@@ -37,19 +37,20 @@ ssize_t WritePendingReplies(Client* const client) {
 }
 
 void FinishWrite(Server* const server, Client* const client, ssize_t written) {
-  connection::Connection* const conn = client->Connection();
-  if (written < 0 && conn->State() != connection::ConnectionState::kConnected) {
+  connection::Connection* const connection = client->Connection();
+  if (written < 0 &&
+      connection->State() != connection::ConnectionState::kConnected) {
     server->RemoveClient(client);
     return;
   }
   if (client->HasPendingReplies()) {
-    if (!conn->HasWriteCallback() &&
-        !conn->SetWriteCallback(
+    if (!connection->HasWriteCallback() &&
+        !connection->SetWriteCallback(
             CreateCallback(CallbackType::kWriteReply, server, client))) {
       RS_LOG_DEBUG("failed to install the write callback\n");
     }
   } else {
-    if (conn->HasWriteCallback() && !conn->UnsetWriteCallback()) {
+    if (connection->HasWriteCallback() && !connection->UnsetWriteCallback()) {
       RS_LOG_DEBUG("failed to unset the write callback\n");
     }
     if (client->ShouldCloseAfterReply()) {
@@ -58,7 +59,7 @@ void FinishWrite(Server* const server, Client* const client, ssize_t written) {
     }
   }
   if (client->ShouldResumeReads() &&
-      conn->SetReadCallback(
+      connection->SetReadCallback(
           CreateCallback(CallbackType::kReadQuery, server, client))) {
     client->SetReadsPaused(false);
   }
@@ -66,7 +67,7 @@ void FinishWrite(Server* const server, Client* const client, ssize_t written) {
 
 connection::ConnectionCallback CreateWriteReplyCallback(Server* const server,
                                                         Client* const client) {
-  return [server, client](connection::Connection* /*conn*/) {
+  return [server, client](connection::Connection* /*connection*/) {
     WriteToClient(server, client);
   };
 }

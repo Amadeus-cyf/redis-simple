@@ -60,7 +60,7 @@ void AppendPersistenceSection(const aof::Aof* const append_only_file,
     AppendField("aof_pending_bytes", size_t{0}, info);
     return;
   }
-  const auto state = append_only_file->State();
+  const aof::AofState state = append_only_file->State();
   AppendField("aof_rewrite_in_progress", state.rewrite_in_progress ? "1" : "0",
               info);
   AppendField("aof_last_bgrewrite_status",
@@ -85,7 +85,7 @@ void AppendStatsSection(const IoStats* const stats, std::string* const info) {
 }  // namespace
 
 void HandleInfo(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   const bool all = args.empty() || utils::EqualsIgnoreCase(args[0], "all") ||
                    utils::EqualsIgnoreCase(args[0], "default");
   const bool persistence =

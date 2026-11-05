@@ -48,9 +48,8 @@ bool List::Set(size_t index, std::string_view value) {
   }
 
   if (listpack_) {
-    const auto listpack_index = listpack_->IndexAt(index);
-    if (!listpack_index.has_value() ||
-        !listpack_->Replace(*listpack_index, value)) {
+    const std::optional<size_t> offset = listpack_->OffsetAt(index);
+    if (!offset.has_value() || !listpack_->Replace(*offset, value)) {
       return false;
     }
     if (listpack_->TotalBytes() > list_max_listpack_bytes_) {
@@ -78,7 +77,7 @@ std::optional<size_t> List::Remove(std::string_view value, size_t limit,
     return RemoveFromListPack(value, limit, direction);
   }
 
-  const auto removed =
+  const std::optional<size_t> removed =
       quicklist_->Remove(value, limit, ToQuickListRemoveDirection(direction));
   TryConvertQuickListToListPack();
   return removed;
@@ -116,11 +115,11 @@ std::optional<size_t> List::RemoveFromListPack(std::string_view value,
 void List::TrimListPack(size_t start, size_t stop) {
   const size_t size = listpack_->Size();
   const size_t tail_count = size - stop - 1;
-  const auto tail_index = listpack_->IndexAt(stop + 1);
-  if (tail_index.has_value()) {
-    listpack_->DeleteRange(*tail_index, tail_count);
+  const std::optional<size_t> tail_offset = listpack_->OffsetAt(stop + 1);
+  if (tail_offset.has_value()) {
+    listpack_->DeleteRange(*tail_offset, tail_count);
   }
-  const auto first = listpack_->First();
+  const std::optional<size_t> first = listpack_->First();
   if (first.has_value()) {
     listpack_->DeleteRange(*first, start);
   }
@@ -170,16 +169,18 @@ std::optional<std::string> List::Pop(bool head) {
     if (listpack_->Size() == 0) {
       return std::nullopt;
     }
-    const auto idx = head ? listpack_->First() : listpack_->Last();
-    if (!idx.has_value()) {
+    const std::optional<size_t> offset =
+        head ? listpack_->First() : listpack_->Last();
+    if (!offset.has_value()) {
       return std::nullopt;
     }
-    auto value = listpack_->Get(*idx);
-    listpack_->Delete(*idx);
+    std::optional<std::string> value = listpack_->Get(*offset);
+    listpack_->Delete(*offset);
     return value;
   }
 
-  auto value = head ? quicklist_->LPop() : quicklist_->RPop();
+  std::optional<std::string> value =
+      head ? quicklist_->LPop() : quicklist_->RPop();
   TryConvertQuickListToListPack();
   return value;
 }
@@ -214,7 +215,7 @@ void List::TryConvertQuickListToListPack() {
   if (!quicklist_) {
     return;
   }
-  const auto bytes = quicklist_->ListPackBytes();
+  const std::optional<size_t> bytes = quicklist_->ListPackBytes();
   if (!bytes.has_value() || *bytes > list_max_listpack_bytes_ / 2) {
     return;
   }

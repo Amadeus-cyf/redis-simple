@@ -40,19 +40,19 @@ class ScopedFd {
 
 int BindAndConnectTcp(const AddressInfo& remote,
                       const std::optional<AddressInfo>& local) {
-  const tcp::TcpAddrInfo remote_addr(remote.ip, remote.port);
-  const auto local_addr =
+  const tcp::TcpAddress remote_address(remote.ip, remote.port);
+  const auto local_address =
       local.has_value()
-          ? std::make_optional<tcp::TcpAddrInfo>(local->ip, local->port)
+          ? std::make_optional<tcp::TcpAddress>(local->ip, local->port)
           : std::nullopt;
-  return tcp::TcpBindAndConnect(remote_addr, local_addr);
+  return tcp::TcpBindAndConnect(remote_address, local_address);
 }
 
 bool WouldBlock(int error) { return error == EAGAIN || error == EWOULDBLOCK; }
 
 size_t MaxIovCount() {
   static const size_t kMaxIovCount = [] {
-    const auto system_limit = sysconf(_SC_IOV_MAX);
+    const int64_t system_limit = sysconf(_SC_IOV_MAX);
     const size_t limit =
         system_limit > 0 ? static_cast<size_t>(system_limit) : 1024;
     return std::min(limit,
@@ -62,10 +62,10 @@ size_t MaxIovCount() {
 }
 }  // namespace
 
-Connection::Connection(const Context& ctx)
-    : fd_(ctx.fd),
+Connection::Connection(const Context& context)
+    : fd_(context.fd),
       state_(ConnectionState::kConnect),
-      loop_(ctx.loop),
+      loop_(context.loop),
       read_callback_(nullptr),
       write_callback_(nullptr) {}
 
@@ -93,7 +93,7 @@ void Connection::Close() {
 
 ConnectionStatus Connection::BindAndConnect(
     const AddressInfo& remote, const std::optional<AddressInfo>& local) {
-  if (auto* loop = loop_) {
+  if (event_loop::Loop* loop = loop_) {
     ScopedFd fd(BindAndConnectTcp(remote, local));
     if (fd.Get() < 0) {
       return ConnectionStatus::kError;
@@ -140,14 +140,14 @@ ConnectionStatus Connection::BindAndBlockingConnect(
   return ConnectionStatus::kOk;
 }
 
-ConnectionStatus Connection::BindAndListen(const AddressInfo& addr_info) {
+ConnectionStatus Connection::BindAndListen(const AddressInfo& address) {
   ScopedFd socket(tcp::TcpCreateSocket(AF_INET, true));
   if (socket.Get() < 0) {
     RS_LOG_DEBUG("create socket failed\n");
     return ConnectionStatus::kError;
   }
-  const tcp::TcpAddrInfo tcp_addr(addr_info.ip, addr_info.port);
-  if (tcp::TcpBind(socket.Get(), tcp_addr) == tcp::TcpStatusCode::kError) {
+  const tcp::TcpAddress tcp_address(address.ip, address.port);
+  if (tcp::TcpBind(socket.Get(), tcp_address) == tcp::TcpStatusCode::kError) {
     return ConnectionStatus::kError;
   }
   if (tcp::TcpListen(socket.Get()) == tcp::TcpStatusCode::kError) {
@@ -157,19 +157,19 @@ ConnectionStatus Connection::BindAndListen(const AddressInfo& addr_info) {
   return ConnectionStatus::kOk;
 }
 
-ConnectionStatus Connection::Accept(int listener_fd, AddressInfo* addr_info) {
+ConnectionStatus Connection::Accept(int listener_fd, AddressInfo* address) {
   if (listener_fd < 0 || fd_ >= 0 || state_ != ConnectionState::kAccepting) {
     return ConnectionStatus::kError;
   }
-  tcp::TcpAddrInfo tcp_addr;
-  const int fd = tcp::TcpAccept(listener_fd, &tcp_addr);
+  tcp::TcpAddress tcp_address;
+  const int fd = tcp::TcpAccept(listener_fd, &tcp_address);
   if (fd < 0) {
     return ConnectionStatus::kError;
   }
-  if (addr_info != nullptr) {
-    addr_info->ip = tcp_addr.ip;
-    addr_info->port = tcp_addr.port;
-    RS_LOG_DEBUG("accept %s %d\n", addr_info->ip.c_str(), addr_info->port);
+  if (address != nullptr) {
+    address->ip = tcp_address.ip;
+    address->port = tcp_address.port;
+    RS_LOG_DEBUG("accept %s %d\n", address->ip.c_str(), address->port);
   }
   state_ = ConnectionState::kConnected;
   fd_ = fd;
@@ -181,7 +181,7 @@ bool Connection::SetReadCallback(ConnectionCallback read_callback) {
   if (!read_callback) {
     return UnsetReadCallback();
   }
-  if (auto* loop = loop_) {
+  if (event_loop::Loop* loop = loop_) {
     auto event = event_loop::FileEvent::Create(
         ReadableEventCallback, nullptr, this,
         event_loop::ToInt(event_loop::EventFlag::kReadable));
@@ -200,7 +200,7 @@ bool Connection::SetReadCallback(ConnectionCallback read_callback) {
 }
 
 bool Connection::UnsetReadCallback() {
-  if (auto* loop = loop_) {
+  if (event_loop::Loop* loop = loop_) {
     if (loop->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable) ==
         event_loop::Status::kError) {
       RS_LOG_DEBUG("failed to unset read callback\n");
@@ -219,7 +219,7 @@ bool Connection::SetWriteCallback(ConnectionCallback callback, bool barrier) {
   if (!callback) {
     return UnsetWriteCallback();
   }
-  if (auto* loop = loop_) {
+  if (event_loop::Loop* loop = loop_) {
     int event_mask = event_loop::ToInt(event_loop::EventFlag::kWritable);
     if (barrier) {
       event_mask |= event_loop::EventFlag::kBarrier;
@@ -246,7 +246,7 @@ bool Connection::SetWriteCallback(ConnectionCallback callback, bool barrier) {
 }
 
 bool Connection::UnsetWriteCallback() {
-  if (auto* loop = loop_) {
+  if (event_loop::Loop* loop = loop_) {
     if (loop->DeleteFileEvent(fd_, event_loop::EventFlag::kWritable) ==
         event_loop::Status::kError) {
       RS_LOG_DEBUG("failed to unset write callback\n");
@@ -342,7 +342,7 @@ ssize_t Connection::WriteVector(std::span<const iovec> blocks) {
   if (blocks.empty()) {
     return 0;
   }
-  const auto block_count =
+  const int block_count =
       static_cast<int>(std::min(blocks.size(), MaxIovCount()));
   ssize_t n = -1;
   n = writev(fd_, blocks.data(), block_count);
@@ -360,45 +360,45 @@ ssize_t Connection::WriteVector(std::span<const iovec> blocks) {
 }
 
 event_loop::CallbackStatus Connection::ReadableEventCallback(
-    event_loop::Loop* /*loop*/, int /*fd*/, Connection* conn, int mask) {
-  if (conn == nullptr || (mask & event_loop::EventFlag::kReadable) == 0) {
+    event_loop::Loop* /*loop*/, int /*fd*/, Connection* connection, int mask) {
+  if (connection == nullptr || (mask & event_loop::EventFlag::kReadable) == 0) {
     return event_loop::CallbackStatus::kError;
   }
-  if (conn->read_callback_) {
-    conn->read_callback_(conn);
+  if (connection->read_callback_) {
+    connection->read_callback_(connection);
   }
-  return conn->State() == ConnectionState::kClosed ||
-                 conn->State() == ConnectionState::kError
+  return connection->State() == ConnectionState::kClosed ||
+                 connection->State() == ConnectionState::kError
              ? event_loop::CallbackStatus::kError
              : event_loop::CallbackStatus::kOk;
 }
 
 event_loop::CallbackStatus Connection::WritableEventCallback(
-    event_loop::Loop* loop, int fd, Connection* conn, int mask) {
-  if (conn == nullptr || (mask & event_loop::EventFlag::kWritable) == 0) {
+    event_loop::Loop* loop, int fd, Connection* connection, int mask) {
+  if (connection == nullptr || (mask & event_loop::EventFlag::kWritable) == 0) {
     return event_loop::CallbackStatus::kError;
   }
-  if (conn->State() == ConnectionState::kConnecting &&
+  if (connection->State() == ConnectionState::kConnecting &&
       (mask & event_loop::EventFlag::kWritable) != 0) {
     // A nonblocking connect completes through the writable event; SO_ERROR
     // tells whether it succeeded.
     if (tcp::IsSocketError(fd)) {
       RS_LOG_DEBUG("socket error\n");
-      conn->SetState(ConnectionState::kError);
+      connection->SetState(ConnectionState::kError);
       return event_loop::CallbackStatus::kError;
     }
     RS_LOG_DEBUG("connection state set to connected\n");
-    conn->SetState(ConnectionState::kConnected);
-    if (!conn->write_callback_) {
+    connection->SetState(ConnectionState::kConnected);
+    if (!connection->write_callback_) {
       loop->DeleteFileEvent(fd, event_loop::EventFlag::kWritable);
-      conn->flags_ &= ~event_loop::EventFlag::kWritable;
+      connection->flags_ &= ~event_loop::EventFlag::kWritable;
     }
   }
-  if (conn->write_callback_) {
-    conn->write_callback_(conn);
+  if (connection->write_callback_) {
+    connection->write_callback_(connection);
   }
-  return conn->State() == ConnectionState::kClosed ||
-                 conn->State() == ConnectionState::kError
+  return connection->State() == ConnectionState::kClosed ||
+                 connection->State() == ConnectionState::kError
              ? event_loop::CallbackStatus::kError
              : event_loop::CallbackStatus::kOk;
 }

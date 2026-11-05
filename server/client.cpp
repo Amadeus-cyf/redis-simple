@@ -17,14 +17,14 @@
 
 namespace redis_simple {
 namespace {
-constexpr auto kReadBufferSize = size_t{16} * 1024;
+constexpr const size_t kReadBufferSize = size_t{16} * 1024;
 // Upper bound for one read while receiving a large bulk argument.
-constexpr auto kMaxBulkReadSize = size_t{1024} * 1024;
-constexpr auto kMaxQueryBufferSize = size_t{64} * 1024 * 1024;
+constexpr const size_t kMaxBulkReadSize = size_t{1024} * 1024;
+constexpr const size_t kMaxQueryBufferSize = size_t{64} * 1024 * 1024;
 // Upper bound for the argument bytes one MULTI may queue.
-constexpr auto kMaxTransactionBytes = kMaxQueryBufferSize;
+constexpr const size_t kMaxTransactionBytes = kMaxQueryBufferSize;
 // Queue buffers larger than this are released after a transaction ends.
-constexpr auto kRetainedTransactionBytes = size_t{64} * 1024;
+constexpr const size_t kRetainedTransactionBytes = size_t{64} * 1024;
 constexpr std::string_view kQueued = "+QUEUED\r\n";
 constexpr std::string_view kExecAbort =
     "-EXECABORT Transaction discarded because of previous errors.\r\n";
@@ -67,7 +67,7 @@ size_t Client::AddReply(std::string_view reply_text) {
   if (!CanQueueReply(reply_text.size())) {
     return 0;
   }
-  return reply_buf_.Append(reply_text.data(), reply_text.size());
+  return reply_buffer_.Append(reply_text.data(), reply_text.size());
 }
 
 size_t Client::AddReply(std::string&& reply_text) {
@@ -79,7 +79,7 @@ size_t Client::AddReply(std::string&& reply_text) {
   if (!CanQueueReply(reply_text.size())) {
     return 0;
   }
-  return reply_buf_.Append(std::move(reply_text));
+  return reply_buffer_.Append(std::move(reply_text));
 }
 
 size_t Client::AddReply(std::string&& header, std::string&& body) {
@@ -94,8 +94,8 @@ size_t Client::AddReply(std::string&& header, std::string&& body) {
   if (!CanQueueReply(total_size)) {
     return 0;
   }
-  const size_t header_size = reply_buf_.Append(std::move(header));
-  const size_t body_size = reply_buf_.Append(std::move(body));
+  const size_t header_size = reply_buffer_.Append(std::move(header));
+  const size_t body_size = reply_buffer_.Append(std::move(body));
   return header_size + body_size;
 }
 
@@ -111,9 +111,9 @@ size_t Client::AddBulkReply(std::string_view value) {
   if (!CanQueueReply(total_size)) {
     return 0;
   }
-  reply_buf_.Append(header.data(), header_size);
-  reply_buf_.Append(value.data(), value.size());
-  reply_buf_.Append(kCrlf.data(), kCrlf.size());
+  reply_buffer_.Append(header.data(), header_size);
+  reply_buffer_.Append(value.data(), value.size());
+  reply_buffer_.Append(kCrlf.data(), kCrlf.size());
   return total_size;
 }
 
@@ -144,10 +144,10 @@ ssize_t Client::ReadQuery() {
   // left in the socket again, so a busy client cannot monopolize the loop.
   // Large bulk arguments are read in bigger steps to save syscalls.
   const size_t pending_bulk =
-      parse_state_.PendingBulkBytes(query_buf_.View().size());
+      parse_state_.PendingBulkBytes(query_buffer_.View().size());
   const size_t read_size =
       std::clamp(pending_bulk, kReadBufferSize, kMaxBulkReadSize);
-  char* const tail = query_buf_.WritableTail(read_size);
+  char* const tail = query_buffer_.WritableTail(read_size);
   const ssize_t nread = connection_->Read({tail, read_size});
   if (nread == 0) {
     return 0;
@@ -157,8 +157,8 @@ ssize_t Client::ReadQuery() {
     return connection_->State() == connection::ConnectionState::kConnected ? 0
                                                                            : -1;
   }
-  query_buf_.Commit(static_cast<size_t>(nread));
-  if (query_buf_.View().size() > kMaxQueryBufferSize) {
+  query_buffer_.Commit(static_cast<size_t>(nread));
+  if (query_buffer_.View().size() > kMaxQueryBufferSize) {
     RS_LOG_DEBUG("query buffer limit exceeded\n");
     connection_->SetState(connection::ConnectionState::kError);
     return -1;
@@ -167,39 +167,40 @@ ssize_t Client::ReadQuery() {
 }
 
 ssize_t Client::SendReply() {
-  return reply_buf_.ReplyCount() > 0 ? SendListReply() : SendBufferReply();
+  return reply_buffer_.ReplyCount() > 0 ? SendListReply() : SendBufferReply();
 }
 
 ssize_t Client::SendBufferReply() {
-  const size_t reply_length = reply_buf_.UnsentLength();
+  const size_t reply_length = reply_buffer_.UnsentLength();
   const int logged_length = static_cast<int>(std::min(
       reply_length, static_cast<size_t>(std::numeric_limits<int>::max())));
   RS_LOG_DEBUG("SendBufferReply %.*s %zu\n", logged_length,
-               reply_buf_.UnsentBuffer(), reply_length);
+               reply_buffer_.UnsentBuffer(), reply_length);
   ssize_t nwritten = connection_->Write(
-      {reply_buf_.UnsentBuffer(), reply_buf_.UnsentLength()});
+      {reply_buffer_.UnsentBuffer(), reply_buffer_.UnsentLength()});
   if (nwritten < 0) {
     return -1;
   }
-  reply_buf_.Consume(nwritten);
+  reply_buffer_.Consume(nwritten);
   return nwritten;
 }
 
 ssize_t Client::SendListReply() {
   RS_LOG_DEBUG("SendListReply\n");
-  reply_buf_.FillBlocks(&reply_blocks_);
+  reply_buffer_.FillBlocks(&reply_blocks_);
   ssize_t nwritten = connection_->WriteVector(reply_blocks_);
   if (nwritten < 0) {
     return -1;
   }
-  reply_buf_.Consume(nwritten);
+  reply_buffer_.Consume(nwritten);
   return nwritten;
 }
 
 ClientStatus Client::ProcessInputBuffer() {
-  while (!close_after_reply_ && query_buf_.Consumed() < query_buf_.Size()) {
-    RS_LOG_DEBUG("process loop %zu %zu\n", query_buf_.Consumed(),
-                 query_buf_.Size());
+  while (!close_after_reply_ &&
+         query_buffer_.Consumed() < query_buffer_.Size()) {
+    RS_LOG_DEBUG("process loop %zu %zu\n", query_buffer_.Consumed(),
+                 query_buffer_.Size());
     const RequestStatus status = ParseRequest();
     if (status == RequestStatus::kIncomplete ||
         status == RequestStatus::kProtocolError) {
@@ -212,7 +213,7 @@ ClientStatus Client::ProcessInputBuffer() {
       return ClientStatus::kError;
     }
   }
-  query_buf_.Compact();
+  query_buffer_.Compact();
   return ClientStatus::kOk;
 }
 
@@ -220,25 +221,25 @@ Client::RequestStatus Client::ParseRequest() {
   command_ = nullptr;
   args_.clear();
   std::string_view name;
-  const auto parsed =
-      request_parser::Parse(query_buf_.View(), &parse_state_, &name, &args_);
+  const request_parser::ParseResult parsed =
+      request_parser::Parse(query_buffer_.View(), &parse_state_, &name, &args_);
   if (parsed.status == request_parser::ParseStatus::kIncomplete) {
     return RequestStatus::kIncomplete;
   }
   if (parsed.status == request_parser::ParseStatus::kInvalid) {
     AddReply(reply::FromError("ERR Protocol error: invalid request"));
     close_after_reply_ = true;
-    query_buf_.Clear();
+    query_buffer_.Clear();
     return RequestStatus::kProtocolError;
   }
-  query_buf_.Consume(parsed.consumed);
+  query_buffer_.Consume(parsed.consumed);
   if (name.empty()) {
     AddReply(reply::FromError("ERR empty command"));
     return RequestStatus::kRejected;
   }
   RS_LOG_DEBUG("command name %.*s\n", static_cast<int>(name.size()),
                name.data());
-  const auto* command = command::Find(name);
+  const command::Command* command = command::Find(name);
   if (command == nullptr) {
     RS_LOG_DEBUG("command not found\n");
     AddReply(reply::UnknownCommand(name, args_));
