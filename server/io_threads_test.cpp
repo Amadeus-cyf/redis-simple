@@ -41,11 +41,11 @@ TEST(IoThreadsTest, SmallBatchesStayOnTheCallingThread) {
   std::mutex mutex;
   std::set<std::thread::id> threads;
   auto job = [&](size_t /*index*/) {
-    const std::lock_guard<std::mutex> lock(mutex);
+    const std::scoped_lock lock(mutex);
     threads.insert(std::this_thread::get_id());
   };
   // Below kMinJobsPerThread jobs per thread.
-  EXPECT_FALSE(pool->Run(IoThreads::kMinJobsPerThread * 4 - 1, job));
+  EXPECT_FALSE(pool->Run((IoThreads::kMinJobsPerThread * 4) - 1, job));
   EXPECT_FALSE(pool->Active());
   EXPECT_EQ(threads, std::set<std::thread::id>{std::this_thread::get_id()});
 

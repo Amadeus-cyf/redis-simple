@@ -19,7 +19,7 @@ constexpr size_t kWaitSpinsBeforeYield = 10'000;
 inline void CpuRelax() {
 #if defined(__x86_64__) || defined(__i386__)
   __builtin_ia32_pause();
-#elif defined(__aarch64__)
+#elifdef __aarch64__
   asm volatile("yield");
 #endif
 }
@@ -118,7 +118,7 @@ void IoThreads::WorkerLoop(size_t thread_index) {
     if (!busy) {
       // Blocks while the calling thread holds the mutex, which it does while
       // the workers are parked.
-      const std::lock_guard<std::mutex> lock(worker.park);
+      const std::scoped_lock lock(worker.park);
       if (stopping_.load(std::memory_order_acquire)) {
         return;
       }

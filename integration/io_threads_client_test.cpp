@@ -165,10 +165,8 @@ int main() {
   const char* const server_args = std::getenv("REDIS_SIMPLE_SERVER_ARGS");
   const bool expect_threads =
       server_args != nullptr &&
-      std::string_view(server_args).find("--io-threads") !=
-          std::string_view::npos &&
-      std::string_view(server_args).find("--io-threads 1") ==
-          std::string_view::npos;
+      std::string_view(server_args).contains("--io-threads") &&
+      !std::string_view(server_args).contains("--io-threads 1");
   try {
     return redis_simple::Run(expect_threads);
   } catch (...) {
