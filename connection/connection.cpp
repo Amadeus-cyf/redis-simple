@@ -342,7 +342,7 @@ ssize_t Connection::WriteVector(std::span<const iovec> blocks) {
   if (blocks.empty()) {
     return 0;
   }
-  const int block_count =
+  const auto block_count =
       static_cast<int>(std::min(blocks.size(), MaxIovCount()));
   ssize_t n = -1;
   n = writev(fd_, blocks.data(), block_count);

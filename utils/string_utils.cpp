@@ -164,9 +164,9 @@ bool ConstantTimeEquals(std::string_view left, std::string_view right) {
   const size_t length = std::max(left.size(), right.size());
   unsigned char difference = left.size() == right.size() ? 0 : 1;
   for (size_t i = 0; i < length; ++i) {
-    const unsigned char left_byte =
+    const auto left_byte =
         static_cast<unsigned char>(i < left.size() ? left[i] : 0);
-    const unsigned char right_byte =
+    const auto right_byte =
         static_cast<unsigned char>(i < right.size() ? right[i] : 0);
     difference |= static_cast<unsigned char>(left_byte ^ right_byte);
   }

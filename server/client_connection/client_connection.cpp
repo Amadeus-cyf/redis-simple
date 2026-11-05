@@ -42,7 +42,7 @@ bool AcceptOne(int listener_fd, Server* const server) {
     connection->Write(kProtectedModeError);
     return true;
   }
-  std::unique_ptr<Client> client =
+  auto client =
       Client::Create(std::move(connection), server->Db(), server->Aof());
   client->RequirePassword(server->RequirePass());
   client->SetThreadedIoStats(server->ThreadedIoStats());

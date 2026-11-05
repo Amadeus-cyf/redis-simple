@@ -79,7 +79,7 @@ TEST(RedisObjectTest, MutableStringConvertsEmbeddedEncoding) {
 TEST(RedisObjectTest, AssignStringFromItsOwnRawBytes) {
   // A short value viewing a large raw buffer is embedded, which frees the
   // buffer, so it must be copied out first.
-  const std::unique_ptr<RedisObject> object =
+  const auto object =
       RedisObject::CreateWithString(std::string(500, 'r') + "tail");
   ASSERT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
   object->AssignString(object->String().View().substr(500));

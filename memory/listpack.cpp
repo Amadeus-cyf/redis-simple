@@ -798,7 +798,7 @@ uint8_t ListPack::BacklenBytes(size_t backlen) {
  */
 size_t ListPack::EncodeString(unsigned char* const buffer,
                               std::string_view element) {
-  const unsigned char* element_string =
+  const auto* element_string =
       reinterpret_cast<const unsigned char*>(element.data());
   const size_t length = element.size();
   size_t backlen = 0;
