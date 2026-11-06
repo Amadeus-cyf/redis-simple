@@ -229,8 +229,9 @@ preset:
 scripts/run_leak_check.sh
 ```
 
-On macOS, the script runs the complete debug unit-test binary under Apple's
-`leaks` tool because Apple AddressSanitizer does not provide LeakSanitizer. On
+On macOS, the script runs the debug unit-test binary under Apple's `leaks`
+tool because Apple AddressSanitizer does not provide LeakSanitizer. It skips
+death tests and `AofTest`, whose forked children stall `leaks`. On
 Linux, it runs the complete sanitizer CTest suite with LeakSanitizer explicitly
 enabled.
 

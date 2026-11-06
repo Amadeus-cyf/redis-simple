@@ -233,6 +233,9 @@ does not include the libFuzzer runtime.
 
 The leak-check script uses Apple `leaks` for the macOS unit-test binary and
 explicit LeakSanitizer options for the complete Linux sanitizer test suite.
+Forked children stall `leaks`, so the macOS run skips death tests and
+`AofTest`, whose rewrites fork; keep other forking tests out of it the same
+way.
 
 Use Docker for a local Linux build and test check from macOS:
 
