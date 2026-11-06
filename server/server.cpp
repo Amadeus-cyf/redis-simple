@@ -196,17 +196,10 @@ int64_t Server::ServerCron() {
     Stop();
     return event_loop::TimeEvent::kNoMore;
   }
-  if (aof_ != nullptr) {
-    // Retries bytes a failed write left behind; only `always` stops on it.
-    if (!aof_->Flush()) {
-      Stop();
-      return event_loop::TimeEvent::kNoMore;
-    }
-    aof_->CheckRewrite();
-    if (aof_->ShouldAutoRewrite() &&
-        aof_->StartRewrite(db_.get()) == aof::RewriteResult::kError) {
-      RS_LOG_WARN("automatic AOF rewrite failed to start\n");
-    }
+  // Only `always` stops the server on an AOF error.
+  if (aof_ != nullptr && !aof_->Cron(db_.get())) {
+    Stop();
+    return event_loop::TimeEvent::kNoMore;
   }
   ActiveExpireCycle(db_.get());
   return kCronIntervalMs;

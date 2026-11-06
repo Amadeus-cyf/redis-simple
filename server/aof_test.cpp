@@ -99,6 +99,12 @@ class TempAof {
     return static_cast<bool>(output);
   }
 
+  [[nodiscard]] std::string ManifestText() const {
+    std::ifstream input(ManifestPath(), std::ios::binary);
+    return {std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+  }
+
   // Bytes in the base and incremental files together.
   [[nodiscard]] off_t Size() const {
     off_t total = 0;
@@ -137,6 +143,15 @@ class TestFileOps final : public FileOps {
       errno = EIO;
       return -1;
     }
+    if (writable_bytes_.has_value()) {
+      // A disk that fills up partway through a write.
+      if (*writable_bytes_ == 0) {
+        errno = ENOSPC;
+        return -1;
+      }
+      size = std::min(size, *writable_bytes_);
+      *writable_bytes_ -= size;
+    }
     return write(fd, data, std::min(size, max_write_size_));
   }
 
@@ -153,6 +168,7 @@ class TestFileOps final : public FileOps {
   }
 
   int Sync(int fd) override {
+    std::this_thread::sleep_for(sync_delay_.load());
     synced_fd_flags_.store(fcntl(fd, F_GETFD));
     const int call = sync_calls_.fetch_add(1) + 1;
     if (call == fail_sync_call_.load()) {
@@ -174,7 +190,13 @@ class TestFileOps final : public FileOps {
   // Makes each write take this long, like a busy disk.
   void SlowWrites(std::chrono::milliseconds delay) { write_delay_ = delay; }
   void FailWrites() { fail_write_.store(true); }
-  void RestoreWrites() { fail_write_.store(false); }
+  void RestoreWrites() {
+    fail_write_.store(false);
+    writable_bytes_.reset();
+  }
+  // Lets this many more bytes through, then fails writes with ENOSPC.
+  void FailWritesAfter(size_t bytes) { writable_bytes_ = bytes; }
+  void SlowSyncs(std::chrono::milliseconds delay) { sync_delay_.store(delay); }
   void FailRewriteWrites() { fail_write_vector_.store(true); }
   void RestoreRewriteWrites() { fail_write_vector_.store(false); }
   void FailNextSync() { fail_sync_call_.store(sync_calls_.load() + 1); }
@@ -188,6 +210,9 @@ class TestFileOps final : public FileOps {
  private:
   size_t max_write_size_{std::numeric_limits<size_t>::max()};
   std::chrono::milliseconds write_delay_{0};
+  std::optional<size_t> writable_bytes_;
+  std::atomic<std::chrono::milliseconds> sync_delay_{
+      std::chrono::milliseconds(0)};
   std::atomic<bool> fail_write_;
   std::atomic<bool> fail_write_vector_;
   std::atomic<bool> fail_rename_;
@@ -205,6 +230,17 @@ std::string Encode(std::string_view command,
   }
   return encoded;
 }
+
+ManifestFile File(std::string name, int64_t sequence, ManifestFile::Type type) {
+  ManifestFile file;
+  file.name = std::move(name);
+  file.sequence = sequence;
+  file.type = type;
+  return file;
+}
+
+// Redis selects the database before the first command of each file.
+constexpr std::string_view kSelect = "*2\r\n$6\r\nSELECT\r\n$1\r\n0\r\n";
 
 Options Always(const TempAof& file) {
   return file.MakeOptions(FsyncPolicy::kAlways);
@@ -440,7 +476,7 @@ TEST(AofTest, RewritesLargeValuesAsReplayableChunks) {
   ASSERT_NE(writer, nullptr);
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
   writer->WaitForRewrite();
-  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
+  EXPECT_TRUE(writer->State().last_rewrite_ok);
   writer.reset();
 
   auto restored = db::RedisDb::Create();
@@ -523,7 +559,7 @@ TEST(AofTest, HandlesShortWritesDuringRewrite) {
   ASSERT_TRUE(writer->Append("SET", {"second", "two"}, source.get()));
   ASSERT_TRUE(writer->Flush());
   writer->WaitForRewrite();
-  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
+  EXPECT_TRUE(writer->State().last_rewrite_ok);
   writer.reset();
 
   auto restored = db::RedisDb::Create();
@@ -560,12 +596,10 @@ TEST(AofTest, ReportsAppendSyncFailures) {
   auto writer = Aof::Open(Always(file, file_ops), source.get());
   ASSERT_NE(writer, nullptr);
 
+  // With `always`, a failed sync stops the server, as Redis exits.
   file_ops->FailNextSync();
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
   EXPECT_FALSE(writer->Flush());
-  const AofState state = writer->State();
-  EXPECT_FALSE(state.accepting_writes);
-  EXPECT_EQ(state.last_error, AofError::kSync);
 }
 
 TEST(AofTest, ReportsAppendWriteFailures) {
@@ -582,7 +616,6 @@ TEST(AofTest, ReportsAppendWriteFailures) {
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
   EXPECT_FALSE(writer->Flush());
   EXPECT_FALSE(writer->AcceptingWrites());
-  EXPECT_EQ(writer->State().last_error, AofError::kWrite);
 }
 
 TEST(AofTest, KeepsOriginalFileWhenRewriteRenameFails) {
@@ -597,10 +630,13 @@ TEST(AofTest, KeepsOriginalFileWhenRewriteRenameFails) {
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
 
   // Starting needs a manifest rename too: with renames failing, the rewrite
-  // does not start, and appends stay in the current file.
+  // does not start, and appends stay in the current file. As in Redis, a
+  // rewrite that never forked does not count as a consecutive failure.
   file_ops->FailRenames();
   EXPECT_EQ(writer->StartRewrite(source.get()), RewriteResult::kError);
   EXPECT_EQ(writer->CurrentManifest().increments.size(), 1);
+  EXPECT_FALSE(writer->State().last_rewrite_ok);
+  EXPECT_EQ(writer->State().consecutive_rewrite_failures, 0);
   file_ops->RestoreRenames();
 
   // A failed rename of the new base keeps the old manifest.
@@ -610,9 +646,8 @@ TEST(AofTest, KeepsOriginalFileWhenRewriteRenameFails) {
   file_ops->RestoreRenames();
   const AofState state = writer->State();
   EXPECT_TRUE(state.accepting_writes);
-  EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
-  EXPECT_EQ(state.last_error, AofError::kRename);
-  EXPECT_EQ(state.consecutive_rewrite_failures, 2);
+  EXPECT_FALSE(state.last_rewrite_ok);
+  EXPECT_EQ(state.consecutive_rewrite_failures, 1);
 
   ASSERT_EQ(
       source->SetKey("key", db::RedisObject::CreateWithString("updated"), 0),
@@ -643,8 +678,8 @@ TEST(AofTest, ReportsRewriteWriteFailuresWithoutStoppingAppends) {
   writer->WaitForRewrite();
   const AofState state = writer->State();
   EXPECT_TRUE(state.accepting_writes);
-  EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
-  EXPECT_EQ(state.last_error, AofError::kWrite);
+  EXPECT_FALSE(state.last_rewrite_ok);
+  EXPECT_EQ(state.consecutive_rewrite_failures, 1);
 
   ASSERT_EQ(
       source->SetKey("key", db::RedisObject::CreateWithString("updated"), 0),
@@ -672,6 +707,8 @@ TEST(AofTest, ReportsDirectorySyncFailureAfterRewrite) {
 
   ASSERT_TRUE(writer->Flush());
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
+  // Let the background thread sync and close the replaced file first.
+  writer->WaitForBackgroundJobs();
   // Installing the rewrite syncs the new manifest, then the directory after
   // renaming it; the directory sync fails. The child's syncs happen in its
   // own process and do not count.
@@ -679,8 +716,7 @@ TEST(AofTest, ReportsDirectorySyncFailureAfterRewrite) {
   writer->WaitForRewrite();
   const AofState state = writer->State();
   EXPECT_FALSE(state.accepting_writes);
-  EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
-  EXPECT_EQ(state.last_error, AofError::kDirectorySync);
+  EXPECT_FALSE(state.last_rewrite_ok);
   // The renamed manifest is live, but the files it replaced stay until a
   // later manifest is safely on disk, in case the old one comes back.
   EXPECT_FALSE(writer->CurrentManifest().history.empty());
@@ -702,8 +738,10 @@ TEST(AofTest, RewriteStartsANewIncrementFileAndRetiresTheOldFiles) {
   auto source = db::RedisDb::Create();
   auto writer = Aof::Open(Always(file), source.get());
   ASSERT_NE(writer, nullptr);
-  ASSERT_EQ(writer->CurrentManifest().increments.size(), 1);
-  EXPECT_FALSE(writer->CurrentManifest().base.has_value());
+  // As in Redis, an AOF with no files starts with an (empty) base file.
+  EXPECT_EQ(file.ManifestText(),
+            "file appendonly.aof.1.base.aof seq 1 type b\n"
+            "file appendonly.aof.1.incr.aof seq 1 type i\n");
   ASSERT_EQ(source->SetKey("a", db::RedisObject::CreateWithString("1"), 0),
             db::DbStatus::kOk);
   ASSERT_TRUE(writer->Append("SET", {"a", "1"}, source.get()));
@@ -712,33 +750,27 @@ TEST(AofTest, RewriteStartsANewIncrementFileAndRetiresTheOldFiles) {
   // writes made during the rewrite go there, not to a buffer.
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
   ASSERT_EQ(writer->CurrentManifest().increments.size(), 2);
-  const std::string old_increment =
-      writer->CurrentManifest().increments.front().name;
   ASSERT_EQ(source->SetKey("b", db::RedisObject::CreateWithString("2"), 0),
             db::DbStatus::kOk);
   ASSERT_TRUE(writer->Append("SET", {"b", "2"}, source.get()));
   ASSERT_TRUE(writer->Flush());
   writer->WaitForRewrite();
-  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
+  EXPECT_TRUE(writer->State().last_rewrite_ok);
 
-  // The new base and the file opened at the start remain; the old
-  // incremental file is deleted.
-  const Manifest& manifest = writer->CurrentManifest();
-  EXPECT_EQ(manifest.base.value_or(ManifestFile{}).name,
-            "appendonly.aof.1.base.aof");
-  ASSERT_EQ(manifest.increments.size(), 1);
-  EXPECT_EQ(manifest.increments.front().name, "appendonly.aof.2.incr.aof");
-  EXPECT_TRUE(manifest.history.empty());
-  // The background thread deletes the retired file.
+  // The new base and the file opened at the start remain; base and
+  // incremental files are numbered separately, as in Redis. The background
+  // thread deletes the retired files.
+  EXPECT_TRUE(writer->CurrentManifest().history.empty());
   writer->WaitForBackgroundJobs();
-  EXPECT_FALSE(std::filesystem::exists(file.Directory() + "/" + old_increment));
+  for (const std::string_view retired :
+       {"appendonly.aof.1.base.aof", "appendonly.aof.1.incr.aof"}) {
+    EXPECT_FALSE(
+        std::filesystem::exists(file.Directory() + "/" + std::string(retired)))
+        << retired;
+  }
   writer.reset();
-
-  std::ifstream input(file.ManifestPath(), std::ios::binary);
-  const std::string text((std::istreambuf_iterator<char>(input)),
-                         std::istreambuf_iterator<char>());
-  EXPECT_EQ(text,
-            "file appendonly.aof.1.base.aof seq 1 type b\n"
+  EXPECT_EQ(file.ManifestText(),
+            "file appendonly.aof.2.base.aof seq 2 type b\n"
             "file appendonly.aof.2.incr.aof seq 2 type i\n");
   auto restored = db::RedisDb::Create();
   auto reader = Aof::Open(Always(file), restored.get());
@@ -760,7 +792,8 @@ TEST(AofTest, WritesTheBatchBeforeFlushReturns) {
         db::DbStatus::kOk);
     ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
     ASSERT_TRUE(writer->Flush());
-    EXPECT_EQ(file.Size(), Encode("SET", {"key", "value"}).size());
+    EXPECT_EQ(file.Size(),
+              kSelect.size() + Encode("SET", {"key", "value"}).size());
   }
 }
 
@@ -805,14 +838,13 @@ TEST(AofTest, RetriesFailedWritesAndRejectsWritesUntilTheyRecover) {
   // Without `always` the batch is kept, so its replies may still be sent.
   EXPECT_TRUE(writer->Flush());
   EXPECT_FALSE(writer->AcceptingWrites());
-  EXPECT_EQ(writer->State().last_error, AofError::kWrite);
-  EXPECT_GT(writer->State().pending_bytes, 0);
+  EXPECT_GT(writer->State().buffer_length, 0);
   EXPECT_FALSE(writer->LastErrorText().empty());
 
   file_ops->RestoreWrites();
   EXPECT_TRUE(writer->Flush());
   EXPECT_TRUE(writer->AcceptingWrites());
-  EXPECT_EQ(writer->State().pending_bytes, 0);
+  EXPECT_EQ(writer->State().buffer_length, 0);
   writer.reset();
 
   auto restored = db::RedisDb::Create();
@@ -821,7 +853,9 @@ TEST(AofTest, RetriesFailedWritesAndRejectsWritesUntilTheyRecover) {
   ASSERT_NE(restored->LookupKey("key"), nullptr);
 }
 
-TEST(AofTest, FailedSyncStopsWritesUntilARewriteReplacesTheFile) {
+TEST(AofTest, AFailedBackgroundSyncClearsWithTheNextSuccessfulOne) {
+  // As in Redis, the last background sync's result decides whether writes
+  // are rejected.
   TempAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
@@ -833,20 +867,19 @@ TEST(AofTest, FailedSyncStopsWritesUntilARewriteReplacesTheFile) {
       source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
       db::DbStatus::kOk);
 
-  file_ops->FailNextSync();
-  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
-  // The kernel may have dropped what it could not sync, so retrying the sync
-  // proves nothing; the error stays.
-  EXPECT_FALSE(writer->SyncNow());
-  EXPECT_FALSE(writer->AcceptingWrites());
-  EXPECT_FALSE(writer->SyncNow());
-  EXPECT_EQ(writer->State().last_error, AofError::kSync);
-
-  // A rewrite writes and syncs a complete new file, which clears it.
-  ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  writer->WaitForRewrite();
-  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
-  EXPECT_TRUE(writer->AcceptingWrites());
+  for (const bool fail : {true, false}) {
+    ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+    ASSERT_TRUE(writer->Flush());
+    // `everysec` queues a sync once a second has passed.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    writer->WaitForBackgroundJobs();
+    if (fail) {
+      file_ops->FailNextSync();
+    }
+    ASSERT_TRUE(writer->Flush());
+    writer->WaitForBackgroundJobs();
+    EXPECT_EQ(writer->AcceptingWrites(), !fail);
+  }
 }
 
 TEST(AofTest, ShutdownStopsARunningRewrite) {
@@ -882,13 +915,15 @@ TEST(AofTest, BatchesAppendsUntilFlush) {
   auto writer = Aof::Open(Always(file), source.get());
   ASSERT_NE(writer, nullptr);
 
+  // The base file created at startup already holds the key.
+  const off_t initial_size = file.Size();
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
-  EXPECT_EQ(file.Size(), 0);
-  EXPECT_GT(writer->State().pending_bytes, 0);
+  EXPECT_EQ(file.Size(), initial_size);
+  EXPECT_GT(writer->State().buffer_length, 0);
   ASSERT_TRUE(writer->Flush());
-  EXPECT_GT(file.Size(), 0);
-  EXPECT_EQ(writer->State().pending_bytes, 0);
+  EXPECT_GT(file.Size(), initial_size);
+  EXPECT_EQ(writer->State().buffer_length, 0);
 }
 
 TEST(AofTest, DetectsWhenAutomaticRewriteIsDue) {
@@ -905,11 +940,31 @@ TEST(AofTest, DetectsWhenAutomaticRewriteIsDue) {
       source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
       db::DbStatus::kOk);
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  // Only written bytes count, as in Redis.
+  EXPECT_FALSE(writer->ShouldAutoRewrite());
+  ASSERT_TRUE(writer->Flush());
   EXPECT_TRUE(writer->ShouldAutoRewrite());
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
   writer->WaitForRewrite();
+  // The new base size is the base plus the current incremental file.
   EXPECT_FALSE(writer->ShouldAutoRewrite());
-  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
+  EXPECT_TRUE(writer->State().last_rewrite_ok);
+  EXPECT_EQ(writer->State().base_size, writer->State().current_size);
+}
+
+TEST(AofTest, StartsAScheduledRewriteFromTheCron) {
+  TempAof file;
+  auto source = db::RedisDb::Create();
+  auto writer = Aof::Open(Always(file), source.get());
+  ASSERT_NE(writer, nullptr);
+  writer->ScheduleRewrite();
+  EXPECT_TRUE(writer->State().rewrite_scheduled);
+  EXPECT_FALSE(writer->RewriteInProgress());
+  ASSERT_TRUE(writer->Cron(source.get()));
+  EXPECT_FALSE(writer->State().rewrite_scheduled);
+  writer->WaitForRewrite();
+  EXPECT_TRUE(writer->State().last_rewrite_ok);
+  EXPECT_EQ(writer->State().rewrites, 1);
 }
 
 TEST(AofTest, ReplaysCompleteTransactions) {
@@ -965,12 +1020,12 @@ TEST(AofTest, RejectsUnbalancedTransactionRecords) {
 TEST(AofTest, WrapsMultiRecordTransactions) {
   TempAof file;
   auto source = db::RedisDb::Create();
+  auto writer = Aof::Open(Always(file), source.get());
+  ASSERT_NE(writer, nullptr);
   ASSERT_EQ(source->SetKey("a", db::RedisObject::CreateWithString("1"), 0),
             db::DbStatus::kOk);
   ASSERT_EQ(source->SetKey("b", db::RedisObject::CreateWithString("2"), 0),
             db::DbStatus::kOk);
-  auto writer = Aof::Open(Always(file), source.get());
-  ASSERT_NE(writer, nullptr);
 
   // A single mutation is already atomic and stays unwrapped.
   writer->BeginTransaction();
@@ -984,7 +1039,8 @@ TEST(AofTest, WrapsMultiRecordTransactions) {
   ASSERT_TRUE(writer->Flush());
   writer.reset();
 
-  std::string expected = Encode("SET", {"a", "1"});
+  std::string expected(kSelect);
+  expected.append(Encode("SET", {"a", "1"}));
   expected.append(Encode("DEL", {"missing"}));
   expected.append(Encode("MULTI", {}));
   expected.append(Encode("SET", {"a", "1"}));
@@ -998,49 +1054,16 @@ TEST(AofTest, WrapsMultiRecordTransactions) {
   EXPECT_EQ(restored->KeyCount(), 2);
 }
 
-TEST(AofTest, FlushInsideTransactionSplitsItIntoAtomicSegments) {
-  TempAof file;
-  auto source = db::RedisDb::Create();
-  for (const std::string_view key : {"a", "b", "c", "d"}) {
-    ASSERT_EQ(source->SetKey(key, db::RedisObject::CreateWithString("v"), 0),
-              db::DbStatus::kOk);
-  }
-  auto writer = Aof::Open(Always(file), source.get());
-  ASSERT_NE(writer, nullptr);
-
-  writer->BeginTransaction();
-  ASSERT_TRUE(writer->Append("SET", {"a", "v"}, source.get()));
-  ASSERT_TRUE(writer->Append("SET", {"b", "v"}, source.get()));
-  // StartRewrite flushes the pending batch, as BGREWRITEAOF inside EXEC does.
-  ASSERT_TRUE(writer->Flush());
-  ASSERT_TRUE(writer->Append("SET", {"c", "v"}, source.get()));
-  ASSERT_TRUE(writer->Append("SET", {"d", "v"}, source.get()));
-  writer->EndTransaction();
-  ASSERT_TRUE(writer->Flush());
-  writer.reset();
-
-  std::string expected;
-  for (const auto& keys : {std::array<std::string_view, 2>{"a", "b"},
-                           std::array<std::string_view, 2>{"c", "d"}}) {
-    expected.append(Encode("MULTI", {}));
-    expected.append(Encode("SET", {keys[0], "v"}));
-    expected.append(Encode("SET", {keys[1], "v"}));
-    expected.append(Encode("EXEC", {}));
-  }
-  const std::string contents = file.Contents();
-  EXPECT_EQ(contents, expected);
-}
-
 TEST(ManifestTest, EncodesAndParsesRedisFormat) {
   Manifest manifest;
   manifest.base =
-      ManifestFile{"appendonly.aof.3.base.aof", 3, ManifestFile::Type::kBase};
-  manifest.history.push_back(ManifestFile{"appendonly.aof.2.base.aof", 2,
-                                          ManifestFile::Type::kHistory});
-  manifest.increments.push_back(ManifestFile{"appendonly.aof.5.incr.aof", 5,
-                                             ManifestFile::Type::kIncrement});
-  manifest.increments.push_back(ManifestFile{"appendonly.aof.6.incr.aof", 6,
-                                             ManifestFile::Type::kIncrement});
+      File("appendonly.aof.3.base.aof", 3, ManifestFile::Type::kBase);
+  manifest.history.push_back(
+      File("appendonly.aof.2.base.aof", 2, ManifestFile::Type::kHistory));
+  manifest.increments.push_back(
+      File("appendonly.aof.5.incr.aof", 5, ManifestFile::Type::kIncrement));
+  manifest.increments.push_back(
+      File("appendonly.aof.6.incr.aof", 6, ManifestFile::Type::kIncrement));
   const std::string text = manifest.Encode();
   EXPECT_EQ(text,
             "file appendonly.aof.3.base.aof seq 3 type b\n"
@@ -1064,63 +1087,79 @@ TEST(ManifestTest, EncodesAndParsesRedisFormat) {
 TEST(ManifestTest, AcceptsAnyKeyOrderCommentsAndUnknownKeys) {
   const std::optional<Manifest> result = Manifest::Parse(
       "# written by a newer version\n"
-      "type b seq 1 file a.1.base.rdb extra x\r\n"
-      "\n"
-      "file a.4.incr.aof seq 4 type i\n");
+      "TYPE b Seq 1 file a.1.base.rdb extra x\r\n"
+      "file a.4.incr.aof seq 4 type i startoffset 10 endoffset 20\n");
   ASSERT_TRUE(result.has_value());
   const Manifest parsed = result.value_or(Manifest{});
   EXPECT_EQ(parsed.base.value_or(ManifestFile{}).name, "a.1.base.rdb");
   ASSERT_EQ(parsed.increments.size(), 1);
+  // Redis' replication offsets are kept.
+  EXPECT_EQ(parsed.increments.front().start_offset, 10);
+  EXPECT_EQ(parsed.increments.front().end_offset, 20);
+  EXPECT_EQ(parsed.Encode(),
+            "file a.1.base.rdb seq 1 type b\n"
+            "file a.4.incr.aof seq 4 type i startoffset 10 endoffset 20\n");
+}
+
+TEST(ManifestTest, QuotesNamesLikeRedis) {
+  Manifest manifest;
+  ManifestFile file;
+  file.name = "my aof\x01\"x\".1.incr.aof";
+  file.sequence = 1;
+  file.type = ManifestFile::Type::kIncrement;
+  manifest.increments.push_back(file);
+  const std::string text = manifest.Encode();
+  EXPECT_EQ(text, "file \"my aof\\x01\\\"x\\\".1.incr.aof\" seq 1 type i\n");
+  const std::optional<Manifest> parsed = Manifest::Parse(text);
+  ASSERT_TRUE(parsed.has_value());
+  EXPECT_EQ(parsed.value_or(Manifest{}).increments.front().name, file.name);
+  // Single quotes work too, as in Redis' sdssplitargs.
+  EXPECT_EQ(Manifest::Parse("file 'a b' seq 1 type i\n")
+                .value_or(Manifest{})
+                .increments.front()
+                .name,
+            "a b");
+}
+
+TEST(ManifestTest, TakesTheNextSequenceNumbersFromLiveFiles) {
+  // As in Redis, history files do not count.
+  const Manifest parsed = Manifest::Parse(
+                              "file a.3.base.aof seq 3 type b\n"
+                              "file a.9.base.aof seq 9 type h\n"
+                              "file a.8.incr.aof seq 8 type h\n"
+                              "file a.5.incr.aof seq 5 type i\n")
+                              .value_or(Manifest{});
+  EXPECT_EQ(parsed.base_sequence, 3);
+  EXPECT_EQ(parsed.increment_sequence, 5);
+  // A manifest of comments lists no files.
+  EXPECT_TRUE(Manifest::Parse("# nothing yet\n").has_value());
 }
 
 TEST(ManifestTest, RejectsMalformedManifests) {
   for (const std::string_view text : {
+           "",                                            // empty
            "file a seq 1\n",                              // no type
            "file a type b\n",                             // no sequence
            "seq 1 type b\n",                              // no file
            "file a seq x type b\n",                       // bad sequence
+           "file a seq 0 type b\n",                       // zero sequence
            "file a seq 1 type z\n",                       // bad type
            "file dir/a seq 1 type b\n",                   // a directory
+           "file dir\\a seq 1 type b\n",                  // a directory
            "file a seq 1 type\n",                         // missing value
            "file a seq 1 type b\nfile c seq 2 type b\n",  // two bases
            "file a seq 2 type i\nfile c seq 1 type i\n",  // out of order
+           "file a seq 1 type b\n\n",                     // a blank line
+           "file a seq 1 type b",                         // no newline
+           "file \"a seq 1 type b\n",                     // open quote
+           "file \"a\"b seq 1 type b\n",                  // text after quote
        }) {
     EXPECT_FALSE(Manifest::Parse(text).has_value()) << text;
   }
-}
-
-TEST(AofTest, StartupDeletesFilesTheManifestDoesNotList) {
-  TempAof file;
-  {
-    auto database = db::RedisDb::Create();
-    ASSERT_EQ(
-        database->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
-        db::DbStatus::kOk);
-    auto writer = Aof::Open(Always(file), database.get());
-    ASSERT_NE(writer, nullptr);
-    ASSERT_TRUE(writer->Append("SET", {"key", "value"}, database.get()));
-  }
-  // Left behind by a crash after a manifest switch or during a rewrite.
-  for (const char* name :
-       {"appendonly.aof.7.base.aof", "appendonly.aof.8.incr.aof",
-        "temp-rewriteaof-abc123", "unrelated.txt"}) {
-    std::ofstream(file.Directory() + "/" + name) << "junk";
-  }
-
-  auto database = db::RedisDb::Create();
-  auto reader = Aof::Open(Always(file), database.get());
-  ASSERT_NE(reader, nullptr);
-  reader->WaitForBackgroundJobs();
-  EXPECT_EQ(database->KeyCount(), 1);
-  const std::string directory = file.Directory() + "/";
+  // Redis reads lines of at most 1024 bytes.
+  const std::string long_name(1024, 'a');
   EXPECT_FALSE(
-      std::filesystem::exists(directory + "appendonly.aof.7.base.aof"));
-  EXPECT_FALSE(
-      std::filesystem::exists(directory + "appendonly.aof.8.incr.aof"));
-  EXPECT_FALSE(std::filesystem::exists(directory + "temp-rewriteaof-abc123"));
-  // Files that are not the AOF's stay.
-  EXPECT_TRUE(std::filesystem::exists(directory + "unrelated.txt"));
-  EXPECT_TRUE(std::filesystem::exists(directory + "appendonly.aof.1.incr.aof"));
+      Manifest::Parse("file " + long_name + " seq 1 type b\n").has_value());
 }
 
 TEST(AofTest, UpgradesASingleFileAof) {
@@ -1146,6 +1185,159 @@ TEST(AofTest, UpgradesASingleFileAof) {
             "appendonly.aof");
   EXPECT_TRUE(std::filesystem::exists(file.Directory() + "/appendonly.aof"));
   EXPECT_EQ(reader->CurrentManifest().increments.size(), 1);
+}
+
+TEST(AofTest, FinishesAnUpgradeCutOffAfterItsManifest) {
+  // Redis writes the manifest before moving the old file, so a crash in
+  // between repeats the move on the next start.
+  TempAof file;
+  const std::filesystem::path previous = std::filesystem::current_path();
+  std::filesystem::current_path(file.Root());
+  {
+    std::ofstream legacy("appendonly.aof", std::ios::binary);
+    legacy << Encode("SET", {"key", "old"});
+  }
+  std::filesystem::create_directories(file.Directory());
+  {
+    std::ofstream manifest(file.ManifestPath(), std::ios::binary);
+    manifest << "file appendonly.aof seq 1 type b\n";
+  }
+  Options options = file.MakeOptions(FsyncPolicy::kAlways);
+  options.directory = "appendonlydir";
+  auto restored = db::RedisDb::Create();
+  auto reader = Aof::Open(options, restored.get());
+  std::filesystem::current_path(previous);
+  ASSERT_NE(reader, nullptr);
+  ASSERT_NE(restored->LookupKey("key"), nullptr);
+  EXPECT_TRUE(std::filesystem::exists(file.Directory() + "/appendonly.aof"));
+}
+
+TEST(AofTest, AListedFileThatIsMissingIsFatal) {
+  TempAof file;
+  ASSERT_TRUE(file.Append(Encode("SET", {"key", "value"})));
+  {
+    std::ofstream manifest(file.ManifestPath(),
+                           std::ios::binary | std::ios::app);
+    manifest << "file appendonly.aof.2.incr.aof seq 2 type i\n";
+  }
+  auto restored = db::RedisDb::Create();
+  EXPECT_EQ(Aof::Open(Always(file), restored.get()), nullptr);
+}
+
+TEST(AofTest, SkipsAnnotationsAndWritesTimestamps) {
+  TempAof file;
+  std::string commands = "#TS:1700000000\r\n";
+  commands.append(Encode("SET", {"key", "value"}));
+  commands.append("#any annotation\r\n");
+  ASSERT_TRUE(file.Append(commands));
+  auto restored = db::RedisDb::Create();
+  Options options = Always(file);
+  options.timestamp_enabled = true;
+  auto writer = Aof::Open(options, restored.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_NE(restored->LookupKey("key"), nullptr);
+
+  // aof-timestamp-enabled: an annotation precedes the first command of each
+  // second.
+  ASSERT_EQ(restored->SetKey("b", db::RedisObject::CreateWithString("1"), 0),
+            db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("SET", {"b", "1"}, restored.get()));
+  ASSERT_TRUE(writer->Flush());
+  writer.reset();
+  const std::string contents = file.Contents();
+  const size_t timestamp = contents.rfind("#TS:");
+  ASSERT_NE(timestamp, std::string::npos);
+  EXPECT_GT(timestamp, commands.size() - 1);
+  auto reloaded = db::RedisDb::Create();
+  ASSERT_NE(Aof::Open(Always(file), reloaded.get()), nullptr);
+  EXPECT_EQ(reloaded->KeyCount(), 2);
+}
+
+TEST(AofTest, LoadsRedisSelectRecordsForTheOnlyDatabase) {
+  {
+    TempAof file;
+    std::string commands(kSelect);
+    commands.append(Encode("SET", {"key", "value"}));
+    ASSERT_TRUE(file.Append(commands));
+    auto restored = db::RedisDb::Create();
+    ASSERT_NE(Aof::Open(Always(file), restored.get()), nullptr);
+    EXPECT_NE(restored->LookupKey("key"), nullptr);
+  }
+  TempAof file;
+  ASSERT_TRUE(file.Append(Encode("SELECT", {"1"}) + Encode("SET", {"k", "v"})));
+  auto restored = db::RedisDb::Create();
+  EXPECT_EQ(Aof::Open(Always(file), restored.get()), nullptr);
+}
+
+TEST(AofTest, RefusesATornTailWithoutAofLoadTruncated) {
+  TempAof file;
+  ASSERT_TRUE(file.Append(Encode("SET", {"key", "value"})));
+  ASSERT_TRUE(file.Append("*2\r\n$3\r\nDEL"));
+  Options options = Always(file);
+  options.load_truncated = false;
+  auto restored = db::RedisDb::Create();
+  EXPECT_EQ(Aof::Open(options, restored.get()), nullptr);
+}
+
+TEST(AofTest, CutsAPartialWriteOffAndRetriesTheWholeBuffer) {
+  // Redis' flushAppendOnlyFile: a short write is truncated back, so a crash
+  // leaves no torn record, and the buffer is retried whole.
+  TempAof file;
+  auto file_ops = std::make_shared<TestFileOps>();
+  auto source = db::RedisDb::Create();
+  Options options = file.MakeOptions(FsyncPolicy::kNo);
+  options.file_ops = file_ops;
+  auto writer = Aof::Open(options, source.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  const size_t record_size =
+      kSelect.size() + Encode("SET", {"key", "value"}).size();
+
+  file_ops->FailWritesAfter(5);
+  EXPECT_TRUE(writer->Flush());
+  EXPECT_FALSE(writer->AcceptingWrites());
+  EXPECT_EQ(file.Size(), 0);
+  EXPECT_EQ(writer->State().buffer_length, record_size);
+
+  file_ops->RestoreWrites();
+  EXPECT_TRUE(writer->Flush());
+  EXPECT_TRUE(writer->AcceptingWrites());
+  EXPECT_EQ(file.Size(), static_cast<off_t>(record_size));
+}
+
+TEST(AofTest, WaitsForARunningSyncBeforeWriting) {
+  // Redis' `everysec`: a write waits, up to two seconds, while a background
+  // sync of the file runs; a forced flush does not wait.
+  TempAof file;
+  auto file_ops = std::make_shared<TestFileOps>();
+  auto source = db::RedisDb::Create();
+  Options options = file.MakeOptions(FsyncPolicy::kEverySecond);
+  options.file_ops = file_ops;
+  auto writer = Aof::Open(options, source.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  ASSERT_TRUE(writer->Flush());
+  std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+  file_ops->SlowSyncs(std::chrono::milliseconds(500));
+  // Queues a sync, which takes half a second.
+  ASSERT_TRUE(writer->Flush());
+  ASSERT_EQ(writer->State().pending_fsyncs, 1);
+
+  const off_t size = file.Size();
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  ASSERT_TRUE(writer->Flush());
+  EXPECT_EQ(file.Size(), size);
+  EXPECT_GT(writer->State().buffer_length, 0);
+  ASSERT_TRUE(writer->Flush(true));
+  EXPECT_GT(file.Size(), size);
+  EXPECT_EQ(writer->State().buffer_length, 0);
+  file_ops->SlowSyncs(std::chrono::milliseconds(0));
 }
 
 TEST(AofTest, KeepsAppendingToTheLastIncrementAcrossRestarts) {
@@ -1228,35 +1420,15 @@ TEST(AofTest, BacksOffAutomaticRewritesAfterRepeatedFailures) {
   file_ops->RestoreRewriteWrites();
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
   writer->WaitForRewrite();
-  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
+  EXPECT_TRUE(writer->State().last_rewrite_ok);
   EXPECT_EQ(writer->State().consecutive_rewrite_failures, 0);
 }
 
-TEST(AofTest, SyncFailureOnTheFileARewriteKeepsStays) {
-  TempAof file;
-  auto file_ops = std::make_shared<TestFileOps>();
-  auto source = db::RedisDb::Create();
-  Options options = file.MakeOptions(FsyncPolicy::kEverySecond);
-  options.file_ops = file_ops;
-  auto writer = Aof::Open(options, source.get());
-  ASSERT_NE(writer, nullptr);
-  ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  // The sync fails on the incremental file opened for the rewrite, which
-  // the rewrite keeps, so its success cannot clear the error.
-  ASSERT_EQ(source->SetKey("key", db::RedisObject::CreateWithString("v"), 0),
-            db::DbStatus::kOk);
-  ASSERT_TRUE(writer->Append("SET", {"key", "v"}, source.get()));
-  file_ops->FailNextSync();
-  EXPECT_FALSE(writer->SyncNow());
-  writer->WaitForRewrite();
-  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
-  EXPECT_FALSE(writer->AcceptingWrites());
-}
-
 TEST(AofTest, CutsOffASmallCorruptTailWhenAllowed) {
-  // Redis 8.4's aof-load-corrupt-tail-max-size.
+  // Redis' aof-load-corrupt-tail-max-size: fewer bytes than the limit follow
+  // the last complete command.
   const std::string garbage = "not-resp-at-all";
-  for (const size_t limit : {size_t{0}, garbage.size() - 1, garbage.size()}) {
+  for (const size_t limit : {size_t{0}, garbage.size(), garbage.size() + 1}) {
     TempAof file;
     ASSERT_TRUE(file.Append(Encode("SET", {"key", "value"})));
     ASSERT_TRUE(file.Append(garbage));
@@ -1264,7 +1436,7 @@ TEST(AofTest, CutsOffASmallCorruptTailWhenAllowed) {
     options.load_corrupt_tail_max_bytes = limit;
     auto restored = db::RedisDb::Create();
     auto reader = Aof::Open(options, restored.get());
-    if (limit < garbage.size()) {
+    if (limit <= garbage.size()) {
       // Off (0), or too small for the damage: refuse to load.
       EXPECT_EQ(reader, nullptr) << limit;
       continue;
