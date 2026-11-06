@@ -382,6 +382,9 @@ Project management files are checked in:
 - `.github/workflows/ci.yml` for CI on push and pull request.
 - `CLAUDE.md` for AI coding-agent project guidance; `AGENTS.md` points to it
   for agents that look for that file.
+- `.claude/skills/` for agent skills, such as `pre-pr-check`, which runs the
+  checks a change needs before a pull request. `.agents/skills` links to the
+  same folder for agents that look there.
 
 Format project C++ files with:
 
