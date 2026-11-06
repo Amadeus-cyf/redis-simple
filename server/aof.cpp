@@ -2,6 +2,7 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -34,6 +35,7 @@
 #include "server/db/db.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
+#include "utils/check.h"
 #include "utils/float_utils.h"
 
 namespace redis_simple::aof {
@@ -196,6 +198,85 @@ pid_t WaitForChild(pid_t child, int* const wait_status, int options) {
       return result;
     }
   }
+}
+
+// Multi-part AOF names, as in Redis 7.
+constexpr std::string_view kBaseSuffix = ".base.aof";
+constexpr std::string_view kIncrementSuffix = ".incr.aof";
+constexpr std::string_view kManifestSuffix = ".manifest";
+constexpr std::string_view kTempPrefix = "temp-";
+
+// Auto-rewrite backoff after repeated failures, as in Redis: from the third
+// consecutive failure, wait a minute, doubling up to an hour.
+constexpr size_t kFailuresBeforeBackoff = 3;
+constexpr std::chrono::minutes kFirstBackoff{1};
+constexpr std::chrono::minutes kMaxBackoff{60};
+
+char TypeCode(ManifestFile::Type type) {
+  switch (type) {
+    case ManifestFile::Type::kBase:
+      return 'b';
+    case ManifestFile::Type::kIncrement:
+      return 'i';
+    case ManifestFile::Type::kHistory:
+      return 'h';
+  }
+  utils::Unreachable();
+}
+
+std::optional<ManifestFile::Type> ParseType(std::string_view code) {
+  if (code == "b") {
+    return ManifestFile::Type::kBase;
+  }
+  if (code == "i") {
+    return ManifestFile::Type::kIncrement;
+  }
+  if (code == "h") {
+    return ManifestFile::Type::kHistory;
+  }
+  return std::nullopt;
+}
+
+// A name the manifest can hold: not empty, no directory, and no whitespace,
+// which separates the manifest's fields.
+bool ValidFileName(std::string_view name) {
+  return !name.empty() && name != "." && name != ".." &&
+         std::ranges::none_of(name, [](char c) {
+           return c == '/' || c == ' ' || c == '\t' || c == '\r' || c == '\n';
+         });
+}
+
+std::optional<std::string> ReadWholeFile(const std::string& path) {
+  int open_flags = O_RDONLY;
+#ifdef O_CLOEXEC
+  open_flags |= O_CLOEXEC;
+#endif
+  const int fd = open(path.c_str(), open_flags);
+  if (fd < 0) {
+    return std::nullopt;
+  }
+  std::string contents;
+  std::array<char, 4096> chunk{};
+  while (true) {
+    const ssize_t size = read(fd, chunk.data(), chunk.size());
+    if (size > 0) {
+      contents.append(chunk.data(), static_cast<size_t>(size));
+      continue;
+    }
+    if (size < 0 && errno == EINTR) {
+      continue;
+    }
+    close(fd);
+    if (size < 0) {
+      return std::nullopt;
+    }
+    return contents;
+  }
+}
+
+bool PathExists(const std::string& path) {
+  struct stat info {};
+  return stat(path.c_str(), &info) == 0;
 }
 
 AofError ChildError(int wait_status) {
@@ -605,8 +686,6 @@ std::string_view ErrorName(AofError error) {
   switch (error) {
     case AofError::kNone:
       return "none";
-    case AofError::kRewriteBufferFull:
-      return "rewrite-buffer-full";
     case AofError::kWrite:
       return "write";
     case AofError::kSync:
@@ -631,83 +710,6 @@ std::string_view RewriteStatusName(RewriteStatus status) {
       return "err";
   }
   return "unknown";
-}
-
-std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
-  if (db == nullptr || options.path.empty() ||
-      options.limits.max_replay_command_bytes == 0 ||
-      options.limits.snapshot_block_bytes == 0) {
-    return nullptr;
-  }
-  int open_flags = O_RDWR | O_CREAT;
-#ifdef O_CLOEXEC
-  open_flags |= O_CLOEXEC;
-#endif
-  const int fd = open(options.path.c_str(), open_flags, 0644);
-  if (fd < 0) {
-    return nullptr;
-  }
-  const std::optional<size_t> file_size = FileSize(fd);
-  if (!file_size.has_value()) {
-    close(fd);
-    return nullptr;
-  }
-  auto aof = std::unique_ptr<Aof>(new Aof(fd, options, *file_size));
-  if (!aof->SyncParentDirectory() || !aof->Replay(db) ||
-      lseek(fd, 0, SEEK_END) < 0) {
-    return nullptr;
-  }
-  // Replay may have truncated a torn final record.
-  const std::optional<size_t> replayed_size = FileSize(fd);
-  if (!replayed_size.has_value()) {
-    return nullptr;
-  }
-  aof->current_size_ = *replayed_size;
-  aof->base_size_ = *replayed_size;
-  if (options.fsync == FsyncPolicy::kEverySecond) {
-    // The project does not throw, but std::thread reports a failure to start
-    // only by throwing std::system_error; catch it at this boundary so the
-    // caller sees an ordinary error.
-    try {
-      aof->sync_thread_ =
-          std::thread([instance = aof.get()] { instance->RunSyncThread(); });
-    } catch (const std::system_error&) {
-      return nullptr;
-    }
-  }
-  return aof;
-}
-
-Aof::Aof(int fd, const Options& options, size_t file_size)
-    : fd_(fd),
-      path_(options.path),
-      fsync_(options.fsync),
-      auto_rewrite_min_bytes_(options.auto_rewrite_min_bytes),
-      auto_rewrite_percentage_(options.auto_rewrite_percentage),
-      limits_(options.limits),
-      file_ops_(options.file_ops != nullptr ? options.file_ops
-                                            : DefaultFileOps()),
-      current_size_(file_size),
-      base_size_(file_size) {}
-
-Aof::~Aof() {
-  // Installs a rewrite whose child already finished, and stops one still
-  // running, as Redis does on shutdown.
-  CheckRewrite();
-  if (rewrite_child_ > 0) {
-    AbandonRewrite(AofError::kSnapshot);
-  }
-  // Redis syncs on shutdown whatever the policy.
-  SyncNow();
-  {
-    const std::scoped_lock lock(mutex_);
-    stopping_ = true;
-  }
-  sync_wakeup_.notify_all();
-  if (sync_thread_.joinable()) {
-    sync_thread_.join();
-  }
-  close(fd_);
 }
 
 bool Aof::Append(std::string_view command,
@@ -769,13 +771,6 @@ bool Aof::Flush() {
   } else {
     unwritten_.append(batch_);
     written = WriteUnwritten();
-  }
-  if (rewrite_child_ > 0) {
-    // The child's snapshot predates these mutations; the new file replays
-    // them after it. Moving the batch costs an allocation only while a
-    // rewrite runs.
-    BufferForRewrite(std::move(batch_));
-    batch_ = std::string();
   }
   batch_.clear();
   if (in_transaction) {
@@ -848,7 +843,7 @@ bool Aof::SyncWritten() {
     return true;
   }
   if (!SyncFile(fd_)) {
-    FailSyncLocked(errno);
+    FailSyncLocked(errno, fd_sequence_);
     return false;
   }
   synced_bytes_ = written;
@@ -858,7 +853,24 @@ bool Aof::SyncWritten() {
 void Aof::RunSyncThread() {
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {
-    sync_wakeup_.wait_for(lock, kSyncInterval, [this] { return stopping_; });
+    sync_wakeup_.wait_for(lock, kSyncInterval, [this] {
+      return stopping_ || !retired_files_.empty();
+    });
+    // Files a rewrite replaced: sync their last writes, then close them.
+    while (!retired_files_.empty()) {
+      const RetiredFile retired = retired_files_.back();
+      retired_files_.pop_back();
+      lock.unlock();
+      const bool synced = SyncFile(retired.fd);
+      const int error_number = errno;
+      close(retired.fd);
+      lock.lock();
+      if (!synced) {
+        FailSyncLocked(error_number, retired.sequence);
+      } else if (retired.written_mark > synced_bytes_) {
+        synced_bytes_ = retired.written_mark;
+      }
+    }
     if (stopping_) {
       // The destructor syncs once the event-loop thread is done writing.
       return;
@@ -871,6 +883,7 @@ void Aof::RunSyncThread() {
     // A duplicate keeps the file open if a rewrite replaces fd_ meanwhile;
     // syncing it syncs the same file.
     const int fd = dup(fd_);
+    const uint64_t sequence = fd_sequence_;
     lock.unlock();
     const bool synced = fd >= 0 && SyncFile(fd);
     const int error_number = errno;
@@ -879,17 +892,21 @@ void Aof::RunSyncThread() {
     }
     lock.lock();
     if (!synced) {
-      FailSyncLocked(error_number);
+      FailSyncLocked(error_number, sequence);
     } else if (written > synced_bytes_) {
       synced_bytes_ = written;
     }
   }
 }
 
-void Aof::FailSyncLocked(int error_number) {
+void Aof::FailSyncLocked(int error_number, uint64_t sequence) {
   // No logging here: on the sync thread, formatting a message allocates, and
   // a fork at that moment could hand the child a held allocator lock. The
   // event-loop thread logs it instead (LogSyncFailure).
+  if (!sync_failed_.load(std::memory_order_relaxed) ||
+      sequence > sync_failed_sequence_) {
+    sync_failed_sequence_ = sequence;
+  }
   sync_failed_.store(true, std::memory_order_relaxed);
   last_error_ = AofError::kSync;
   last_errno_ = error_number;
@@ -914,67 +931,6 @@ void Aof::RecordError(AofError error, int error_number) {
                static_cast<int>(ErrorName(error).size()),
                ErrorName(error).data(),
                error_number != 0 ? std::strerror(error_number) : "unknown");
-}
-
-RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
-  if (db == nullptr) {
-    return RewriteResult::kError;
-  }
-  if (rewrite_child_ > 0) {
-    return RewriteResult::kInProgress;
-  }
-  // Mutations already applied to `db` belong in the current file; the
-  // snapshot covers them, so they must not land in the rewrite buffer.
-  if (!Flush()) {
-    return RewriteResult::kError;
-  }
-  last_rewrite_attempt_ = std::chrono::steady_clock::now();
-
-  std::string path = path_ + ".rewrite.XXXXXX";
-  const int rewrite_fd = mkstemp(path.data());
-  if (rewrite_fd < 0) {
-    rewrite_status_ = RewriteStatus::kFailed;
-    RecordError(AofError::kWrite, errno);
-    return RewriteResult::kError;
-  }
-  struct stat file_info{};
-  const mode_t mode = fstat(fd_, &file_info) == 0
-                          ? static_cast<mode_t>(file_info.st_mode & 0777)
-                          : static_cast<mode_t>(0644);
-  if (fcntl(rewrite_fd, F_SETFD, FD_CLOEXEC) < 0 ||
-      fchmod(rewrite_fd, mode) < 0) {
-    const int error_number = errno;
-    close(rewrite_fd);
-    unlink(path.c_str());
-    rewrite_status_ = RewriteStatus::kFailed;
-    RecordError(AofError::kWrite, error_number);
-    return RewriteResult::kError;
-  }
-
-  if (before_fork_) {
-    before_fork_();
-  }
-  const pid_t child = fork();
-  if (child == 0) {
-    RunRewriteChild(db, rewrite_fd);
-  }
-  if (after_fork_) {
-    after_fork_();
-  }
-  if (child < 0) {
-    const int error_number = errno;
-    close(rewrite_fd);
-    unlink(path.c_str());
-    rewrite_status_ = RewriteStatus::kFailed;
-    RecordError(AofError::kSnapshot, error_number);
-    return RewriteResult::kError;
-  }
-  rewrite_child_ = child;
-  rewrite_fd_ = rewrite_fd;
-  rewrite_path_ = std::move(path);
-  rewrite_buffer_.clear();
-  rewrite_buffer_bytes_ = 0;
-  return RewriteResult::kStarted;
 }
 
 void Aof::RunRewriteChild(db::RedisDb* const db, int rewrite_fd) const {
@@ -1035,14 +991,489 @@ void Aof::WaitForRewrite() {
   FinishRewrite(result < 0 ? -1 : wait_status);
 }
 
-void Aof::BufferForRewrite(std::string batch) {
-  if (batch.size() > limits_.max_rewrite_buffer_bytes ||
-      rewrite_buffer_bytes_ > limits_.max_rewrite_buffer_bytes - batch.size()) {
-    AbandonRewrite(AofError::kRewriteBufferFull);
+bool Aof::SyncFile(int fd) const { return aof::SyncFile(file_ops_.get(), fd); }
+
+bool Aof::SyncParentDirectory() const {
+  // Renames of the manifest and base files happen inside the directory.
+  int open_flags = O_RDONLY;
+#ifdef O_CLOEXEC
+  open_flags |= O_CLOEXEC;
+#endif
+#ifdef O_DIRECTORY
+  open_flags |= O_DIRECTORY;
+#endif
+  const int directory_fd = open(directory_.c_str(), open_flags);
+  if (directory_fd < 0) {
+    return false;
+  }
+  const bool synced = SyncFile(directory_fd);
+  const bool closed = close(directory_fd) == 0;
+  return synced && closed;
+}
+
+std::string Manifest::Encode() const {
+  std::string text;
+  const auto append = [&text](const ManifestFile& file) {
+    text.append("file ")
+        .append(file.name)
+        .append(" seq ")
+        .append(std::to_string(file.sequence))
+        .append(" type ")
+        .push_back(TypeCode(file.type));
+    text.push_back('\n');
+  };
+  if (base.has_value()) {
+    append(*base);
+  }
+  for (const ManifestFile& file : history) {
+    append(file);
+  }
+  for (const ManifestFile& file : increments) {
+    append(file);
+  }
+  return text;
+}
+
+std::optional<Manifest> Manifest::Parse(std::string_view text) {
+  Manifest manifest;
+  while (!text.empty()) {
+    const size_t line_end = text.find('\n');
+    std::string_view line = text.substr(0, line_end);
+    text = line_end == std::string_view::npos ? std::string_view()
+                                              : text.substr(line_end + 1);
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    if (line.empty() || line.front() == '#') {
+      continue;
+    }
+    // Space-separated key/value pairs, in any order.
+    ManifestFile file;
+    bool has_name = false;
+    bool has_sequence = false;
+    bool has_type = false;
+    while (!line.empty()) {
+      const size_t key_end = line.find(' ');
+      if (key_end == std::string_view::npos) {
+        return std::nullopt;
+      }
+      const std::string_view key = line.substr(0, key_end);
+      line.remove_prefix(key_end + 1);
+      const size_t value_end = line.find(' ');
+      const std::string_view value = line.substr(0, value_end);
+      line = value_end == std::string_view::npos ? std::string_view()
+                                                 : line.substr(value_end + 1);
+      if (key == "file") {
+        if (!ValidFileName(value)) {
+          return std::nullopt;
+        }
+        file.name = value;
+        has_name = true;
+      } else if (key == "seq") {
+        const auto [end, error] = std::from_chars(
+            value.data(), value.data() + value.size(), file.sequence);
+        if (error != std::errc() || end != value.data() + value.size()) {
+          return std::nullopt;
+        }
+        has_sequence = true;
+      } else if (key == "type") {
+        const std::optional<ManifestFile::Type> type = ParseType(value);
+        if (!type.has_value()) {
+          return std::nullopt;
+        }
+        file.type = *type;
+        has_type = true;
+      }
+      // Unknown keys are ignored, so newer manifests stay loadable.
+    }
+    if (!has_name || !has_sequence || !has_type) {
+      return std::nullopt;
+    }
+    switch (file.type) {
+      case ManifestFile::Type::kBase:
+        if (manifest.base.has_value()) {
+          return std::nullopt;
+        }
+        manifest.base_sequence =
+            std::max(manifest.base_sequence, file.sequence);
+        manifest.base = std::move(file);
+        break;
+      case ManifestFile::Type::kIncrement:
+        // Incremental files replay in order.
+        if (!manifest.increments.empty() &&
+            file.sequence <= manifest.increments.back().sequence) {
+          return std::nullopt;
+        }
+        manifest.increment_sequence =
+            std::max(manifest.increment_sequence, file.sequence);
+        manifest.increments.push_back(std::move(file));
+        break;
+      case ManifestFile::Type::kHistory:
+        // Keep sequence numbers unique across files not yet deleted.
+        if (file.name.ends_with(kBaseSuffix)) {
+          manifest.base_sequence =
+              std::max(manifest.base_sequence, file.sequence);
+        } else if (file.name.ends_with(kIncrementSuffix)) {
+          manifest.increment_sequence =
+              std::max(manifest.increment_sequence, file.sequence);
+        }
+        manifest.history.push_back(std::move(file));
+        break;
+    }
+  }
+  return manifest;
+}
+
+std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
+  if (db == nullptr || options.directory.empty() ||
+      !ValidFileName(options.file_name) ||
+      options.limits.max_replay_command_bytes == 0 ||
+      options.limits.snapshot_block_bytes == 0) {
+    return nullptr;
+  }
+  if (mkdir(options.directory.c_str(), 0755) < 0 && errno != EEXIST) {
+    return nullptr;
+  }
+  auto aof = std::unique_ptr<Aof>(new Aof(options, options.directory));
+  if (!aof->LoadManifest() || !aof->Replay(db) || !aof->OpenLastIncrement()) {
+    return nullptr;
+  }
+  aof->DeleteHistory();
+  if (options.fsync == FsyncPolicy::kEverySecond) {
+    // The project does not throw, but std::thread reports a failure to start
+    // only by throwing std::system_error; catch it at this boundary so the
+    // caller sees an ordinary error.
+    try {
+      aof->sync_thread_ =
+          std::thread([instance = aof.get()] { instance->RunSyncThread(); });
+    } catch (const std::system_error&) {
+      return nullptr;
+    }
+  }
+  return aof;
+}
+
+Aof::Aof(const Options& options, std::string directory)
+    : directory_(std::move(directory)),
+      file_name_(options.file_name),
+      fsync_(options.fsync),
+      auto_rewrite_min_bytes_(options.auto_rewrite_min_bytes),
+      auto_rewrite_percentage_(options.auto_rewrite_percentage),
+      limits_(options.limits),
+      file_ops_(options.file_ops != nullptr ? options.file_ops
+                                            : DefaultFileOps()) {}
+
+Aof::~Aof() {
+  // Installs a rewrite whose child already finished, and stops one still
+  // running, as Redis does on shutdown.
+  CheckRewrite();
+  if (rewrite_child_ > 0) {
+    AbandonRewrite(AofError::kSnapshot);
+  }
+  // Redis syncs on shutdown whatever the policy.
+  SyncNow();
+  {
+    const std::scoped_lock lock(mutex_);
+    stopping_ = true;
+  }
+  sync_wakeup_.notify_all();
+  if (sync_thread_.joinable()) {
+    sync_thread_.join();
+  }
+  // Files replaced since the sync thread last ran.
+  for (const RetiredFile& retired : retired_files_) {
+    SyncFile(retired.fd);
+    close(retired.fd);
+  }
+  if (fd_ >= 0) {
+    close(fd_);
+  }
+}
+
+std::string Aof::FilePath(std::string_view name) const {
+  std::string path = directory_;
+  path.push_back('/');
+  path.append(name);
+  return path;
+}
+
+std::string Aof::ManifestPath() const {
+  return FilePath(file_name_ + std::string(kManifestSuffix));
+}
+
+bool Aof::LoadManifest() {
+  if (PathExists(ManifestPath())) {
+    const std::optional<std::string> text = ReadWholeFile(ManifestPath());
+    if (!text.has_value()) {
+      return false;
+    }
+    std::optional<Manifest> manifest = Manifest::Parse(*text);
+    if (!manifest.has_value()) {
+      RS_LOG_ERROR("malformed AOF manifest %s\n", ManifestPath().c_str());
+      return false;
+    }
+    manifest_ = std::move(*manifest);
+    return true;
+  }
+  // Upgrade a single-file AOF, as Redis 7 does: move it into the directory
+  // as the base file, keeping its name.
+  if (PathExists(file_name_)) {
+    if (rename(file_name_.c_str(), FilePath(file_name_).c_str()) < 0) {
+      return false;
+    }
+    Manifest manifest;
+    manifest.base = ManifestFile{file_name_, 1, ManifestFile::Type::kBase};
+    manifest.base_sequence = 1;
+    if (PersistManifest(manifest) != AofError::kNone) {
+      return false;
+    }
+    manifest_ = std::move(manifest);
+    RS_LOG_WARN("moved %s into %s as the AOF base file\n", file_name_.c_str(),
+                directory_.c_str());
+  }
+  return true;
+}
+
+bool Aof::Replay(db::RedisDb* const db) {
+  std::vector<const ManifestFile*> files;
+  if (manifest_.base.has_value()) {
+    files.push_back(&*manifest_.base);
+  }
+  for (const ManifestFile& file : manifest_.increments) {
+    files.push_back(&file);
+  }
+  size_t total_size = 0;
+  for (size_t index = 0; index < files.size(); ++index) {
+    int open_flags = O_RDWR;
+#ifdef O_CLOEXEC
+    open_flags |= O_CLOEXEC;
+#endif
+    const std::string path = FilePath(files[index]->name);
+    const int fd = open(path.c_str(), open_flags);
+    if (fd < 0) {
+      // A listed incremental file that was never created holds nothing.
+      if (errno == ENOENT &&
+          files[index]->type == ManifestFile::Type::kIncrement) {
+        continue;
+      }
+      RS_LOG_ERROR("cannot open AOF file %s\n", path.c_str());
+      return false;
+    }
+    // Only the last file may end in a torn record, as in Redis.
+    const bool replayed = ReplayFile(db, fd, index + 1 == files.size());
+    const std::optional<size_t> size = FileSize(fd);
+    close(fd);
+    if (!replayed || !size.has_value()) {
+      RS_LOG_ERROR("cannot load AOF file %s\n", path.c_str());
+      return false;
+    }
+    if (files[index]->type == ManifestFile::Type::kBase) {
+      base_size_ = *size;
+    }
+    total_size += *size;
+  }
+  current_size_ = total_size;
+  return true;
+}
+
+bool Aof::OpenLastIncrement() {
+  // Appends continue in the last incremental file, as in Redis; only a
+  // rewrite starts a new one.
+  if (manifest_.increments.empty()) {
+    return OpenNextIncrement();
+  }
+  const ManifestFile& last = manifest_.increments.back();
+  int open_flags = O_RDWR | O_CREAT;
+#ifdef O_CLOEXEC
+  open_flags |= O_CLOEXEC;
+#endif
+  const int fd = open(FilePath(last.name).c_str(), open_flags, 0644);
+  if (fd < 0 || lseek(fd, 0, SEEK_END) < 0) {
+    if (fd >= 0) {
+      close(fd);
+    }
+    return false;
+  }
+  SwitchFile(fd, last.sequence);
+  return true;
+}
+
+bool Aof::OpenNextIncrement() {
+  Manifest manifest = manifest_;
+  const uint64_t sequence = manifest.increment_sequence + 1;
+  const std::string name = file_name_ + "." + std::to_string(sequence) +
+                           std::string(kIncrementSuffix);
+  int open_flags = O_RDWR | O_CREAT | O_TRUNC;
+#ifdef O_CLOEXEC
+  open_flags |= O_CLOEXEC;
+#endif
+  const int fd = open(FilePath(name).c_str(), open_flags, 0644);
+  if (fd < 0) {
+    RecordError(AofError::kWrite, errno);
+    return false;
+  }
+  manifest.increments.push_back(
+      ManifestFile{name, sequence, ManifestFile::Type::kIncrement});
+  manifest.increment_sequence = sequence;
+  const AofError error = PersistManifest(manifest);
+  const int error_number = errno;
+  if (error != AofError::kNone && error != AofError::kDirectorySync) {
+    close(fd);
+    unlink(FilePath(name).c_str());
+    RecordError(error, error_number);
+    return false;
+  }
+  // After the rename the new manifest is live, durable or not.
+  manifest_ = std::move(manifest);
+  SwitchFile(fd, sequence);
+  if (error == AofError::kDirectorySync) {
+    FailDirectorySync(error_number);
+  }
+  return true;
+}
+
+void Aof::FailDirectorySync(int error_number) {
+  // A rename that may not survive a crash: reject writes until a later
+  // rewrite persists a manifest safely.
+  {
+    const std::scoped_lock lock(mutex_);
+    FailSyncLocked(error_number, fd_sequence_);
+    last_error_ = AofError::kDirectorySync;
+  }
+  history_unsafe_to_delete_ = true;
+}
+
+void Aof::SwitchFile(int fd, uint64_t sequence) {
+  int old_fd = -1;
+  {
+    const std::scoped_lock lock(mutex_);
+    old_fd = fd_;
+    if (old_fd >= 0 && fsync_ == FsyncPolicy::kEverySecond) {
+      // The sync thread syncs the replaced file's last writes, then closes
+      // it, so the switch does not wait for the disk.
+      retired_files_.push_back(
+          {old_fd, fd_sequence_,
+           written_bytes_.load(std::memory_order_acquire)});
+      old_fd = -1;
+    }
+    fd_ = fd;
+    fd_sequence_ = sequence;
+  }
+  sync_wakeup_.notify_all();
+  if (old_fd >= 0) {
+    // `always` synced every write already; `no` leaves it to the system.
+    close(old_fd);
+  }
+}
+
+AofError Aof::PersistManifest(const Manifest& manifest) {
+  const std::string temp_path = FilePath(std::string(kTempPrefix) + file_name_ +
+                                         std::string(kManifestSuffix));
+  int open_flags = O_WRONLY | O_CREAT | O_TRUNC;
+#ifdef O_CLOEXEC
+  open_flags |= O_CLOEXEC;
+#endif
+  const int fd = open(temp_path.c_str(), open_flags, 0644);
+  if (fd < 0) {
+    return AofError::kWrite;
+  }
+  const std::string text = manifest.Encode();
+  int error_number = 0;
+  const bool written =
+      WritePrefix(file_ops_.get(), fd, text, &error_number) == text.size();
+  const bool synced = written && SyncFile(fd);
+  close(fd);
+  if (!written || !synced) {
+    unlink(temp_path.c_str());
+    errno = error_number != 0 ? error_number : errno;
+    return written ? AofError::kSync : AofError::kWrite;
+  }
+  if (file_ops_->Rename(temp_path.c_str(), ManifestPath().c_str()) < 0) {
+    const int rename_errno = errno;
+    unlink(temp_path.c_str());
+    errno = rename_errno;
+    return AofError::kRename;
+  }
+  return SyncParentDirectory() ? AofError::kNone : AofError::kDirectorySync;
+}
+
+void Aof::DeleteHistory() {
+  // After a manifest whose rename may not be durable, a crash could bring
+  // back the previous manifest, which still needs these files.
+  if (manifest_.history.empty() || history_unsafe_to_delete_) {
     return;
   }
-  rewrite_buffer_bytes_ += batch.size();
-  rewrite_buffer_.push_back(std::move(batch));
+  // The manifest no longer lists them as live, so deleting them first is
+  // safe; a crash before the second persist only leaves them listed.
+  for (const ManifestFile& file : manifest_.history) {
+    unlink(FilePath(file.name).c_str());
+  }
+  Manifest manifest = manifest_;
+  manifest.history.clear();
+  if (PersistManifest(manifest) == AofError::kNone) {
+    manifest_ = std::move(manifest);
+  }
+}
+
+RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
+  if (db == nullptr) {
+    return RewriteResult::kError;
+  }
+  if (rewrite_child_ > 0) {
+    return RewriteResult::kInProgress;
+  }
+  // Every mutation applied to `db` must be in the current incremental file
+  // before the switch: the snapshot covers them, and the next file must not.
+  // Bytes stuck after a write error would land in both, so wait them out.
+  if (!Flush() || !unwritten_.empty()) {
+    return RewriteResult::kError;
+  }
+  last_rewrite_attempt_ = std::chrono::steady_clock::now();
+  if (!OpenNextIncrement()) {
+    FailRewrite();
+    return RewriteResult::kError;
+  }
+
+  std::string path = FilePath("temp-rewriteaof-XXXXXX");
+  const int rewrite_fd = mkstemp(path.data());
+  if (rewrite_fd < 0) {
+    RecordError(AofError::kWrite, errno);
+    FailRewrite();
+    return RewriteResult::kError;
+  }
+  if (fcntl(rewrite_fd, F_SETFD, FD_CLOEXEC) < 0 ||
+      fchmod(rewrite_fd, 0644) < 0) {
+    const int error_number = errno;
+    close(rewrite_fd);
+    unlink(path.c_str());
+    RecordError(AofError::kWrite, error_number);
+    FailRewrite();
+    return RewriteResult::kError;
+  }
+
+  if (before_fork_) {
+    before_fork_();
+  }
+  const pid_t child = fork();
+  if (child == 0) {
+    RunRewriteChild(db, rewrite_fd);
+  }
+  const int fork_errno = errno;
+  if (after_fork_) {
+    after_fork_();
+  }
+  if (child < 0) {
+    close(rewrite_fd);
+    unlink(path.c_str());
+    RecordError(AofError::kSnapshot, fork_errno);
+    FailRewrite();
+    return RewriteResult::kError;
+  }
+  rewrite_child_ = child;
+  rewrite_fd_ = rewrite_fd;
+  rewrite_path_ = std::move(path);
+  rewrite_increment_sequence_ = manifest_.increment_sequence;
+  return RewriteResult::kStarted;
 }
 
 void Aof::FinishRewrite(int wait_status) {
@@ -1055,60 +1486,95 @@ void Aof::FinishRewrite(int wait_status) {
   if (rewrite_fd_ >= 0) {
     close(rewrite_fd_);
     rewrite_fd_ = -1;
-    unlink(rewrite_path_.c_str());
   }
-  rewrite_buffer_.clear();
-  rewrite_buffer_bytes_ = 0;
   if (error == AofError::kNone) {
     rewrite_status_ = RewriteStatus::kSucceeded;
+    consecutive_rewrite_failures_ = 0;
+    DeleteHistory();
     return;
   }
-  rewrite_status_ = RewriteStatus::kFailed;
+  unlink(rewrite_path_.c_str());
   RecordError(error, error_number);
+  FailRewrite();
 }
 
 AofError Aof::InstallRewrite(int* const error_number) {
-  if (!WriteBlocks(file_ops_.get(), rewrite_fd_, rewrite_buffer_)) {
+  // The child synced the snapshot; it becomes the next base file.
+  const std::optional<size_t> base_size = FileSize(rewrite_fd_);
+  if (!base_size.has_value()) {
     *error_number = errno;
     return AofError::kWrite;
   }
-  if (!SyncFile(rewrite_fd_)) {
-    *error_number = errno;
-    return AofError::kSync;
-  }
-  const std::optional<size_t> size = FileSize(rewrite_fd_);
-  if (!size.has_value()) {
-    *error_number = errno;
-    return AofError::kWrite;
-  }
-  if (file_ops_->Rename(rewrite_path_.c_str(), path_.c_str()) < 0) {
+  Manifest manifest = manifest_;
+  const uint64_t base_sequence = manifest.base_sequence + 1;
+  const std::string base_name = file_name_ + "." +
+                                std::to_string(base_sequence) +
+                                std::string(kBaseSuffix);
+  if (file_ops_->Rename(rewrite_path_.c_str(), FilePath(base_name).c_str()) <
+      0) {
     *error_number = errno;
     return AofError::kRename;
   }
-  int old_fd = -1;
-  {
-    // The new file holds every mutation and is synced, so it also clears a
-    // failed write or sync on the old one.
-    const std::scoped_lock lock(mutex_);
-    old_fd = fd_;
-    fd_ = rewrite_fd_;
-    synced_bytes_ = written_bytes_.load(std::memory_order_acquire);
-    sync_failed_.store(false, std::memory_order_relaxed);
+  // The old base and the incremental files before the fork are history.
+  if (manifest.base.has_value()) {
+    manifest.base->type = ManifestFile::Type::kHistory;
+    manifest.history.push_back(std::move(*manifest.base));
   }
-  sync_failure_logged_ = false;
-  rewrite_fd_ = -1;
-  close(old_fd);
-  unwritten_.clear();
-  write_failed_ = false;
-  current_size_ = *size;
-  base_size_ = *size;
-  if (!SyncParentDirectory()) {
+  const auto first_kept = std::ranges::find_if(
+      manifest.increments, [this](const ManifestFile& file) {
+        return file.sequence >= rewrite_increment_sequence_;
+      });
+  for (auto file = manifest.increments.begin(); file != first_kept; ++file) {
+    file->type = ManifestFile::Type::kHistory;
+    manifest.history.push_back(std::move(*file));
+  }
+  manifest.increments.erase(manifest.increments.begin(), first_kept);
+  manifest.base =
+      ManifestFile{base_name, base_sequence, ManifestFile::Type::kBase};
+  manifest.base_sequence = base_sequence;
+  const AofError persist_error = PersistManifest(manifest);
+  if (persist_error != AofError::kNone &&
+      persist_error != AofError::kDirectorySync) {
     *error_number = errno;
+    // The old manifest still describes the AOF; drop the unused base.
+    unlink(FilePath(base_name).c_str());
+    return persist_error;
+  }
+  // After the rename the new manifest is live, durable or not.
+  manifest_ = std::move(manifest);
+  if (persist_error == AofError::kDirectorySync) {
+    *error_number = errno;
+    FailDirectorySync(*error_number);
+  }
+
+  size_t increment_size = 0;
+  for (const ManifestFile& file : manifest_.increments) {
+    struct stat info {};
+    if (stat(FilePath(file.name).c_str(), &info) == 0 && info.st_size > 0) {
+      increment_size += static_cast<size_t>(info.st_size);
+    }
+  }
+  base_size_ = *base_size;
+  current_size_ = *base_size + increment_size;
+  if (persist_error == AofError::kDirectorySync) {
+    return persist_error;
+  }
+  history_unsafe_to_delete_ = false;
+  {
+    // A sync that failed on a file the new base replaces no longer matters.
     const std::scoped_lock lock(mutex_);
-    FailSyncLocked(*error_number);
-    return AofError::kDirectorySync;
+    if (sync_failed_.load(std::memory_order_relaxed) &&
+        sync_failed_sequence_ < rewrite_increment_sequence_) {
+      sync_failed_.store(false, std::memory_order_relaxed);
+      sync_failure_logged_ = false;
+    }
   }
   return AofError::kNone;
+}
+
+void Aof::FailRewrite() {
+  rewrite_status_ = RewriteStatus::kFailed;
+  ++consecutive_rewrite_failures_;
 }
 
 void Aof::AbandonRewrite(AofError error) {
@@ -1119,10 +1585,8 @@ void Aof::AbandonRewrite(AofError error) {
   close(rewrite_fd_);
   rewrite_fd_ = -1;
   unlink(rewrite_path_.c_str());
-  rewrite_buffer_.clear();
-  rewrite_buffer_bytes_ = 0;
-  rewrite_status_ = RewriteStatus::kFailed;
   RecordError(error, 0);
+  FailRewrite();
 }
 
 bool Aof::ShouldAutoRewrite() const {
@@ -1131,10 +1595,17 @@ bool Aof::ShouldAutoRewrite() const {
       current_size == 0 || current_size < auto_rewrite_min_bytes_) {
     return false;
   }
-  if (rewrite_status_ == RewriteStatus::kFailed &&
-      std::chrono::steady_clock::now() - last_rewrite_attempt_ <
-          kRewriteRetryDelay) {
-    return false;
+  if (consecutive_rewrite_failures_ >= kFailuresBeforeBackoff) {
+    // A failing rewrite leaves an incremental file behind each time, so back
+    // off: one minute, doubling, up to an hour.
+    const size_t doublings = std::min<size_t>(
+        consecutive_rewrite_failures_ - kFailuresBeforeBackoff, 6);
+    const std::chrono::minutes delay =
+        std::min(kFirstBackoff * (int64_t{1} << static_cast<int>(doublings)),
+                 kMaxBackoff);
+    if (std::chrono::steady_clock::now() - last_rewrite_attempt_ < delay) {
+      return false;
+    }
   }
   if (base_size_ == 0) {
     return true;
@@ -1155,39 +1626,13 @@ AofState Aof::State() const {
           last_error_,
           current_size_ + pending,
           base_size_,
-          pending};
+          pending,
+          consecutive_rewrite_failures_};
 }
 
-bool Aof::SyncFile(int fd) const { return aof::SyncFile(file_ops_.get(), fd); }
-
-bool Aof::SyncParentDirectory() const {
-  std::filesystem::path parent = std::filesystem::path(path_).parent_path();
-  if (parent.empty()) {
-    parent = ".";
-  }
-  int open_flags = O_RDONLY;
-#ifdef O_CLOEXEC
-  open_flags |= O_CLOEXEC;
-#endif
-#ifdef O_DIRECTORY
-  open_flags |= O_DIRECTORY;
-#endif
-  const int directory_fd = open(parent.c_str(), open_flags);
-  if (directory_fd < 0) {
-    return false;
-  }
-  const bool synced = SyncFile(directory_fd);
-  const bool closed = close(directory_fd) == 0;
-  return synced && closed;
-}
-
-bool Aof::Replay(db::RedisDb* const db) {
-  if (lseek(fd_, 0, SEEK_SET) < 0) {
-    return false;
-  }
-
+bool Aof::ReplayFile(db::RedisDb* const db, int fd, bool last) {
   db->SetLoading(true);
-  const bool replayed = [this, db] {
+  const bool replayed = [this, db, fd, last] {
     Client client(db);
     std::array<char, kReadChunkSize> chunk{};
     in_memory::DynamicBuffer input;
@@ -1202,7 +1647,7 @@ bool Aof::Replay(db::RedisDb* const db) {
     while (!reached_end) {
       ssize_t bytes_read = -1;
       while (true) {
-        bytes_read = read(fd_, chunk.data(), chunk.size());
+        bytes_read = read(fd, chunk.data(), chunk.size());
         if (bytes_read >= 0 || errno != EINTR) {
           break;
         }
@@ -1270,17 +1715,20 @@ bool Aof::Replay(db::RedisDb* const db) {
     }
 
     const bool truncated = !input.Empty() || transaction_start.has_value();
+    if (truncated && !last) {
+      return false;
+    }
     if (truncated) {
       const size_t valid_bytes = transaction_start.value_or(complete_bytes);
       RS_LOG_DEBUG("truncating incomplete AOF tail at %zu bytes\n",
                    valid_bytes);
       if (valid_bytes >
               static_cast<uintmax_t>(std::numeric_limits<off_t>::max()) ||
-          ftruncate(fd_, static_cast<off_t>(valid_bytes)) < 0) {
+          ftruncate(fd, static_cast<off_t>(valid_bytes)) < 0) {
         return false;
       }
     }
-    return !truncated || SyncFile(fd_);
+    return !truncated || SyncFile(fd);
   }();
   db->SetLoading(false);
   return replayed;

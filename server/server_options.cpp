@@ -110,10 +110,20 @@ constexpr auto kOptionSpecs = std::to_array<OptionSpec>({
     {.name = "--appendfilename",
      .apply =
          [](std::string_view value, ServerOptions* options) {
-           options->aof_options.path.assign(value.data(), value.size());
+           options->aof_options.file_name.assign(value.data(), value.size());
+           // A name only, as in Redis; --appenddirname picks the directory.
+           return !value.empty() && !value.contains('/') &&
+                  value.find_first_of(" \t\r\n") == std::string_view::npos;
+         },
+     .error = "appendfilename must be a file name without a directory or "
+              "whitespace"},
+    {.name = "--appenddirname",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           options->aof_options.directory.assign(value.data(), value.size());
            return !value.empty();
          },
-     .error = "appendfilename cannot be empty"},
+     .error = "appenddirname cannot be empty"},
     {.name = "--appendfsync",
      .apply =
          [](std::string_view value, ServerOptions* options) {
@@ -193,7 +203,8 @@ OptionsResult ParseServerOptions(int argc, const char* const* argv) {
 
 std::string_view ServerUsage() {
   return "Usage: redis_simple [--bind <address>] [--port <port>] "
-         "[--appendonly <yes|no>] [--appendfilename <path>] "
+         "[--appendonly <yes|no>] [--appendfilename <name>] "
+         "[--appenddirname <dir>] "
          "[--appendfsync <always|everysec|no>] "
          "[--auto-aof-rewrite-min-size <bytes>] "
          "[--auto-aof-rewrite-percentage <percent>] "

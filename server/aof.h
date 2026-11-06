@@ -9,10 +9,10 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -40,9 +40,6 @@ class FileOps {
 };
 
 struct Limits {
-  // Mutations made while a rewrite runs are kept until it finishes; a rewrite
-  // that would keep more is abandoned.
-  size_t max_rewrite_buffer_bytes{size_t{64} * 1024 * 1024};
   size_t max_replay_command_bytes{size_t{64} * 1024 * 1024};
   // The rewrite writes the snapshot in blocks of about this size, and splits
   // large values and collections into commands no larger.
@@ -51,10 +48,18 @@ struct Limits {
 
 struct Options {
   Options() = default;
-  Options(std::string file_path, FsyncPolicy fsync_policy)
-      : path(std::move(file_path)), fsync(fsync_policy) {}
+  Options(std::string aof_directory, std::string aof_file_name,
+          FsyncPolicy fsync_policy)
+      : directory(std::move(aof_directory)),
+        file_name(std::move(aof_file_name)),
+        fsync(fsync_policy) {}
 
-  std::string path{"appendonly.aof"};
+  // Redis' appenddirname: the directory holding the AOF's files and manifest.
+  std::string directory{"appendonlydir"};
+  // Redis' appendfilename: the prefix of the AOF's file names, without a
+  // directory. An existing single-file AOF of this name in the working
+  // directory is moved into `directory` as the base file.
+  std::string file_name{"appendonly.aof"};
   FsyncPolicy fsync{FsyncPolicy::kEverySecond};
   size_t auto_rewrite_min_bytes{size_t{64} * 1024 * 1024};
   size_t auto_rewrite_percentage{100};
@@ -76,7 +81,6 @@ enum class RewriteStatus {
 
 enum class AofError {
   kNone,
-  kRewriteBufferFull,
   kWrite,
   kSync,
   kRename,
@@ -90,25 +94,60 @@ struct AofState {
   bool rewrite_in_progress{};
   RewriteStatus rewrite_status{RewriteStatus::kNeverRun};
   AofError last_error{AofError::kNone};
+  // Bytes in the base and incremental files, and in the base file alone.
   size_t current_size{};
   size_t base_size{};
   // Encoded mutations not yet written to the file.
   size_t pending_bytes{};
+  // Failed rewrites since the last successful one, as Redis'
+  // aof_rewrites_consecutive_failures.
+  size_t consecutive_rewrite_failures{};
 };
 
 std::string_view ErrorName(AofError error);
 std::string_view RewriteStatusName(RewriteStatus status);
 
-// The append-only file. Every method runs on the event-loop thread; with
-// `everysec` a background thread only fsyncs the file once a second.
+// One file of a multi-part AOF, as listed in its manifest.
+struct ManifestFile {
+  enum class Type {
+    kBase,
+    kIncrement,
+    // Replaced by a rewrite and deleted soon after.
+    kHistory,
+  };
+  std::string name;
+  uint64_t sequence{};
+  Type type{};
+};
+
+// The manifest of a multi-part AOF, in Redis 7's format: one line per file,
+// such as "file appendonly.aof.1.base.aof seq 1 type b". Loading replays the
+// base file, then the incremental files in order.
+struct Manifest {
+  std::optional<ManifestFile> base;
+  std::vector<ManifestFile> increments;
+  std::vector<ManifestFile> history;
+  // The highest sequence numbers used so far.
+  uint64_t base_sequence{};
+  uint64_t increment_sequence{};
+
+  std::string Encode() const;
+  // Returns nullopt for a malformed manifest.
+  static std::optional<Manifest> Parse(std::string_view text);
+};
+
+// A multi-part append-only file, like Redis 7's: a directory with one base
+// file (the last rewrite's snapshot), incremental files with the mutations
+// since, and a manifest listing them. Every method runs on the event-loop
+// thread; with `everysec` a background thread only fsyncs, once a second.
 //
-// Each batch of mutations is written to the file before its replies are sent,
-// so a crash of this process loses no acknowledged write; with `everysec` an
-// operating-system crash may lose about the last second. A rewrite forks a
-// child that writes a snapshot of the database to a temporary file, while the
-// parent keeps appending to the old file and also keeps the mutations made
-// meanwhile; when the child exits, the parent appends those, then replaces
-// the old file atomically.
+// Each batch of mutations is written to the current incremental file before
+// its replies are sent, so a crash of this process loses no acknowledged
+// write; with `everysec` an operating-system crash may lose about the last
+// second. A rewrite first switches appends to a new incremental file, then
+// forks a child that writes a snapshot of the database as a new base file.
+// When the child finishes, a new manifest lists that base and the new
+// incremental file, and the files it replaced are deleted.
 class Aof {
  public:
   static std::unique_ptr<Aof> Open(const Options& options, db::RedisDb* db);
@@ -136,8 +175,9 @@ class Aof {
   // false until a write succeeds.
   bool Flush();
   // Whether write commands may run. False while written bytes are stuck after
-  // a write error, and for good after a failed fsync, since the kernel may
-  // have dropped the data it could not sync.
+  // a write error, and after a failed fsync until a rewrite retires the file
+  // it failed on, since the kernel may have dropped the data it could not
+  // sync.
   bool AcceptingWrites() const;
   // The system error of the last failed write or sync, for MISCONF replies.
   std::string LastErrorText() const;
@@ -162,10 +202,25 @@ class Aof {
   bool SyncNow();
   // For tests: waits for the rewrite child and finishes the rewrite.
   void WaitForRewrite();
+  // The manifest as last persisted.
+  const Manifest& CurrentManifest() const { return manifest_; }
 
  private:
-  Aof(int fd, const Options& options, size_t file_size);
+  Aof(const Options& options, std::string directory);
+  bool LoadManifest();
   bool Replay(db::RedisDb* db);
+  bool ReplayFile(db::RedisDb* db, int fd, bool last);
+  std::string FilePath(std::string_view name) const;
+  std::string ManifestPath() const;
+  // Writes `manifest` to a temporary file, syncs it, renames it over the
+  // manifest, and syncs the directory.
+  AofError PersistManifest(const Manifest& manifest);
+  // Creates the next incremental file, lists it in the manifest, and makes it
+  // the file appends go to.
+  bool OpenLastIncrement();
+  bool OpenNextIncrement();
+  void SwitchFile(int fd, uint64_t sequence);
+  void DeleteHistory();
   static bool Encode(std::string_view command,
                      const std::vector<std::string_view>& args, db::RedisDb* db,
                      std::string* output);
@@ -174,22 +229,34 @@ class Aof {
   void FailWrite(int error_number);
   bool SyncWritten();
   void RunSyncThread();
-  void FailSyncLocked(int error_number);
+  void FailSyncLocked(int error_number, uint64_t sequence);
   void LogSyncFailure();
   void RecordError(AofError error, int error_number);
-  void BufferForRewrite(std::string batch);
   [[noreturn]] void RunRewriteChild(db::RedisDb* db, int rewrite_fd) const;
   void FinishRewrite(int wait_status);
   AofError InstallRewrite(int* error_number);
   void AbandonRewrite(AofError error);
+  void FailRewrite();
+  void FailDirectorySync(int error_number);
   bool SyncFile(int fd) const;
   bool SyncParentDirectory() const;
 
-  // Guarded by `mutex_`: the file descriptor (replaced when a rewrite is
-  // installed) and the sync thread's state and errors.
+  // Guarded by `mutex_`: the current incremental file (replaced when a
+  // rewrite starts), files it replaced that still need a sync before they
+  // close, and the sync thread's state and errors.
   mutable std::mutex mutex_;
   std::condition_variable sync_wakeup_;
-  int fd_;
+  int fd_{-1};
+  uint64_t fd_sequence_{};
+  struct RetiredFile {
+    int fd;
+    uint64_t sequence;
+    // written_bytes_ when the file was replaced.
+    uint64_t written_mark;
+  };
+  std::vector<RetiredFile> retired_files_;
+  // The incremental file a sync failed on.
+  uint64_t sync_failed_sequence_{};
   bool stopping_{false};
   // Also read without the lock by AcceptingWrites().
   std::atomic<bool> sync_failed_{false};
@@ -201,7 +268,9 @@ class Aof {
   uint64_t synced_bytes_{0};
 
   // Event-loop thread only.
-  std::string path_;
+  std::string directory_;
+  std::string file_name_;
+  Manifest manifest_;
   FsyncPolicy fsync_;
   size_t auto_rewrite_min_bytes_;
   size_t auto_rewrite_percentage_;
@@ -221,14 +290,17 @@ class Aof {
   size_t base_size_{};
   std::thread sync_thread_;
 
-  // The running rewrite: its child, temporary file, and the mutations made
-  // since the fork, in order.
+  // The running rewrite: its child, the temporary base file, and the first
+  // incremental file after the fork, which the new base precedes.
   pid_t rewrite_child_{-1};
   int rewrite_fd_{-1};
   std::string rewrite_path_;
-  std::deque<std::string> rewrite_buffer_;
-  size_t rewrite_buffer_bytes_{};
+  uint64_t rewrite_increment_sequence_{};
   RewriteStatus rewrite_status_{RewriteStatus::kNeverRun};
+  size_t consecutive_rewrite_failures_{};
+  // Set when a manifest rename may not be durable; history files then stay
+  // until a later manifest persists safely.
+  bool history_unsafe_to_delete_{false};
   std::chrono::steady_clock::time_point last_rewrite_attempt_{};
   std::function<void()> before_fork_;
   std::function<void()> after_fork_;

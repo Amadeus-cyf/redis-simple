@@ -9,9 +9,11 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -535,12 +537,11 @@ TEST(ClientTest, SetOverwritesStringsInPlaceAndReplacesOtherTypes) {
 }
 TEST(ClientTest, RejectsWritesWithMisconfWhileTheAofCannotWrite) {
   std::string path = "/tmp/redis_simple_client_aof.XXXXXX";
-  const int temp_fd = mkstemp(path.data());
-  ASSERT_GE(temp_fd, 0);
-  close(temp_fd);
+  ASSERT_NE(mkdtemp(path.data()), nullptr);
   auto file_ops = std::make_shared<FailableFileOps>();
   auto db = db::RedisDb::Create();
-  aof::Options options{path, aof::FsyncPolicy::kEverySecond};
+  aof::Options options{path + "/appendonlydir", "appendonly.aof",
+                       aof::FsyncPolicy::kEverySecond};
   options.file_ops = file_ops;
   auto aof = aof::Aof::Open(options, db.get());
   ASSERT_NE(aof, nullptr);
@@ -585,17 +586,17 @@ TEST(ClientTest, RejectsWritesWithMisconfWhileTheAofCannotWrite) {
             "+OK\r\n");
   client.reset();
   aof.reset();
-  std::remove(path.c_str());
+  std::error_code error;
+  std::filesystem::remove_all(path, error);
 }
 
 TEST(ClientTest, ExecRejectsQueuedWritesWhenTheAofFailsAfterQueueing) {
   std::string path = "/tmp/redis_simple_client_aof.XXXXXX";
-  const int temp_fd = mkstemp(path.data());
-  ASSERT_GE(temp_fd, 0);
-  close(temp_fd);
+  ASSERT_NE(mkdtemp(path.data()), nullptr);
   auto file_ops = std::make_shared<FailableFileOps>();
   auto db = db::RedisDb::Create();
-  aof::Options options{path, aof::FsyncPolicy::kEverySecond};
+  aof::Options options{path + "/appendonlydir", "appendonly.aof",
+                       aof::FsyncPolicy::kEverySecond};
   options.file_ops = file_ops;
   auto aof = aof::Aof::Open(options, db.get());
   ASSERT_NE(aof, nullptr);
@@ -622,6 +623,7 @@ TEST(ClientTest, ExecRejectsQueuedWritesWhenTheAofFailsAfterQueueing) {
   file_ops->fail_writes.store(false);
   client.reset();
   aof.reset();
-  std::remove(path.c_str());
+  std::error_code error;
+  std::filesystem::remove_all(path, error);
 }
 }  // namespace redis_simple

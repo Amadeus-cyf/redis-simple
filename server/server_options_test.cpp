@@ -14,7 +14,8 @@ TEST(ServerOptionsTest, UsesDefaults) {
   EXPECT_EQ(result.options.bind_address, "127.0.0.1");
   EXPECT_EQ(result.options.port, 8080);
   EXPECT_FALSE(result.options.append_only);
-  EXPECT_EQ(result.options.aof_options.path, "appendonly.aof");
+  EXPECT_EQ(result.options.aof_options.file_name, "appendonly.aof");
+  EXPECT_EQ(result.options.aof_options.directory, "appendonlydir");
   EXPECT_EQ(result.options.aof_options.fsync, aof::FsyncPolicy::kEverySecond);
   EXPECT_EQ(result.options.aof_options.auto_rewrite_min_bytes,
             size_t{64} * 1024 * 1024);
@@ -67,12 +68,24 @@ TEST(ServerOptionsTest, ParsesBindAddressAndPort) {
   EXPECT_EQ(result.options.port, 6380);
 }
 
+TEST(ServerOptionsTest, RejectsAppendFileNamesWithDirectories) {
+  for (const char* name :
+       {"dir/appendonly.aof", "/tmp/appendonly.aof", "append only.aof", ""}) {
+    const std::array argv = {"redis_simple", "--appendfilename", name};
+    EXPECT_EQ(ParseServerOptions(argv.size(), argv.data()).status,
+              OptionsStatus::kError)
+        << name;
+  }
+}
+
 TEST(ServerOptionsTest, ParsesAofOptions) {
   constexpr std::array kArgv = {"redis_simple",
                                 "--appendonly",
                                 "yes",
                                 "--appendfilename",
-                                "/tmp/appendonly.aof",
+                                "data.aof",
+                                "--appenddirname",
+                                "/tmp/aof",
                                 "--appendfsync",
                                 "always",
                                 "--auto-aof-rewrite-min-size",
@@ -84,7 +97,8 @@ TEST(ServerOptionsTest, ParsesAofOptions) {
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_TRUE(result.options.append_only);
-  EXPECT_EQ(result.options.aof_options.path, "/tmp/appendonly.aof");
+  EXPECT_EQ(result.options.aof_options.file_name, "data.aof");
+  EXPECT_EQ(result.options.aof_options.directory, "/tmp/aof");
   EXPECT_EQ(result.options.aof_options.fsync, aof::FsyncPolicy::kAlways);
   EXPECT_EQ(result.options.aof_options.auto_rewrite_min_bytes, 4096);
   EXPECT_EQ(result.options.aof_options.auto_rewrite_percentage, 50);
