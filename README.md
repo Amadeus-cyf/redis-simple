@@ -65,13 +65,30 @@ Enable AOF persistence with Redis-style fsync policies:
 
 ```sh
 ./build/debug/redis_simple --appendonly yes \
-  --appendfilename appendonly.aof --appendfsync everysec \
+  --appenddirname appendonlydir --appendfilename appendonly.aof \
+  --appendfsync everysec \
   --auto-aof-rewrite-min-size 67108864 \
   --auto-aof-rewrite-percentage 100
 ```
 
-AOF is disabled by default. When enabled, `appendonly.aof` is the default path
-and `everysec` is the default fsync policy. Mutations are encoded into one
+AOF is disabled by default. When enabled, it is a multi-part AOF like Redis
+7's: a directory (`--appenddirname`, default `appendonlydir`) holding one base
+file, the snapshot of the last rewrite, then incremental files with the
+mutations since, and a manifest that lists them in Redis' format:
+
+```
+file appendonly.aof.1.base.aof seq 1 type b
+file appendonly.aof.2.incr.aof seq 2 type i
+```
+
+`--appendfilename` (default `appendonly.aof`) is the files' name prefix, a plain
+name as in Redis. `--appenddirname` accepts a path, since this server has no
+Redis `dir` setting to put it under. An existing single-file AOF of that name
+in the working directory is moved into the directory as the base file on first
+start, as Redis 7 does when upgrading. The manifest is replaced atomically:
+written to a temporary file, synced, renamed, and the directory synced.
+
+`everysec` is the default fsync policy. Mutations are encoded into one
 batch per client read, and the batch is written to the file before any of its
 replies are sent, so a crash of the server process loses no acknowledged write
 under any policy. `always` also syncs each batch once (group commit);
@@ -79,28 +96,32 @@ under any policy. `always` also syncs each batch once (group commit);
 crash or power loss can cost about the last second; `no` leaves syncing to the
 operating system. Graceful shutdown writes and syncs everything pending.
 
-`BGREWRITEAOF` compacts command history into a point-in-time snapshot of the
-database, written by a forked child process from its copy-on-write view of
-memory, so the server keeps serving while it runs. Large strings are split into
+`BGREWRITEAOF` compacts command history. It first switches appends to a new
+incremental file and lists it in the manifest, then forks a child that writes
+a snapshot of the database, from its copy-on-write view of memory, as the next
+base file; the server keeps serving meanwhile. Large strings are split into
 replay-safe commands, and collection batches are limited by encoded bytes.
-Mutations made during the rewrite still go to the current file, and the server
-also keeps them, up to 64 MiB, and appends them to the new file once the child
-finishes. The replacement file is synced, renamed atomically, and followed by
-a parent-directory sync before it becomes durable. Shutdown stops a rewrite
-that is still running and keeps the original file.
+When the child finishes, a new manifest lists the new base and the
+incremental file opened at the start; the old base and incremental files are
+then deleted. Writes made during the rewrite are already in that incremental
+file, so nothing is buffered or copied at the end. Shutdown stops a rewrite
+that is still running; the previous files stay listed. Replay loads the base,
+then each incremental file in order; only the last file may end in a torn
+record, which is cut off, as with Redis' `aof-load-truncated`.
 
 Automatic rewriting starts after the AOF reaches 64 MiB and grows by 100% from
 the last rewrite or startup size. The two `--auto-aof-rewrite-*` options override
 those defaults; a percentage of `0` disables automatic rewriting. Use
 `INFO persistence` to inspect rewrite progress, the last rewrite, write, and
-error status, current and base sizes, and pending bytes.
+error status, current (base plus incremental) and base sizes, pending bytes,
+and `aof_rewrites_consecutive_failures`.
 
 When the file cannot be written, as on a full disk, the server keeps the
 unwritten bytes and retries them, and until a write succeeds it rejects write
 commands with Redis' `-MISCONF Errors writing to the AOF file` error while
 reads keep working. A failed fsync is not retried, since the kernel may have
 dropped the data it could not sync: writes stay rejected until a successful
-rewrite replaces the file or the server restarts. With `always`, which promises
+rewrite retires the file it failed on or the server restarts. With `always`, which promises
 that every acknowledged write is synced, a failed write or sync stops the
 server instead.
 
@@ -189,10 +210,11 @@ applies the transaction as a whole; a transaction cut off at the end of the
 file is truncated rather than partially applied. Relative expirations are stored
 as absolute millisecond timestamps, incomplete final records are truncated,
 and corruption before the final record prevents startup. AOF rewrites traverse
-collection values through borrowed views in a forked child, retain concurrent
-mutations in a bounded buffer, preserve the original file if rewriting fails
-before the atomic replacement, and retry failed automatic rewrites after a
-short delay.
+collection values through borrowed views in a forked child, keep the previous
+manifest and files if rewriting fails before the new manifest is renamed into
+place, and back off automatic rewrites after three consecutive failures, from
+one minute doubling to an hour, as Redis does; `BGREWRITEAOF` still runs at
+once.
 
 ## Test
 

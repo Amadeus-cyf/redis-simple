@@ -82,7 +82,7 @@ Guidance for AI coding agents working in this repository.
   separate thread only fsyncs, once a second, independently of the writes.
 - After an AOF write error, `Flush` keeps the unwritten bytes and retries
   them, and write commands get `-MISCONF` until a write succeeds; a failed
-  fsync keeps writes rejected until a rewrite installs a new synced file.
+  fsync keeps writes rejected until a rewrite retires the file it failed on.
   Only `always` stops the server, through `Flush` returning false.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
@@ -164,10 +164,13 @@ Guidance for AI coding agents working in this repository.
   `Aof::EndTransaction`, which add `MULTI`/`EXEC` records when there is more
   than one. Replay applies a `MULTI` block only at its `EXEC` and truncates a
   block cut off at the end of the file.
-- Keep AOF rewrite snapshots visitor-based and preserve the original AOF until
-  the snapshot and buffered mutation delta have been synced and atomically
-  installed. The normal append path should pay no copy cost when no rewrite is
-  active.
+- The AOF is multi-part, like Redis 7: a directory with a base file,
+  incremental files, and a manifest in Redis' format (`Manifest`). A rewrite
+  first switches appends to a new incremental file (`OpenNextIncrement`), so
+  writes made during it need no buffer; the new base and the files it
+  replaces change only through a new manifest. Keep rewrite snapshots
+  visitor-based, and keep the previous manifest and files until the new
+  manifest is safely renamed into place.
 - `BGREWRITEAOF` forks; the child writes the snapshot and exits, and the
   server cron finishes the rewrite through `Aof::CheckRewrite`. No other
   thread may allocate during the fork: the server's fork hooks pause the I/O
@@ -176,9 +179,16 @@ Guidance for AI coding agents working in this repository.
 - Bound AOF snapshot memory and replay command sizes together. Split large
   strings into replay-safe commands and batch collections by encoded bytes, not
   only element count.
-- Complete durable AOF replacement in this order: sync the temporary file,
-  rename it, then sync the parent directory. Keep failed rewrites observable
-  through `INFO persistence` without disabling a still-healthy original AOF.
+- Replace the manifest in this order: write and sync a temporary file, rename
+  it, then sync the directory (`PersistManifest`). After a rename whose
+  directory sync failed, the new manifest is live but may not survive a
+  crash: adopt it, reject writes, and keep the replaced files until a later
+  manifest persists safely. Delete history files only after the manifest that
+  retires them is durable. Keep failed rewrites observable through
+  `INFO persistence` without disabling a still-healthy AOF.
+- Replay the base, then the incremental files in manifest order; only the
+  last file may end in a torn record. Restarts keep appending to the last
+  incremental file; only a rewrite starts a new one.
 
 ## Build And Test
 
