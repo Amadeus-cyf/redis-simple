@@ -1434,7 +1434,7 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
     return RewriteResult::kError;
   }
 
-  std::string path = FilePath("temp-rewriteaof-XXXXXX");
+  std::string path = FilePath(std::string(kTempPrefix) + "rewriteaof-XXXXXX");
   const int rewrite_fd = mkstemp(path.data());
   if (rewrite_fd < 0) {
     RecordError(AofError::kWrite, errno);

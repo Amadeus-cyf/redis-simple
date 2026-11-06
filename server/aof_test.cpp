@@ -724,8 +724,8 @@ TEST(AofTest, RewriteStartsANewIncrementFileAndRetiresTheOldFiles) {
   // The new base and the file opened at the start remain; the old
   // incremental file is deleted.
   const Manifest& manifest = writer->CurrentManifest();
-  ASSERT_TRUE(manifest.base.has_value());
-  EXPECT_EQ(manifest.base->name, "appendonly.aof.1.base.aof");
+  EXPECT_EQ(manifest.base.value_or(ManifestFile{}).name,
+            "appendonly.aof.1.base.aof");
   ASSERT_EQ(manifest.increments.size(), 1);
   EXPECT_EQ(manifest.increments.front().name, "appendonly.aof.2.incr.aof");
   EXPECT_TRUE(manifest.history.empty());
@@ -1046,27 +1046,29 @@ TEST(ManifestTest, EncodesAndParsesRedisFormat) {
             "file appendonly.aof.5.incr.aof seq 5 type i\n"
             "file appendonly.aof.6.incr.aof seq 6 type i\n");
 
-  const std::optional<Manifest> parsed = Manifest::Parse(text);
-  ASSERT_TRUE(parsed.has_value());
-  ASSERT_TRUE(parsed->base.has_value());
-  EXPECT_EQ(parsed->base->name, "appendonly.aof.3.base.aof");
-  ASSERT_EQ(parsed->increments.size(), 2);
-  EXPECT_EQ(parsed->increments.back().sequence, 6);
-  ASSERT_EQ(parsed->history.size(), 1);
-  EXPECT_EQ(parsed->base_sequence, 3);
-  EXPECT_EQ(parsed->increment_sequence, 6);
+  const std::optional<Manifest> result = Manifest::Parse(text);
+  ASSERT_TRUE(result.has_value());
+  const Manifest parsed = result.value_or(Manifest{});
+  ASSERT_TRUE(parsed.base.has_value());
+  EXPECT_EQ(parsed.base.value_or(ManifestFile{}).name,
+            "appendonly.aof.3.base.aof");
+  ASSERT_EQ(parsed.increments.size(), 2);
+  EXPECT_EQ(parsed.increments.back().sequence, 6);
+  ASSERT_EQ(parsed.history.size(), 1);
+  EXPECT_EQ(parsed.base_sequence, 3);
+  EXPECT_EQ(parsed.increment_sequence, 6);
 }
 
 TEST(ManifestTest, AcceptsAnyKeyOrderCommentsAndUnknownKeys) {
-  const std::optional<Manifest> parsed = Manifest::Parse(
+  const std::optional<Manifest> result = Manifest::Parse(
       "# written by a newer version\n"
       "type b seq 1 file a.1.base.rdb extra x\r\n"
       "\n"
       "file a.4.incr.aof seq 4 type i\n");
-  ASSERT_TRUE(parsed.has_value());
-  ASSERT_TRUE(parsed->base.has_value());
-  EXPECT_EQ(parsed->base->name, "a.1.base.rdb");
-  ASSERT_EQ(parsed->increments.size(), 1);
+  ASSERT_TRUE(result.has_value());
+  const Manifest parsed = result.value_or(Manifest{});
+  EXPECT_EQ(parsed.base.value_or(ManifestFile{}).name, "a.1.base.rdb");
+  ASSERT_EQ(parsed.increments.size(), 1);
 }
 
 TEST(ManifestTest, RejectsMalformedManifests) {
@@ -1104,8 +1106,8 @@ TEST(AofTest, UpgradesASingleFileAof) {
   EXPECT_EQ(restored->LookupKey("key")->String(), "old");
   // It moved into the directory as the base file, keeping its name.
   EXPECT_FALSE(std::filesystem::exists(file.Root() + "/appendonly.aof"));
-  ASSERT_TRUE(reader->CurrentManifest().base.has_value());
-  EXPECT_EQ(reader->CurrentManifest().base->name, "appendonly.aof");
+  EXPECT_EQ(reader->CurrentManifest().base.value_or(ManifestFile{}).name,
+            "appendonly.aof");
   EXPECT_TRUE(std::filesystem::exists(file.Directory() + "/appendonly.aof"));
   EXPECT_EQ(reader->CurrentManifest().increments.size(), 1);
 }
