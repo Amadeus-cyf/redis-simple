@@ -61,8 +61,6 @@ std::pair<uint64_t, uint64_t> WideMultiply(uint64_t left, uint64_t right) {
           (middle << 32) | (low_low & kLowHalf)};
 }
 constexpr std::string_view kExecRecord = "*1\r\n$4\r\nEXEC\r\n";
-constexpr const std::chrono::seconds kRewriteRetryDelay =
-    std::chrono::seconds(5);
 
 class SystemFileOps final : public FileOps {
  public:
