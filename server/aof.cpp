@@ -113,7 +113,7 @@ constexpr int kChildSyncFailed = 2;
 constexpr int kChildSnapshotFailed = 3;
 
 std::optional<size_t> FileSize(int fd) {
-  struct stat file_info {};
+  struct stat file_info{};
   if (fstat(fd, &file_info) < 0 || file_info.st_size < 0 ||
       static_cast<uintmax_t>(file_info.st_size) >
           std::numeric_limits<size_t>::max()) {
