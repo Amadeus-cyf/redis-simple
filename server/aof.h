@@ -63,6 +63,10 @@ struct Options {
   FsyncPolicy fsync{FsyncPolicy::kEverySecond};
   size_t auto_rewrite_min_bytes{size_t{64} * 1024 * 1024};
   size_t auto_rewrite_percentage{100};
+  // Redis 8.4's aof-load-corrupt-tail-max-size: a format error in the last
+  // file's final bytes is cut off, like a torn record, when it spans at most
+  // this many bytes. 0, the default, refuses to load instead.
+  size_t load_corrupt_tail_max_bytes{0};
   Limits limits;
   std::shared_ptr<FileOps> file_ops;
 };
@@ -210,6 +214,7 @@ class Aof {
   bool LoadManifest();
   bool Replay(db::RedisDb* db);
   bool ReplayFile(db::RedisDb* db, int fd, bool last);
+  bool RepairCorruptTail(int fd, size_t valid_bytes) const;
   std::string FilePath(std::string_view name) const;
   std::string ManifestPath() const;
   // Writes `manifest` to a temporary file, syncs it, renames it over the
@@ -275,6 +280,7 @@ class Aof {
   size_t auto_rewrite_min_bytes_;
   size_t auto_rewrite_percentage_;
   Limits limits_;
+  size_t load_corrupt_tail_max_bytes_;
   std::shared_ptr<FileOps> file_ops_;
   // Encoded mutations of the current batch.
   std::string batch_;

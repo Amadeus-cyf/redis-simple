@@ -68,6 +68,17 @@ TEST(ServerOptionsTest, ParsesBindAddressAndPort) {
   EXPECT_EQ(result.options.port, 6380);
 }
 
+TEST(ServerOptionsTest, ParsesAofLoadCorruptTailMaxSize) {
+  const std::array argv = {"redis_simple", "--aof-load-corrupt-tail-max-size",
+                           "4096"};
+  const OptionsResult result = ParseServerOptions(argv.size(), argv.data());
+  EXPECT_EQ(result.status, OptionsStatus::kOk);
+  EXPECT_EQ(result.options.aof_options.load_corrupt_tail_max_bytes, 4096);
+  EXPECT_EQ(ParseServerOptions(1, argv.data())
+                .options.aof_options.load_corrupt_tail_max_bytes,
+            0);
+}
+
 TEST(ServerOptionsTest, RejectsAppendFileNamesWithDirectories) {
   for (const char* name :
        {"dir/appendonly.aof", "/tmp/appendonly.aof", "append only.aof", ""}) {

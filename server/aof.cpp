@@ -1158,6 +1158,7 @@ Aof::Aof(const Options& options, std::string directory)
       auto_rewrite_min_bytes_(options.auto_rewrite_min_bytes),
       auto_rewrite_percentage_(options.auto_rewrite_percentage),
       limits_(options.limits),
+      load_corrupt_tail_max_bytes_(options.load_corrupt_tail_max_bytes),
       file_ops_(options.file_ops != nullptr ? options.file_ops
                                             : DefaultFileOps()) {}
 
@@ -1186,6 +1187,25 @@ Aof::~Aof() {
   if (fd_ >= 0) {
     close(fd_);
   }
+}
+
+bool Aof::RepairCorruptTail(int fd, size_t valid_bytes) const {
+  // Redis 8.4's aof-load-corrupt-tail-max-size: cut off a corrupt tail of
+  // the last file if it is small enough, as a torn record is.
+  const std::optional<size_t> size = FileSize(fd);
+  if (!size.has_value() || *size < valid_bytes ||
+      *size - valid_bytes > load_corrupt_tail_max_bytes_) {
+    RS_LOG_ERROR(
+        "AOF has a corrupt tail larger than aof-load-corrupt-tail-max-size\n");
+    return false;
+  }
+  if (valid_bytes > static_cast<uintmax_t>(std::numeric_limits<off_t>::max()) ||
+      ftruncate(fd, static_cast<off_t>(valid_bytes)) < 0 || !SyncFile(fd)) {
+    return false;
+  }
+  RS_LOG_WARN("AOF loaded after cutting off a corrupt tail of %zu bytes\n",
+              *size - valid_bytes);
+  return true;
 }
 
 std::string Aof::FilePath(std::string_view name) const {
@@ -1630,7 +1650,10 @@ AofState Aof::State() const {
 
 bool Aof::ReplayFile(db::RedisDb* const db, int fd, bool last) {
   db->SetLoading(true);
-  const bool replayed = [this, db, fd, last] {
+  // Where a format error starts the corrupt tail: after the last complete
+  // command, and before a transaction it interrupts.
+  std::optional<size_t> corrupt_from;
+  bool replayed = [this, db, fd, last, &corrupt_from] {
     Client client(db);
     std::array<char, kReadChunkSize> chunk{};
     in_memory::DynamicBuffer input;
@@ -1661,6 +1684,7 @@ bool Aof::ReplayFile(db::RedisDb* const db, int fd, bool last) {
       while (!input.Empty()) {
         const std::string_view remaining = input.View();
         if (remaining.front() != '*') {
+          corrupt_from = transaction_start.value_or(complete_bytes);
           return false;
         }
         std::string_view name;
@@ -1670,6 +1694,7 @@ bool Aof::ReplayFile(db::RedisDb* const db, int fd, bool last) {
           break;
         }
         if (parsed.status != request_parser::ParseStatus::kComplete) {
+          corrupt_from = transaction_start.value_or(complete_bytes);
           return false;
         }
         if (parsed.consumed > limits_.max_replay_command_bytes) {
@@ -1728,6 +1753,10 @@ bool Aof::ReplayFile(db::RedisDb* const db, int fd, bool last) {
     }
     return !truncated || SyncFile(fd);
   }();
+  if (!replayed && last && corrupt_from.has_value() &&
+      load_corrupt_tail_max_bytes_ > 0) {
+    replayed = RepairCorruptTail(fd, *corrupt_from);
+  }
   db->SetLoading(false);
   return replayed;
 }
