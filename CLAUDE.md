@@ -252,6 +252,10 @@ Before committing, run the relevant build and tests.
 - Always update relevant docs, including `README.md` and this `CLAUDE.md`, when
   changing build, test, workflow, or project conventions. `AGENTS.md` only
   points here, so keep the guidance in this file.
+- Agent skills live in `.claude/skills/<name>/SKILL.md`, and `.agents/skills`
+  is a symlink to that folder, so keep one copy. Use the `pre-pr-check` skill
+  before committing or opening a pull request, and update it when the checks
+  in this file change.
 - Keep CMake target-based. Source files are discovered by scoped directory
   globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
   explicitly when they do not belong in a library target.
