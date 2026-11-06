@@ -356,7 +356,7 @@ std::optional<std::vector<std::string>> SplitFields(std::string_view line) {
             HexDigit(at(position + 2)).has_value() &&
             HexDigit(at(position + 3)).has_value()) {
           field.push_back(
-              static_cast<char>(HexDigit(at(position + 2)).value_or(0) * 16 +
+              static_cast<char>((HexDigit(at(position + 2)).value_or(0) * 16) +
                                 HexDigit(at(position + 3)).value_or(0)));
           position += 3;
         } else if (c == '\\' && at(position + 1) != '\0') {
@@ -442,7 +442,7 @@ int64_t ParseLeadingInteger(std::string_view text) {
        ++position) {
     const auto digit = static_cast<uint64_t>(text[position] - '0');
     magnitude =
-        magnitude > (kLimit - digit) / 10 ? kLimit : magnitude * 10 + digit;
+        magnitude > (kLimit - digit) / 10 ? kLimit : (magnitude * 10) + digit;
   }
   if (negative) {
     return magnitude >= kLimit ? std::numeric_limits<int64_t>::min()
@@ -1028,7 +1028,7 @@ bool Aof::Flush(bool force) {
     }
     const ssize_t written = WriteAll(file_ops_.get(), fd_, batch_);
     flush_postponed_start_.reset();
-    if (written != static_cast<ssize_t>(batch_.size())) {
+    if (std::cmp_not_equal(written, batch_.size())) {
       FailWrite(written);
       // With `always` the replies already promise durability, so stop.
       return fsync_ != FsyncPolicy::kAlways;
@@ -2116,7 +2116,8 @@ bool Aof::ShouldAutoRewrite() {
   const uint64_t base = base_size_ != 0 ? base_size_ : 1;
   const auto current = static_cast<uint64_t>(current_size_);
   // current * 100 / base - 100, without overflow.
-  const uint64_t ratio = current / base * 100 + current % base * 100 / base;
+  const uint64_t ratio =
+      ((current / base) * 100) + (((current % base) * 100) / base);
   if (ratio < 100 || ratio - 100 < auto_rewrite_percentage_) {
     return false;
   }
