@@ -117,6 +117,13 @@ constexpr auto kOptionSpecs = std::to_array<OptionSpec>({
          },
      .error = "appendfilename must be a file name without a directory or "
               "whitespace"},
+    {.name = "--aof-load-corrupt-tail-max-size",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseSize(value,
+                            &options->aof_options.load_corrupt_tail_max_bytes);
+         },
+     .error = "aof-load-corrupt-tail-max-size must be a byte count"},
     {.name = "--appenddirname",
      .apply =
          [](std::string_view value, ServerOptions* options) {
@@ -205,6 +212,7 @@ std::string_view ServerUsage() {
   return "Usage: redis_simple [--bind <address>] [--port <port>] "
          "[--appendonly <yes|no>] [--appendfilename <name>] "
          "[--appenddirname <dir>] "
+         "[--aof-load-corrupt-tail-max-size <bytes>] "
          "[--appendfsync <always|everysec|no>] "
          "[--auto-aof-rewrite-min-size <bytes>] "
          "[--auto-aof-rewrite-percentage <percent>] "

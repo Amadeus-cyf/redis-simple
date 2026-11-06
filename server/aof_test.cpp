@@ -1216,4 +1216,52 @@ TEST(AofTest, SyncFailureOnTheFileARewriteKeepsStays) {
   EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
   EXPECT_FALSE(writer->AcceptingWrites());
 }
+
+TEST(AofTest, CutsOffASmallCorruptTailWhenAllowed) {
+  // Redis 8.4's aof-load-corrupt-tail-max-size.
+  const std::string garbage = "not-resp-at-all";
+  for (const size_t limit : {size_t{0}, garbage.size() - 1, garbage.size()}) {
+    TempAof file;
+    ASSERT_TRUE(file.Append(Encode("SET", {"key", "value"})));
+    ASSERT_TRUE(file.Append(garbage));
+    Options options = Always(file);
+    options.load_corrupt_tail_max_bytes = limit;
+    auto restored = db::RedisDb::Create();
+    auto reader = Aof::Open(options, restored.get());
+    if (limit < garbage.size()) {
+      // Off (0), or too small for the damage: refuse to load.
+      EXPECT_EQ(reader, nullptr) << limit;
+      continue;
+    }
+    ASSERT_NE(reader, nullptr);
+    ASSERT_NE(restored->LookupKey("key"), nullptr);
+    reader.reset();
+    EXPECT_EQ(file.Size(),
+              static_cast<off_t>(Encode("SET", {"key", "value"}).size()));
+  }
+}
+
+TEST(AofTest, NeverCutsOffCorruptionInAnEarlierFile) {
+  TempAof file;
+  {
+    auto db = db::RedisDb::Create();
+    auto writer = Aof::Open(Always(file), db.get());
+    ASSERT_NE(writer, nullptr);
+    ASSERT_EQ(db->SetKey("a", db::RedisObject::CreateWithString("1"), 0),
+              db::DbStatus::kOk);
+    ASSERT_TRUE(writer->Append("SET", {"a", "1"}, db.get()));
+    ASSERT_EQ(writer->StartRewrite(db.get()), RewriteResult::kStarted);
+    writer->WaitForRewrite();
+  }
+  const std::vector<std::string> files = file.Files();
+  ASSERT_EQ(files.size(), 2);
+  {
+    std::ofstream base(files.front(), std::ios::binary | std::ios::app);
+    base << "garbage";
+  }
+  Options options = Always(file);
+  options.load_corrupt_tail_max_bytes = 1024;
+  auto restored = db::RedisDb::Create();
+  EXPECT_EQ(Aof::Open(options, restored.get()), nullptr);
+}
 }  // namespace redis_simple::aof
