@@ -273,7 +273,7 @@ std::optional<std::string> ReadWholeFile(const std::string& path) {
 }
 
 bool PathExists(const std::string& path) {
-  struct stat info {};
+  struct stat info{};
   return stat(path.c_str(), &info) == 0;
 }
 
@@ -1637,7 +1637,7 @@ AofError Aof::InstallRewrite(int* const error_number) {
 
   size_t increment_size = 0;
   for (const ManifestFile& file : manifest_.increments) {
-    struct stat info {};
+    struct stat info{};
     if (stat(FilePath(file.name).c_str(), &info) == 0 && info.st_size > 0) {
       increment_size += static_cast<size_t>(info.st_size);
     }
