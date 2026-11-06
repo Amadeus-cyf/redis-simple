@@ -72,27 +72,37 @@ Enable AOF persistence with Redis-style fsync policies:
 
 AOF is disabled by default. When enabled, `appendonly.aof` is the default path
 and `everysec` is the default fsync policy. Mutations are encoded into one
-batch per client read and flushed before any of that batch's replies are sent.
-`always` writes and syncs each batch once (group commit), while `no` delegates
-periodic durability to the operating system. Background policies hand each
-batch to a bounded writer queue and use scatter/gather writes; when the writer
-falls behind, the event loop waits for queue space instead of failing.
-Graceful shutdown drains and syncs the queue. `BGREWRITEAOF` compacts command
-history into a point-in-time database snapshot. Snapshot records are produced in
-bounded blocks while a background thread writes them; large strings are split
-into replay-safe commands, and collection batches are limited by encoded bytes.
-Mutations that overlap the rewrite share one immutable encoded record between
-the normal writer and rewrite delta queues. The replacement file is synced,
-renamed atomically, and followed by a parent-directory sync before it becomes
-durable.
+batch per client read, and the batch is written to the file before any of its
+replies are sent, so a crash of the server process loses no acknowledged write
+under any policy. `always` also syncs each batch once (group commit);
+`everysec` syncs on a separate thread once a second, so an operating-system
+crash or power loss can cost about the last second; `no` leaves syncing to the
+operating system. Graceful shutdown writes and syncs everything pending.
+
+`BGREWRITEAOF` compacts command history into a point-in-time snapshot of the
+database, written by a forked child process from its copy-on-write view of
+memory, so the server keeps serving while it runs. Large strings are split into
+replay-safe commands, and collection batches are limited by encoded bytes.
+Mutations made during the rewrite still go to the current file, and the server
+also keeps them, up to 64 MiB, and appends them to the new file once the child
+finishes. The replacement file is synced, renamed atomically, and followed by
+a parent-directory sync before it becomes durable. Shutdown stops a rewrite
+that is still running and keeps the original file.
 
 Automatic rewriting starts after the AOF reaches 64 MiB and grows by 100% from
 the last rewrite or startup size. The two `--auto-aof-rewrite-*` options override
 those defaults; a percentage of `0` disables automatic rewriting. Use
-`INFO persistence` to inspect rewrite progress, the last rewrite/error status,
-current and base sizes, and queued bytes. An unrecoverable append or sync error
-marks persistence unhealthy and stops the server instead of continuing without
-durable command history.
+`INFO persistence` to inspect rewrite progress, the last rewrite, write, and
+error status, current and base sizes, and pending bytes.
+
+When the file cannot be written, as on a full disk, the server keeps the
+unwritten bytes and retries them, and until a write succeeds it rejects write
+commands with Redis' `-MISCONF Errors writing to the AOF file` error while
+reads keep working. A failed fsync is not retried, since the kernel may have
+dropped the data it could not sync: writes stay rejected until a successful
+rewrite replaces the file or the server restarts. With `always`, which promises
+that every acknowledged write is synced, a failed write or sync stops the
+server instead.
 
 Clients can send standard RESP arrays of bulk strings or the legacy inline
 syntax. RESP2 is the default reply protocol; `HELLO 3` switches a connection to
@@ -174,9 +184,10 @@ applies the transaction as a whole; a transaction cut off at the end of the
 file is truncated rather than partially applied. Relative expirations are stored
 as absolute millisecond timestamps, incomplete final records are truncated,
 and corruption before the final record prevents startup. AOF rewrites traverse
-collection values through borrowed views, retain concurrent mutations in a
-bounded delta queue, preserve the original file if rewriting fails before the
-atomic replacement, and retry failed automatic rewrites after a short delay.
+collection values through borrowed views in a forked child, retain concurrent
+mutations in a bounded buffer, preserve the original file if rewriting fails
+before the atomic replacement, and retry failed automatic rewrites after a
+short delay.
 
 ## Test
 

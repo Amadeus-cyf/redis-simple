@@ -128,6 +128,10 @@ class Client {
   };
 
   RequestStatus ParseRequest();
+  // False while the AOF cannot store writes; write commands are then
+  // rejected with AofWriteError(), as Redis replies with MISCONF.
+  bool AofAcceptsWrites() const;
+  std::string AofWriteError() const;
   ClientStatus ProcessCommand();
   void QueueCommand();
   void ResetTransaction();

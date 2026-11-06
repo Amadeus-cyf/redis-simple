@@ -100,6 +100,21 @@ bool WriteDataset(cli::RedisCli* const cli) {
   return true;
 }
 
+// Waits for a background rewrite to finish successfully.
+bool WaitForRewrite(cli::RedisCli* const cli) {
+  constexpr int kMaxAttempts = 500;
+  for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+    cli->AddCommand("INFO persistence\r\n");
+    const std::string info = cli->ReadReply();
+    if (info.contains("aof_rewrite_in_progress:0") &&
+        info.contains("aof_last_bgrewrite_status:ok")) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return false;
+}
+
 bool RewriteDataset(cli::RedisCli* const cli) {
   const std::vector<Case> cases = {
       {"BGREWRITEAOF\r\n", "Background append only file rewriting started\n"},
@@ -122,6 +137,10 @@ bool RewriteDataset(cli::RedisCli* const cli) {
   if (!std::ranges::all_of(cases, [cli](const auto& test_case) {
         return ExpectReply(cli, test_case);
       })) {
+    return false;
+  }
+  // The rewrite runs in a child process; shutdown stops one still running.
+  if (!WaitForRewrite(cli)) {
     return false;
   }
   cli->AddCommand("INFO persistence\r\n");
@@ -188,17 +207,7 @@ bool WriteAutoRewriteDataset(cli::RedisCli* const cli) {
     }
   }
 
-  constexpr int kMaxAttempts = 500;
-  for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
-    cli->AddCommand("INFO persistence\r\n");
-    const std::string info = cli->ReadReply();
-    if (info.contains("aof_rewrite_in_progress:0") &&
-        info.contains("aof_last_bgrewrite_status:ok")) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return false;
+  return WaitForRewrite(cli);
 }
 
 bool ReadAutoRewriteDataset(cli::RedisCli* const cli) {

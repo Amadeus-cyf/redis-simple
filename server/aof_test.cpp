@@ -9,14 +9,17 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "server/db/db.h"
@@ -79,6 +82,7 @@ class TempFile {
 class TestFileOps final : public FileOps {
  public:
   ssize_t Write(int fd, const void* data, size_t size) override {
+    std::this_thread::sleep_for(write_delay_);
     if (fail_write_.load()) {
       errno = EIO;
       return -1;
@@ -117,16 +121,21 @@ class TestFileOps final : public FileOps {
   }
 
   void LimitWrites(size_t size) { max_write_size_ = size; }
+  // Makes each write take this long, like a busy disk.
+  void SlowWrites(std::chrono::milliseconds delay) { write_delay_ = delay; }
   void FailWrites() { fail_write_.store(true); }
+  void RestoreWrites() { fail_write_.store(false); }
   void FailRewriteWrites() { fail_write_vector_.store(true); }
   void FailNextSync() { fail_sync_call_.store(sync_calls_.load() + 1); }
   void FailSyncAfterNext() { fail_sync_call_.store(sync_calls_.load() + 2); }
   void FailRenames() { fail_rename_.store(true); }
+  [[nodiscard]] int SyncCount() const { return sync_calls_.load(); }
   // The descriptor flags (F_GETFD) of the most recently synced file.
   [[nodiscard]] int SyncedFdFlags() const { return synced_fd_flags_.load(); }
 
  private:
   size_t max_write_size_{std::numeric_limits<size_t>::max()};
+  std::chrono::milliseconds write_delay_{0};
   std::atomic<bool> fail_write_;
   std::atomic<bool> fail_write_vector_;
   std::atomic<bool> fail_rename_;
@@ -242,7 +251,7 @@ TEST(AofTest, RejectsCorruptInput) {
   EXPECT_EQ(Aof::Open(Always(file), database.get()), nullptr);
 }
 
-TEST(AofTest, FlushesBackgroundWritesOnShutdown) {
+TEST(AofTest, FlushesThePendingBatchOnShutdown) {
   TempFile file;
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
@@ -253,8 +262,7 @@ TEST(AofTest, FlushesBackgroundWritesOnShutdown) {
   ASSERT_NE(writer, nullptr);
   const std::vector<std::string_view> args = {"key", "value"};
   ASSERT_TRUE(writer->Append("SET", args, source.get()));
-  writer->WaitUntilIdle();
-  EXPECT_TRUE(writer->Healthy());
+  EXPECT_TRUE(writer->AcceptingWrites());
   writer.reset();
 
   auto restored = db::RedisDb::Create();
@@ -311,8 +319,8 @@ TEST(AofTest, RewritesAllObjectTypesAndPreservesConcurrentWrites) {
             db::DbStatus::kOk);
   const std::vector<std::string_view> set_args = {"string", "updated"};
   ASSERT_TRUE(writer->Append("SET", set_args, source.get()));
-  writer->WaitUntilRewriteIdle();
-  ASSERT_TRUE(writer->Healthy());
+  writer->WaitForRewrite();
+  ASSERT_TRUE(writer->AcceptingWrites());
   writer.reset();
 
   auto restored = db::RedisDb::Create();
@@ -353,7 +361,7 @@ TEST(AofTest, RewriteCompactsCommandHistory) {
   ASSERT_GT(original_size, 0);
 
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  writer->WaitUntilRewriteIdle();
+  writer->WaitForRewrite();
 
   EXPECT_GT(original_size, file.Size());
   writer.reset();
@@ -376,11 +384,10 @@ TEST(AofTest, RewritesLargeValuesAsReplayableChunks) {
   Options options = Always(file);
   options.limits.max_replay_command_bytes = 256;
   options.limits.snapshot_block_bytes = 96;
-  options.limits.max_snapshot_queue_bytes = 192;
   auto writer = Aof::Open(options, source.get());
   ASSERT_NE(writer, nullptr);
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  writer->WaitUntilRewriteIdle();
+  writer->WaitForRewrite();
   EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
   writer.reset();
 
@@ -405,11 +412,10 @@ TEST(AofTest, BoundsCollectionSnapshotCommandsByBytes) {
   Options options = Always(file);
   options.limits.max_replay_command_bytes = 256;
   options.limits.snapshot_block_bytes = 128;
-  options.limits.max_snapshot_queue_bytes = 256;
   auto writer = Aof::Open(options, source.get());
   ASSERT_NE(writer, nullptr);
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  writer->WaitUntilRewriteIdle();
+  writer->WaitForRewrite();
   writer.reset();
 
   auto restored = db::RedisDb::Create();
@@ -442,7 +448,7 @@ TEST(AofTest, HandlesShortWritesWithoutLosingCommands) {
   EXPECT_EQ(restored->LookupKey("key")->String(), "value");
 }
 
-TEST(AofTest, HandlesShortVectorWritesWithoutLosingCommands) {
+TEST(AofTest, HandlesShortWritesDuringRewrite) {
   TempFile file;
   auto file_ops = std::make_shared<TestFileOps>();
   file_ops->LimitWrites(3);
@@ -456,12 +462,16 @@ TEST(AofTest, HandlesShortVectorWritesWithoutLosingCommands) {
       source->SetKey("first", db::RedisObject::CreateWithString("one"), 0),
       db::DbStatus::kOk);
   ASSERT_TRUE(writer->Append("SET", {"first", "one"}, source.get()));
+  // The snapshot (in the child) and the buffered mutations (in the parent)
+  // are written with vectored writes, three bytes at a time.
+  ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
   ASSERT_EQ(
       source->SetKey("second", db::RedisObject::CreateWithString("two"), 0),
       db::DbStatus::kOk);
   ASSERT_TRUE(writer->Append("SET", {"second", "two"}, source.get()));
-  writer->WaitUntilIdle();
-  ASSERT_TRUE(writer->Healthy());
+  ASSERT_TRUE(writer->Flush());
+  writer->WaitForRewrite();
+  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
   writer.reset();
 
   auto restored = db::RedisDb::Create();
@@ -502,7 +512,7 @@ TEST(AofTest, ReportsAppendSyncFailures) {
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
   EXPECT_FALSE(writer->Flush());
   const AofState state = writer->State();
-  EXPECT_FALSE(state.healthy);
+  EXPECT_FALSE(state.accepting_writes);
   EXPECT_EQ(state.last_error, AofError::kSync);
 }
 
@@ -519,7 +529,7 @@ TEST(AofTest, ReportsAppendWriteFailures) {
   file_ops->FailWrites();
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
   EXPECT_FALSE(writer->Flush());
-  EXPECT_FALSE(writer->Healthy());
+  EXPECT_FALSE(writer->AcceptingWrites());
   EXPECT_EQ(writer->State().last_error, AofError::kWrite);
 }
 
@@ -536,9 +546,9 @@ TEST(AofTest, KeepsOriginalFileWhenRewriteRenameFails) {
 
   file_ops->FailRenames();
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  writer->WaitUntilRewriteIdle();
+  writer->WaitForRewrite();
   const AofState state = writer->State();
-  EXPECT_TRUE(state.healthy);
+  EXPECT_TRUE(state.accepting_writes);
   EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
   EXPECT_EQ(state.last_error, AofError::kRename);
 
@@ -568,9 +578,9 @@ TEST(AofTest, ReportsRewriteWriteFailuresWithoutStoppingAppends) {
 
   file_ops->FailRewriteWrites();
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  writer->WaitUntilRewriteIdle();
+  writer->WaitForRewrite();
   const AofState state = writer->State();
-  EXPECT_TRUE(state.healthy);
+  EXPECT_TRUE(state.accepting_writes);
   EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
   EXPECT_EQ(state.last_error, AofError::kWrite);
 
@@ -603,9 +613,9 @@ TEST(AofTest, ReportsDirectorySyncFailureAfterRewrite) {
   ASSERT_TRUE(writer->Flush());
   file_ops->FailSyncAfterNext();
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  writer->WaitUntilRewriteIdle();
+  writer->WaitForRewrite();
   const AofState state = writer->State();
-  EXPECT_FALSE(state.healthy);
+  EXPECT_FALSE(state.accepting_writes);
   EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
   EXPECT_EQ(state.last_error, AofError::kDirectorySync);
   writer.reset();
@@ -617,34 +627,167 @@ TEST(AofTest, ReportsDirectorySyncFailureAfterRewrite) {
   EXPECT_EQ(restored->LookupKey("key")->String(), "value");
 }
 
-TEST(AofTest, AppliesBackpressureWhenTheBackgroundQueueIsFull) {
+TEST(AofTest, AbandonsRewriteWhenItsBufferOverflows) {
   TempFile file;
   auto source = db::RedisDb::Create();
-  Options options{file.Path(), FsyncPolicy::kNo};
-  options.limits.max_pending_commands = 1;
-  options.limits.max_pending_bytes = 1;
+  Options options = Always(file);
+  options.limits.max_rewrite_buffer_bytes = 16;
   auto writer = Aof::Open(options, source.get());
   ASSERT_NE(writer, nullptr);
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
 
-  constexpr int kBatches = 64;
-  for (int i = 0; i < kBatches; ++i) {
-    const std::string key = "key" + std::to_string(i);
-    ASSERT_EQ(
-        source->SetKey(key, db::RedisObject::CreateWithString("value"), 0),
-        db::DbStatus::kOk);
-    ASSERT_TRUE(writer->Append("SET", {key, "value"}, source.get()));
-    // Each flush waits for the writer instead of failing the AOF.
-    ASSERT_TRUE(writer->Flush());
-  }
-  writer->WaitUntilIdle();
-  EXPECT_TRUE(writer->Healthy());
-  EXPECT_EQ(writer->State().last_error, AofError::kNone);
+  ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
+  // A mutation larger than the rewrite buffer abandons the rewrite but still
+  // reaches the current file.
+  const std::string large(64, 'x');
+  ASSERT_EQ(
+      source->SetKey("large", db::RedisObject::CreateWithString(large), 0),
+      db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("SET", {"large", large}, source.get()));
+  ASSERT_TRUE(writer->Flush());
+  const AofState state = writer->State();
+  EXPECT_FALSE(state.rewrite_in_progress);
+  EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
+  EXPECT_EQ(state.last_error, AofError::kRewriteBufferFull);
+  EXPECT_TRUE(state.accepting_writes);
   writer.reset();
 
   auto restored = db::RedisDb::Create();
   auto reader = Aof::Open(Always(file), restored.get());
   ASSERT_NE(reader, nullptr);
-  EXPECT_EQ(restored->KeyCount(), kBatches);
+  EXPECT_EQ(restored->KeyCount(), 2);
+}
+
+TEST(AofTest, WritesTheBatchBeforeFlushReturns) {
+  // The reply follows Flush, so a crash of the server after it cannot lose
+  // the write, whatever the fsync policy.
+  for (const FsyncPolicy policy :
+       {FsyncPolicy::kEverySecond, FsyncPolicy::kNo}) {
+    TempFile file;
+    auto source = db::RedisDb::Create();
+    auto writer = Aof::Open({file.Path(), policy}, source.get());
+    ASSERT_NE(writer, nullptr);
+    ASSERT_EQ(
+        source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+        db::DbStatus::kOk);
+    ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+    ASSERT_TRUE(writer->Flush());
+    EXPECT_EQ(file.Size(), Encode("SET", {"key", "value"}).size());
+  }
+}
+
+TEST(AofTest, SyncsEverySecondUnderSustainedWrites) {
+  TempFile file;
+  auto file_ops = std::make_shared<TestFileOps>();
+  auto source = db::RedisDb::Create();
+  Options options{file.Path(), FsyncPolicy::kEverySecond};
+  options.file_ops = file_ops;
+  auto writer = Aof::Open(options, source.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+  // Constant slow writes kept the old background writer busy enough that it
+  // never synced; the sync thread now runs independently of the writes.
+  file_ops->SlowWrites(std::chrono::milliseconds(2));
+  const int syncs_before = file_ops->SyncCount();
+  const auto end =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(1300);
+  while (std::chrono::steady_clock::now() < end) {
+    ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+    ASSERT_TRUE(writer->Flush());
+  }
+  EXPECT_GE(file_ops->SyncCount() - syncs_before, 1);
+}
+
+TEST(AofTest, RetriesFailedWritesAndRejectsWritesUntilTheyRecover) {
+  TempFile file;
+  auto file_ops = std::make_shared<TestFileOps>();
+  auto source = db::RedisDb::Create();
+  Options options{file.Path(), FsyncPolicy::kEverySecond};
+  options.file_ops = file_ops;
+  auto writer = Aof::Open(options, source.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+
+  file_ops->FailWrites();
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  // Without `always` the batch is kept, so its replies may still be sent.
+  EXPECT_TRUE(writer->Flush());
+  EXPECT_FALSE(writer->AcceptingWrites());
+  EXPECT_EQ(writer->State().last_error, AofError::kWrite);
+  EXPECT_GT(writer->State().pending_bytes, 0);
+  EXPECT_FALSE(writer->LastErrorText().empty());
+
+  file_ops->RestoreWrites();
+  EXPECT_TRUE(writer->Flush());
+  EXPECT_TRUE(writer->AcceptingWrites());
+  EXPECT_EQ(writer->State().pending_bytes, 0);
+  writer.reset();
+
+  auto restored = db::RedisDb::Create();
+  auto reader = Aof::Open(Always(file), restored.get());
+  ASSERT_NE(reader, nullptr);
+  ASSERT_NE(restored->LookupKey("key"), nullptr);
+}
+
+TEST(AofTest, FailedSyncStopsWritesUntilARewriteReplacesTheFile) {
+  TempFile file;
+  auto file_ops = std::make_shared<TestFileOps>();
+  auto source = db::RedisDb::Create();
+  Options options{file.Path(), FsyncPolicy::kEverySecond};
+  options.file_ops = file_ops;
+  auto writer = Aof::Open(options, source.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+
+  file_ops->FailNextSync();
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  // The kernel may have dropped what it could not sync, so retrying the sync
+  // proves nothing; the error stays.
+  EXPECT_FALSE(writer->SyncNow());
+  EXPECT_FALSE(writer->AcceptingWrites());
+  EXPECT_FALSE(writer->SyncNow());
+  EXPECT_EQ(writer->State().last_error, AofError::kSync);
+
+  // A rewrite writes and syncs a complete new file, which clears it.
+  ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
+  writer->WaitForRewrite();
+  EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
+  EXPECT_TRUE(writer->AcceptingWrites());
+}
+
+TEST(AofTest, ShutdownStopsARunningRewrite) {
+  TempFile file;
+  auto source = db::RedisDb::Create();
+  auto writer = Aof::Open(Always(file), source.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
+  writer.reset();
+
+  // The temporary file is gone, and the original still holds the data.
+  const std::filesystem::path path(file.Path());
+  for (const auto& entry :
+       std::filesystem::directory_iterator(path.parent_path())) {
+    EXPECT_FALSE(entry.path().filename().string().starts_with(
+        path.filename().string() + ".rewrite."))
+        << entry.path();
+  }
+  auto restored = db::RedisDb::Create();
+  auto reader = Aof::Open(Always(file), restored.get());
+  ASSERT_NE(reader, nullptr);
+  ASSERT_NE(restored->LookupKey("key"), nullptr);
 }
 
 TEST(AofTest, BatchesAppendsUntilFlush) {
@@ -681,7 +824,7 @@ TEST(AofTest, DetectsWhenAutomaticRewriteIsDue) {
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
   EXPECT_TRUE(writer->ShouldAutoRewrite());
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  writer->WaitUntilRewriteIdle();
+  writer->WaitForRewrite();
   EXPECT_FALSE(writer->ShouldAutoRewrite());
   EXPECT_EQ(writer->State().rewrite_status, RewriteStatus::kSucceeded);
 }

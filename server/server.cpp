@@ -210,13 +210,23 @@ bool Server::InstallAcceptCallback() {
 
 int64_t Server::ServerCron() {
   constexpr int64_t kCronIntervalMs = 100;
-  if (shutdown::StopRequested() || (aof_ != nullptr && !aof_->Healthy())) {
+  if (shutdown::StopRequested()) {
     Stop();
     return event_loop::TimeEvent::kNoMore;
   }
-  if (aof_ != nullptr && aof_->ShouldAutoRewrite() &&
-      aof_->StartRewrite(db_.get()) == aof::RewriteResult::kError) {
-    RS_LOG_WARN("automatic AOF rewrite failed to start\n");
+  if (aof_ != nullptr) {
+    // Retries bytes a failed write left behind; only `always` stops on it.
+    if (!aof_->Flush()) {
+      Stop();
+      return event_loop::TimeEvent::kNoMore;
+    }
+    aof_->CheckRewrite();
+    // The cron runs between event-loop iterations, when the I/O threads are
+    // idle, so the rewrite child inherits no allocator lock.
+    if (aof_->ShouldAutoRewrite() &&
+        aof_->StartRewrite(db_.get()) == aof::RewriteResult::kError) {
+      RS_LOG_WARN("automatic AOF rewrite failed to start\n");
+    }
   }
   ActiveExpireCycle(db_.get());
   return kCronIntervalMs;

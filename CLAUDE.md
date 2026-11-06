@@ -77,6 +77,13 @@ Guidance for AI coding agents working in this repository.
 - `Aof::Append` only encodes into the pending batch. The read handler calls
   `Aof::Flush` once per batch of commands, before any replies are written;
   call `Flush` before arming test failures that depend on file-write order.
+  `Flush` writes the batch on the event-loop thread for every fsync policy, so
+  a process crash cannot lose an acknowledged write; with `everysec` a
+  separate thread only fsyncs, once a second, independently of the writes.
+- After an AOF write error, `Flush` keeps the unwritten bytes and retries
+  them, and write commands get `-MISCONF` until a write succeeds; a failed
+  fsync keeps writes rejected until a rewrite installs a new synced file.
+  Only `always` stops the server, through `Flush` returning false.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
 - With `--io-threads` above 1, readable events only queue the client, and
@@ -156,6 +163,12 @@ Guidance for AI coding agents working in this repository.
   the snapshot and buffered mutation delta have been synced and atomically
   installed. The normal append path should pay no copy cost when no rewrite is
   active.
+- `BGREWRITEAOF` forks; the child writes the snapshot and exits, and the
+  server cron finishes the rewrite through `Aof::CheckRewrite`. Fork only from
+  the event-loop thread while no other thread allocates (the I/O threads are
+  idle then, and the fsync thread must not allocate or log), and keep the
+  child free of locks and logging, since another thread may have held one at
+  the fork.
 - Bound AOF snapshot memory and replay command sizes together. Split large
   strings into replay-safe commands and batch collections by encoded bytes, not
   only element count.
