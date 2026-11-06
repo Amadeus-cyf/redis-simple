@@ -88,7 +88,7 @@ int Run() {
   cli.AddCommand(std::vector<std::string_view>{"INFO", "persistence"});
   const std::string persistence_info = cli.ReadReply();
   if (!persistence_info.contains("aof_enabled:0") ||
-      !persistence_info.contains("aof_last_error:none")) {
+      !persistence_info.contains("aof_last_write_status:ok")) {
     RS_LOG_DEBUG("unexpected persistence info: %s\n", persistence_info.c_str());
     return EXIT_FAILURE;
   }

@@ -107,6 +107,7 @@ bool WaitForRewrite(cli::RedisCli* const cli) {
     cli->AddCommand("INFO persistence\r\n");
     const std::string info = cli->ReadReply();
     if (info.contains("aof_rewrite_in_progress:0") &&
+        info.contains("aof_rewrite_scheduled:0") &&
         info.contains("aof_last_bgrewrite_status:ok")) {
       return true;
     }
@@ -143,9 +144,26 @@ bool RewriteDataset(cli::RedisCli* const cli) {
   if (!WaitForRewrite(cli)) {
     return false;
   }
+  // As in Redis, BGREWRITEAOF inside EXEC is scheduled, and the cron starts
+  // it after the transaction.
+  const std::vector<Case> scheduled = {
+      {"MULTI\r\n", "OK\n"},
+      {"BGREWRITEAOF\r\n", "QUEUED\n"},
+      {"EXEC\r\n", "Background append only file rewriting scheduled\n\n\n"},
+  };
+  if (!std::ranges::all_of(scheduled,
+                           [cli](const auto& test_case) {
+                             return ExpectReply(cli, test_case);
+                           }) ||
+      !WaitForRewrite(cli)) {
+    return false;
+  }
   cli->AddCommand("INFO persistence\r\n");
   const std::string info = cli->ReadReply();
-  return info.contains("aof_enabled:1") && info.contains("aof_current_size:");
+  return info.contains("aof_enabled:1") && info.contains("aof_rewrites:2") &&
+         info.contains("aof_current_size:") &&
+         info.contains("aof_pending_bio_fsync:") &&
+         info.contains("aof_delayed_fsync:");
 }
 
 bool ReadDataset(cli::RedisCli* const cli) {

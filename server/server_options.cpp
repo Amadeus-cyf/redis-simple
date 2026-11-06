@@ -112,11 +112,35 @@ constexpr auto kOptionSpecs = std::to_array<OptionSpec>({
          [](std::string_view value, ServerOptions* options) {
            options->aof_options.file_name.assign(value.data(), value.size());
            // A name only, as in Redis; --appenddirname picks the directory.
-           return !value.empty() && !value.contains('/') &&
-                  value.find_first_of(" \t\r\n") == std::string_view::npos;
+           return !value.empty() &&
+                  value.find_first_of("/\\") == std::string_view::npos;
          },
-     .error = "appendfilename must be a file name without a directory or "
-              "whitespace"},
+     .error = "appendfilename can't be a path, just a filename"},
+    {.name = "--aof-load-truncated",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->aof_options.load_truncated);
+         },
+     .error = "aof-load-truncated must be yes or no"},
+    {.name = "--aof-timestamp-enabled",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->aof_options.timestamp_enabled);
+         },
+     .error = "aof-timestamp-enabled must be yes or no"},
+    {.name = "--aof-rewrite-incremental-fsync",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value,
+                             &options->aof_options.rewrite_incremental_fsync);
+         },
+     .error = "aof-rewrite-incremental-fsync must be yes or no"},
+    {.name = "--no-appendfsync-on-rewrite",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->aof_options.no_fsync_on_rewrite);
+         },
+     .error = "no-appendfsync-on-rewrite must be yes or no"},
     {.name = "--aof-load-corrupt-tail-max-size",
      .apply =
          [](std::string_view value, ServerOptions* options) {
@@ -212,7 +236,11 @@ std::string_view ServerUsage() {
   return "Usage: redis_simple [--bind <address>] [--port <port>] "
          "[--appendonly <yes|no>] [--appendfilename <name>] "
          "[--appenddirname <dir>] "
+         "[--aof-load-truncated <yes|no>] "
          "[--aof-load-corrupt-tail-max-size <bytes>] "
+         "[--aof-timestamp-enabled <yes|no>] "
+         "[--aof-rewrite-incremental-fsync <yes|no>] "
+         "[--no-appendfsync-on-rewrite <yes|no>] "
          "[--appendfsync <always|everysec|no>] "
          "[--auto-aof-rewrite-min-size <bytes>] "
          "[--auto-aof-rewrite-percentage <percent>] "
