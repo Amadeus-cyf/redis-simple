@@ -92,7 +92,7 @@ written to a temporary file, synced, renamed, and the directory synced.
 batch per client read, and the batch is written to the file before any of its
 replies are sent, so a crash of the server process loses no acknowledged write
 under any policy. `always` also syncs each batch once (group commit);
-`everysec` syncs on a separate thread once a second, so an operating-system
+`everysec` syncs on the background thread once a second, so an operating-system
 crash or power loss can cost about the last second; `no` leaves syncing to the
 operating system. Graceful shutdown writes and syncs everything pending.
 
@@ -102,8 +102,11 @@ a snapshot of the database, from its copy-on-write view of memory, as the next
 base file; the server keeps serving meanwhile. Large strings are split into
 replay-safe commands, and collection batches are limited by encoded bytes.
 When the child finishes, a new manifest lists the new base and the
-incremental file opened at the start; the old base and incremental files are
-then deleted. Writes made during the rewrite are already in that incremental
+incremental file opened at the start. The old base and incremental files are
+then dropped from the manifest and deleted on a background thread, as Redis'
+background job thread does, so closing or unlinking a large file never stalls
+the event loop; startup deletes AOF and temporary files the manifest does not
+list, which a crash between those steps leaves behind. Writes made during the rewrite are already in that incremental
 file, so nothing is buffered or copied at the end. Shutdown stops a rewrite
 that is still running; the previous files stay listed. Replay loads the base,
 then each incremental file in order; only the last file may end in a torn

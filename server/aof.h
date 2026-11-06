@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -189,8 +190,8 @@ class Aof {
   // Forks a child that writes the snapshot; the server finishes the rewrite
   // through CheckRewrite once the child exits. No other thread may allocate
   // during the fork, or the child could inherit a held allocator lock: the
-  // fsync thread never does, and `before_fork` must stop any other thread
-  // that might, such as the I/O threads, until `after_fork`.
+  // AOF background thread never does, and `before_fork` must stop any other
+  // thread that might, such as the I/O threads, until `after_fork`.
   RewriteResult StartRewrite(db::RedisDb* db);
   void SetForkHooks(std::function<void()> before_fork,
                     std::function<void()> after_fork) {
@@ -206,6 +207,9 @@ class Aof {
   bool SyncNow();
   // For tests: waits for the rewrite child and finishes the rewrite.
   void WaitForRewrite();
+  // For tests: waits until the background thread has closed and deleted
+  // every file queued so far.
+  void WaitForBackgroundJobs();
   // The manifest as last persisted.
   const Manifest& CurrentManifest() const { return manifest_; }
 
@@ -233,7 +237,9 @@ class Aof {
   void AddWritten(size_t size);
   void FailWrite(int error_number);
   bool SyncWritten();
-  void RunSyncThread();
+  void RunBackgroundThread();
+  void QueueDeletion(const std::string& path);
+  void SweepUnlistedFiles();
   void FailSyncLocked(int error_number, uint64_t sequence);
   void LogSyncFailure();
   void RecordError(AofError error, int error_number);
@@ -258,8 +264,17 @@ class Aof {
     uint64_t sequence;
     // written_bytes_ when the file was replaced.
     uint64_t written_mark;
+    // `everysec` syncs the file's last writes before closing it.
+    bool needs_sync;
   };
   std::vector<RetiredFile> retired_files_;
+  // Files to delete. Fixed-size buffers, so the background thread never
+  // allocates or frees memory; the event-loop thread only appends.
+  static constexpr size_t kMaxPathBytes = 4096;
+  using DeletionPath = std::array<char, kMaxPathBytes>;
+  std::vector<DeletionPath> deletions_;
+  bool running_job_{false};
+  std::condition_variable jobs_done_;
   // The incremental file a sync failed on.
   uint64_t sync_failed_sequence_{};
   bool stopping_{false};
@@ -294,7 +309,7 @@ class Aof {
   bool in_transaction_{};
   size_t current_size_{};
   size_t base_size_{};
-  std::thread sync_thread_;
+  std::thread background_thread_;
 
   // The running rewrite: its child, the temporary base file, and the first
   // incremental file after the fork, which the new base precedes.

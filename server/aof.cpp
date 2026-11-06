@@ -848,33 +848,46 @@ bool Aof::SyncWritten() {
   return true;
 }
 
-void Aof::RunSyncThread() {
+void Aof::RunBackgroundThread() {
+  // Like Redis' background job thread: it closes replaced files, deletes
+  // files a rewrite retired, and with `everysec` syncs once a second. It
+  // never allocates or frees memory, so the rewrite's fork can happen while
+  // it runs: jobs hold paths in fixed buffers, and queues only shrink here.
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {
     sync_wakeup_.wait_for(lock, kSyncInterval, [this] {
-      return stopping_ || !retired_files_.empty();
+      return stopping_ || !retired_files_.empty() || !deletions_.empty();
     });
-    // Files a rewrite replaced: sync their last writes, then close them.
+    running_job_ = true;
     while (!retired_files_.empty()) {
       const RetiredFile retired = retired_files_.back();
       retired_files_.pop_back();
       lock.unlock();
-      const bool synced = SyncFile(retired.fd);
+      const bool synced = !retired.needs_sync || SyncFile(retired.fd);
       const int error_number = errno;
       close(retired.fd);
       lock.lock();
       if (!synced) {
         FailSyncLocked(error_number, retired.sequence);
-      } else if (retired.written_mark > synced_bytes_) {
+      } else if (retired.needs_sync && retired.written_mark > synced_bytes_) {
         synced_bytes_ = retired.written_mark;
       }
     }
+    while (!deletions_.empty()) {
+      const DeletionPath path = deletions_.back();
+      deletions_.pop_back();
+      lock.unlock();
+      unlink(path.data());
+      lock.lock();
+    }
+    running_job_ = false;
+    jobs_done_.notify_all();
     if (stopping_) {
       // The destructor syncs once the event-loop thread is done writing.
       return;
     }
     const uint64_t written = written_bytes_.load(std::memory_order_acquire);
-    if (written == synced_bytes_ ||
+    if (fsync_ != FsyncPolicy::kEverySecond || written == synced_bytes_ ||
         sync_failed_.load(std::memory_order_relaxed)) {
       continue;
     }
@@ -1136,17 +1149,16 @@ std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
   if (!aof->LoadManifest() || !aof->Replay(db) || !aof->OpenLastIncrement()) {
     return nullptr;
   }
+  aof->SweepUnlistedFiles();
   aof->DeleteHistory();
-  if (options.fsync == FsyncPolicy::kEverySecond) {
-    // The project does not throw, but std::thread reports a failure to start
-    // only by throwing std::system_error; catch it at this boundary so the
-    // caller sees an ordinary error.
-    try {
-      aof->sync_thread_ =
-          std::thread([instance = aof.get()] { instance->RunSyncThread(); });
-    } catch (const std::system_error&) {
-      return nullptr;
-    }
+  // The project does not throw, but std::thread reports a failure to start
+  // only by throwing std::system_error; catch it at this boundary so the
+  // caller sees an ordinary error.
+  try {
+    aof->background_thread_ = std::thread(
+        [instance = aof.get()] { instance->RunBackgroundThread(); });
+  } catch (const std::system_error&) {
+    return nullptr;
   }
   return aof;
 }
@@ -1176,13 +1188,18 @@ Aof::~Aof() {
     stopping_ = true;
   }
   sync_wakeup_.notify_all();
-  if (sync_thread_.joinable()) {
-    sync_thread_.join();
+  if (background_thread_.joinable()) {
+    background_thread_.join();
   }
-  // Files replaced since the sync thread last ran.
+  // Jobs queued after the background thread's last pass.
   for (const RetiredFile& retired : retired_files_) {
-    SyncFile(retired.fd);
+    if (retired.needs_sync) {
+      SyncFile(retired.fd);
+    }
     close(retired.fd);
+  }
+  for (const DeletionPath& path : deletions_) {
+    unlink(path.data());
   }
   if (fd_ >= 0) {
     close(fd_);
@@ -1366,22 +1383,73 @@ void Aof::SwitchFile(int fd, uint64_t sequence) {
   {
     const std::scoped_lock lock(mutex_);
     old_fd = fd_;
-    if (old_fd >= 0 && fsync_ == FsyncPolicy::kEverySecond) {
-      // The sync thread syncs the replaced file's last writes, then closes
-      // it, so the switch does not wait for the disk.
-      retired_files_.push_back(
-          {old_fd, fd_sequence_,
-           written_bytes_.load(std::memory_order_acquire)});
-      old_fd = -1;
+    if (old_fd >= 0) {
+      // The background thread closes the replaced file, so the switch does
+      // not wait for the disk; with `everysec` it syncs the last writes
+      // first. `always` synced every write already, and `no` leaves it to
+      // the system.
+      retired_files_.push_back({old_fd, fd_sequence_,
+                                written_bytes_.load(std::memory_order_acquire),
+                                fsync_ == FsyncPolicy::kEverySecond});
     }
     fd_ = fd;
     fd_sequence_ = sequence;
   }
   sync_wakeup_.notify_all();
-  if (old_fd >= 0) {
-    // `always` synced every write already; `no` leaves it to the system.
-    close(old_fd);
+}
+
+void Aof::QueueDeletion(const std::string& path) {
+  DeletionPath copy{};
+  if (path.size() >= copy.size()) {
+    // Too long for the fixed buffer: delete it here instead.
+    unlink(path.c_str());
+    return;
   }
+  std::ranges::copy(path, copy.begin());
+  {
+    const std::scoped_lock lock(mutex_);
+    deletions_.push_back(copy);
+  }
+  sync_wakeup_.notify_all();
+}
+
+void Aof::SweepUnlistedFiles() {
+  // A crash between persisting a manifest and deleting the files it replaced
+  // leaves them unlisted; so does one during a rewrite, for its temporary
+  // base. The manifest is the authority, so delete them.
+  std::vector<std::string_view> listed;
+  if (manifest_.base.has_value()) {
+    listed.emplace_back(manifest_.base->name);
+  }
+  for (const ManifestFile& file : manifest_.increments) {
+    listed.emplace_back(file.name);
+  }
+  for (const ManifestFile& file : manifest_.history) {
+    listed.emplace_back(file.name);
+  }
+  std::error_code error;
+  for (const std::filesystem::directory_entry& entry :
+       std::filesystem::directory_iterator(directory_, error)) {
+    const std::string name = entry.path().filename().string();
+    const bool temporary =
+        name.starts_with(kTempPrefix) && !name.ends_with(kManifestSuffix);
+    const bool ours =
+        name.starts_with(file_name_ + ".") &&
+        (name.ends_with(kBaseSuffix) || name.ends_with(kIncrementSuffix));
+    if ((temporary || ours) &&
+        std::ranges::find(listed, name) == listed.end()) {
+      RS_LOG_WARN("deleting %s, which the AOF manifest does not list\n",
+                  name.c_str());
+      QueueDeletion(entry.path().string());
+    }
+  }
+}
+
+void Aof::WaitForBackgroundJobs() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  jobs_done_.wait(lock, [this] {
+    return retired_files_.empty() && deletions_.empty() && !running_job_;
+  });
 }
 
 AofError Aof::PersistManifest(const Manifest& manifest) {
@@ -1421,16 +1489,18 @@ void Aof::DeleteHistory() {
   if (manifest_.history.empty() || history_unsafe_to_delete_) {
     return;
   }
-  // The manifest no longer lists them as live, so deleting them first is
-  // safe; a crash before the second persist only leaves them listed.
-  for (const ManifestFile& file : manifest_.history) {
-    unlink(FilePath(file.name).c_str());
-  }
+  // Drop them from the manifest first, then delete them in the background,
+  // where deleting a large file cannot stall the event loop. A crash in
+  // between leaves unlisted files, which the next start sweeps.
   Manifest manifest = manifest_;
   manifest.history.clear();
-  if (PersistManifest(manifest) == AofError::kNone) {
-    manifest_ = std::move(manifest);
+  if (PersistManifest(manifest) != AofError::kNone) {
+    return;
   }
+  for (const ManifestFile& file : manifest_.history) {
+    QueueDeletion(FilePath(file.name));
+  }
+  manifest_ = std::move(manifest);
 }
 
 RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
