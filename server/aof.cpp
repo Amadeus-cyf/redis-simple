@@ -951,9 +951,15 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
     return RewriteResult::kError;
   }
 
+  if (before_fork_) {
+    before_fork_();
+  }
   const pid_t child = fork();
   if (child == 0) {
     RunRewriteChild(db, rewrite_fd);
+  }
+  if (after_fork_) {
+    after_fork_();
   }
   if (child < 0) {
     const int error_number = errno;

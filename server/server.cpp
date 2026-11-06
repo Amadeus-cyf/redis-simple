@@ -32,7 +32,6 @@ bool Server::Run(const ServerOptions& options) {
     return false;
   }
   aof_.reset();
-  io_stats_ = IoStats{};
   require_pass_ = options.require_pass;
   protected_mode_ = options.protected_mode;
   db_ = db::RedisDb::Create();
@@ -44,6 +43,10 @@ bool Server::Run(const ServerOptions& options) {
     if (aof_ == nullptr) {
       return false;
     }
+    // I/O threads allocate as they read and parse, so they wait out the
+    // rewrite's fork.
+    aof_->SetForkHooks([this] { PauseIoThreads(); },
+                       [this] { ResumeIoThreads(); });
   }
   connection::Connection connection(
       connection::Context{.loop = loop_.get(), .fd = -1});
@@ -54,19 +57,18 @@ bool Server::Run(const ServerOptions& options) {
     return false;
   }
   fd_ = connection.Descriptor();
-  if (options.io_threads > 1) {
-    io_threads_ = IoThreads::Create(static_cast<size_t>(options.io_threads));
-    if (io_threads_ == nullptr) {
-      RS_LOG_WARN("failed to start %d I/O threads\n", options.io_threads);
-      fd_ = -1;
-      aof_.reset();
-      return false;
-    }
-    loop_->SetBeforeSleep([this] { HandlePendingIo(); });
+  // Like Redis, --io-threads counts the main thread, which runs commands
+  // while the others own the client sockets.
+  if (options.io_threads > 1 &&
+      !StartIoThreads(static_cast<size_t>(options.io_threads) - 1)) {
+    RS_LOG_WARN("failed to start %d I/O threads\n", options.io_threads - 1);
+    StopIoThreads();
+    fd_ = -1;
+    aof_.reset();
+    return false;
   }
   if (!InstallAcceptCallback()) {
-    loop_->SetBeforeSleep(nullptr);
-    io_threads_.reset();
+    StopIoThreads();
     fd_ = -1;
     aof_.reset();
     return false;
@@ -75,14 +77,81 @@ bool Server::Run(const ServerOptions& options) {
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
-  loop_->SetBeforeSleep(nullptr);
   fd_ = -1;
-  pending_reads_.clear();
-  pending_writes_.clear();
-  io_threads_.reset();
+  StopIoThreads();
+  return true;
+}
+
+bool Server::StartIoThreads(size_t thread_count) {
+  for (size_t index = 1; index <= thread_count; ++index) {
+    std::unique_ptr<IoThread> thread = IoThread::Create(
+        index, loop_.get(),
+        [this](IoThread* const io_thread,
+               std::vector<IoThread::Handoff>* const handoffs) {
+          RunHandedOverClients(io_thread, handoffs);
+        });
+    if (thread == nullptr) {
+      return false;
+    }
+    io_threads_.push_back(std::move(thread));
+  }
+  return true;
+}
+
+void Server::StopIoThreads() {
+  // Stop the threads first, so freeing the clients below unregisters their
+  // sockets from loops no thread runs anymore; the loops go last.
+  for (const std::unique_ptr<IoThread>& thread : io_threads_) {
+    thread->Stop();
+  }
   clients_.clear();
   aof_.reset();
-  return true;
+  io_threads_.clear();
+}
+
+IoThread* Server::NextIoThread() {
+  IoThread* chosen = nullptr;
+  for (const std::unique_ptr<IoThread>& thread : io_threads_) {
+    if (chosen == nullptr || thread->ClientCount() < chosen->ClientCount()) {
+      chosen = thread.get();
+    }
+  }
+  return chosen;
+}
+
+void Server::PauseIoThreads() {
+  for (const std::unique_ptr<IoThread>& thread : io_threads_) {
+    thread->Pause();
+  }
+}
+
+void Server::ResumeIoThreads() {
+  for (const std::unique_ptr<IoThread>& thread : io_threads_) {
+    thread->Resume();
+  }
+}
+
+void Server::RunHandedOverClients(
+    IoThread* const thread, std::vector<IoThread::Handoff>* const handoffs) {
+  handed_over_.clear();
+  for (const IoThread::Handoff& handoff : *handoffs) {
+    if (handoff.closed) {
+      thread->ClientFreed();
+      RemoveClient(handoff.client);
+      continue;
+    }
+    handoff.client->RunParsedQueries();
+    handed_over_.push_back(handoff.client);
+  }
+  // Persist these clients' mutations before any of their replies are sent.
+  if (aof_ != nullptr && !handed_over_.empty() && !aof_->Flush()) {
+    Stop();
+    return;
+  }
+  for (Client* const client : handed_over_) {
+    thread->Return(client);
+  }
+  handed_over_.clear();
 }
 
 void Server::Stop() {
@@ -95,105 +164,10 @@ bool Server::RemoveClient(Client* c) {
   if (c == nullptr) {
     return false;
   }
-  // The client is destroyed before the next batch, so it must leave the
-  // queue. Clients in the batch being handled are skipped once freed.
-  if (c->PendingRead()) {
-    std::erase(pending_reads_, c);
-    c->SetPendingRead(false);
-  }
   c->Free();
   // Destroy the client after the current event, which may still use it.
   loop_->Defer([this, c] { clients_.erase(c); });
   return true;
-}
-
-void Server::QueueRead(Client* const client) {
-  if (!client->PendingRead()) {
-    client->SetPendingRead(true);
-    pending_reads_.push_back(client);
-  }
-}
-
-void Server::QueueWrite(Client* const client) {
-  // A client with a write callback is waiting for its socket to drain and
-  // writes from that event instead.
-  if (client->HasPendingReplies() &&
-      !client->Connection()->HasWriteCallback()) {
-    pending_writes_.push_back(client);
-  }
-}
-
-void Server::HandlePendingIo() {
-  if (!pending_reads_.empty()) {
-    ReadPendingClients();
-  }
-  if (!pending_writes_.empty()) {
-    WritePendingClients();
-  }
-}
-
-void Server::ReadPendingClients() {
-  io_batch_.clear();
-  io_batch_.swap(pending_reads_);
-  for (Client* const client : io_batch_) {
-    client->SetPendingRead(false);
-  }
-  io_results_.assign(io_batch_.size(), 0);
-  auto read = [this](size_t index) {
-    io_results_[index] = io_batch_[index]->ReadQuery();
-  };
-  if (io_threads_->Run(io_batch_.size(), read)) {
-    io_stats_.threaded_reads += io_batch_.size();
-  }
-  io_stats_.active = io_threads_->Active();
-
-  // Commands run here, one client after another in arrival order.
-  size_t ran = 0;
-  for (size_t index = 0; index < io_batch_.size(); ++index) {
-    Client* const client = io_batch_[index];
-    if (client_connection::RunQueries(this, client, io_results_[index])) {
-      io_batch_[ran++] = client;
-    }
-  }
-  io_batch_.resize(ran);
-  // Persist the whole batch's mutations before any of its replies are sent.
-  if (aof_ != nullptr && !io_batch_.empty() && !aof_->Flush()) {
-    Stop();
-    for (Client* const client : io_batch_) {
-      if (!client->Freed()) {
-        RemoveClient(client);
-      }
-    }
-    io_batch_.clear();
-    return;
-  }
-  for (Client* const client : io_batch_) {
-    if (!client->Freed()) {
-      client_connection::FinishQueries(this, client);
-    }
-  }
-  io_batch_.clear();
-}
-
-void Server::WritePendingClients() {
-  io_batch_.clear();
-  io_batch_.swap(pending_writes_);
-  io_results_.assign(io_batch_.size(), 0);
-  auto write = [this](size_t index) {
-    io_results_[index] =
-        client_connection::WritePendingReplies(io_batch_[index]);
-  };
-  if (io_threads_->Run(io_batch_.size(), write)) {
-    io_stats_.threaded_writes += io_batch_.size();
-  }
-  io_stats_.active = io_threads_->Active();
-  for (size_t index = 0; index < io_batch_.size(); ++index) {
-    Client* const client = io_batch_[index];
-    if (!client->Freed()) {
-      client_connection::FinishWrite(this, client, io_results_[index]);
-    }
-  }
-  io_batch_.clear();
 }
 
 bool Server::InstallAcceptCallback() {
@@ -221,8 +195,6 @@ int64_t Server::ServerCron() {
       return event_loop::TimeEvent::kNoMore;
     }
     aof_->CheckRewrite();
-    // The cron runs between event-loop iterations, when the I/O threads are
-    // idle, so the rewrite child inherits no allocator lock.
     if (aof_->ShouldAutoRewrite() &&
         aof_->StartRewrite(db_.get()) == aof::RewriteResult::kError) {
       RS_LOG_WARN("automatic AOF rewrite failed to start\n");

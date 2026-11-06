@@ -12,13 +12,16 @@
 namespace redis_simple::client_connection {
 namespace {
 void ReadQuery(Server* const server, Client* const client) {
-  // With I/O threads, the read happens with the next batch.
-  if (server->ThreadedIo()) {
-    server->QueueRead(client);
+  connection::Connection* const connection = client->Connection();
+  const ssize_t nread = client->ReadQuery();
+  if (nread <= 0) {
+    if (connection->State() != connection::ConnectionState::kConnected) {
+      server->RemoveClient(client);
+    }
     return;
   }
-  if (!RunQueries(server, client, client->ReadQuery())) {
-    return;
+  if (client->ProcessInputBuffer() == ClientStatus::kError) {
+    RS_LOG_DEBUG("process query buffer failed\n");
   }
   // Persist this batch of mutations before any of its replies are sent.
   if (aof::Aof* const append_only_file = server->Aof();
@@ -27,26 +30,6 @@ void ReadQuery(Server* const server, Client* const client) {
     server->RemoveClient(client);
     return;
   }
-  FinishQueries(server, client);
-}
-}  // namespace
-
-bool RunQueries(Server* const server, Client* const client, ssize_t nread) {
-  if (nread <= 0) {
-    if (client->Connection()->State() !=
-        connection::ConnectionState::kConnected) {
-      server->RemoveClient(client);
-    }
-    return false;
-  }
-  if (client->ProcessInputBuffer() == ClientStatus::kError) {
-    RS_LOG_DEBUG("process query buffer failed\n");
-  }
-  return true;
-}
-
-void FinishQueries(Server* const server, Client* const client) {
-  connection::Connection* const connection = client->Connection();
   if (connection->State() != connection::ConnectionState::kConnected) {
     server->RemoveClient(client);
     return;
@@ -54,12 +37,9 @@ void FinishQueries(Server* const server, Client* const client) {
   if (client->ShouldPauseReads() && connection->UnsetReadCallback()) {
     client->SetReadsPaused(true);
   }
-  if (server->ThreadedIo()) {
-    server->QueueWrite(client);
-  } else {
-    WriteToClient(server, client);
-  }
+  WriteToClient(server, client);
 }
+}  // namespace
 
 connection::ConnectionCallback CreateReadQueryCallback(Server* const server,
                                                        Client* const client) {

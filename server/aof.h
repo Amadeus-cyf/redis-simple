@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -142,10 +143,16 @@ class Aof {
   std::string LastErrorText() const;
 
   // Forks a child that writes the snapshot; the server finishes the rewrite
-  // through CheckRewrite once the child exits. Must run on the event-loop
-  // thread while no other thread allocates memory, so the child does not
-  // inherit an allocator lock held by another thread.
+  // through CheckRewrite once the child exits. No other thread may allocate
+  // during the fork, or the child could inherit a held allocator lock: the
+  // fsync thread never does, and `before_fork` must stop any other thread
+  // that might, such as the I/O threads, until `after_fork`.
   RewriteResult StartRewrite(db::RedisDb* db);
+  void SetForkHooks(std::function<void()> before_fork,
+                    std::function<void()> after_fork) {
+    before_fork_ = std::move(before_fork);
+    after_fork_ = std::move(after_fork);
+  }
   // Finishes the rewrite if its child has exited. Called by the server cron.
   void CheckRewrite();
   bool ShouldAutoRewrite() const;
@@ -223,6 +230,8 @@ class Aof {
   size_t rewrite_buffer_bytes_{};
   RewriteStatus rewrite_status_{RewriteStatus::kNeverRun};
   std::chrono::steady_clock::time_point last_rewrite_attempt_{};
+  std::function<void()> before_fork_;
+  std::function<void()> after_fork_;
 };
 }  // namespace redis_simple::aof
 

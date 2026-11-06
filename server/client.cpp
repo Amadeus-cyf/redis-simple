@@ -218,21 +218,91 @@ ClientStatus Client::ProcessInputBuffer() {
 }
 
 Client::RequestStatus Client::ParseRequest() {
+  std::string_view name;
+  const RequestStatus framed = FrameRequest(&name);
+  if (framed == RequestStatus::kProtocolError) {
+    FailProtocol();
+    return framed;
+  }
+  if (framed != RequestStatus::kReady) {
+    return framed;
+  }
+  return ValidateRequest(name);
+}
+
+Client::RequestStatus Client::FrameRequest(std::string_view* const name) {
   command_ = nullptr;
   args_.clear();
-  std::string_view name;
   const request_parser::ParseResult parsed =
-      request_parser::Parse(query_buffer_.View(), &parse_state_, &name, &args_);
+      request_parser::Parse(query_buffer_.View(), &parse_state_, name, &args_);
   if (parsed.status == request_parser::ParseStatus::kIncomplete) {
     return RequestStatus::kIncomplete;
   }
   if (parsed.status == request_parser::ParseStatus::kInvalid) {
-    AddReply(reply::FromError("ERR Protocol error: invalid request"));
-    close_after_reply_ = true;
-    query_buffer_.Clear();
     return RequestStatus::kProtocolError;
   }
   query_buffer_.Consume(parsed.consumed);
+  return RequestStatus::kReady;
+}
+
+void Client::FailProtocol() {
+  AddReply(reply::FromError("ERR Protocol error: invalid request"));
+  close_after_reply_ = true;
+  query_buffer_.Clear();
+}
+
+bool Client::ParseQueries() {
+  parsed_args_.clear();
+  parsed_requests_.clear();
+  while (!protocol_error_ && query_buffer_.Consumed() < query_buffer_.Size()) {
+    std::string_view name;
+    const RequestStatus framed = FrameRequest(&name);
+    if (framed == RequestStatus::kIncomplete) {
+      break;
+    }
+    if (framed == RequestStatus::kProtocolError) {
+      // Replied to on the main thread, after the requests before it.
+      protocol_error_ = true;
+      break;
+    }
+    parsed_requests_.push_back({parsed_args_.size(), args_.size()});
+    parsed_args_.push_back(name);
+    parsed_args_.insert(parsed_args_.end(), args_.begin(), args_.end());
+  }
+  return !parsed_requests_.empty() || protocol_error_;
+}
+
+ClientStatus Client::RunParsedQueries() {
+  ClientStatus status = ClientStatus::kOk;
+  for (const ParsedRequest& request : parsed_requests_) {
+    if (close_after_reply_) {
+      break;
+    }
+    const auto first =
+        parsed_args_.begin() + static_cast<std::ptrdiff_t>(request.first);
+    args_.assign(first + 1,
+                 first + 1 + static_cast<std::ptrdiff_t>(request.arg_count));
+    if (ValidateRequest(*first) != RequestStatus::kReady) {
+      continue;
+    }
+    if (ProcessCommand() == ClientStatus::kError) {
+      status = ClientStatus::kError;
+      break;
+    }
+  }
+  parsed_requests_.clear();
+  parsed_args_.clear();
+  if (protocol_error_) {
+    protocol_error_ = false;
+    if (!close_after_reply_) {
+      FailProtocol();
+    }
+  }
+  query_buffer_.Compact();
+  return status;
+}
+
+Client::RequestStatus Client::ValidateRequest(std::string_view name) {
   if (name.empty()) {
     AddReply(reply::FromError("ERR empty command"));
     return RequestStatus::kRejected;

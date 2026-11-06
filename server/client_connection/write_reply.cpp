@@ -15,26 +15,6 @@ namespace {
 // Bounds the bytes written to one client per event so a large reply cannot
 // starve other clients, like Redis' NET_MAX_WRITES_PER_EVENT.
 constexpr size_t kMaxBytesPerEvent = size_t{64} * 1024;
-}  // namespace
-
-void WriteToClient(Server* const server, Client* const client) {
-  FinishWrite(server, client, WritePendingReplies(client));
-}
-
-ssize_t WritePendingReplies(Client* const client) {
-  size_t total_written = 0;
-  while (client->HasPendingReplies() && total_written < kMaxBytesPerEvent) {
-    const ssize_t written = client->SendReply();
-    if (written < 0) {
-      return -1;
-    }
-    if (written == 0) {
-      break;
-    }
-    total_written += static_cast<size_t>(written);
-  }
-  return static_cast<ssize_t>(total_written);
-}
 
 void FinishWrite(Server* const server, Client* const client, ssize_t written) {
   connection::Connection* const connection = client->Connection();
@@ -63,6 +43,26 @@ void FinishWrite(Server* const server, Client* const client, ssize_t written) {
           CreateCallback(CallbackType::kReadQuery, server, client))) {
     client->SetReadsPaused(false);
   }
+}
+}  // namespace
+
+void WriteToClient(Server* const server, Client* const client) {
+  FinishWrite(server, client, WritePendingReplies(client));
+}
+
+ssize_t WritePendingReplies(Client* const client) {
+  size_t total_written = 0;
+  while (client->HasPendingReplies() && total_written < kMaxBytesPerEvent) {
+    const ssize_t written = client->SendReply();
+    if (written < 0) {
+      return -1;
+    }
+    if (written == 0) {
+      break;
+    }
+    total_written += static_cast<size_t>(written);
+  }
+  return static_cast<ssize_t>(total_written);
 }
 
 connection::ConnectionCallback CreateWriteReplyCallback(Server* const server,

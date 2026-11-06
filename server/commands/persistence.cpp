@@ -1,11 +1,14 @@
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "server/aof.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
-#include "server/io_threads.h"
+#include "server/io_thread.h"
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
@@ -74,16 +77,48 @@ void AppendPersistenceSection(const aof::Aof* const append_only_file,
   AppendField("aof_pending_bytes", state.pending_bytes, info);
 }
 
-// Threaded I/O fields of Redis' stats section.
-void AppendStatsSection(const IoStats* const stats, std::string* const info) {
-  const IoStats empty;
-  const IoStats& io = stats == nullptr ? empty : *stats;
+using IoThreadList = std::vector<std::unique_ptr<IoThread>>;
+
+// Threaded I/O fields of Redis' stats section: totals over the I/O threads.
+void AppendStatsSection(const IoThreadList* const threads,
+                        std::string* const info) {
+  uint64_t reads = 0;
+  uint64_t writes = 0;
+  const bool active = threads != nullptr && !threads->empty();
+  if (active) {
+    for (const std::unique_ptr<IoThread>& thread : *threads) {
+      const IoThreadInfo thread_info = thread->Info();
+      reads += thread_info.reads_processed;
+      writes += thread_info.writes_processed;
+    }
+  }
   info->append("# Stats\r\n");
-  AppendField("io_threads_active", io.active ? "1" : "0", info);
-  AppendField("io_threaded_reads_processed",
-              static_cast<size_t>(io.threaded_reads), info);
-  AppendField("io_threaded_writes_processed",
-              static_cast<size_t>(io.threaded_writes), info);
+  AppendField("io_threads_active", active ? "1" : "0", info);
+  AppendField("io_threaded_reads_processed", static_cast<size_t>(reads), info);
+  AppendField("io_threaded_writes_processed", static_cast<size_t>(writes),
+              info);
+}
+
+// Redis 8's threads section: one line per I/O thread, numbered from 1 since
+// the main thread is thread 0.
+void AppendThreadsSection(const IoThreadList* const threads,
+                          std::string* const info) {
+  info->append("# Threads\r\n");
+  if (threads == nullptr) {
+    return;
+  }
+  for (const std::unique_ptr<IoThread>& thread : *threads) {
+    const IoThreadInfo thread_info = thread->Info();
+    info->append("io_thread_")
+        .append(std::to_string(thread->Index()))
+        .append(":clients=")
+        .append(std::to_string(thread_info.clients))
+        .append(",reads_processed=")
+        .append(std::to_string(thread_info.reads_processed))
+        .append(",writes_processed=")
+        .append(std::to_string(thread_info.writes_processed))
+        .append("\r\n");
+  }
 }
 }  // namespace
 
@@ -94,6 +129,7 @@ void HandleInfo(Client* const client) {
   const bool persistence =
       all || utils::EqualsIgnoreCase(args[0], "persistence");
   const bool stats = all || utils::EqualsIgnoreCase(args[0], "stats");
+  const bool threads = all || utils::EqualsIgnoreCase(args[0], "threads");
   std::string info;
   if (persistence) {
     AppendPersistenceSection(client->Aof(), &info);
@@ -102,7 +138,13 @@ void HandleInfo(Client* const client) {
     if (!info.empty()) {
       info.append("\r\n");
     }
-    AppendStatsSection(client->ThreadedIoStats(), &info);
+    AppendStatsSection(client->IoThreads(), &info);
+  }
+  if (threads) {
+    if (!info.empty()) {
+      info.append("\r\n");
+    }
+    AppendThreadsSection(client->IoThreads(), &info);
   }
   client->AddBulkReply(info);
 }
