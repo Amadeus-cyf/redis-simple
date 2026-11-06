@@ -99,6 +99,7 @@ class TestFileOps final : public FileOps {
   }
 
   int Sync(int fd) override {
+    synced_fd_flags_.store(fcntl(fd, F_GETFD));
     const int call = sync_calls_.fetch_add(1) + 1;
     if (call == fail_sync_call_.load()) {
       errno = EIO;
@@ -121,6 +122,8 @@ class TestFileOps final : public FileOps {
   void FailNextSync() { fail_sync_call_.store(sync_calls_.load() + 1); }
   void FailSyncAfterNext() { fail_sync_call_.store(sync_calls_.load() + 2); }
   void FailRenames() { fail_rename_.store(true); }
+  // The descriptor flags (F_GETFD) of the most recently synced file.
+  [[nodiscard]] int SyncedFdFlags() const { return synced_fd_flags_.load(); }
 
  private:
   size_t max_write_size_{std::numeric_limits<size_t>::max()};
@@ -129,6 +132,7 @@ class TestFileOps final : public FileOps {
   std::atomic<bool> fail_rename_;
   std::atomic<int> sync_calls_;
   std::atomic<int> fail_sync_call_{-1};
+  std::atomic<int> synced_fd_flags_{-1};
 };
 
 std::string Encode(std::string_view command,
@@ -467,6 +471,21 @@ TEST(AofTest, HandlesShortVectorWritesWithoutLosingCommands) {
   EXPECT_EQ(restored->LookupKey("first")->String(), "one");
   ASSERT_NE(restored->LookupKey("second"), nullptr);
   EXPECT_EQ(restored->LookupKey("second")->String(), "two");
+}
+
+TEST(AofTest, OpensFileCloseOnExec) {
+  // A child started with exec() must not inherit a writable AOF descriptor.
+  TempFile file;
+  auto file_ops = std::make_shared<TestFileOps>();
+  auto db = db::RedisDb::Create();
+  auto aof = Aof::Open(Always(file, file_ops), db.get());
+  ASSERT_NE(aof, nullptr);
+  // The always policy syncs the AOF's own descriptor after each append.
+  ASSERT_TRUE(aof->Append("SET", {"key", "value"}, db.get()));
+  ASSERT_TRUE(aof->Flush());
+  const int flags = file_ops->SyncedFdFlags();
+  ASSERT_GE(flags, 0);
+  EXPECT_NE(flags & FD_CLOEXEC, 0);
 }
 
 TEST(AofTest, ReportsAppendSyncFailures) {
