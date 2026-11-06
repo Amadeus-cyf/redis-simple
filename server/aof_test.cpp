@@ -729,6 +729,8 @@ TEST(AofTest, RewriteStartsANewIncrementFileAndRetiresTheOldFiles) {
   ASSERT_EQ(manifest.increments.size(), 1);
   EXPECT_EQ(manifest.increments.front().name, "appendonly.aof.2.incr.aof");
   EXPECT_TRUE(manifest.history.empty());
+  // The background thread deletes the retired file.
+  writer->WaitForBackgroundJobs();
   EXPECT_FALSE(std::filesystem::exists(file.Directory() + "/" + old_increment));
   writer.reset();
 
@@ -1085,6 +1087,40 @@ TEST(ManifestTest, RejectsMalformedManifests) {
        }) {
     EXPECT_FALSE(Manifest::Parse(text).has_value()) << text;
   }
+}
+
+TEST(AofTest, StartupDeletesFilesTheManifestDoesNotList) {
+  TempAof file;
+  {
+    auto database = db::RedisDb::Create();
+    ASSERT_EQ(
+        database->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+        db::DbStatus::kOk);
+    auto writer = Aof::Open(Always(file), database.get());
+    ASSERT_NE(writer, nullptr);
+    ASSERT_TRUE(writer->Append("SET", {"key", "value"}, database.get()));
+  }
+  // Left behind by a crash after a manifest switch or during a rewrite.
+  for (const char* name :
+       {"appendonly.aof.7.base.aof", "appendonly.aof.8.incr.aof",
+        "temp-rewriteaof-abc123", "unrelated.txt"}) {
+    std::ofstream(file.Directory() + "/" + name) << "junk";
+  }
+
+  auto database = db::RedisDb::Create();
+  auto reader = Aof::Open(Always(file), database.get());
+  ASSERT_NE(reader, nullptr);
+  reader->WaitForBackgroundJobs();
+  EXPECT_EQ(database->KeyCount(), 1);
+  const std::string directory = file.Directory() + "/";
+  EXPECT_FALSE(
+      std::filesystem::exists(directory + "appendonly.aof.7.base.aof"));
+  EXPECT_FALSE(
+      std::filesystem::exists(directory + "appendonly.aof.8.incr.aof"));
+  EXPECT_FALSE(std::filesystem::exists(directory + "temp-rewriteaof-abc123"));
+  // Files that are not the AOF's stay.
+  EXPECT_TRUE(std::filesystem::exists(directory + "unrelated.txt"));
+  EXPECT_TRUE(std::filesystem::exists(directory + "appendonly.aof.1.incr.aof"));
 }
 
 TEST(AofTest, UpgradesASingleFileAof) {

@@ -175,9 +175,11 @@ Guidance for AI coding agents working in this repository.
   server cron finishes the rewrite through `Aof::CheckRewrite`. No other
   thread may allocate or free memory during the fork: the server's fork
   hooks pause the I/O threads and the reclaimer that frees `UNLINK`ed values,
-  and the fsync thread must not allocate or log. Pause any new thread that
-  touches the heap the same way. Keep the child free
-  of locks and logging, since another thread may have held one at the fork.
+  and the AOF background thread, which fsyncs, closes, and deletes retired
+  files, must not allocate or log: its deletion jobs hold paths in fixed-size
+  buffers. Pause any new thread that touches the heap the same way. Keep the
+  child free of locks and logging, since another thread may have held one at
+  the fork.
 - Bound AOF snapshot memory and replay command sizes together. Split large
   strings into replay-safe commands and batch collections by encoded bytes, not
   only element count.
@@ -186,8 +188,10 @@ Guidance for AI coding agents working in this repository.
   directory sync failed, the new manifest is live but may not survive a
   crash: adopt it, reject writes, and keep the replaced files until a later
   manifest persists safely. Delete history files only after the manifest that
-  retires them is durable. Keep failed rewrites observable through
-  `INFO persistence` without disabling a still-healthy AOF.
+  retires them is durable, on the background thread. Startup sweeps AOF and
+  temporary files the manifest does not list, but never a temporary manifest,
+  whose fixed name a later `PersistManifest` reuses. Keep failed rewrites
+  observable through `INFO persistence` without disabling a still-healthy AOF.
 - Replay the base, then the incremental files in manifest order; only the
   last file may end in a torn record. Restarts keep appending to the last
   incremental file; only a rewrite starts a new one.
