@@ -1688,9 +1688,8 @@ bool Aof::ShouldAutoRewrite() const {
     // off: one minute, doubling, up to an hour.
     const size_t doublings = std::min<size_t>(
         consecutive_rewrite_failures_ - kFailuresBeforeBackoff, 6);
-    const std::chrono::minutes delay =
-        std::min(kFirstBackoff * (int64_t{1} << static_cast<int>(doublings)),
-                 kMaxBackoff);
+    const std::chrono::minutes delay = std::min<std::chrono::minutes>(
+        kFirstBackoff * (1 << doublings), kMaxBackoff);
     if (std::chrono::steady_clock::now() - last_rewrite_attempt_ < delay) {
       return false;
     }
