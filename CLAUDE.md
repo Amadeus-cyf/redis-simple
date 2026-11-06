@@ -173,8 +173,10 @@ Guidance for AI coding agents working in this repository.
   manifest is safely renamed into place.
 - `BGREWRITEAOF` forks; the child writes the snapshot and exits, and the
   server cron finishes the rewrite through `Aof::CheckRewrite`. No other
-  thread may allocate during the fork: the server's fork hooks pause the I/O
-  threads, and the fsync thread must not allocate or log. Keep the child free
+  thread may allocate or free memory during the fork: the server's fork
+  hooks pause the I/O threads and the reclaimer that frees `UNLINK`ed values,
+  and the fsync thread must not allocate or log. Pause any new thread that
+  touches the heap the same way. Keep the child free
   of locks and logging, since another thread may have held one at the fork.
 - Bound AOF snapshot memory and replay command sizes together. Split large
   strings into replay-safe commands and batch collections by encoded bytes, not
