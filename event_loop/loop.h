@@ -7,7 +7,6 @@
 #include <functional>
 #include <list>
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "event_loop/event_poller.h"
@@ -61,11 +60,6 @@ class Loop {
   }
   void CreateTimeEvent(std::unique_ptr<TimeEvent> time_event);
   void Defer(std::function<void()> callback);
-  // Runs `callback` at the start of every iteration, before waiting for
-  // events, like Redis' beforeSleep. An empty callback removes it.
-  void SetBeforeSleep(std::function<void()> callback) {
-    before_sleep_ = std::move(callback);
-  }
   void ProcessEvents();
   ~Loop() = default;
 
@@ -81,7 +75,6 @@ class Loop {
   std::list<std::unique_ptr<TimeEvent>> time_events_;
   std::vector<std::function<void()>> deferred_callbacks_;
   std::vector<std::function<void()>> running_deferred_callbacks_;
-  std::function<void()> before_sleep_;
   std::unique_ptr<EventPoller> event_poller_;
   bool processing_file_events_{false};
   bool stop_requested_{false};

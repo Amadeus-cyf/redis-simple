@@ -36,7 +36,7 @@ check that could not run, with the reason.
 | --- | --- |
 | Ownership, memory layout, assertions, low-level data structures | `release` and `sanitizer` presets (build plus `ctest`), then `scripts/run_leak_check.sh` |
 | Request parsing, data types, core containers, buffers, expiration, persistence, event loop | `fuzz` preset: build `redis_simple_fuzzers`, then `ctest --preset fuzz -L fuzz` |
-| Threaded I/O (`server/io_threads*`, the threaded read and write path) | the `*_io_threads` integration variants, and the concurrent-clients test under a ThreadSanitizer build |
+| Threaded I/O (`server/io_thread*`, client handoff, `Client::ParseQueries`/`RunParsedQueries`) | the `*_io_threads` integration variants, and the concurrent-clients test under a ThreadSanitizer build |
 | Behavior shared with Redis, when a reference server is available | `scripts/run_redis_compatibility_check.sh build/debug/redis_simple` |
 | Server performance or memory | `scripts/profile_server.sh` and `scripts/measure_server_memory.sh` against the previous build; report instruction counts, not throughput |
 

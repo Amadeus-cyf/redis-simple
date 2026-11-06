@@ -100,28 +100,33 @@ RESP3, including native null, map, set, and double replies. Request buffers are
 capped at 64 MiB. Pending output pauses reads at 8 MiB, resumes below 4 MiB,
 and closes the connection before exceeding 64 MiB.
 
-Threaded I/O, like Redis 6's `io-threads`, is off by default:
+Threaded I/O, like Redis 8's `io-threads`, is off by default:
 
 ```sh
 ./build/release/redis_simple --io-threads 4
 ```
 
-The count includes the main thread, from 1 (the default) to 128. With more
-than one, a readable client is queued instead of read right away. Before the
-event loop waits again, the server handles the queue in four steps:
+The count includes the main thread, from 1 (the default) to 128, so
+`--io-threads 4` starts three I/O threads. Each runs its own event loop, and
+each new connection goes to the I/O thread with the fewest clients and stays
+there. For its clients, an I/O thread:
 
-1. Read every queued client's socket on the I/O threads.
-2. Run all their commands on the main thread, in arrival order, so commands
-   and data structures stay single-threaded.
-3. Flush the AOF once for the batch.
-4. Write the replies on the I/O threads.
+1. Reads the socket and frames the complete requests, without running them.
+2. Hands the client to the main thread, which runs the commands in order, so
+   commands and data structures stay single-threaded, and flushes the AOF
+   once for all the clients handed over together.
+3. Gets the client back, writes the replies, and resumes reading.
 
-Batches with fewer than two clients per thread stay on the main thread, and
-the idle I/O threads park until load returns. `INFO stats` reports
-`io_threads_active`, `io_threaded_reads_processed`, and
-`io_threaded_writes_processed`. As with Redis, threads help only on machines
-with cores to spare. Use at most one fewer thread than the server's cores; on
-a 2-core machine, `--io-threads 2` is about 20% slower than the default.
+A client belongs to one side at a time, and mutex-guarded queues with pipe
+wakeups carry it between them, so no thread spins waiting for another.
+Closed connections are closed on their I/O thread and freed on the main
+thread. `INFO stats` reports `io_threads_active`,
+`io_threaded_reads_processed`, and `io_threaded_writes_processed`, and
+`INFO threads` lists each I/O thread's clients, reads, and writes.
+
+As with Redis, threads pay off only when the main thread is the bottleneck,
+as with heavily pipelined traffic on a machine with spare cores; without
+pipelining, round trips limit throughput and the default of 1 is as fast.
 
 In another terminal, run a mock command client or your own TCP client against
 `localhost:8080`.

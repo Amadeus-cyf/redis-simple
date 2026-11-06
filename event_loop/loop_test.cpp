@@ -234,33 +234,4 @@ TEST(LoopTest, CallbackDeferredDuringDispatchRunsNextCycle) {
   loop->ProcessEvents();
   EXPECT_EQ(order, (std::vector<int>{1, 2}));
 }
-
-TEST(LoopTest, BeforeSleepRunsBeforeEachWait) {
-  auto loop = Loop::Create();
-  ASSERT_NE(loop, nullptr);
-  auto sockets = CreateSocketPair();
-  std::vector<int> order;
-  auto read_callback = [&order](Loop* /*callback_loop*/, int fd, int) {
-    char byte = '\0';
-    EXPECT_EQ(read(fd, &byte, 1), 1);
-    order.push_back(2);
-    return CallbackStatus::kOk;
-  };
-  ASSERT_EQ(loop->CreateFileEvent(
-                sockets[0].Get(),
-                FileEvent::Create(FileEvent::Callback(read_callback), nullptr,
-                                  ToInt(EventFlag::kReadable))),
-            Status::kOk);
-  loop->SetBeforeSleep([&order] { order.push_back(1); });
-  ASSERT_EQ(write(sockets[1].Get(), "x", 1), 1);
-
-  loop->ProcessEvents();
-  EXPECT_EQ(order, (std::vector<int>{1, 2}));
-
-  // Removing the callback stops it; a deferred callback keeps the wait short.
-  loop->SetBeforeSleep(nullptr);
-  loop->Defer([] {});
-  loop->ProcessEvents();
-  EXPECT_EQ(order, (std::vector<int>{1, 2}));
-}
 }  // namespace redis_simple::event_loop

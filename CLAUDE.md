@@ -79,17 +79,22 @@ Guidance for AI coding agents working in this repository.
   call `Flush` before arming test failures that depend on file-write order.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
-- With `--io-threads` above 1, readable events only queue the client, and
-  `Server::HandlePendingIo` (the loop's before-sleep hook) reads the queued
-  sockets on `IoThreads`, runs every command on the main thread, flushes the
-  AOF once, then writes replies on `IoThreads`. Work given to the I/O threads
-  must touch only that client's socket and buffers (`Client::ReadQuery`,
-  `client_connection::WritePendingReplies`); keep commands, the database,
-  the AOF, and event-loop registration on the main thread. `RemoveClient`
-  takes a client off the read queue, and later batch steps skip clients that
-  are `Freed()`. Run the threaded integration variants (`*_io_threads`) and a
-  ThreadSanitizer build of the concurrent-clients test after changing this
-  path.
+- With `--io-threads` above 1, I/O works like Redis 8: each client belongs
+  to one `IoThread` (the one with the fewest clients when it connected),
+  whose own event loop reads its socket and frames requests
+  (`Client::ParseQueries`), then hands it to the main thread, which runs
+  them (`Client::RunParsedQueries`), flushes the AOF once per handoff, and
+  returns it to write the replies and resume reading. A client belongs to one
+  side at a time: the I/O thread unregisters its socket events before handing
+  it over, and hands clients over only after the current loop iteration, since
+  connection callbacks still touch the connection after returning. Keep
+  commands, the database, and the AOF on the main thread, and I/O threads to
+  the client's socket, buffers, and parser. Connections close on their I/O
+  thread; the main thread only frees them. Stop the I/O threads before
+  freeing clients at shutdown, and pause them (`Server::PauseIoThreads`)
+  around anything that must not race their allocations, such as `fork`. Run
+  the threaded integration variants (`*_io_threads`) and a ThreadSanitizer
+  build of the concurrent-clients test after changing this path.
 - Rely on the command table for arity in handlers, and use
   `server/commands/lookup.h` for typed lookups instead of re-checking the
   object type and null database in each command.

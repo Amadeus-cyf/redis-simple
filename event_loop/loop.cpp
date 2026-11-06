@@ -205,9 +205,6 @@ void Loop::Defer(std::function<void()> callback) {
 }
 
 void Loop::ProcessEvents() {
-  if (before_sleep_) {
-    before_sleep_();
-  }
   ProcessFileEvents();
   ProcessDeferredCallbacks();
   ProcessTimeEvents();

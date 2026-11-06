@@ -23,8 +23,12 @@ constexpr std::string_view kProtectedModeError =
 
 // Returns false once the listener has no more pending connections.
 bool AcceptOne(int listener_fd, Server* const server) {
-  auto connection = std::make_unique<connection::Connection>(
-      connection::Context{.loop = server->Loop(), .fd = -1});
+  // With I/O threads, the client's socket belongs to its thread's loop.
+  IoThread* const io_thread = server->NextIoThread();
+  auto connection =
+      std::make_unique<connection::Connection>(connection::Context{
+          .loop = io_thread != nullptr ? io_thread->Loop() : server->Loop(),
+          .fd = -1});
   connection->SetState(connection::ConnectionState::kAccepting);
   connection::AddressInfo address;
   if (connection->Accept(listener_fd, &address) ==
@@ -45,8 +49,13 @@ bool AcceptOne(int listener_fd, Server* const server) {
   auto client =
       Client::Create(std::move(connection), server->Db(), server->Aof());
   client->RequirePassword(server->RequirePass());
-  client->SetThreadedIoStats(server->ThreadedIoStats());
+  client->SetIoThreads(&server->IoThreads());
   Client* const client_ptr = client.get();
+  if (io_thread != nullptr) {
+    server->AddClient(std::move(client));
+    io_thread->Assign(client_ptr);
+    return true;
+  }
   if (!client_ptr->Connection()->SetReadCallback(
           CreateCallback(CallbackType::kReadQuery, server, client_ptr))) {
     RS_LOG_DEBUG("failed to set the read callback\n");
