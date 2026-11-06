@@ -17,6 +17,11 @@ class AsyncReclaimer {
   AsyncReclaimer& operator=(const AsyncReclaimer&) = delete;
   bool Reclaim(RedisObjectPtr object);
   void WaitUntilIdle();
+  // Holds the worker idle between batches, so it neither allocates nor frees
+  // memory, until Resume; for fork(), whose child could otherwise inherit an
+  // allocator lock the worker holds.
+  void Pause();
+  void Resume();
   size_t PendingCount() const;
   ~AsyncReclaimer();
 
@@ -27,7 +32,11 @@ class AsyncReclaimer {
   std::condition_variable work_available_;
   std::condition_variable idle_;
   std::deque<RedisObjectPtr> pending_;
+  // The batch being freed, kept between batches so the worker allocates no
+  // container of its own.
+  std::deque<RedisObjectPtr> batch_;
   size_t reclaiming_{};
+  bool paused_{};
   bool stopping_{};
   // Declared last so every field the worker reads is initialized before the
   // thread starts.

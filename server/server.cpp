@@ -43,10 +43,18 @@ bool Server::Run(const ServerOptions& options) {
     if (aof_ == nullptr) {
       return false;
     }
-    // I/O threads allocate as they read and parse, so they wait out the
-    // rewrite's fork.
-    aof_->SetForkHooks([this] { PauseIoThreads(); },
-                       [this] { ResumeIoThreads(); });
+    // Threads that allocate or free memory wait out the rewrite's fork: the
+    // I/O threads, as they read and parse, and the database's thread that
+    // frees UNLINKed values.
+    aof_->SetForkHooks(
+        [this] {
+          PauseIoThreads();
+          db_->PauseBackgroundFrees();
+        },
+        [this] {
+          db_->ResumeBackgroundFrees();
+          ResumeIoThreads();
+        });
   }
   connection::Connection connection(
       connection::Context{.loop = loop_.get(), .fd = -1});

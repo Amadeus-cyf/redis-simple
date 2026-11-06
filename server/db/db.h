@@ -99,6 +99,9 @@ class RedisDb {
   void UnwatchKeys(KeyWatcher* watcher);
   void TouchWatchedKey(std::string_view key);
   bool HasWatchedKeys() const { return watched_keys_->Size() > 0; }
+  // Holds the thread that frees UNLINKed values idle, for fork().
+  void PauseBackgroundFrees() { reclaimer_.Pause(); }
+  void ResumeBackgroundFrees() { reclaimer_.Resume(); }
 
  private:
   friend class aof::Aof;
