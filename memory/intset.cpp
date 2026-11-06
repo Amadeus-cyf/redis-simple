@@ -90,11 +90,11 @@ void IntSet::UpgradeAndAdd(int64_t value) {
   contents_ = std::make_unique<unsigned char[]>(
       static_cast<size_t>(old_length + 1) * encoding_);
   const uint32_t prepend = value < 0 ? 1 : 0;
-  for (uint32_t idx = old_length; idx > 0; --idx) {
-    const uint32_t old_idx = idx - 1;
+  for (uint32_t index = old_length; index > 0; --index) {
+    const uint32_t old_index = index - 1;
     int64_t old_value = 0;
     const unsigned char* src =
-        old_contents.get() + (static_cast<size_t>(old_idx * old_encoding));
+        old_contents.get() + (static_cast<size_t>(old_index * old_encoding));
     if (old_encoding == kInt64) {
       std::memcpy(&old_value, src, sizeof(old_value));
     } else if (old_encoding == kInt32) {
@@ -106,7 +106,7 @@ void IntSet::UpgradeAndAdd(int64_t value) {
       std::memcpy(&value16, src, sizeof(value16));
       old_value = value16;
     }
-    Set(old_idx + prepend, old_value);
+    Set(old_index + prepend, old_value);
   }
   if (prepend == 1) {
     Set(0, value);
@@ -129,25 +129,25 @@ bool IntSet::Search(int64_t value, uint32_t* const index) const {
     }
     return false;
   }
-  uint32_t min_idx = 0;
-  uint32_t max_idx = length_;
-  while (min_idx < max_idx) {
-    const uint32_t mid = min_idx + ((max_idx - min_idx) / 2);
-    int64_t val = EncodedValue(mid, encoding_);
-    if (val == value) {
+  uint32_t min_index = 0;
+  uint32_t max_index = length_;
+  while (min_index < max_index) {
+    const uint32_t mid = min_index + ((max_index - min_index) / 2);
+    const int64_t candidate = EncodedValue(mid, encoding_);
+    if (candidate == value) {
       if (index != nullptr) {
         *index = mid;
       }
       return true;
     }
-    if (val < value) {
-      min_idx = mid + 1;
+    if (candidate < value) {
+      min_index = mid + 1;
     } else {
-      max_idx = mid;
+      max_index = mid;
     }
   }
   if (index != nullptr) {
-    *index = min_idx;
+    *index = min_index;
   }
   return false;
 }

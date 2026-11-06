@@ -1,5 +1,5 @@
-#ifndef REDIS_SIMPLE_SERVER_DB_REDIS_OBJ_H_
-#define REDIS_SIMPLE_SERVER_DB_REDIS_OBJ_H_
+#ifndef REDIS_SIMPLE_SERVER_DB_REDIS_OBJECT_H_
+#define REDIS_SIMPLE_SERVER_DB_REDIS_OBJECT_H_
 
 #include <array>
 #include <cstddef>
@@ -207,4 +207,4 @@ class RedisObject {
 using RedisObjectPtr = std::unique_ptr<RedisObject>;
 }  // namespace redis_simple::db
 
-#endif  // REDIS_SIMPLE_SERVER_DB_REDIS_OBJ_H_
+#endif  // REDIS_SIMPLE_SERVER_DB_REDIS_OBJECT_H_

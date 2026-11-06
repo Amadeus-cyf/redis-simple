@@ -11,7 +11,7 @@ namespace redis_simple::cli::resp_parser {
 namespace {
 std::ptrdiff_t ParseBytes(std::string_view response,
                           std::vector<std::string>& reply) {
-  const auto result = Parse(response, reply);
+  const ParseResult result = Parse(response, reply);
   return result.status == ParseStatus::kComplete
              ? static_cast<std::ptrdiff_t>(result.consumed)
              : -1;

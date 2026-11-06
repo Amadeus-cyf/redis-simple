@@ -46,12 +46,12 @@ std::optional<std::string> Hash::Get(std::string_view field) const {
 
 bool Hash::Delete(std::string_view field) {
   if (encoding_ == Encoding::kListPack) {
-    const auto field_idx = FindListPackField(field);
-    if (!field_idx.has_value()) {
+    const std::optional<size_t> field_offset = FindListPackField(field);
+    if (!field_offset.has_value()) {
       return false;
     }
-    const auto idx = static_cast<size_t>(*field_idx);
-    listpack_->DeleteRange(idx, 2);
+    const auto offset = static_cast<size_t>(*field_offset);
+    listpack_->DeleteRange(offset, 2);
     return true;
   }
   if (encoding_ == Encoding::kDict) {
@@ -101,18 +101,18 @@ bool Hash::CanAppendToListPack(std::string_view field,
 
 bool Hash::SetListPack(std::string_view field, std::string_view value) {
   RS_CHECK(encoding_ == Encoding::kListPack);
-  const auto field_idx = FindListPackField(field);
-  if (field_idx.has_value()) {
+  const std::optional<size_t> field_offset = FindListPackField(field);
+  if (field_offset.has_value()) {
     if (!CanStoreInListPack(field, value)) {
       ConvertListPackToDict(Size());
       SetDict(field, value);
       return false;
     }
-    const auto value_idx = listpack_->Next(*field_idx);
-    if (!value_idx.has_value()) {
+    const std::optional<size_t> value_offset = listpack_->Next(*field_offset);
+    if (!value_offset.has_value()) {
       return false;
     }
-    listpack_->Replace(*value_idx, value);
+    listpack_->Replace(*value_offset, value);
     return false;
   }
 

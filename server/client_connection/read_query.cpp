@@ -12,10 +12,10 @@
 namespace redis_simple::client_connection {
 namespace {
 void ReadQuery(Server* const server, Client* const client) {
-  connection::Connection* const conn = client->Connection();
+  connection::Connection* const connection = client->Connection();
   const ssize_t nread = client->ReadQuery();
   if (nread <= 0) {
-    if (conn->State() != connection::ConnectionState::kConnected) {
+    if (connection->State() != connection::ConnectionState::kConnected) {
       server->RemoveClient(client);
     }
     return;
@@ -30,11 +30,11 @@ void ReadQuery(Server* const server, Client* const client) {
     server->RemoveClient(client);
     return;
   }
-  if (conn->State() != connection::ConnectionState::kConnected) {
+  if (connection->State() != connection::ConnectionState::kConnected) {
     server->RemoveClient(client);
     return;
   }
-  if (client->ShouldPauseReads() && conn->UnsetReadCallback()) {
+  if (client->ShouldPauseReads() && connection->UnsetReadCallback()) {
     client->SetReadsPaused(true);
   }
   WriteToClient(server, client);
@@ -43,7 +43,7 @@ void ReadQuery(Server* const server, Client* const client) {
 
 connection::ConnectionCallback CreateReadQueryCallback(Server* const server,
                                                        Client* const client) {
-  return [server, client](connection::Connection* /*conn*/) {
+  return [server, client](connection::Connection* /*connection*/) {
     ReadQuery(server, client);
   };
 }

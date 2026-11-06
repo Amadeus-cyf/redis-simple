@@ -38,7 +38,8 @@ void ParseCompleteRequest(benchmark::State& state) {
   command::CommandArgs args;
   for (auto _ : state) {
     (void)_;
-    auto result = request_parser::Parse(request, &parse_state, &command, &args);
+    request_parser::ParseResult result =
+        request_parser::Parse(request, &parse_state, &command, &args);
     benchmark::DoNotOptimize(result);
     benchmark::DoNotOptimize(args.data());
   }

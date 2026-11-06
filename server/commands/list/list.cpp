@@ -113,7 +113,7 @@ std::pair<size_t, List::RemoveDirection> NormalizeRemoveCount(int64_t count) {
 }
 
 void HandlePush(Client* const client, Side side) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   auto [object, wrong_type] = MutableLookupTyped(client->Db(), args[0], kList);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
@@ -179,7 +179,7 @@ void HandleLLen(Client* const client) {
 }
 
 void HandleLRange(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   int64_t start = 0;
   int64_t stop = 0;
   if (!ParseInteger(client, args[1], &start) ||
@@ -190,9 +190,9 @@ void HandleLRange(Client* const client) {
   if (!LookupList(client, args[0], &list)) {
     return;
   }
-  const auto range = list == nullptr
-                         ? std::nullopt
-                         : NormalizeRange(start, stop, list->Size());
+  const std::optional<std::pair<size_t, size_t>> range =
+      list == nullptr ? std::nullopt
+                      : NormalizeRange(start, stop, list->Size());
   if (!range.has_value()) {
     client->AddReply(reply::FromArrayHeader(0));
     return;
@@ -208,7 +208,7 @@ void HandleLRange(Client* const client) {
 }
 
 void HandleLIndex(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   int64_t index = 0;
   if (!ParseInteger(client, args[1], &index)) {
     return;
@@ -217,9 +217,10 @@ void HandleLIndex(Client* const client) {
   if (!LookupList(client, args[0], &list)) {
     return;
   }
-  const auto position =
+  const std::optional<size_t> position =
       list == nullptr ? std::nullopt : NormalizeIndex(index, list->Size());
-  const auto value = position.has_value() ? list->At(*position) : std::nullopt;
+  const std::optional<std::string> value =
+      position.has_value() ? list->At(*position) : std::nullopt;
   if (value.has_value()) {
     client->AddBulkReply(*value);
   } else {
@@ -228,7 +229,7 @@ void HandleLIndex(Client* const client) {
 }
 
 void HandleLSet(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   int64_t index = 0;
   if (!ParseInteger(client, args[1], &index)) {
     return;
@@ -241,7 +242,7 @@ void HandleLSet(Client* const client) {
     client->AddReply(reply::FromError("ERR no such key"));
     return;
   }
-  const auto position = NormalizeIndex(index, list->Size());
+  const std::optional<size_t> position = NormalizeIndex(index, list->Size());
   if (!position.has_value() || !list->Set(*position, args[2])) {
     client->AddReply(reply::FromError("ERR index out of range"));
     return;
@@ -251,7 +252,7 @@ void HandleLSet(Client* const client) {
 }
 
 void HandleLRem(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   int64_t count = 0;
   if (!ParseInteger(client, args[1], &count)) {
     return;
@@ -273,7 +274,7 @@ void HandleLRem(Client* const client) {
 }
 
 void HandleLTrim(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   int64_t start = 0;
   int64_t stop = 0;
   if (!ParseInteger(client, args[1], &start) ||
@@ -285,7 +286,8 @@ void HandleLTrim(Client* const client) {
     return;
   }
   if (list != nullptr) {
-    const auto range = NormalizeRange(start, stop, list->Size());
+    const std::optional<std::pair<size_t, size_t>> range =
+        NormalizeRange(start, stop, list->Size());
     // An empty range trims every element.
     const bool trimmed = range.has_value()
                              ? list->Trim(range->first, range->second)

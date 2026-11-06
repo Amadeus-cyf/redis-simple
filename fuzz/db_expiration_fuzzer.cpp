@@ -8,7 +8,7 @@
 
 #include "fuzz/fuzz_input.h"
 #include "server/db/db.h"
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 
 namespace redis_simple::fuzz {
 namespace {

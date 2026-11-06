@@ -13,7 +13,7 @@ TEST(RequestParserTest, ParsesRespBulkStringArrayWithoutCopying) {
   std::string_view command;
   command::CommandArgs args;
 
-  const auto result = Parse(kRequest, &command, &args);
+  const ParseResult result = Parse(kRequest, &command, &args);
 
   EXPECT_EQ(result.status, ParseStatus::kComplete);
   EXPECT_EQ(result.consumed, kRequest.size());
@@ -98,7 +98,7 @@ TEST(RequestParserTest, ResumesSplitRequestFromSavedState) {
         << size;
     EXPECT_TRUE(args.empty());
   }
-  const auto result = Parse(request, &state, &command, &args);
+  const ParseResult result = Parse(request, &state, &command, &args);
   ASSERT_EQ(result.status, ParseStatus::kComplete);
   EXPECT_EQ(result.consumed, request.size());
   EXPECT_EQ(command, "SET");
@@ -125,7 +125,7 @@ TEST(RequestParserTest, HandsOffFromAnySplitPointToResume) {
 
     // The rest arrives in a separate buffer at a different address.
     const std::string full(kRequest);
-    const auto result = Parse(full, &state, &command, &args);
+    const ParseResult result = Parse(full, &state, &command, &args);
     ASSERT_EQ(result.status, ParseStatus::kComplete) << split;
     EXPECT_EQ(result.consumed, full.size());
     EXPECT_EQ(command, "HSET");
@@ -179,7 +179,8 @@ TEST(RequestParserTest, PreservesInlineProtocolCompatibility) {
   std::string_view command;
   command::CommandArgs args;
 
-  const auto result = Parse("  GET   key  \r\nremaining", &command, &args);
+  const ParseResult result =
+      Parse("  GET   key  \r\nremaining", &command, &args);
 
   EXPECT_EQ(result.status, ParseStatus::kComplete);
   EXPECT_EQ(result.consumed, 15);

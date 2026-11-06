@@ -68,7 +68,7 @@ bool ExpectScanKeys(cli::RedisCli* cli, std::string_view pattern,
   size_t calls = 0;
   while (true) {
     cli->AddCommand({"SCAN", cursor, "MATCH", pattern, "COUNT", "1"});
-    auto lines = NonEmptyLines(cli->ReadReply());
+    std::vector<std::string> lines = NonEmptyLines(cli->ReadReply());
     if (lines.empty()) {
       RS_LOG_DEBUG("SCAN returned no cursor\n");
       return false;

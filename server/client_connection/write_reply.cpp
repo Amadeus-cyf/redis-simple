@@ -15,31 +15,22 @@ namespace {
 // Bounds the bytes written to one client per event so a large reply cannot
 // starve other clients, like Redis' NET_MAX_WRITES_PER_EVENT.
 constexpr size_t kMaxBytesPerEvent = size_t{64} * 1024;
-}  // namespace
 
-void WriteToClient(Server* const server, Client* const client) {
-  connection::Connection* const conn = client->Connection();
-  size_t total_written = 0;
-  ssize_t written = 0;
-  while (client->HasPendingReplies() && total_written < kMaxBytesPerEvent) {
-    written = client->SendReply();
-    if (written <= 0) {
-      break;
-    }
-    total_written += static_cast<size_t>(written);
-  }
-  if (written < 0 && conn->State() != connection::ConnectionState::kConnected) {
+void FinishWrite(Server* const server, Client* const client, ssize_t written) {
+  connection::Connection* const connection = client->Connection();
+  if (written < 0 &&
+      connection->State() != connection::ConnectionState::kConnected) {
     server->RemoveClient(client);
     return;
   }
   if (client->HasPendingReplies()) {
-    if (!conn->HasWriteCallback() &&
-        !conn->SetWriteCallback(
+    if (!connection->HasWriteCallback() &&
+        !connection->SetWriteCallback(
             CreateCallback(CallbackType::kWriteReply, server, client))) {
       RS_LOG_DEBUG("failed to install the write callback\n");
     }
   } else {
-    if (conn->HasWriteCallback() && !conn->UnsetWriteCallback()) {
+    if (connection->HasWriteCallback() && !connection->UnsetWriteCallback()) {
       RS_LOG_DEBUG("failed to unset the write callback\n");
     }
     if (client->ShouldCloseAfterReply()) {
@@ -48,15 +39,35 @@ void WriteToClient(Server* const server, Client* const client) {
     }
   }
   if (client->ShouldResumeReads() &&
-      conn->SetReadCallback(
+      connection->SetReadCallback(
           CreateCallback(CallbackType::kReadQuery, server, client))) {
     client->SetReadsPaused(false);
   }
 }
+}  // namespace
+
+void WriteToClient(Server* const server, Client* const client) {
+  FinishWrite(server, client, WritePendingReplies(client));
+}
+
+ssize_t WritePendingReplies(Client* const client) {
+  size_t total_written = 0;
+  while (client->HasPendingReplies() && total_written < kMaxBytesPerEvent) {
+    const ssize_t written = client->SendReply();
+    if (written < 0) {
+      return -1;
+    }
+    if (written == 0) {
+      break;
+    }
+    total_written += static_cast<size_t>(written);
+  }
+  return static_cast<ssize_t>(total_written);
+}
 
 connection::ConnectionCallback CreateWriteReplyCallback(Server* const server,
                                                         Client* const client) {
-  return [server, client](connection::Connection* /*conn*/) {
+  return [server, client](connection::Connection* /*connection*/) {
     WriteToClient(server, client);
   };
 }

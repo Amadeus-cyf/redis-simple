@@ -206,7 +206,7 @@ TEST(FloatUtilsTest, PlainDecimalsParseLikeTheGeneralParser) {
     for (size_t d = 0; d < digits; ++d) {
       text.push_back(static_cast<char>('0' + (random() % 10)));
     }
-    const auto point = random() % (digits + 2);
+    const size_t point = random() % (digits + 2);
     if (point > 0 && point < digits) {
       text.insert(text.size() - point, ".");
     }

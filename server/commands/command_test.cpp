@@ -8,17 +8,17 @@
 
 namespace redis_simple::command {
 TEST(CommandRegistryTest, FindsCommandsCaseInsensitively) {
-  const auto* get = Find("get");
+  const Command* get = Find("get");
   ASSERT_NE(get, nullptr);
   EXPECT_EQ(get->name, "GET");
   EXPECT_NE(get->callback, nullptr);
 
-  const auto* zrange = Find("ZRANGE");
+  const Command* zrange = Find("ZRANGE");
   ASSERT_NE(zrange, nullptr);
   EXPECT_EQ(zrange->name, "ZRANGE");
   EXPECT_NE(zrange->callback, nullptr);
 
-  const auto* hset = Find("hset");
+  const Command* hset = Find("hset");
   ASSERT_NE(hset, nullptr);
   EXPECT_EQ(hset->name, "HSET");
   EXPECT_NE(hset->callback, nullptr);
@@ -35,7 +35,7 @@ TEST(CommandRegistryTest, FindsExpandedRedisCommandSet) {
       "HVALS",  "HINCRBY",   "HELLO",         "PING",      "ECHO",
       "QUIT",   "SCAN",      "BGREWRITEAOF",  "INFO"};
   for (const auto* name : names) {
-    const auto* command = Find(name);
+    const Command* command = Find(name);
     ASSERT_NE(command, nullptr) << name;
     EXPECT_NE(command->callback, nullptr);
   }
@@ -64,7 +64,7 @@ TEST(CommandRegistryTest, CaseFoldingMatchesOnlyTheSameLetter) {
         const char lower = static_cast<char>(upper - 'A' + 'a');
         const bool same_letter =
             probe[position] == upper || probe[position] == lower;
-        const auto* command = Find(probe);
+        const Command* command = Find(probe);
         EXPECT_EQ(command != nullptr && command->name == name, same_letter)
             << name << " position " << position << " byte " << byte;
       }
@@ -76,14 +76,14 @@ TEST(CommandRegistryTest, FindsEveryCaseVariant) {
   for (const std::string_view name :
        {"get", "Get", "gEt", "GET", "zRaNgEbYsCoRe", "bgrewriteaof", "Exec",
         "unwatch"}) {
-    const auto* command = Find(name);
+    const Command* command = Find(name);
     ASSERT_NE(command, nullptr) << name;
     EXPECT_EQ(command->name.size(), name.size()) << name;
   }
 }
 
 TEST(CommandRegistryTest, ExposesCommandMetadata) {
-  const auto* get = Find("GET");
+  const Command* get = Find("GET");
   ASSERT_NE(get, nullptr);
   EXPECT_TRUE(get->arity.Accepts(1));
   EXPECT_FALSE(get->arity.Accepts(0));
@@ -92,24 +92,24 @@ TEST(CommandRegistryTest, ExposesCommandMetadata) {
   EXPECT_EQ(get->keys.first, 0);
   EXPECT_EQ(get->keys.last, 0);
 
-  const auto* mset = Find("MSET");
+  const Command* mset = Find("MSET");
   ASSERT_NE(mset, nullptr);
   EXPECT_EQ(mset->access, CommandAccess::kWrite);
   EXPECT_EQ(mset->keys.first, 0);
   EXPECT_EQ(mset->keys.last, KeySpec::kAllRemaining);
   EXPECT_EQ(mset->keys.step, 2);
 
-  const auto* ping = Find("PING");
+  const Command* ping = Find("PING");
   ASSERT_NE(ping, nullptr);
   EXPECT_EQ(ping->access, CommandAccess::kConnection);
   EXPECT_FALSE(ping->keys.HasKeys());
 
-  const auto* rewrite = Find("BGREWRITEAOF");
+  const Command* rewrite = Find("BGREWRITEAOF");
   ASSERT_NE(rewrite, nullptr);
   EXPECT_EQ(rewrite->access, CommandAccess::kAdmin);
   EXPECT_FALSE(rewrite->keys.HasKeys());
 
-  const auto* info = Find("INFO");
+  const Command* info = Find("INFO");
   ASSERT_NE(info, nullptr);
   EXPECT_EQ(info->access, CommandAccess::kAdmin);
   EXPECT_TRUE(info->arity.Accepts(0));
@@ -117,19 +117,19 @@ TEST(CommandRegistryTest, ExposesCommandMetadata) {
 }
 
 TEST(CommandRegistryTest, OnlyAuthAndQuitRunBeforeAuth) {
-  const auto* auth = Find("auth");
+  const Command* auth = Find("auth");
   ASSERT_NE(auth, nullptr);
   EXPECT_TRUE(auth->allowed_before_auth);
   EXPECT_TRUE(auth->arity.Accepts(1));
   EXPECT_TRUE(auth->arity.Accepts(2));
   EXPECT_FALSE(auth->arity.Accepts(3));
 
-  const auto* quit = Find("QUIT");
+  const Command* quit = Find("QUIT");
   ASSERT_NE(quit, nullptr);
   EXPECT_TRUE(quit->allowed_before_auth);
 
   for (const auto* name : {"PING", "HELLO", "GET", "SET", "INFO"}) {
-    const auto* command = Find(name);
+    const Command* command = Find(name);
     ASSERT_NE(command, nullptr) << name;
     EXPECT_FALSE(command->allowed_before_auth) << name;
   }
@@ -137,12 +137,12 @@ TEST(CommandRegistryTest, OnlyAuthAndQuitRunBeforeAuth) {
 
 TEST(CommandRegistryTest, OnlyTransactionControlRunsImmediatelyInMulti) {
   for (const auto* name : {"EXEC", "DISCARD", "MULTI", "WATCH", "QUIT"}) {
-    const auto* command = Find(name);
+    const Command* command = Find(name);
     ASSERT_NE(command, nullptr) << name;
     EXPECT_FALSE(command->queued_in_multi) << name;
   }
   for (const auto* name : {"UNWATCH", "GET", "SET", "PING", "HELLO", "AUTH"}) {
-    const auto* command = Find(name);
+    const Command* command = Find(name);
     ASSERT_NE(command, nullptr) << name;
     EXPECT_TRUE(command->queued_in_multi) << name;
   }

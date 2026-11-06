@@ -27,7 +27,7 @@ class DynamicBuffer {
   std::optional<std::string_view> ReadLineView();
   std::string ReadLine();
   std::string_view View() const {
-    return std::string_view(buf_.get() + processed_, UnreadSize());
+    return std::string_view(buffer_.get() + processed_, UnreadSize());
   }
   std::string ToString() const { return std::string(View()); }
   bool Empty() const { return processed_ == size_; }
@@ -38,7 +38,7 @@ class DynamicBuffer {
   size_t UnreadSize() const { return size_ - processed_; }
   void Reserve(size_t n);
   void Resize(size_t n);
-  std::unique_ptr<char[]> buf_;
+  std::unique_ptr<char[]> buffer_;
   size_t capacity_;
   size_t size_;
   size_t processed_;

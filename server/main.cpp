@@ -12,7 +12,8 @@
 #endif
 
 int main(int argc, char* argv[]) {
-  const auto result = redis_simple::ParseServerOptions(argc, argv);
+  const redis_simple::OptionsResult result =
+      redis_simple::ParseServerOptions(argc, argv);
   if (result.status == redis_simple::OptionsStatus::kHelp) {
     std::cout << redis_simple::ServerUsage();
     return EXIT_SUCCESS;

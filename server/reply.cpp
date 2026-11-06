@@ -126,22 +126,22 @@ size_t EncodeBulkStringHeader(size_t length, char* const buffer,
   return static_cast<size_t>(end - buffer);
 }
 
-std::string FromFloat(double fl, ProtocolVersion protocol) {
+std::string FromFloat(double value, ProtocolVersion protocol) {
   std::string reply;
-  AppendFloat(fl, protocol, &reply);
+  AppendFloat(value, protocol, &reply);
   return reply;
 }
 
-void AppendFloat(double fl, ProtocolVersion protocol,
+void AppendFloat(double value, ProtocolVersion protocol,
                  std::string* const reply) {
   utils::FloatBuffer buffer;
-  const std::string_view value = utils::FormatFloat(fl, &buffer);
+  const std::string_view text = utils::FormatFloat(value, &buffer);
   if (protocol == ProtocolVersion::kResp2) {
-    AppendBulkString(value, reply);
+    AppendBulkString(text, reply);
     return;
   }
   reply->push_back(kDoublePrefix);
-  reply->append(value.data(), value.size()).append(kCrlf.data(), kCrlf.size());
+  reply->append(text.data(), text.size()).append(kCrlf.data(), kCrlf.size());
 }
 
 std::string FromError(std::string_view message) {

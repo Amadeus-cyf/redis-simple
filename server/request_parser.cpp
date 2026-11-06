@@ -231,7 +231,7 @@ ParseResult Parse(std::string_view input, ParseState* const state,
     return {ParseStatus::kIncomplete, 0};
   }
   if (state->element_count == 0 && input.front() != '*') {
-    const auto result = ParseInline(input, command, args);
+    const ParseResult result = ParseInline(input, command, args);
     if (result.status != ParseStatus::kComplete) {
       *command = {};
       args->clear();
@@ -240,7 +240,7 @@ ParseResult Parse(std::string_view input, ParseState* const state,
   }
 
   if (state->element_count == 0) {
-    const auto result = ParseFreshResp(input, state, command, args);
+    const ParseResult result = ParseFreshResp(input, state, command, args);
     if (result.status != ParseStatus::kComplete) {
       *command = {};
       args->clear();
@@ -251,12 +251,12 @@ ParseResult Parse(std::string_view input, ParseState* const state,
     return result;
   }
 
-  const auto result = ResumeResp(input, state);
+  const ParseResult result = ResumeResp(input, state);
   if (result.status == ParseStatus::kIncomplete) {
     return result;
   }
   if (result.status == ParseStatus::kComplete) {
-    const auto& elements = state->elements;
+    const std::vector<std::pair<size_t, size_t>>& elements = state->elements;
     *command = input.substr(elements.front().first, elements.front().second);
     args->reserve(elements.size() - 1);
     for (size_t index = 1; index < elements.size(); ++index) {

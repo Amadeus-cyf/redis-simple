@@ -10,40 +10,41 @@
 
 namespace redis_simple::utils {
 TEST(StringUtilsTest, Split) {
-  const auto str0 = Split("string for testing", " ");
+  const std::vector<std::string> str0 = Split("string for testing", " ");
   ASSERT_EQ(str0, std::vector<std::string>({"string", "for", "testing"}));
 
-  const auto str1 = Split("string\ntestfor\nnewlinedelimiter\n", "\n");
+  const std::vector<std::string> str1 =
+      Split("string\ntestfor\nnewlinedelimiter\n", "\n");
   ASSERT_EQ(str1, std::vector<std::string>(
                       {"string", "testfor", "newlinedelimiter"}));
 
-  const auto str2 = Split("string for test", ",");
+  const std::vector<std::string> str2 = Split("string for test", ",");
   ASSERT_EQ(str2, std::vector<std::string>({"string for test"}));
 
-  const auto str3 = Split("", ",");
+  const std::vector<std::string> str3 = Split("", ",");
   ASSERT_TRUE(str3.empty());
 
-  const auto str4 = Split("string for testing", "");
+  const std::vector<std::string> str4 = Split("string for testing", "");
   ASSERT_EQ(str4, std::vector<std::string>({"string for testing"}));
 
-  const auto str5 = Split("", "");
+  const std::vector<std::string> str5 = Split("", "");
   ASSERT_EQ(str5, std::vector<std::string>({""}));
 }
 
 TEST(StringUtilsTest, SplitView) {
   const std::string command = "set key value";
-  const auto args = SplitView(command, " ");
+  const std::vector<std::string_view> args = SplitView(command, " ");
 
   ASSERT_EQ(args.size(), 3);
   EXPECT_EQ(args[0], "set");
   EXPECT_EQ(args[1], "key");
   EXPECT_EQ(args[2], "value");
 
-  const auto no_delimiter = SplitView(command, ",");
+  const std::vector<std::string_view> no_delimiter = SplitView(command, ",");
   ASSERT_EQ(no_delimiter.size(), 1);
   EXPECT_EQ(no_delimiter[0], command);
 
-  const auto empty_delimiter = SplitView(command, "");
+  const std::vector<std::string_view> empty_delimiter = SplitView(command, "");
   ASSERT_EQ(empty_delimiter.size(), 1);
   EXPECT_EQ(empty_delimiter[0], command);
 }

@@ -28,16 +28,16 @@ static size_t RandomIndex(size_t size) {
   return dist(Rng());
 }
 
-static std::string RandomString(int len) {
+static std::string RandomString(int length) {
   static constexpr std::string_view kAlphaNum =
       "0123456789"
       "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
       "abcdefghijklmnopqrstuvwxyz";
   std::uniform_int_distribution<size_t> dist(0, kAlphaNum.size() - 1);
   std::string str;
-  str.reserve(len);
+  str.reserve(length);
 
-  for (int i = 0; i < len; ++i) {
+  for (int i = 0; i < length; ++i) {
     str += kAlphaNum[dist(Rng())];
   }
 
@@ -47,7 +47,7 @@ static std::string RandomString(int len) {
 static void DictAdd(benchmark::State& state) {
   for (auto _ : state) {
     (void)_;
-    const auto key = RandomString(10);
+    const std::string key = RandomString(10);
     BenchmarkKeys().push_back(key);
     BenchmarkDict().Insert(key, RandomString(10));
   }

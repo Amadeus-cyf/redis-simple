@@ -17,7 +17,7 @@ namespace {
 constexpr std::string_view kRequest = "ping";
 constexpr std::string_view kResponse = "pong";
 
-ssize_t ReadWithTimeout(int fd, char* buffer, size_t len) {
+ssize_t ReadWithTimeout(int fd, char* buffer, size_t length) {
   pollfd pfd{};
   pfd.fd = fd;
   pfd.events = POLLIN;
@@ -25,12 +25,12 @@ ssize_t ReadWithTimeout(int fd, char* buffer, size_t len) {
   if (poll(&pfd, 1, 1000) <= 0) {
     return -1;
   }
-  return read(fd, buffer, len);
+  return read(fd, buffer, length);
 }
 }  // namespace
 
 int Run(int port) {
-  const tcp::TcpAddrInfo remote("localhost", port);
+  const tcp::TcpAddress remote("localhost", port);
   const int fd = tcp::TcpBindAndConnect(remote, {}, false);
   if (fd < 0) {
     RS_LOG_DEBUG("failed to connect to tcp integration server\n");

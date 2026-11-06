@@ -4,7 +4,10 @@ set -u
 server="$1"
 shift
 
-"$server" &
+# REDIS_SIMPLE_SERVER_ARGS adds server flags, such as "--io-threads 4"; it is
+# split on spaces on purpose.
+# shellcheck disable=SC2086
+"$server" ${REDIS_SIMPLE_SERVER_ARGS:-} &
 server_pid=$!
 
 cleanup() {

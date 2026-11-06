@@ -13,7 +13,7 @@
 
 namespace redis_simple::command::zsets {
 void HandleZAdd(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   // Validate every score before mutating anything.
   if (args.size() % 2 == 0) {
     client->AddReply(reply::kSyntaxError);

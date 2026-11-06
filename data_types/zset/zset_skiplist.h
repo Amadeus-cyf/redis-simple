@@ -19,7 +19,7 @@ class ZSetSkiplist : public ZSetStorage {
   bool InsertOrUpdate(std::string_view key, double score) override;
   bool Delete(std::string_view key) override;
   std::optional<double> Score(std::string_view key) const override {
-    const auto* score = dict_->FindValue(key);
+    const double* score = dict_->FindValue(key);
     return score == nullptr ? std::nullopt : std::optional<double>(*score);
   }
   std::optional<size_t> Rank(std::string_view key) const override;
@@ -42,7 +42,8 @@ class ZSetSkiplist : public ZSetStorage {
   struct EntryOrder {
     std::partial_ordering operator()(const ZSetEntry& entry,
                                      const MemberRef& member) const {
-      if (const auto order = entry.score <=> member.score; order != 0) {
+      if (const std::partial_ordering order = entry.score <=> member.score;
+          order != 0) {
         return order;
       }
       return std::string_view(entry.key) <=> member.key;

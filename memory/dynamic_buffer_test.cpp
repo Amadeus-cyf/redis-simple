@@ -12,23 +12,23 @@
 namespace redis_simple::in_memory {
 namespace {
 std::array<char, 4096> MakeLineBuffer() {
-  std::array<char, 4096> buf{};
+  std::array<char, 4096> dynamic_buffer{};
   char c = 'a';
-  for (size_t i = 0; i < buf.size(); ++i) {
+  for (size_t i = 0; i < dynamic_buffer.size(); ++i) {
     if ((i + 1) % 1024 == 0) {
       ++c;
-      buf[i] = '\n';
+      dynamic_buffer[i] = '\n';
     } else {
-      buf[i] = c;
+      dynamic_buffer[i] = c;
     }
   }
-  return buf;
+  return dynamic_buffer;
 }
 
 std::unique_ptr<DynamicBuffer> MakeFilledBuffer() {
   auto buffer = std::make_unique<DynamicBuffer>();
-  const auto buf = MakeLineBuffer();
-  buffer->Append(buf.data(), buf.size());
+  const auto dynamic_buffer = MakeLineBuffer();
+  buffer->Append(dynamic_buffer.data(), dynamic_buffer.size());
   return buffer;
 }
 
@@ -99,12 +99,12 @@ TEST(DynamicBufferTest, TrimProcessed) {
 
 TEST(DynamicBufferTest, Resize) {
   auto buffer = MakeTrimmedBuffer();
-  std::array<char, 8192> buf{};
-  for (size_t i = 0; i < buf.size(); ++i) {
-    buf[i] = (i + 1) % 1024 == 0 ? '\n' : 'c';
+  std::array<char, 8192> dynamic_buffer{};
+  for (size_t i = 0; i < dynamic_buffer.size(); ++i) {
+    dynamic_buffer[i] = (i + 1) % 1024 == 0 ? '\n' : 'c';
   }
   ASSERT_EQ(buffer->Size(), 1024);
-  buffer->Append(buf.data(), buf.size());
+  buffer->Append(dynamic_buffer.data(), dynamic_buffer.size());
   ASSERT_EQ(buffer->Capacity(), 9216);
   ASSERT_EQ(buffer->Size(), 9216);
   ASSERT_EQ(buffer->Consumed(), 0);

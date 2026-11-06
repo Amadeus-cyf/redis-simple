@@ -250,7 +250,7 @@ constexpr std::array<uint8_t, kIndexSize> BuildIndex() {
   return index;
 }
 
-constexpr auto kCommandIndex = BuildIndex();
+constexpr const std::array<uint8_t, kIndexSize> kCommandIndex = BuildIndex();
 }  // namespace
 
 const Command* Find(std::string_view name) {

@@ -8,7 +8,7 @@ namespace redis_simple {
 TEST(ServerOptionsTest, UsesDefaults) {
   constexpr std::array kArgv = {"redis_simple"};
 
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_EQ(result.options.bind_address, "127.0.0.1");
@@ -21,13 +21,31 @@ TEST(ServerOptionsTest, UsesDefaults) {
   EXPECT_EQ(result.options.aof_options.auto_rewrite_percentage, 100);
   EXPECT_TRUE(result.options.require_pass.empty());
   EXPECT_TRUE(result.options.protected_mode);
+  EXPECT_EQ(result.options.io_threads, 1);
+}
+
+TEST(ServerOptionsTest, ParsesIoThreads) {
+  constexpr std::array kArgv = {"redis_simple", "--io-threads", "4"};
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
+  EXPECT_EQ(result.status, OptionsStatus::kOk);
+  EXPECT_EQ(result.options.io_threads, 4);
+
+  constexpr std::array kMax = {"redis_simple", "--io-threads", "128"};
+  EXPECT_EQ(ParseServerOptions(kMax.size(), kMax.data()).options.io_threads,
+            128);
+  for (const char* const invalid : {"0", "129", "-1", "four", "4x", ""}) {
+    const std::array argv = {"redis_simple", "--io-threads", invalid};
+    EXPECT_EQ(ParseServerOptions(argv.size(), argv.data()).status,
+              OptionsStatus::kError)
+        << invalid;
+  }
 }
 
 TEST(ServerOptionsTest, ParsesSecurityOptions) {
   constexpr std::array kArgv = {"redis_simple", "--requirepass", "s3cret",
                                 "--protected-mode", "no"};
 
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_EQ(result.options.require_pass, "s3cret");
@@ -42,7 +60,7 @@ TEST(ServerOptionsTest, ParsesBindAddressAndPort) {
   constexpr std::array kArgv = {"redis_simple", "--bind", "0.0.0.0", "--port",
                                 "6380"};
 
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_EQ(result.options.bind_address, "0.0.0.0");
@@ -62,7 +80,7 @@ TEST(ServerOptionsTest, ParsesAofOptions) {
                                 "--auto-aof-rewrite-percentage",
                                 "50"};
 
-  const auto result = ParseServerOptions(kArgv.size(), kArgv.data());
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_TRUE(result.options.append_only);

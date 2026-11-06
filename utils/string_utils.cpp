@@ -98,18 +98,18 @@ std::vector<std::string> Split(const std::string& s,
   if (delimiter.empty()) {
     return {s};
   }
-  std::vector<std::string> res;
-  res.reserve(SplitTokenCount(s, delimiter));
+  std::vector<std::string> result;
+  result.reserve(SplitTokenCount(s, delimiter));
   size_t start = 0;
   size_t end = std::string::npos;
   while ((end = s.find(delimiter, start)) != std::string::npos) {
-    res.emplace_back(s.substr(start, end - start));
+    result.emplace_back(s.substr(start, end - start));
     start = end + delimiter.size();
   }
   if (start < s.length()) {
-    res.emplace_back(s.substr(start));
+    result.emplace_back(s.substr(start));
   }
-  return res;
+  return result;
 }
 
 std::vector<std::string_view> SplitView(std::string_view s,
@@ -117,29 +117,29 @@ std::vector<std::string_view> SplitView(std::string_view s,
   if (delimiter.empty()) {
     return {s};
   }
-  std::vector<std::string_view> res;
-  res.reserve(SplitTokenCount(s, delimiter));
+  std::vector<std::string_view> result;
+  result.reserve(SplitTokenCount(s, delimiter));
   size_t start = 0;
   size_t end = std::string_view::npos;
   while ((end = s.find(delimiter, start)) != std::string_view::npos) {
-    res.emplace_back(s.substr(start, end - start));
+    result.emplace_back(s.substr(start, end - start));
     start = end + delimiter.size();
   }
   if (start < s.length()) {
-    res.emplace_back(s.substr(start));
+    result.emplace_back(s.substr(start));
   }
-  return res;
+  return result;
 }
 
-void ShiftCString(char* s, size_t len, size_t offset) {
+void ShiftCString(char* s, size_t length, size_t offset) {
   if ((s == nullptr) || offset == 0) {
     return;
   }
-  if (offset >= len) {
-    std::memset(s, '\0', len);
+  if (offset >= length) {
+    std::memset(s, '\0', length);
     return;
   }
-  std::memmove(s, s + offset, len - offset);
+  std::memmove(s, s + offset, length - offset);
 }
 
 void ToUppercase(std::string& s) {

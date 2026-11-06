@@ -11,7 +11,7 @@
 
 namespace redis_simple::utils {
 namespace {
-// Formats `fl` as fixed-point text with at most kMaxFastDecimals decimals
+// Formats `value` as fixed-point text with at most kMaxFastDecimals decimals
 // when that text is exactly the shortest round-trip form, which covers
 // typical scores such as 1.5 or 99.95 without the general shortest-digit
 // search. Returns the length written, or 0 to fall back to it.
@@ -19,11 +19,11 @@ constexpr int kMaxFastDecimals = 6;
 constexpr std::array<double, kMaxFastDecimals + 1> kPowersOfTen = {
     1, 10, 100, 1000, 10000, 100000, 1000000};
 
-size_t FormatShortDecimal(double fl, char* const out) {
-  const double magnitude = std::abs(fl);
+size_t FormatShortDecimal(double value, char* const out) {
+  const double magnitude = std::abs(value);
   // 2^51 / 10^k bounds both the scaled integer below 2^53 and the double
-  // spacing near `fl` below half of 10^-k, so exactly one k-decimal number
-  // rounds to `fl`, and it is the one the shortest form would print.
+  // spacing near `value` below half of 10^-k, so exactly one k-decimal number
+  // rounds to `value`, and it is the one the shortest form would print.
   // Values below 10^-4 print in scientific notation instead.
   constexpr double kTwoPow51 = 2251799813685248.0;
   if (!(magnitude >= 1e-4) || magnitude >= kTwoPow51 / kPowersOfTen.back()) {
@@ -50,8 +50,8 @@ size_t FormatShortDecimal(double fl, char* const out) {
     for (uint64_t rest = integer_part; rest >= 10; rest /= 10) {
       ++integer_digits;
     }
-    const size_t length =
-        (fl < 0 ? 1 : 0) + integer_digits + 1 + static_cast<size_t>(decimals);
+    const size_t length = (value < 0 ? 1 : 0) + integer_digits + 1 +
+                          static_cast<size_t>(decimals);
     char* cursor = out + length;
     uint64_t remaining = scaled;
     for (int i = 0; i < decimals; ++i) {
@@ -63,7 +63,7 @@ size_t FormatShortDecimal(double fl, char* const out) {
       *--cursor = static_cast<char>('0' + (remaining % 10));
       remaining /= 10;
     }
-    if (fl < 0) {
+    if (value < 0) {
       *--cursor = '-';
     }
     return length;
@@ -72,7 +72,7 @@ size_t FormatShortDecimal(double fl, char* const out) {
 }
 }  // namespace
 
-std::string_view FormatFloat(double fl, FloatBuffer* const buffer) {
+std::string_view FormatFloat(double value, FloatBuffer* const buffer) {
   char* const begin = buffer->data();
   char* const limit = begin + buffer->size();
   // Every integer of magnitude at most 2^53 is exactly representable, so its
@@ -81,16 +81,17 @@ std::string_view FormatFloat(double fl, FloatBuffer* const buffer) {
   constexpr double kMaxExactInteger = 9007199254740992.0;
   // The cast is in range below 2^53, and converting back compares the value
   // with its integer part without a libm trunc call.
-  if (std::abs(fl) <= kMaxExactInteger &&
-      static_cast<double>(static_cast<int64_t>(fl)) == fl &&
-      (fl != 0 || !std::signbit(fl))) {
-    const auto integer = std::to_chars(begin, limit, static_cast<int64_t>(fl));
+  if (std::abs(value) <= kMaxExactInteger &&
+      static_cast<double>(static_cast<int64_t>(value)) == value &&
+      (value != 0 || !std::signbit(value))) {
+    const auto integer =
+        std::to_chars(begin, limit, static_cast<int64_t>(value));
     return {begin, integer.ptr};
   }
-  if (const size_t length = FormatShortDecimal(fl, begin); length != 0) {
+  if (const size_t length = FormatShortDecimal(value, begin); length != 0) {
     return {begin, length};
   }
-  auto [end, error] = std::to_chars(begin, limit, fl);
+  auto [end, error] = std::to_chars(begin, limit, value);
   if (error != std::errc()) {
     return {};
   }
@@ -109,7 +110,7 @@ std::string_view FormatFloat(double fl, FloatBuffer* const buffer) {
         exponent_start, exponent_text.data() + exponent_text.size(), exponent);
     if (exponent_result.ec == std::errc() && exponent >= -4 && exponent <= 16) {
       const auto fixed =
-          std::to_chars(begin, limit, fl, std::chars_format::fixed);
+          std::to_chars(begin, limit, value, std::chars_format::fixed);
       if (fixed.ec == std::errc()) {
         end = fixed.ptr;
       }
@@ -118,9 +119,9 @@ std::string_view FormatFloat(double fl, FloatBuffer* const buffer) {
   return {begin, end};
 }
 
-std::string FloatToString(double fl) {
+std::string FloatToString(double value) {
   FloatBuffer buffer;
-  return std::string(FormatFloat(fl, &buffer));
+  return std::string(FormatFloat(value, &buffer));
 }
 
 namespace {

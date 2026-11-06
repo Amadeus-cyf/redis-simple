@@ -83,7 +83,7 @@ void AddHashListReply(Client* const client, Visit visit) {
 }  // namespace
 
 void HandleHSet(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   if (args.size() % 2 == 0) {
     client->AddReply(reply::WrongNumberOfArguments("hset"));
     return;
@@ -101,7 +101,7 @@ void HandleHSet(Client* const client) {
 }
 
 void HandleHGet(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   const Hash* hash = nullptr;
   if (!LookupHash(client, args[0], &hash)) {
     return;
@@ -117,7 +117,7 @@ void HandleHGet(Client* const client) {
 }
 
 void HandleHDel(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   const auto [object, wrong_type] =
       MutableLookupTyped(client->Db(), args[0], kHash);
   if (wrong_type) {
@@ -150,7 +150,7 @@ void HandleHLen(Client* const client) {
 }
 
 void HandleHExists(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   const Hash* hash = nullptr;
   if (!LookupHash(client, args[0], &hash)) {
     return;
@@ -178,7 +178,7 @@ void HandleHGetAll(Client* const client) {
 }
 
 void HandleHMGet(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   const Hash* hash = nullptr;
   if (!LookupHash(client, args[0], &hash)) {
     return;
@@ -211,7 +211,7 @@ void HandleHVals(Client* const client) {
 }
 
 void HandleHIncrBy(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   int64_t increment = 0;
   if (!utils::ToInt64(args[2], &increment)) {
     client->AddReply(reply::kNotAnIntegerError);

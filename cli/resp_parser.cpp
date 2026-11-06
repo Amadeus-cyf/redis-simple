@@ -50,7 +50,7 @@ bool ParseSize(std::string_view value, size_t* const result) {
 
 ParseResult ParseLine(std::string_view resp, size_t start,
                       std::vector<std::string>* const reply) {
-  const auto line = FindLineEnd(resp, start + 1);
+  const ParseResult line = FindLineEnd(resp, start + 1);
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
@@ -60,7 +60,7 @@ ParseResult ParseLine(std::string_view resp, size_t start,
 
 ParseResult ParseBulkString(std::string_view resp, size_t start,
                             std::vector<std::string>* const reply) {
-  const auto header = FindLineEnd(resp, start + 1);
+  const ParseResult header = FindLineEnd(resp, start + 1);
   if (header.status != ParseStatus::kComplete) {
     return header;
   }
@@ -91,7 +91,7 @@ ParseResult ParseBulkString(std::string_view resp, size_t start,
 
 ParseResult ParseInteger(std::string_view resp, size_t start,
                          std::vector<std::string>* const reply) {
-  const auto line = FindLineEnd(resp, start + 1);
+  const ParseResult line = FindLineEnd(resp, start + 1);
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
@@ -107,7 +107,7 @@ ParseResult ParseInteger(std::string_view resp, size_t start,
 ParseResult ParseAggregate(std::string_view resp, size_t start,
                            size_t element_multiplier,
                            std::vector<std::string>* const reply) {
-  const auto header = FindLineEnd(resp, start + 1);
+  const ParseResult header = FindLineEnd(resp, start + 1);
   if (header.status != ParseStatus::kComplete) {
     return header;
   }
@@ -126,7 +126,7 @@ ParseResult ParseAggregate(std::string_view resp, size_t start,
   size_t consumed = header.consumed - start + 2;
   const size_t element_count = length * element_multiplier;
   for (size_t index = 0; index < element_count; ++index) {
-    const auto element = ParseAt(resp, start + consumed, reply);
+    const ParseResult element = ParseAt(resp, start + consumed, reply);
     if (element.status != ParseStatus::kComplete) {
       return element;
     }
@@ -156,7 +156,7 @@ ParseResult ParseSet(std::string_view resp, size_t start,
 
 ParseResult ParseNull(std::string_view resp, size_t start,
                       std::vector<std::string>* const reply) {
-  const auto line = FindLineEnd(resp, start + 1);
+  const ParseResult line = FindLineEnd(resp, start + 1);
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
@@ -250,7 +250,7 @@ bool ParseFloatText(std::string_view value, std::string* const rendered) {
 
 ParseResult ParseFloat(std::string_view resp, size_t start,
                        std::vector<std::string>* const reply) {
-  const auto line = FindLineEnd(resp, start + 1);
+  const ParseResult line = FindLineEnd(resp, start + 1);
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
@@ -294,7 +294,7 @@ ParseResult ParseAt(std::string_view resp, size_t start,
 
 ParseResult Parse(std::string_view resp, std::vector<std::string>& reply) {
   const size_t original_size = reply.size();
-  const auto result = ParseAt(resp, 0, &reply);
+  const ParseResult result = ParseAt(resp, 0, &reply);
   if (result.status != ParseStatus::kComplete) {
     reply.resize(original_size);
   }

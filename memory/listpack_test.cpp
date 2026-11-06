@@ -23,51 +23,51 @@ ListPack::ListPackEntry StrEntry(std::string_view str) {
   return {str, 0, false};
 }
 
-ListPack::ListPackEntry IntEntry(int64_t val) { return {"", val, true}; }
+ListPack::ListPackEntry IntEntry(int64_t value) { return {"", value, true}; }
 
-std::string StringAt(const ListPack& listpack, size_t idx) {
-  size_t len = 0;
-  const unsigned char* data = listpack.Get(idx, &len);
-  return {reinterpret_cast<const char*>(data), len};
+std::string StringAt(const ListPack& listpack, size_t offset) {
+  size_t length = 0;
+  const unsigned char* data = listpack.Get(offset, &length);
+  return {reinterpret_cast<const char*>(data), length};
 }
 
-void ExpectEntryAt(const ListPack& listpack, size_t idx,
+void ExpectEntryAt(const ListPack& listpack, size_t offset,
                    const ListPack::ListPackEntry& entry) {
   if (!entry.is_integer) {
-    EXPECT_EQ(StringAt(listpack, idx), entry.str);
+    EXPECT_EQ(StringAt(listpack, offset), entry.str);
     return;
   }
 
-  const auto expected = std::to_string(entry.sval);
-  EXPECT_EQ(StringAt(listpack, idx), expected);
-  EXPECT_EQ(listpack.IntegerAt(idx), entry.sval);
+  const std::string expected = std::to_string(entry.integer_value);
+  EXPECT_EQ(StringAt(listpack, offset), expected);
+  EXPECT_EQ(listpack.IntegerAt(offset), entry.integer_value);
 }
 
 std::optional<size_t> ExpectEntriesFrom(
-    const ListPack& listpack, size_t start_idx,
+    const ListPack& listpack, size_t start_offset,
     const std::vector<ListPack::ListPackEntry>& entries) {
-  std::optional<size_t> idx = start_idx;
+  std::optional<size_t> offset = start_offset;
   for (const auto& entry : entries) {
-    if (!idx.has_value()) {
+    if (!offset.has_value()) {
       ADD_FAILURE() << "listpack ended before all entries were checked";
-      return idx;
+      return offset;
     }
-    ExpectEntryAt(listpack, *idx, entry);
-    idx = listpack.Next(*idx);
+    ExpectEntryAt(listpack, *offset, entry);
+    offset = listpack.Next(*offset);
   }
-  return idx;
+  return offset;
 }
 
-size_t Advance(const ListPack& listpack, size_t idx, size_t steps) {
+size_t Advance(const ListPack& listpack, size_t offset, size_t steps) {
   for (size_t step = 0; step < steps; ++step) {
-    const auto next = listpack.Next(idx);
+    const std::optional<size_t> next = listpack.Next(offset);
     if (!next.has_value()) {
       ADD_FAILURE() << "listpack ended before the requested advance";
-      return idx;
+      return offset;
     }
-    idx = *next;
+    offset = *next;
   }
-  return idx;
+  return offset;
 }
 
 std::vector<ListPack::ListPackEntry> MakeBatchAppendEntries(
@@ -142,30 +142,30 @@ std::unique_ptr<ListPack> MakeInsertedListPack() {
   std::string s0("test string 2");
   std::string s1(4094, 'f');
   std::string s2(4097, 'g');
-  size_t idx = Advance(*listpack, RequireIndex(listpack->First()), 3);
-  listpack->Insert(idx, s0);
-  idx = Advance(*listpack, idx, 2);
-  listpack->Insert(idx, INT64_MAX - 7);
-  idx = Advance(*listpack, idx, 2);
-  listpack->Insert(idx, INT32_MIN + 7);
-  idx = Advance(*listpack, idx, 1);
-  listpack->Insert(idx, s1);
-  idx = Advance(*listpack, idx, 2);
-  listpack->Insert(idx, s2);
+  size_t offset = Advance(*listpack, RequireIndex(listpack->First()), 3);
+  listpack->Insert(offset, s0);
+  offset = Advance(*listpack, offset, 2);
+  listpack->Insert(offset, INT64_MAX - 7);
+  offset = Advance(*listpack, offset, 2);
+  listpack->Insert(offset, INT32_MIN + 7);
+  offset = Advance(*listpack, offset, 1);
+  listpack->Insert(offset, s1);
+  offset = Advance(*listpack, offset, 2);
+  listpack->Insert(offset, s2);
   return listpack;
 }
 
 std::unique_ptr<ListPack> MakeReplacedListPack() {
   auto listpack = MakeInsertedListPack();
-  size_t idx = RequireIndex(listpack->First());
+  size_t offset = RequireIndex(listpack->First());
   for (int i = 0; i < 10; ++i) {
-    idx = RequireIndex(listpack->Next(idx));
+    offset = RequireIndex(listpack->Next(offset));
   }
-  listpack->Replace(idx, std::string("test string update"));
+  listpack->Replace(offset, std::string("test string update"));
   for (int i = 0; i < 7; ++i) {
-    idx = RequireIndex(listpack->Next(idx));
+    offset = RequireIndex(listpack->Next(offset));
   }
-  listpack->Replace(idx, 17);
+  listpack->Replace(offset, 17);
   listpack->Replace(RequireIndex(listpack->First()),
                     std::string("test string update 1"));
   listpack->Replace(RequireIndex(listpack->Last()), 217);
@@ -198,8 +198,8 @@ std::unique_ptr<ListPack> MakeBatchInsertedListPack() {
   std::string s1(4093, 'j');
   std::string s2(4099, 'k');
   const auto entries = MakeBatchInsertEntries(s0, s1, s2);
-  size_t idx = Advance(*listpack, RequireIndex(listpack->First()), 3);
-  listpack->BatchInsert(idx, entries);
+  size_t offset = Advance(*listpack, RequireIndex(listpack->First()), 3);
+  listpack->BatchInsert(offset, entries);
   return listpack;
 }
 }  // namespace
@@ -214,16 +214,16 @@ TEST(ListPackTest, Append) {
   ASSERT_TRUE(listpack->Append(s0));
   ASSERT_EQ(listpack->Size(), 2);
 
-  size_t idx = RequireIndex(listpack->First());
-  ASSERT_EQ(idx, ListPack::kListPackHeaderSize);
-  ASSERT_EQ(listpack->IntegerAt(idx), -1234);
+  size_t offset = RequireIndex(listpack->First());
+  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  ASSERT_EQ(listpack->IntegerAt(offset), -1234);
   size_t l0 = 0;
-  unsigned char* c0 = listpack->Get(idx, &l0);
+  unsigned char* c0 = listpack->Get(offset, &l0);
   ASSERT_TRUE(std::equal(c0, c0 + 5, "-1234"));
 
   size_t l1 = 0;
-  idx = RequireIndex(listpack->Next(idx));
-  unsigned char* c1 = listpack->Get(idx, &l1);
+  offset = RequireIndex(listpack->Next(offset));
+  unsigned char* c1 = listpack->Get(offset, &l1);
   ASSERT_EQ(l1, s0.size());
   ASSERT_TRUE(std::equal(c1, c1 + l1, s0.c_str()));
 
@@ -244,37 +244,37 @@ TEST(ListPackTest, Append) {
   // ASSERT_FALSE(listpack->Append(s4));
 
   ASSERT_EQ(listpack->Size(), 10);
-  idx = RequireIndex(listpack->Next(idx));
-  ASSERT_EQ(listpack->IntegerAt(idx), INT16_MAX >> 3);
-  idx = RequireIndex(listpack->Next(idx));
-  ASSERT_EQ(listpack->IntegerAt(idx), INT16_MAX);
-  idx = RequireIndex(listpack->Next(idx));
-  ASSERT_EQ(listpack->IntegerAt(idx), INT32_MAX >> 8);
-  idx = RequireIndex(listpack->Next(idx));
-  ASSERT_EQ(listpack->IntegerAt(idx), INT32_MAX);
-  idx = RequireIndex(listpack->Next(idx));
-  ASSERT_EQ(listpack->IntegerAt(idx), INT64_MAX);
+  offset = RequireIndex(listpack->Next(offset));
+  ASSERT_EQ(listpack->IntegerAt(offset), INT16_MAX >> 3);
+  offset = RequireIndex(listpack->Next(offset));
+  ASSERT_EQ(listpack->IntegerAt(offset), INT16_MAX);
+  offset = RequireIndex(listpack->Next(offset));
+  ASSERT_EQ(listpack->IntegerAt(offset), INT32_MAX >> 8);
+  offset = RequireIndex(listpack->Next(offset));
+  ASSERT_EQ(listpack->IntegerAt(offset), INT32_MAX);
+  offset = RequireIndex(listpack->Next(offset));
+  ASSERT_EQ(listpack->IntegerAt(offset), INT64_MAX);
 
-  idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
   size_t l2 = 0;
-  unsigned char* c2 = listpack->Get(idx, &l2);
+  unsigned char* c2 = listpack->Get(offset, &l2);
   ASSERT_TRUE(std::equal(c2, c2 + l2, "-1234567890"));
-  ASSERT_EQ(listpack->IntegerAt(idx), -1234567890);
+  ASSERT_EQ(listpack->IntegerAt(offset), -1234567890);
 
-  idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
   size_t l3 = 0;
-  unsigned char* c3 = listpack->Get(idx, &l3);
+  unsigned char* c3 = listpack->Get(offset, &l3);
   ASSERT_EQ(l3, 4095);
   ASSERT_TRUE(std::equal(c3, c3 + l3, s2.c_str()));
 
-  idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
   size_t l4 = 0;
-  unsigned char* c4 = listpack->Get(idx, &l4);
+  unsigned char* c4 = listpack->Get(offset, &l4);
   ASSERT_EQ(l4, 10000);
   ASSERT_TRUE(std::equal(c4, c4 + l4, s3.c_str()));
 
   // Reach the end of the listpack.
-  ASSERT_FALSE(listpack->Next(idx).has_value());
+  ASSERT_FALSE(listpack->Next(offset).has_value());
 }
 
 TEST(ListPackTest, PreservesNonCanonicalIntegerStrings) {
@@ -306,43 +306,43 @@ TEST(ListPackTest, Prepend) {
   listpack->Prepend(s3);
   ASSERT_EQ(listpack->Size(), 16);
 
-  size_t idx = RequireIndex(listpack->First());
-  ASSERT_EQ(idx, ListPack::kListPackHeaderSize);
+  size_t offset = RequireIndex(listpack->First());
+  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
   size_t l0 = 0;
-  unsigned char* c0 = listpack->Get(idx, &l0);
+  unsigned char* c0 = listpack->Get(offset, &l0);
   ASSERT_EQ(l0, s3.size());
   ASSERT_TRUE(std::equal(c0, c0 + l0, "123456789"));
-  ASSERT_EQ(listpack->IntegerAt(idx), 123456789);
+  ASSERT_EQ(listpack->IntegerAt(offset), 123456789);
 
-  idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
   size_t l1 = 0;
-  unsigned char* c1 = listpack->Get(idx, &l1);
+  unsigned char* c1 = listpack->Get(offset, &l1);
   ASSERT_EQ(l1, s2.size());
   ASSERT_TRUE(std::equal(c1, c1 + l1, s2.c_str()));
 
-  idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
   size_t l2 = 0;
-  unsigned char* c2 = listpack->Get(idx, &l2);
+  unsigned char* c2 = listpack->Get(offset, &l2);
   ASSERT_EQ(l2, 6);
   ASSERT_TRUE(std::equal(c2, c2 + l2, "-32765"));
-  ASSERT_EQ(listpack->IntegerAt(idx), INT16_MIN + 3);
+  ASSERT_EQ(listpack->IntegerAt(offset), INT16_MIN + 3);
 
-  idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
   size_t l3 = 0;
-  unsigned char* c3 = listpack->Get(idx, &l3);
+  unsigned char* c3 = listpack->Get(offset, &l3);
   ASSERT_EQ(l3, s1.size());
   ASSERT_TRUE(std::equal(c3, c3 + l3, s1.c_str()));
 
-  idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
   size_t l4 = 0;
-  unsigned char* c4 = listpack->Get(idx, &l4);
+  unsigned char* c4 = listpack->Get(offset, &l4);
   ASSERT_EQ(l4, 19);
   ASSERT_TRUE(std::equal(c4, c4 + l4, "9223372036854775803"));
-  ASSERT_EQ(listpack->IntegerAt(idx), INT64_MAX - 4);
+  ASSERT_EQ(listpack->IntegerAt(offset), INT64_MAX - 4);
 
-  idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
   size_t l5 = 0;
-  unsigned char* c5 = listpack->Get(idx, &l5);
+  unsigned char* c5 = listpack->Get(offset, &l5);
   ASSERT_EQ(l5, s0.size());
   ASSERT_TRUE(std::equal(c5, c5 + l5, s0.c_str()));
 }
@@ -353,26 +353,26 @@ TEST(ListPackTest, Insert) {
   std::string s1(4094, 'f');
   std::string s2(4097, 'g');
 
-  size_t idx = RequireIndex(listpack->First());
-  ASSERT_EQ(idx, ListPack::kListPackHeaderSize);
-  idx = Advance(*listpack, idx, 3);
-  size_t i0 = idx;
+  size_t offset = RequireIndex(listpack->First());
+  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  offset = Advance(*listpack, offset, 3);
+  size_t i0 = offset;
   ASSERT_TRUE(listpack->Insert(i0, s0));
 
-  idx = Advance(*listpack, idx, 2);
-  size_t i1 = idx;
+  offset = Advance(*listpack, offset, 2);
+  size_t i1 = offset;
   ASSERT_TRUE(listpack->Insert(i1, INT64_MAX - 7));
 
-  idx = Advance(*listpack, idx, 2);
-  size_t i2 = idx;
+  offset = Advance(*listpack, offset, 2);
+  size_t i2 = offset;
   ASSERT_TRUE(listpack->Insert(i2, INT32_MIN + 7));
 
-  idx = Advance(*listpack, idx, 1);
-  size_t i3 = idx;
+  offset = Advance(*listpack, offset, 1);
+  size_t i3 = offset;
   ASSERT_TRUE(listpack->Insert(i3, s1));
 
-  idx = Advance(*listpack, idx, 2);
-  size_t i4 = idx;
+  offset = Advance(*listpack, offset, 2);
+  size_t i4 = offset;
   ASSERT_TRUE(listpack->Insert(i4, s2));
 
   ASSERT_EQ(listpack->Size(), 21);
@@ -409,91 +409,91 @@ TEST(ListPackTest, Replace) {
   auto listpack = MakeInsertedListPack();
   // Replace string.
   std::string s0("test string update");
-  size_t idx = RequireIndex(listpack->First());
-  ASSERT_EQ(idx, ListPack::kListPackHeaderSize);
+  size_t offset = RequireIndex(listpack->First());
+  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
   for (int i = 0; i < 10; ++i) {
-    idx = RequireIndex(listpack->Next(idx));
+    offset = RequireIndex(listpack->Next(offset));
   }
-  size_t num_of_elements = listpack->Size();
+  size_t element_count = listpack->Size();
   // Get next element to check if it's not changed after the replace.
   size_t l0_next = 0;
-  size_t next0 = RequireIndex(listpack->Next(idx));
+  size_t next0 = RequireIndex(listpack->Next(offset));
   unsigned char* c0_next = listpack->Get(next0, &l0_next);
   std::string s0_next(reinterpret_cast<const char*>(c0_next), l0_next);
   // Replace and get the element.
-  listpack->Replace(idx, s0);
-  ASSERT_EQ(listpack->Size(), num_of_elements);
+  listpack->Replace(offset, s0);
+  ASSERT_EQ(listpack->Size(), element_count);
   size_t l1 = 0;
   size_t l1_next = 0;
-  unsigned char* c1 = listpack->Get(idx, &l1);
+  unsigned char* c1 = listpack->Get(offset, &l1);
   ASSERT_EQ(l1, s0.size());
   ASSERT_TRUE(std::equal(c1, c1 + l1, s0.c_str()));
   // Get the next element and check if it is not changed.
-  size_t next1 = RequireIndex(listpack->Next(idx));
+  size_t next1 = RequireIndex(listpack->Next(offset));
   unsigned char* c1_next = listpack->Get(next1, &l1_next);
   ASSERT_EQ(l1_next, l0_next);
   ASSERT_TRUE(std::equal(c1_next, c1_next + l1_next, s0_next.c_str()));
 
   // Replace integer.
   for (int i = 0; i < 7; ++i) {
-    idx = RequireIndex(listpack->Next(idx));
+    offset = RequireIndex(listpack->Next(offset));
   }
   // Get next element to check if it's not changed after the replace.
   size_t l2_next = 0;
-  size_t next2 = RequireIndex(listpack->Next(idx));
+  size_t next2 = RequireIndex(listpack->Next(offset));
   unsigned char* c2_next = listpack->Get(next2, &l2_next);
   std::string s2_next(reinterpret_cast<const char*>(c2_next), l2_next);
   // Replace and get the element.
-  listpack->Replace(idx, 17);
-  ASSERT_EQ(listpack->Size(), num_of_elements);
+  listpack->Replace(offset, 17);
+  ASSERT_EQ(listpack->Size(), element_count);
   size_t l3 = 0;
   size_t l3_next = 0;
-  unsigned char* c3 = listpack->Get(idx, &l3);
+  unsigned char* c3 = listpack->Get(offset, &l3);
   ASSERT_EQ(l3, 2);
   ASSERT_TRUE(std::equal(c3, c3 + l3, "17"));
-  ASSERT_EQ(listpack->IntegerAt(idx), 17);
+  ASSERT_EQ(listpack->IntegerAt(offset), 17);
   // Get the next element and check if it is not changed.
-  size_t next3 = RequireIndex(listpack->Next(idx));
+  size_t next3 = RequireIndex(listpack->Next(offset));
   unsigned char* c3_next = listpack->Get(next3, &l3_next);
   ASSERT_EQ(l3_next, l2_next);
   ASSERT_TRUE(std::equal(c3_next, c3_next + l3_next, s2_next.c_str()));
 
   // Replace the first element.
-  idx = RequireIndex(listpack->First());
+  offset = RequireIndex(listpack->First());
   std::string s1("test string update 1");
   // Get next element to check if it's not changed after the replace.
   size_t l4_next = 0;
-  size_t next4 = RequireIndex(listpack->Next(idx));
+  size_t next4 = RequireIndex(listpack->Next(offset));
   unsigned char* c4_next = listpack->Get(next4, &l4_next);
   std::string s4_next(reinterpret_cast<const char*>(c4_next), l4_next);
   // Replace and get the element.
-  listpack->Replace(idx, s1);
-  ASSERT_EQ(listpack->Size(), num_of_elements);
+  listpack->Replace(offset, s1);
+  ASSERT_EQ(listpack->Size(), element_count);
   size_t l5 = 0;
   size_t l5_next = 0;
-  unsigned char* c5 = listpack->Get(idx, &l5);
+  unsigned char* c5 = listpack->Get(offset, &l5);
   ASSERT_EQ(l5, s1.size());
   ASSERT_TRUE(std::equal(c5, c5 + l5, s1.c_str()));
   // Get the next element and check if it is not changed.
-  size_t next5 = RequireIndex(listpack->Next(idx));
+  size_t next5 = RequireIndex(listpack->Next(offset));
   unsigned char* c5_next = listpack->Get(next5, &l5_next);
   ASSERT_EQ(l5_next, l4_next);
   ASSERT_TRUE(std::equal(c5_next, c5_next + l5_next, s4_next.c_str()));
 
   // Replace the last element.
-  idx = RequireIndex(listpack->Last());
-  ASSERT_FALSE(listpack->Next(idx).has_value());
+  offset = RequireIndex(listpack->Last());
+  ASSERT_FALSE(listpack->Next(offset).has_value());
   // Replace and get the element.
-  listpack->Replace(idx, 217);
-  ASSERT_EQ(listpack->Size(), num_of_elements);
+  listpack->Replace(offset, 217);
+  ASSERT_EQ(listpack->Size(), element_count);
   size_t l7 = 0;
   [[maybe_unused]] size_t l7_next = 0;
-  unsigned char* c7 = listpack->Get(idx, &l7);
+  unsigned char* c7 = listpack->Get(offset, &l7);
   ASSERT_EQ(l7, 3);
   ASSERT_TRUE(std::equal(c7, c7 + l7, "217"));
-  ASSERT_EQ(listpack->IntegerAt(idx), 217);
+  ASSERT_EQ(listpack->IntegerAt(offset), 217);
   // Check if the element is the last element.
-  ASSERT_FALSE(listpack->Next(idx).has_value());
+  ASSERT_FALSE(listpack->Next(offset).has_value());
 }
 
 TEST(ListPackTest, BatchAppend) {
@@ -502,11 +502,12 @@ TEST(ListPackTest, BatchAppend) {
   std::string s1("hello world");
   std::string s2("-1234567");
   const auto entries = MakeBatchAppendEntries(s0, s1, s2);
-  size_t idx = listpack->TotalBytes() - 1;
+  size_t offset = listpack->TotalBytes() - 1;
   listpack->BatchAppend(entries);
   ASSERT_EQ(listpack->Size(), 30);
-  const auto end_idx = ExpectEntriesFrom(*listpack, idx, entries);
-  ASSERT_FALSE(end_idx.has_value());
+  const std::optional<size_t> end_offset =
+      ExpectEntriesFrom(*listpack, offset, entries);
+  ASSERT_FALSE(end_offset.has_value());
 
   // Append an empty list.
   ASSERT_FALSE(listpack->BatchAppend({}));
@@ -520,9 +521,9 @@ TEST(ListPackTest, BatchPrepend) {
   const auto entries = MakeBatchPrependEntries(s0, s1, s2);
   ASSERT_TRUE(listpack->BatchPrepend(entries));
   ASSERT_EQ(listpack->Size(), 39);
-  size_t idx = RequireIndex(listpack->First());
-  ASSERT_EQ(idx, ListPack::kListPackHeaderSize);
-  ExpectEntriesFrom(*listpack, idx, entries);
+  size_t offset = RequireIndex(listpack->First());
+  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  ExpectEntriesFrom(*listpack, offset, entries);
 
   // Prepend an empty list.
   ASSERT_FALSE(listpack->BatchPrepend({}));
@@ -534,12 +535,12 @@ TEST(ListPackTest, BatchInsert) {
   std::string s1(4093, 'j');
   std::string s2(4099, 'k');
   const auto entries = MakeBatchInsertEntries(s0, s1, s2);
-  size_t idx = RequireIndex(listpack->First());
-  ASSERT_EQ(idx, ListPack::kListPackHeaderSize);
-  idx = Advance(*listpack, idx, 3);
-  ASSERT_TRUE(listpack->BatchInsert(idx, entries));
+  size_t offset = RequireIndex(listpack->First());
+  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  offset = Advance(*listpack, offset, 3);
+  ASSERT_TRUE(listpack->BatchInsert(offset, entries));
   ASSERT_EQ(listpack->Size(), 49);
-  ExpectEntriesFrom(*listpack, idx, entries);
+  ExpectEntriesFrom(*listpack, offset, entries);
 
   // Insert an empty list.
   ASSERT_FALSE(listpack->BatchInsert(0, {}));
@@ -564,18 +565,18 @@ TEST(ListPackTest, Find) {
 
 TEST(ListPackTest, Iterate) {
   auto listpack = MakeBatchInsertedListPack();
-  auto index = listpack->First();
+  std::optional<size_t> index = listpack->First();
   ASSERT_EQ(index, ListPack::kListPackHeaderSize);
 
   std::optional<size_t> previous;
-  size_t len = 0;
+  size_t length = 0;
   while (index.has_value()) {
-    ++len;
+    ++length;
     previous = index;
     index = listpack->Next(*index);
   }
   ASSERT_EQ(previous, listpack->Last());
-  ASSERT_EQ(len, listpack->Size());
+  ASSERT_EQ(length, listpack->Size());
 }
 
 TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
@@ -601,14 +602,14 @@ TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
 
   // Collect every value through Get() and Next() as the reference.
   std::vector<std::string> by_index;
-  for (auto index = listpack.First(); index.has_value();
+  for (std::optional<size_t> index = listpack.First(); index.has_value();
        index = listpack.Next(*index)) {
     by_index.push_back(StringAt(listpack, *index));
   }
   ASSERT_EQ(by_index, expected);
   // Canonical integer strings must use the integer encodings above.
   size_t position = 0;
-  for (auto index = listpack.First(); index.has_value();
+  for (std::optional<size_t> index = listpack.First(); index.has_value();
        index = listpack.Next(*index), ++position) {
     EXPECT_EQ(listpack.IntegerAt(*index).has_value(), position < 6) << position;
   }
@@ -661,11 +662,11 @@ TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
   EXPECT_EQ(calls, 3);
 }
 
-TEST(ListPackTest, IndexAt) {
+TEST(ListPackTest, OffsetAt) {
   auto listpack = MakeBatchInsertedListPack();
   std::vector<size_t> indices;
 
-  auto index = listpack->First();
+  std::optional<size_t> index = listpack->First();
   while (index.has_value()) {
     indices.push_back(*index);
     index = listpack->Next(*index);
@@ -673,53 +674,53 @@ TEST(ListPackTest, IndexAt) {
 
   ASSERT_EQ(indices.size(), listpack->Size());
   for (size_t i = 0; i < indices.size(); ++i) {
-    ASSERT_EQ(listpack->IndexAt(i), indices[i]);
+    ASSERT_EQ(listpack->OffsetAt(i), indices[i]);
   }
-  ASSERT_EQ(listpack->IndexAt(indices.size()), std::nullopt);
+  ASSERT_EQ(listpack->OffsetAt(indices.size()), std::nullopt);
 }
 
 TEST(ListPackTest, Delete) {
   auto listpack = MakeBatchInsertedListPack();
   // Delete the head.
-  size_t idx = RequireIndex(listpack->First());
-  size_t next_idx = RequireIndex(listpack->Next(idx));
-  size_t num_of_elements = listpack->Size();
+  size_t offset = RequireIndex(listpack->First());
+  size_t next_offset = RequireIndex(listpack->Next(offset));
+  size_t element_count = listpack->Size();
   size_t l0 = 0;
-  unsigned char* c0 = listpack->Get(next_idx, &l0);
-  listpack->Delete(idx);
-  idx = RequireIndex(listpack->First());
+  unsigned char* c0 = listpack->Get(next_offset, &l0);
+  listpack->Delete(offset);
+  offset = RequireIndex(listpack->First());
   size_t l1 = 0;
-  unsigned char* c1 = listpack->Get(idx, &l1);
-  ASSERT_EQ(listpack->Size(), num_of_elements - 1);
+  unsigned char* c1 = listpack->Get(offset, &l1);
+  ASSERT_EQ(listpack->Size(), element_count - 1);
   ASSERT_EQ(l0, l1);
   ASSERT_TRUE(std::equal(c1, c1 + l1, c0));
 
   // Delete an element in the mid.
-  idx = RequireIndex(listpack->Next(idx));
-  const size_t prev_idx = RequireIndex(listpack->Next(idx));
-  idx = RequireIndex(listpack->Next(prev_idx));
-  next_idx = RequireIndex(listpack->Next(idx));
+  offset = RequireIndex(listpack->Next(offset));
+  const size_t prev_offset = RequireIndex(listpack->Next(offset));
+  offset = RequireIndex(listpack->Next(prev_offset));
+  next_offset = RequireIndex(listpack->Next(offset));
   size_t l2 = 0;
-  unsigned char* c2 = listpack->Get(next_idx, &l2);
-  num_of_elements = listpack->Size();
-  listpack->Delete(idx);
-  ASSERT_EQ(listpack->Size(), num_of_elements - 1);
-  idx = RequireIndex(listpack->Next(prev_idx));
+  unsigned char* c2 = listpack->Get(next_offset, &l2);
+  element_count = listpack->Size();
+  listpack->Delete(offset);
+  ASSERT_EQ(listpack->Size(), element_count - 1);
+  offset = RequireIndex(listpack->Next(prev_offset));
   size_t l3 = 0;
-  unsigned char* c3 = listpack->Get(idx, &l3);
+  unsigned char* c3 = listpack->Get(offset, &l3);
   ASSERT_EQ(l2, l3);
   ASSERT_TRUE(std::equal(c3, c3 + l3, c2));
 
   // Delete the tail.
-  idx = RequireIndex(listpack->Last());
-  ASSERT_FALSE(listpack->Next(idx).has_value());
+  offset = RequireIndex(listpack->Last());
+  ASSERT_FALSE(listpack->Next(offset).has_value());
   size_t l4 = 0;
-  unsigned char* c4 = listpack->Get(next_idx, &l4);
-  num_of_elements = listpack->Size();
-  listpack->Delete(idx);
-  ASSERT_EQ(listpack->Size(), num_of_elements - 1);
+  unsigned char* c4 = listpack->Get(next_offset, &l4);
+  element_count = listpack->Size();
+  listpack->Delete(offset);
+  ASSERT_EQ(listpack->Size(), element_count - 1);
   size_t l5 = 0;
-  unsigned char* c5 = listpack->Get(next_idx, &l5);
+  unsigned char* c5 = listpack->Get(next_offset, &l5);
   ASSERT_EQ(l4, l5);
   ASSERT_TRUE(std::equal(c5, c5 + l5, c4));
 }
@@ -730,7 +731,7 @@ TEST(ListPackTest, DeleteRangeUsesOneContiguousMutation) {
     ASSERT_TRUE(listpack.Append(value));
   }
 
-  const auto first_deleted = listpack.IndexAt(1);
+  const std::optional<size_t> first_deleted = listpack.OffsetAt(1);
   ASSERT_TRUE(first_deleted.has_value());
   EXPECT_EQ(listpack.DeleteRange(RequireIndex(first_deleted), 3), 3);
   EXPECT_EQ(listpack.Size(), 2);
@@ -742,7 +743,7 @@ TEST(ListPackTest, DeleteRangeUsesOneContiguousMutation) {
                                  return true;
                                }));
   EXPECT_EQ(values, (std::vector<std::string>{"zero", "four"}));
-  const auto first = listpack.First();
+  const std::optional<size_t> first = listpack.First();
   ASSERT_TRUE(first.has_value());
   EXPECT_EQ(listpack.DeleteRange(RequireIndex(first), 100), 2);
   EXPECT_EQ(listpack.Size(), 0);
@@ -819,13 +820,13 @@ TEST(ListPackTest, DeleteMatchingMatchesModelForEveryEncoding) {
 
     // Walk both ways so every moved element's encoding and backlen is used.
     std::vector<std::string> forward;
-    for (auto index = listpack.First(); index.has_value();
+    for (std::optional<size_t> index = listpack.First(); index.has_value();
          index = listpack.Next(*index)) {
       forward.push_back(listpack.Get(*index).value_or("<missing>"));
     }
     EXPECT_EQ(forward, model) << round;
     std::vector<std::string> backward;
-    for (auto index = listpack.Last(); index.has_value();
+    for (std::optional<size_t> index = listpack.Last(); index.has_value();
          index = listpack.Prev(*index)) {
       backward.push_back(listpack.Get(*index).value_or("<missing>"));
     }

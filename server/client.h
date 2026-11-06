@@ -24,6 +24,8 @@ class Aof;
 }
 
 namespace redis_simple {
+class IoThread;
+
 enum class ClientStatus {
   kOk = 0,
   kError = -1,
@@ -59,8 +61,8 @@ class Client {
   size_t AddReply(std::string&& header, std::string&& body);
   // Encodes `value` as a bulk string straight into the output buffer.
   size_t AddBulkReply(std::string_view value);
-  bool HasPendingReplies() const { return !reply_buf_.Empty(); }
-  size_t PendingReplyBytes() const { return reply_buf_.PendingBytes(); }
+  bool HasPendingReplies() const { return !reply_buffer_.Empty(); }
+  size_t PendingReplyBytes() const { return reply_buffer_.PendingBytes(); }
   bool ShouldPauseReads() const;
   bool ShouldResumeReads() const;
   bool ReadsPaused() const { return reads_paused_; }
@@ -69,8 +71,28 @@ class Client {
   void CloseAfterReply() { close_after_reply_ = true; }
   reply::ProtocolVersion Protocol() const { return protocol_; }
   void SetProtocol(reply::ProtocolVersion protocol) { protocol_ = protocol; }
+  // Parses and runs every complete request in the query buffer.
   ClientStatus ProcessInputBuffer();
-  void Free() { connection_->Close(); }
+  // The same work split for I/O threads. ParseQueries, on the client's I/O
+  // thread, frames the complete requests without running them and returns
+  // whether there is anything for the main thread; RunParsedQueries, on the
+  // main thread, validates and runs them. The parsed arguments view the query
+  // buffer, which neither thread touches in between.
+  bool ParseQueries();
+  ClientStatus RunParsedQueries();
+  void Free() {
+    connection_->Close();
+    freed_ = true;
+  }
+  // Whether the server has removed this client; it is destroyed later.
+  bool Freed() const { return freed_; }
+  // The server's I/O threads, for INFO; null without a server.
+  const std::vector<std::unique_ptr<IoThread>>* IoThreads() const {
+    return io_threads_;
+  }
+  void SetIoThreads(const std::vector<std::unique_ptr<IoThread>>* threads) {
+    io_threads_ = threads;
+  }
   const command::CommandArgs& Args() const { return args_; }
   // Requires AUTH before most commands. `password` must outlive the client.
   void RequirePassword(std::string_view password) {
@@ -116,6 +138,12 @@ class Client {
   };
 
   RequestStatus ParseRequest();
+  // RESP framing only: fills `args_` and consumes the request, with no
+  // reply or other side effect.
+  RequestStatus FrameRequest(std::string_view* name);
+  // Command lookup, arity, AUTH, and MISCONF checks; sets `command_`.
+  RequestStatus ValidateRequest(std::string_view name);
+  void FailProtocol();
   ClientStatus ProcessCommand();
   void QueueCommand();
   void ResetTransaction();
@@ -130,13 +158,24 @@ class Client {
   aof::Aof* aof_{nullptr};
   const command::Command* command_{nullptr};
   command::CommandArgs args_;
+  // Requests framed by ParseQueries: each is `arg_count` arguments after its
+  // name at `first` in `parsed_args_`.
+  struct ParsedRequest {
+    size_t first;
+    size_t arg_count;
+  };
+  std::vector<ParsedRequest> parsed_requests_;
+  std::vector<std::string_view> parsed_args_;
+  bool protocol_error_{};
   request_parser::ParseState parse_state_;
-  in_memory::DynamicBuffer query_buf_;
-  in_memory::ReplyBuffer reply_buf_;
+  in_memory::DynamicBuffer query_buffer_;
+  in_memory::ReplyBuffer reply_buffer_;
   std::vector<iovec> reply_blocks_;
   OutputBufferLimits output_limits_;
   reply::ProtocolVersion protocol_{reply::ProtocolVersion::kResp2};
   bool reads_paused_{};
+  bool freed_{};
+  const std::vector<std::unique_ptr<IoThread>>* io_threads_{nullptr};
   bool close_after_reply_{};
   bool modified_{};
   bool propagation_failed_{};

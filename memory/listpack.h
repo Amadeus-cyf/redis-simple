@@ -19,7 +19,7 @@ class ListPack {
  public:
   struct ListPackEntry {
     std::string_view str;
-    int64_t sval;
+    int64_t integer_value;
     bool is_integer;
   };
   // Header: 32-bit total bytes followed by 16-bit element count.
@@ -27,24 +27,24 @@ class ListPack {
   ListPack();
   ListPack(const ListPack&) = delete;
   ListPack& operator=(const ListPack&) = delete;
-  unsigned char* Get(size_t idx, size_t* len) const;
-  std::optional<std::string> Get(size_t idx) const;
-  std::optional<int64_t> IntegerAt(size_t idx) const;
-  std::optional<size_t> Find(std::string_view val) const;
-  std::optional<size_t> FindAndSkip(std::string_view val, size_t skip) const;
+  unsigned char* Get(size_t offset, size_t* length) const;
+  std::optional<std::string> Get(size_t offset) const;
+  std::optional<int64_t> IntegerAt(size_t offset) const;
+  std::optional<size_t> Find(std::string_view value) const;
+  std::optional<size_t> FindAndSkip(std::string_view value, size_t skip) const;
   bool Append(std::string_view element_string);
   bool Append(int64_t element_integer);
   bool Prepend(std::string_view element_string);
   bool Prepend(int64_t element_integer);
-  bool Insert(size_t idx, std::string_view element_string);
-  bool Insert(size_t idx, int64_t element_integer);
-  bool Replace(size_t idx, std::string_view element_string);
-  bool Replace(size_t idx, int64_t element_integer);
+  bool Insert(size_t offset, std::string_view element_string);
+  bool Insert(size_t offset, int64_t element_integer);
+  bool Replace(size_t offset, std::string_view element_string);
+  bool Replace(size_t offset, int64_t element_integer);
   bool BatchAppend(const std::vector<ListPackEntry>& entries);
   bool BatchAppend(std::initializer_list<ListPackEntry> entries);
   bool BatchPrepend(const std::vector<ListPackEntry>& entries);
-  bool BatchInsert(size_t idx, const std::vector<ListPackEntry>& entries);
-  std::optional<size_t> IndexAt(size_t index) const;
+  bool BatchInsert(size_t offset, const std::vector<ListPackEntry>& entries);
+  std::optional<size_t> OffsetAt(size_t index) const;
   // The value view is valid only during the callback invocation.
   template <typename Visitor>
   bool ForEach(size_t start, size_t stop, Visitor&& visitor) const;
@@ -53,25 +53,25 @@ class ListPack {
   // The pair views are valid only during the callback invocation.
   template <typename Visitor>
   bool ForEachPair(Visitor&& visitor) const;
-  void Delete(size_t idx);
-  size_t DeleteRange(size_t idx, size_t count);
+  void Delete(size_t offset);
+  size_t DeleteRange(size_t offset, size_t count);
   size_t DeleteMatching(std::string_view value, size_t limit,
                         bool from_tail = false);
   std::optional<size_t> First() const;
   std::optional<size_t> Last() const;
-  std::optional<size_t> Next(size_t idx) const;
-  std::optional<size_t> Prev(size_t idx) const;
+  std::optional<size_t> Next(size_t offset) const;
+  std::optional<size_t> Prev(size_t offset) const;
   uint32_t TotalBytes() const;
   size_t Size() const;
   static size_t EstimateEntryBytes(std::string_view value);
-  static size_t EstimateBytes(int64_t lval, size_t repeat);
-  static bool SafeToAdd(const ListPack* lp, size_t bytes);
+  static size_t EstimateBytes(int64_t value, size_t repeat);
+  static bool SafeToAdd(const ListPack* listpack, size_t bytes);
   ~ListPack() = default;
 
  private:
   // Enough space for INT64_MIN plus a null terminator.
-  static constexpr int kListPackIntBufSize = 21;
-  static constexpr uint16_t kListPackNumEleUnknown = UINT16_MAX;
+  static constexpr int kListPackIntBufferSize = 21;
+  static constexpr uint16_t kListPackUnknownElementCount = UINT16_MAX;
   static constexpr int kUint7BitIntMax = 127;
   static constexpr int kInt24BitIntMax = (1 << 23) - 1;
   static constexpr int kInt24BitIntMin = -(1 << 23);
@@ -118,30 +118,30 @@ class ListPack {
   };
   struct Encoding {
     std::string_view str;
-    int64_t sval;
+    int64_t integer_value;
     EncodingGeneralType encoding_type;
     size_t backlen_bytes;
   };
-  unsigned char* StringAt(size_t idx, size_t* len,
+  unsigned char* StringAt(size_t offset, size_t* length,
                           EncodingType encoding_type) const;
-  unsigned char* IntegerAt(size_t idx, unsigned char* dst, size_t* len,
-                           int64_t* val, EncodingType encoding_type) const;
-  bool Insert(size_t idx, ListPack::Position where,
+  unsigned char* IntegerAt(size_t offset, unsigned char* dst, size_t* length,
+                           int64_t* value, EncodingType encoding_type) const;
+  bool Insert(size_t offset, ListPack::Position where,
               const std::string_view* element_string,
               const int64_t* element_integer);
-  bool BatchInsert(size_t idx, ListPack::Position where,
+  bool BatchInsert(size_t offset, ListPack::Position where,
                    const ListPackEntry* entries, size_t entry_count);
   // Chooses the encoding for `entry`; returns false if it is too large.
   static bool PlanEntry(const ListPackEntry& entry, Encoding* encoding);
   static size_t EncodedEntryBytes(const Encoding& encoding);
   void SetTotalBytes(uint32_t listpack_bytes);
   uint16_t ElementCount() const;
-  void SetNumOfElements(uint16_t num_of_elements) const;
-  size_t Skip(size_t idx) const;
-  EncodingType EncodingAt(size_t idx) const;
-  size_t Backlen(size_t idx) const;
-  // Bytes of the element at `idx` before its backlen, given its encoding.
-  size_t EncodedBytes(size_t idx, EncodingType encoding_type) const;
+  void SetNumOfElements(uint16_t element_count) const;
+  size_t Skip(size_t offset) const;
+  EncodingType EncodingAt(size_t offset) const;
+  size_t Backlen(size_t offset) const;
+  // Bytes of the element at `offset` before its backlen, given its encoding.
+  size_t EncodedBytes(size_t offset, EncodingType encoding_type) const;
   // An element's value bytes and the offset just past it, which is the EOF
   // byte for the last element.
   struct DecodedEntry {
@@ -149,32 +149,33 @@ class ListPack {
     size_t length;
     size_t next;
   };
-  // Decodes the element at `idx`, which must not be EOF, reading its encoding
-  // once for both the value and the next offset. Integers are rendered into
-  // `int_buf`, which must hold kListPackIntBufSize bytes. Iterators use this
-  // instead of Get() followed by Next(), which decode each element twice.
-  DecodedEntry DecodeEntry(size_t idx, unsigned char* int_buf) const;
+  // Decodes the element at `offset`, which must not be EOF, reading its
+  // encoding once for both the value and the next offset. Integers are rendered
+  // into `int_buffer`, which must hold kListPackIntBufferSize bytes. Iterators
+  // use this instead of Get() followed by Next(), which decode each element
+  // twice.
+  DecodedEntry DecodeEntry(size_t offset, unsigned char* int_buffer) const;
   // Returns the offset of element `position`, which must be below `size`,
   // the element count. Walks from whichever end is closer.
   size_t Seek(size_t position, size_t size) const;
-  // Offset of the element before the one at `idx`, which may be the EOF
-  // byte; `idx` must not be the first element.
-  size_t PrevUnchecked(size_t idx) const;
+  // Offset of the element before the one at `offset`, which may be the EOF
+  // byte; `offset` must not be the first element.
+  size_t PrevUnchecked(size_t offset) const;
   static std::string_view ValueView(const DecodedEntry& entry) {
     return {reinterpret_cast<const char*>(entry.data), entry.length};
   }
   static uint8_t BacklenBytes(size_t backlen);
-  static size_t EncodeString(unsigned char* buf, std::string_view ele);
-  static size_t EncodeInteger(unsigned char* buf, int64_t v);
-  static void EncodeBacklen(unsigned char* buf, size_t backlen);
-  size_t DecodeBacklen(size_t idx) const;
-  size_t DecodeStringLength(size_t idx) const;
+  static size_t EncodeString(unsigned char* buffer, std::string_view element);
+  static size_t EncodeInteger(unsigned char* buffer, int64_t v);
+  static void EncodeBacklen(unsigned char* buffer, size_t backlen);
+  size_t DecodeBacklen(size_t offset) const;
+  size_t DecodeStringLength(size_t offset) const;
   static bool IsString(EncodingType encoding_type);
   void Realloc(size_t bytes);
-  std::unique_ptr<unsigned char[]> lp_;
-  // Allocated bytes of lp_; at least TotalBytes().
+  std::unique_ptr<unsigned char[]> listpack_;
+  // Allocated bytes of listpack_; at least TotalBytes().
   size_t capacity_;
-  mutable std::array<unsigned char, kListPackIntBufSize> int_buf_{};
+  mutable std::array<unsigned char, kListPackIntBufferSize> int_buffer_{};
 };
 
 template <typename Visitor>
@@ -185,14 +186,14 @@ bool ListPack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   }
   stop = std::min(stop, size - 1);
 
-  size_t listpack_index = Seek(start, size);
-  for (size_t index = start;
-       index <= stop && lp_[listpack_index] != kListPackEof; ++index) {
-    const DecodedEntry entry = DecodeEntry(listpack_index, int_buf_.data());
+  size_t offset = Seek(start, size);
+  for (size_t index = start; index <= stop && listpack_[offset] != kListPackEof;
+       ++index) {
+    const DecodedEntry entry = DecodeEntry(offset, int_buffer_.data());
     if (!visitor(ValueView(entry))) {
       return false;
     }
-    listpack_index = entry.next;
+    offset = entry.next;
   }
   return true;
 }
@@ -207,15 +208,15 @@ bool ListPack::ForEachReverse(size_t start, size_t stop,
   stop = std::min(stop, size - 1);
 
   size_t index = stop;
-  std::optional<size_t> listpack_index = Seek(stop, size);
-  while (listpack_index.has_value() && index >= start) {
-    if (!visitor(ValueView(DecodeEntry(*listpack_index, int_buf_.data())))) {
+  std::optional<size_t> offset = Seek(stop, size);
+  while (offset.has_value() && index >= start) {
+    if (!visitor(ValueView(DecodeEntry(*offset, int_buffer_.data())))) {
       return false;
     }
     if (index == 0) {
       break;
     }
-    listpack_index = Prev(*listpack_index);
+    offset = Prev(*offset);
     --index;
   }
   return true;
@@ -223,25 +224,25 @@ bool ListPack::ForEachReverse(size_t start, size_t stop,
 
 template <typename Visitor>
 bool ListPack::ForEachPair(Visitor&& visitor) const {
-  const auto first = First();
+  const std::optional<size_t> first = First();
   if (!first.has_value()) {
     return true;
   }
-  std::array<unsigned char, kListPackIntBufSize> first_int_buf{};
-  std::array<unsigned char, kListPackIntBufSize> second_int_buf{};
-  size_t listpack_index = *first;
-  while (lp_[listpack_index] != kListPackEof) {
+  std::array<unsigned char, kListPackIntBufferSize> first_int_buffer{};
+  std::array<unsigned char, kListPackIntBufferSize> second_int_buffer{};
+  size_t offset = *first;
+  while (listpack_[offset] != kListPackEof) {
     const DecodedEntry first_entry =
-        DecodeEntry(listpack_index, first_int_buf.data());
-    if (lp_[first_entry.next] == kListPackEof) {
+        DecodeEntry(offset, first_int_buffer.data());
+    if (listpack_[first_entry.next] == kListPackEof) {
       break;
     }
     const DecodedEntry second_entry =
-        DecodeEntry(first_entry.next, second_int_buf.data());
+        DecodeEntry(first_entry.next, second_int_buffer.data());
     if (!visitor(ValueView(first_entry), ValueView(second_entry))) {
       return false;
     }
-    listpack_index = second_entry.next;
+    offset = second_entry.next;
   }
   return true;
 }

@@ -1,4 +1,4 @@
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 
 #include <cstdint>
 #include <cstring>
@@ -56,10 +56,11 @@ void RedisObject::EmbedString(std::string_view value) {
 }
 
 StringValue RedisObject::String() const {
-  if (const auto* integer = std::get_if<int64_t>(&value_)) {
+  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
     return StringValue(*integer);
   }
-  if (const auto* embedded = std::get_if<EmbeddedString>(&value_)) {
+  if (const redis_simple::db::EmbeddedString* embedded =
+          std::get_if<EmbeddedString>(&value_)) {
     return StringValue(embedded->View());
   }
   const auto* value = std::get_if<std::string>(&value_);
@@ -68,7 +69,7 @@ StringValue RedisObject::String() const {
 }
 
 std::optional<int64_t> RedisObject::Int() const {
-  if (const auto* integer = std::get_if<int64_t>(&value_)) {
+  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
     return *integer;
   }
   int64_t parsed = 0;
@@ -78,9 +79,10 @@ std::optional<int64_t> RedisObject::Int() const {
 }
 
 std::string* RedisObject::MutableString() {
-  if (const auto* integer = std::get_if<int64_t>(&value_)) {
+  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
     value_.emplace<std::string>(StringValue(*integer).View());
-  } else if (const auto* embedded = std::get_if<EmbeddedString>(&value_)) {
+  } else if (const redis_simple::db::EmbeddedString* embedded =
+                 std::get_if<EmbeddedString>(&value_)) {
     // Copy out first: emplacing destroys the embedded bytes.
     std::string raw(embedded->View());
     value_.emplace<std::string>(std::move(raw));

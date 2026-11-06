@@ -3,13 +3,17 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "event_loop/file_event.h"
 #include "event_loop/time_event.h"
 #include "logging/logger.h"
 #include "server/client_connection/client_connection.h"
+#include "server/client_connection/read_query.h"
+#include "server/client_connection/write_reply.h"
 #include "server/db/db.h"
 #include "server/expire.h"
 #include "server/shutdown.h"
@@ -40,15 +44,27 @@ bool Server::Run(const ServerOptions& options) {
       return false;
     }
   }
-  connection::Connection conn(
+  connection::Connection connection(
       connection::Context{.loop = loop_.get(), .fd = -1});
-  const connection::AddressInfo addr_info(options.bind_address, options.port);
-  if (conn.BindAndListen(addr_info) == connection::ConnectionStatus::kError) {
+  const connection::AddressInfo address(options.bind_address, options.port);
+  if (connection.BindAndListen(address) ==
+      connection::ConnectionStatus::kError) {
     aof_.reset();
     return false;
   }
-  fd_ = conn.Descriptor();
+  fd_ = connection.Descriptor();
+  // Like Redis, --io-threads counts the main thread, which runs commands
+  // while the others own the client sockets.
+  if (options.io_threads > 1 &&
+      !StartIoThreads(static_cast<size_t>(options.io_threads) - 1)) {
+    RS_LOG_WARN("failed to start %d I/O threads\n", options.io_threads - 1);
+    StopIoThreads();
+    fd_ = -1;
+    aof_.reset();
+    return false;
+  }
   if (!InstallAcceptCallback()) {
+    StopIoThreads();
     fd_ = -1;
     aof_.reset();
     return false;
@@ -58,9 +74,80 @@ bool Server::Run(const ServerOptions& options) {
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
   fd_ = -1;
+  StopIoThreads();
+  return true;
+}
+
+bool Server::StartIoThreads(size_t thread_count) {
+  for (size_t index = 1; index <= thread_count; ++index) {
+    std::unique_ptr<IoThread> thread = IoThread::Create(
+        index, loop_.get(),
+        [this](IoThread* const io_thread,
+               std::vector<IoThread::Handoff>* const handoffs) {
+          RunHandedOverClients(io_thread, handoffs);
+        });
+    if (thread == nullptr) {
+      return false;
+    }
+    io_threads_.push_back(std::move(thread));
+  }
+  return true;
+}
+
+void Server::StopIoThreads() {
+  // Stop the threads first, so freeing the clients below unregisters their
+  // sockets from loops no thread runs anymore; the loops go last.
+  for (const std::unique_ptr<IoThread>& thread : io_threads_) {
+    thread->Stop();
+  }
   clients_.clear();
   aof_.reset();
-  return true;
+  io_threads_.clear();
+}
+
+IoThread* Server::NextIoThread() {
+  IoThread* chosen = nullptr;
+  for (const std::unique_ptr<IoThread>& thread : io_threads_) {
+    if (chosen == nullptr || thread->ClientCount() < chosen->ClientCount()) {
+      chosen = thread.get();
+    }
+  }
+  return chosen;
+}
+
+void Server::PauseIoThreads() {
+  for (const std::unique_ptr<IoThread>& thread : io_threads_) {
+    thread->Pause();
+  }
+}
+
+void Server::ResumeIoThreads() {
+  for (const std::unique_ptr<IoThread>& thread : io_threads_) {
+    thread->Resume();
+  }
+}
+
+void Server::RunHandedOverClients(
+    IoThread* const thread, std::vector<IoThread::Handoff>* const handoffs) {
+  handed_over_.clear();
+  for (const IoThread::Handoff& handoff : *handoffs) {
+    if (handoff.closed) {
+      thread->ClientFreed();
+      RemoveClient(handoff.client);
+      continue;
+    }
+    handoff.client->RunParsedQueries();
+    handed_over_.push_back(handoff.client);
+  }
+  // Persist these clients' mutations before any of their replies are sent.
+  if (aof_ != nullptr && !handed_over_.empty() && !aof_->Flush()) {
+    Stop();
+    return;
+  }
+  for (Client* const client : handed_over_) {
+    thread->Return(client);
+  }
+  handed_over_.clear();
 }
 
 void Server::Stop() {

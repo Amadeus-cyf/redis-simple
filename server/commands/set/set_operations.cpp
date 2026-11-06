@@ -209,7 +209,7 @@ std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
 }
 
 void AddSetOperationReply(Client* const client, SetOperation operation) {
-  auto encoded = operation(client->Db(), client->Args());
+  std::optional<SetReply> encoded = operation(client->Db(), client->Args());
   if (!encoded.has_value()) {
     client->AddReply(reply::kWrongTypeError);
     return;

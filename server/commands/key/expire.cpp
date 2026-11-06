@@ -145,7 +145,7 @@ void AddExpireReply(Client* const client, int64_t multiplier, bool absolute,
     client->AddReply(reply::FromError(message));
     return;
   }
-  const auto status =
+  const db::DbStatus status =
       client->Db()->ExpireKeyAt(args.key, expire, args.condition);
   if (status == db::DbStatus::kOk) {
     client->MarkModified();
@@ -184,7 +184,7 @@ void HandlePTtl(Client* const client) {
 }
 
 void HandlePersist(Client* const client) {
-  const auto status = client->Db()->PersistKey(client->Args()[0]);
+  const db::DbStatus status = client->Db()->PersistKey(client->Args()[0]);
   if (status == db::DbStatus::kOk) {
     client->MarkModified();
   }
@@ -212,7 +212,7 @@ void HandleDbSize(Client* const client) {
 void HandleFlushDb(Client* const client) {
   // FLUSHDB [ASYNC | SYNC]. Flushing is always synchronous here, so both
   // modes behave the same.
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   if (args.size() > 1 ||
       (args.size() == 1 && !utils::EqualsIgnoreCase(args[0], "ASYNC") &&
        !utils::EqualsIgnoreCase(args[0], "SYNC"))) {

@@ -34,7 +34,7 @@ bool ZSetSkiplist::InsertOrUpdate(std::string_view key, double score) {
 }
 
 bool ZSetSkiplist::Delete(std::string_view key) {
-  const auto* score = dict_->FindValue(key);
+  const double* score = dict_->FindValue(key);
   if (score == nullptr) {
     return false;
   }
@@ -43,7 +43,7 @@ bool ZSetSkiplist::Delete(std::string_view key) {
 }
 
 std::optional<size_t> ZSetSkiplist::Rank(std::string_view key) const {
-  const auto* score = dict_->FindValue(key);
+  const double* score = dict_->FindValue(key);
   if (score == nullptr) {
     return std::nullopt;
   }
@@ -54,7 +54,8 @@ ZSetEntryList ZSetSkiplist::RangeByRank(const RangeByRankSpec* spec) const {
   if (spec == nullptr) {
     return {};
   }
-  const auto normalized = NormalizeRankRange(*spec, Size());
+  const std::optional<RangeByRankSpec> normalized =
+      NormalizeRankRange(*spec, Size());
   if (!normalized.has_value()) {
     return {};
   }

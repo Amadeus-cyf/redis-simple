@@ -63,21 +63,21 @@ CliStatus RedisCli::Connect(const std::string& ip, int port) {
                                                     : CliStatus::kOk;
 }
 
-void RedisCli::AddCommand(const std::string& cmd) {
+void RedisCli::AddCommand(const std::string& command) {
   const std::scoped_lock lock(lock_);
-  query_buf_.Append(cmd.c_str(), cmd.size());
+  query_buffer_.Append(command.c_str(), command.size());
 }
 
 void RedisCli::AddCommand(const std::vector<std::string_view>& args) {
   const std::scoped_lock lock(lock_);
   const std::string encoded = EncodeCommand(args);
-  query_buf_.Append(encoded.data(), encoded.size());
+  query_buffer_.Append(encoded.data(), encoded.size());
 }
 
 std::string RedisCli::ReadReply() {
   const std::scoped_lock lock(lock_);
   // Drain any buffered complete reply before touching the socket.
-  const auto result = MaybeReadReply();
+  const std::optional<std::string> result = MaybeReadReply();
   return result.has_value() ? *result : ReadReplyFromConnection();
 }
 
@@ -87,15 +87,15 @@ std::future<std::string> RedisCli::ReadReplyAsync() {
 
 std::optional<std::string> RedisCli::MaybeReadReply() {
   std::vector<std::string> reply;
-  if (reply_buf_.Empty()) {
+  if (reply_buffer_.Empty()) {
     return std::nullopt;
   }
-  const auto status = ProcessReply(reply);
+  const resp_parser::ParseStatus status = ProcessReply(reply);
   if (status == resp_parser::ParseStatus::kComplete) {
     return ReplyListToString(reply);
   }
   if (status == resp_parser::ParseStatus::kInvalid) {
-    reply_buf_.Clear();
+    reply_buffer_.Clear();
     return kErrResp;
   }
   return std::nullopt;
@@ -103,11 +103,11 @@ std::optional<std::string> RedisCli::MaybeReadReply() {
 
 std::string RedisCli::ReadReplyFromConnection() {
   std::vector<std::string> reply;
-  if (!query_buf_.Empty()) {
-    if (!WriteToConnection(connection_.get(), query_buf_.View())) {
+  if (!query_buffer_.Empty()) {
+    if (!WriteToConnection(connection_.get(), query_buffer_.View())) {
       return kErrResp;
     }
-    query_buf_.Clear();
+    query_buffer_.Clear();
   }
 
   std::array<char, 4096> buffer{};
@@ -116,13 +116,13 @@ std::string RedisCli::ReadReplyFromConnection() {
     if (read <= 0) {
       return kNoReplyResp;
     }
-    reply_buf_.Append(buffer.data(), static_cast<size_t>(read));
-    const auto status = ProcessReply(reply);
+    reply_buffer_.Append(buffer.data(), static_cast<size_t>(read));
+    const resp_parser::ParseStatus status = ProcessReply(reply);
     if (status == resp_parser::ParseStatus::kComplete) {
       return ReplyListToString(reply);
     }
     if (status == resp_parser::ParseStatus::kInvalid) {
-      reply_buf_.Clear();
+      reply_buffer_.Clear();
       return kErrResp;
     }
   }
@@ -130,10 +130,11 @@ std::string RedisCli::ReadReplyFromConnection() {
 
 resp_parser::ParseStatus RedisCli::ProcessReply(
     std::vector<std::string>& reply) {
-  const auto result = resp_parser::Parse(reply_buf_.View(), reply);
+  const resp_parser::ParseResult result =
+      resp_parser::Parse(reply_buffer_.View(), reply);
   if (result.status == resp_parser::ParseStatus::kComplete) {
-    reply_buf_.Consume(result.consumed);
-    reply_buf_.Compact();
+    reply_buffer_.Consume(result.consumed);
+    reply_buffer_.Compact();
   }
   return result.status;
 }

@@ -16,8 +16,9 @@
 
 namespace redis_simple::tcp {
 namespace {
-// Keep the listen queue small for this single-threaded test server.
-constexpr int kBacklog = 3;
+// Redis' default tcp-backlog, so bursts of new connections queue instead of
+// timing out. The kernel caps it at net.core.somaxconn.
+constexpr int kBacklog = 511;
 
 int SetCloseOnExec(int fd);
 
@@ -49,8 +50,8 @@ int TcpGenericCreateSocket(int domain, int type, int protocol, bool non_block) {
   return socket_fd;
 }
 
-int TcpGenericAccept(int socket_fd, sockaddr* addr, socklen_t* len) {
-  int s = accept(socket_fd, addr, len);
+int TcpGenericAccept(int socket_fd, sockaddr* address, socklen_t* length) {
+  int s = accept(socket_fd, address, length);
   if (s == -1) {
     return ToInt(TcpStatusCode::kError);
   }
@@ -89,8 +90,8 @@ int TcpCreateSocket(int domain, bool non_block) {
   return TcpGenericCreateSocket(domain, SOCK_STREAM, 0, non_block);
 }
 
-int TcpBindAndConnect(const TcpAddrInfo& remote,
-                      const std::optional<TcpAddrInfo>& local, bool non_block) {
+int TcpBindAndConnect(const TcpAddress& remote,
+                      const std::optional<TcpAddress>& local, bool non_block) {
   addrinfo hints{};
   addrinfo* info = nullptr;
   hints.ai_family = AF_INET;
@@ -131,14 +132,14 @@ int TcpBindAndConnect(const TcpAddrInfo& remote,
   return socket_fd != -1 ? socket_fd : ToInt(TcpStatusCode::kError);
 }
 
-int TcpAccept(int socket_fd, TcpAddrInfo* const addr_info) {
+int TcpAccept(int socket_fd, TcpAddress* const address) {
   sockaddr_storage sa{};
-  socklen_t len = sizeof(sa);
+  socklen_t length = sizeof(sa);
   int remote_fd = -1;
   // accept() may be interrupted by a signal; retry those transient failures.
   while (true) {
     remote_fd =
-        TcpGenericAccept(socket_fd, reinterpret_cast<sockaddr*>(&sa), &len);
+        TcpGenericAccept(socket_fd, reinterpret_cast<sockaddr*>(&sa), &length);
     if (remote_fd != -1 || errno != EINTR) {
       break;
     }
@@ -151,29 +152,27 @@ int TcpAccept(int socket_fd, TcpAddrInfo* const addr_info) {
     close(remote_fd);
     return ToInt(TcpStatusCode::kError);
   }
-  if (addr_info != nullptr) {
-    const auto* address = reinterpret_cast<const sockaddr_in*>(&sa);
+  if (address != nullptr) {
+    const auto* peer = reinterpret_cast<const sockaddr_in*>(&sa);
     std::array<char, INET_ADDRSTRLEN> ip{};
-    if (inet_ntop(AF_INET, &address->sin_addr, ip.data(), ip.size()) ==
-        nullptr) {
+    if (inet_ntop(AF_INET, &peer->sin_addr, ip.data(), ip.size()) == nullptr) {
       close(remote_fd);
       return ToInt(TcpStatusCode::kError);
     }
-    addr_info->ip = ip.data();
-    addr_info->port = ntohs(address->sin_port);
+    address->ip = ip.data();
+    address->port = ntohs(peer->sin_port);
   }
   return remote_fd;
 }
 
-int TcpBind(int socket_fd, const TcpAddrInfo& addr_info) {
+int TcpBind(int socket_fd, const TcpAddress& address) {
   addrinfo hints{};
   addrinfo* info = nullptr;
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_NUMERICSERV;
-  const int address_status =
-      getaddrinfo(addr_info.ip.c_str(), std::to_string(addr_info.port).c_str(),
-                  &hints, &info);
+  const int address_status = getaddrinfo(
+      address.ip.c_str(), std::to_string(address.port).c_str(), &hints, &info);
   if (address_status != 0) {
     RS_LOG_DEBUG("getaddrinfo failed: %s\n", gai_strerror(address_status));
     return ToInt(TcpStatusCode::kError);

@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "server/db/db.h"
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 #include "utils/time_utils.h"
 
 // Keyspace benchmarks: lookups that also consult the TTL table, and string
@@ -28,7 +28,7 @@ std::vector<std::string> Keys() {
 // GET-style lookups. Argument 1 gives one key a TTL, so every lookup also
 // checks the TTL table, which reuses the key's hash.
 void DbLookup(benchmark::State& state) {
-  const auto keys = Keys();
+  const std::vector<std::string> keys = Keys();
   auto db = db::RedisDb::Create();
   for (const std::string& key : keys) {
     db->SetKey(key, db::RedisObject::CreateWithString("value"), 0);
@@ -49,7 +49,7 @@ void DbLookup(benchmark::State& state) {
 // in place through SetStringKey; 0 allocates a new object, as SetKey does.
 void DbOverwriteString(benchmark::State& state) {
   const bool in_place = state.range(0) != 0;
-  const auto keys = Keys();
+  const std::vector<std::string> keys = Keys();
   auto db = db::RedisDb::Create();
   for (const std::string& key : keys) {
     db->SetStringKey(key, "initial-value", 0);
@@ -76,7 +76,7 @@ void DbSetString(benchmark::State& state) {
   const auto value_size = static_cast<size_t>(state.range(0));
   const bool overwrite = state.range(1) != 0;
   const std::string value(value_size, 'v');
-  const auto keys = Keys();
+  const std::vector<std::string> keys = Keys();
   auto db = db::RedisDb::Create();
   if (overwrite) {
     for (const std::string& key : keys) {

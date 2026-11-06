@@ -29,7 +29,7 @@ TEST(ZSetListPackTest, PreservesNumericKeyWhileReadingScore) {
   ASSERT_TRUE(zset.InsertOrUpdate("0", 42.0));
   const RangeByRankSpec spec(0, 0, false, false);
 
-  const auto entries = zset.RangeByRank(&spec);
+  const ZSetEntryList entries = zset.RangeByRank(&spec);
 
   ASSERT_EQ(entries.size(), 1);
   EXPECT_EQ(entries.front()->key, "0");
@@ -68,7 +68,7 @@ TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {
   }
   const RangeByRankSpec spec(0, static_cast<int64_t>(entries.size()) - 1, false,
                              false);
-  const auto range = zset.RangeByRank(&spec);
+  const ZSetEntryList range = zset.RangeByRank(&spec);
   ASSERT_EQ(range.size(), entries.size());
   for (size_t index = 0; index < entries.size(); ++index) {
     EXPECT_EQ(range[index]->key, entries[index].first);

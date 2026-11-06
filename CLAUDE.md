@@ -18,7 +18,12 @@ Guidance for AI coding agents working in this repository.
   `std::format` and `std::print`, which need newer standard libraries than
   the minimum compilers in `README.md`. CI runs clang-tidy 22, which
   checks more of these than older local versions do.
-- Keep naming consistent with nearby code.
+- Keep naming consistent with nearby code. Name things with whole words, as
+  Google style asks: `index`, `length`, `value`, `buffer`, `connection`, not
+  `idx`, `len`, `val`, `buf`, `conn`. Universally known short names (`i`, `n`,
+  `fd`, `it`) and Redis or POSIX terms (`backlen`, `iov_len`) are fine. In
+  listpack code, `offset` is a byte position in the buffer, and `index` or
+  `position` is an element's place in the list.
 - Use `#define` header guards named `REDIS_SIMPLE_<PATH>_<FILE>_H_`, not
   `#pragma once`.
 - Do not use exceptions. Report recoverable failures through return values
@@ -74,6 +79,22 @@ Guidance for AI coding agents working in this repository.
   call `Flush` before arming test failures that depend on file-write order.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
+- With `--io-threads` above 1, I/O works like Redis 8: each client belongs
+  to one `IoThread` (the one with the fewest clients when it connected),
+  whose own event loop reads its socket and frames requests
+  (`Client::ParseQueries`), then hands it to the main thread, which runs
+  them (`Client::RunParsedQueries`), flushes the AOF once per handoff, and
+  returns it to write the replies and resume reading. A client belongs to one
+  side at a time: the I/O thread unregisters its socket events before handing
+  it over, and hands clients over only after the current loop iteration, since
+  connection callbacks still touch the connection after returning. Keep
+  commands, the database, and the AOF on the main thread, and I/O threads to
+  the client's socket, buffers, and parser. Connections close on their I/O
+  thread; the main thread only frees them. Stop the I/O threads before
+  freeing clients at shutdown, and pause them (`Server::PauseIoThreads`)
+  around anything that must not race their allocations, such as `fork`. Run
+  the threaded integration variants (`*_io_threads`) and a ThreadSanitizer
+  build of the concurrent-clients test after changing this path.
 - Rely on the command table for arity in handlers, and use
   `server/commands/lookup.h` for typed lookups instead of re-checking the
   object type and null database in each command.
@@ -224,6 +245,7 @@ Before committing, run the relevant build and tests.
 - Current integration coverage should stay focused:
   - `integration/commands/`
   - `integration/aof_client_test.cpp`
+  - `integration/io_threads_client_test.cpp`
   - `integration/tcp/`
 - Keep server option and graceful shutdown coverage in the lifecycle integration
   test rather than introducing a separate command-test server implementation.

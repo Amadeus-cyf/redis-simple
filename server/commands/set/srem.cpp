@@ -9,7 +9,7 @@
 
 namespace redis_simple::command::sets {
 void HandleSRem(Client* const client) {
-  const auto& args = client->Args();
+  const command::CommandArgs& args = client->Args();
   const auto [object, wrong_type] = MutableLookupTyped(
       client->Db(), args[0], db::RedisObject::ObjectType::kSet);
   if (wrong_type) {

@@ -17,133 +17,133 @@ std::string BlockString(const iovec& block) {
 
 std::unique_ptr<ReplyBuffer> MakeBufferWithMainBytes() {
   // Small sizes keep the overflow-list cases below easy to reach.
-  auto buf = std::make_unique<ReplyBuffer>(4096, 1024);
+  auto reply_buffer = std::make_unique<ReplyBuffer>(4096, 1024);
   std::string s(2000, 'a');
-  buf->Append(s.c_str(), 2000);
-  return buf;
+  reply_buffer->Append(s.c_str(), 2000);
+  return reply_buffer;
 }
 
 std::unique_ptr<ReplyBuffer> MakeBufferWithReplyList() {
-  auto buf = MakeBufferWithMainBytes();
+  auto reply_buffer = MakeBufferWithMainBytes();
   std::string s1(4096, 'b');
-  buf->Append(s1.c_str(), 4096);
+  reply_buffer->Append(s1.c_str(), 4096);
   std::string s2(1000, 'c');
-  buf->Append(s2.c_str(), 1000);
+  reply_buffer->Append(s2.c_str(), 1000);
   std::string s3(24, 'c');
-  buf->Append(s3.c_str(), 24);
+  reply_buffer->Append(s3.c_str(), 24);
   std::string s4(1024, 'c');
-  buf->Append(s4.c_str(), 1000);
+  reply_buffer->Append(s4.c_str(), 1000);
   std::string s5(1024, 'd');
-  buf->Append(s5.c_str(), 1024);
-  return buf;
+  reply_buffer->Append(s5.c_str(), 1024);
+  return reply_buffer;
 }
 
 }  // namespace
 
-TEST(ReplyBufferTest, AddToBuf) {
-  auto buf = MakeBufferWithMainBytes();
-  ASSERT_EQ(buf->BufferSize(), 2000);
+TEST(ReplyBufferTest, AddToBuffer) {
+  auto reply_buffer = MakeBufferWithMainBytes();
+  ASSERT_EQ(reply_buffer->BufferSize(), 2000);
 }
 
 TEST(ReplyBufferTest, AddToReplyList) {
-  auto buf = MakeBufferWithMainBytes();
+  auto reply_buffer = MakeBufferWithMainBytes();
   std::string s1(4096, 'b');
-  size_t r = buf->Append(s1.c_str(), 4096);
+  size_t r = reply_buffer->Append(s1.c_str(), 4096);
   ASSERT_EQ(r, 4096);
-  ASSERT_EQ(buf->SentLength(), 0);
-  ASSERT_EQ(buf->BufferSize(), 4096);
-  ASSERT_EQ(buf->ReplyCount(), 1);
+  ASSERT_EQ(reply_buffer->SentLength(), 0);
+  ASSERT_EQ(reply_buffer->BufferSize(), 4096);
+  ASSERT_EQ(reply_buffer->ReplyCount(), 1);
 
   // Add a new node to the reply list.
   std::string s2(1000, 'c');
-  r = buf->Append(s2.c_str(), 1000);
+  r = reply_buffer->Append(s2.c_str(), 1000);
   ASSERT_EQ(r, 1000);
-  ASSERT_EQ(buf->ReplyCount(), 2);
+  ASSERT_EQ(reply_buffer->ReplyCount(), 2);
 
   // no new node created
   std::string s3(24, 'c');
-  r = buf->Append(s3.c_str(), 24);
+  r = reply_buffer->Append(s3.c_str(), 24);
   ASSERT_EQ(r, 24);
-  ASSERT_EQ(buf->ReplyCount(), 2);
+  ASSERT_EQ(reply_buffer->ReplyCount(), 2);
 
   // Add a new node with available space remained.
   std::string s4(1024, 'c');
-  r = buf->Append(s4.c_str(), 1000);
+  r = reply_buffer->Append(s4.c_str(), 1000);
   ASSERT_EQ(r, 1000);
-  ASSERT_EQ(buf->BufferSize(), 4096);
-  ASSERT_EQ(buf->ReplyCount(), 3);
+  ASSERT_EQ(reply_buffer->BufferSize(), 4096);
+  ASSERT_EQ(reply_buffer->ReplyCount(), 3);
 
   // Partially append to the last node and add a new node for the remaining
   // memory.
   std::string s5(1024, 'd');
-  r = buf->Append(s5.c_str(), 1024);
+  r = reply_buffer->Append(s5.c_str(), 1024);
   ASSERT_EQ(r, 1024);
-  ASSERT_EQ(buf->BufferSize(), 4096);
-  ASSERT_EQ(buf->ReplyCount(), 4);
+  ASSERT_EQ(reply_buffer->BufferSize(), 4096);
+  ASSERT_EQ(reply_buffer->ReplyCount(), 4);
 
-  std::vector<iovec> mem_vec;
-  buf->FillBlocks(&mem_vec);
-  ASSERT_EQ(mem_vec.size(), 5);
-  ASSERT_EQ(BlockString(mem_vec[0]),
+  std::vector<iovec> blocks;
+  reply_buffer->FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 5);
+  ASSERT_EQ(BlockString(blocks[0]),
             std::string(2000, 'a').append(4096 - 2000, 'b'));
-  ASSERT_EQ(mem_vec[0].iov_len, 4096);
-  ASSERT_EQ(BlockString(mem_vec[1]), std::string(4096 - (4096 - 2000), 'b'));
-  ASSERT_EQ(mem_vec[1].iov_len, 4096 - (4096 - 2000));
-  ASSERT_EQ(BlockString(mem_vec[2]), std::string(1024, 'c'));
-  ASSERT_EQ(mem_vec[2].iov_len, 1024);
-  ASSERT_EQ(BlockString(mem_vec[3]),
+  ASSERT_EQ(blocks[0].iov_len, 4096);
+  ASSERT_EQ(BlockString(blocks[1]), std::string(4096 - (4096 - 2000), 'b'));
+  ASSERT_EQ(blocks[1].iov_len, 4096 - (4096 - 2000));
+  ASSERT_EQ(BlockString(blocks[2]), std::string(1024, 'c'));
+  ASSERT_EQ(blocks[2].iov_len, 1024);
+  ASSERT_EQ(BlockString(blocks[3]),
             std::string(1000, 'c') + std::string(24, 'd'));
-  ASSERT_EQ(mem_vec[3].iov_len, 1024);
-  ASSERT_EQ(BlockString(mem_vec[4]), std::string(1000, 'd'));
-  ASSERT_EQ(mem_vec[4].iov_len, 1000);
+  ASSERT_EQ(blocks[3].iov_len, 1024);
+  ASSERT_EQ(BlockString(blocks[4]), std::string(1000, 'd'));
+  ASSERT_EQ(blocks[4].iov_len, 1000);
 }
 
 TEST(ReplyBufferTest, Consume) {
-  auto buf = MakeBufferWithReplyList();
-  EXPECT_EQ(buf->PendingBytes(), 9144);
+  auto reply_buffer = MakeBufferWithReplyList();
+  EXPECT_EQ(reply_buffer->PendingBytes(), 9144);
   // Partially consume the main buffer.
-  buf->Consume(2047);
-  EXPECT_EQ(buf->PendingBytes(), 7097);
-  ASSERT_EQ(buf->BufferSize(), 4096);
-  ASSERT_EQ(buf->SentLength(), 2047);
+  reply_buffer->Consume(2047);
+  EXPECT_EQ(reply_buffer->PendingBytes(), 7097);
+  ASSERT_EQ(reply_buffer->BufferSize(), 4096);
+  ASSERT_EQ(reply_buffer->SentLength(), 2047);
 
   // Consume the rest of the main buffer and one list node.
-  buf->Consume(5000);
-  EXPECT_EQ(buf->PendingBytes(), 2097);
-  ASSERT_EQ(buf->BufferSize(), 0);
-  ASSERT_EQ(buf->SentLength(), kExpectedSentAfterConsume);
-  ASSERT_EQ(buf->ReplyCount(), 3);
+  reply_buffer->Consume(5000);
+  EXPECT_EQ(reply_buffer->PendingBytes(), 2097);
+  ASSERT_EQ(reply_buffer->BufferSize(), 0);
+  ASSERT_EQ(reply_buffer->SentLength(), kExpectedSentAfterConsume);
+  ASSERT_EQ(reply_buffer->ReplyCount(), 3);
 
-  std::vector<iovec> mem_vec;
-  buf->FillBlocks(&mem_vec);
-  ASSERT_EQ(mem_vec.size(), 3);
-  ASSERT_EQ(BlockString(mem_vec[0]),
+  std::vector<iovec> blocks;
+  reply_buffer->FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 3);
+  ASSERT_EQ(BlockString(blocks[0]),
             std::string(1024 - kExpectedSentAfterConsume, 'c'));
-  ASSERT_EQ(mem_vec[0].iov_len, 1024 - kExpectedSentAfterConsume);
-  ASSERT_EQ(BlockString(mem_vec[1]),
+  ASSERT_EQ(blocks[0].iov_len, 1024 - kExpectedSentAfterConsume);
+  ASSERT_EQ(BlockString(blocks[1]),
             std::string(1000, 'c') + std::string(24, 'd'));
-  ASSERT_EQ(mem_vec[1].iov_len, 1024);
-  ASSERT_EQ(BlockString(mem_vec[2]), std::string(1000, 'd'));
-  ASSERT_EQ(mem_vec[2].iov_len, 1000);
+  ASSERT_EQ(blocks[1].iov_len, 1024);
+  ASSERT_EQ(BlockString(blocks[2]), std::string(1000, 'd'));
+  ASSERT_EQ(blocks[2].iov_len, 1000);
 }
 
 TEST(ReplyBufferTest, ConsumeListNodeInMultiplePartialWrites) {
-  auto buf = MakeBufferWithReplyList();
-  buf->Consume(4096);
+  auto reply_buffer = MakeBufferWithReplyList();
+  reply_buffer->Consume(4096);
 
-  buf->Consume(300);
-  ASSERT_EQ(buf->SentLength(), 300);
-  std::vector<iovec> mem_vec;
-  buf->FillBlocks(&mem_vec);
-  ASSERT_EQ(mem_vec.size(), 4);
-  ASSERT_EQ(mem_vec[0].iov_len, 1700);
+  reply_buffer->Consume(300);
+  ASSERT_EQ(reply_buffer->SentLength(), 300);
+  std::vector<iovec> blocks;
+  reply_buffer->FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 4);
+  ASSERT_EQ(blocks[0].iov_len, 1700);
 
-  buf->Consume(400);
-  ASSERT_EQ(buf->SentLength(), 700);
-  buf->FillBlocks(&mem_vec);
-  ASSERT_EQ(mem_vec.size(), 4);
-  ASSERT_EQ(BlockString(mem_vec[0]), std::string(1300, 'b'));
-  ASSERT_EQ(mem_vec[0].iov_len, 1300);
+  reply_buffer->Consume(400);
+  ASSERT_EQ(reply_buffer->SentLength(), 700);
+  reply_buffer->FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 4);
+  ASSERT_EQ(BlockString(blocks[0]), std::string(1300, 'b'));
+  ASSERT_EQ(blocks[0].iov_len, 1300);
 }
 
 TEST(ReplyBufferTest, AppendFillsTailBeforeAddingNode) {

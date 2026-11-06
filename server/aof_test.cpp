@@ -20,7 +20,7 @@
 #include <vector>
 
 #include "server/db/db.h"
-#include "server/db/redis_obj.h"
+#include "server/db/redis_object.h"
 #include "server/reply.h"
 #include "utils/check.h"
 #include "utils/time_utils.h"
@@ -173,7 +173,7 @@ TEST(AofTest, ReplaysCanonicalSetAndExpiration) {
   auto restored = db::RedisDb::Create();
   auto reader = Aof::Open(Always(file), restored.get());
   ASSERT_NE(reader, nullptr);
-  const auto* object = restored->LookupKey("key");
+  const db::RedisObject* object = restored->LookupKey("key");
   ASSERT_NE(object, nullptr);
   EXPECT_EQ(object->String(), "value");
   EXPECT_EQ(restored->Expiration("key"), expire);
@@ -415,7 +415,7 @@ TEST(AofTest, BoundsCollectionSnapshotCommandsByBytes) {
   auto restored = db::RedisDb::Create();
   auto reader = Aof::Open(options, restored.get());
   ASSERT_NE(reader, nullptr);
-  const auto* object = restored->LookupKey("list");
+  const db::RedisObject* object = restored->LookupKey("list");
   ASSERT_NE(object, nullptr);
   EXPECT_EQ(object->List()->Size(), 8);
   EXPECT_EQ(object->List()->At(7), std::string(80, 'h'));
@@ -501,7 +501,7 @@ TEST(AofTest, ReportsAppendSyncFailures) {
   file_ops->FailNextSync();
   ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
   EXPECT_FALSE(writer->Flush());
-  const auto state = writer->State();
+  const AofState state = writer->State();
   EXPECT_FALSE(state.healthy);
   EXPECT_EQ(state.last_error, AofError::kSync);
 }
@@ -537,7 +537,7 @@ TEST(AofTest, KeepsOriginalFileWhenRewriteRenameFails) {
   file_ops->FailRenames();
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
   writer->WaitUntilRewriteIdle();
-  const auto state = writer->State();
+  const AofState state = writer->State();
   EXPECT_TRUE(state.healthy);
   EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
   EXPECT_EQ(state.last_error, AofError::kRename);
@@ -569,7 +569,7 @@ TEST(AofTest, ReportsRewriteWriteFailuresWithoutStoppingAppends) {
   file_ops->FailRewriteWrites();
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
   writer->WaitUntilRewriteIdle();
-  const auto state = writer->State();
+  const AofState state = writer->State();
   EXPECT_TRUE(state.healthy);
   EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
   EXPECT_EQ(state.last_error, AofError::kWrite);
@@ -604,7 +604,7 @@ TEST(AofTest, ReportsDirectorySyncFailureAfterRewrite) {
   file_ops->FailSyncAfterNext();
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
   writer->WaitUntilRewriteIdle();
-  const auto state = writer->State();
+  const AofState state = writer->State();
   EXPECT_FALSE(state.healthy);
   EXPECT_EQ(state.rewrite_status, RewriteStatus::kFailed);
   EXPECT_EQ(state.last_error, AofError::kDirectorySync);

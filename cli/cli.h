@@ -24,7 +24,7 @@ class RedisCli {
   RedisCli();
   RedisCli(const std::string& ip, int port);
   CliStatus Connect(const std::string& ip, int port);
-  void AddCommand(const std::string& cmd);
+  void AddCommand(const std::string& command);
   void AddCommand(const std::vector<std::string_view>& args);
   std::string ReadReply();
   std::future<std::string> ReadReplyAsync();
@@ -39,8 +39,8 @@ class RedisCli {
   std::unique_ptr<connection::Connection> connection_;
   std::optional<std::string> ip_;
   std::optional<int> port_;
-  in_memory::DynamicBuffer query_buf_;
-  in_memory::DynamicBuffer reply_buf_;
+  in_memory::DynamicBuffer query_buffer_;
+  in_memory::DynamicBuffer reply_buffer_;
   std::mutex lock_;
 };
 }  // namespace redis_simple::cli

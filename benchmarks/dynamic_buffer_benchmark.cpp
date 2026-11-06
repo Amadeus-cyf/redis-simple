@@ -33,7 +33,7 @@ void DynamicBufferWrite(benchmark::State& state) {
 void DynamicBufferProcessAndTrim(benchmark::State& state) {
   for (auto _ : state) {
     (void)_;
-    const auto s = DynamicBufferBenchmarkBuffer().ReadLine();
+    const std::string s = DynamicBufferBenchmarkBuffer().ReadLine();
     benchmark::DoNotOptimize(s.data());
     benchmark::DoNotOptimize(s.size());
   }

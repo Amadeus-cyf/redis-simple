@@ -11,8 +11,8 @@
 namespace redis_simple::in_memory {
 ReplyBuffer::ReplyBuffer(size_t buffer_size, size_t chunk_size)
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
-    : buf_(new char[buffer_size]),
-      buf_capacity_(buffer_size),
+    : buffer_(new char[buffer_size]),
+      buffer_capacity_(buffer_size),
       chunk_size_(std::max<size_t>(chunk_size, 1)) {}
 
 ReplyBuffer::~ReplyBuffer() {
@@ -22,16 +22,16 @@ ReplyBuffer::~ReplyBuffer() {
   }
 }
 
-size_t ReplyBuffer::Append(const char* s, size_t len) {
-  if (len == 0) {
+size_t ReplyBuffer::Append(const char* s, size_t length) {
+  if (length == 0) {
     return 0;
   }
-  const size_t buffered = AppendToBuffer(s, len);
-  if (buffered < len) {
-    AppendToList(s + buffered, len - buffered);
+  const size_t buffered = AppendToBuffer(s, length);
+  if (buffered < length) {
+    AppendToList(s + buffered, length - buffered);
   }
-  pending_bytes_ += len;
-  return len;
+  pending_bytes_ += length;
+  return length;
 }
 
 size_t ReplyBuffer::Append(std::string&& reply) {
@@ -39,36 +39,36 @@ size_t ReplyBuffer::Append(std::string&& reply) {
   if (length < kMinMovedReplySize) {
     return Append(reply.data(), length);
   }
-  PushNode(BufNode::CreateOwned(std::move(reply)));
+  PushNode(ReplyChunk::CreateOwned(std::move(reply)));
   pending_bytes_ += length;
   return length;
 }
 
-size_t ReplyBuffer::AppendToBuffer(const char* s, size_t len) {
+size_t ReplyBuffer::AppendToBuffer(const char* s, size_t length) {
   // Preserve write order: once overflow nodes exist, new bytes must also go to
   // the list until earlier list data is drained.
   if (node_count_ != 0) {
     return 0;
   }
-  const size_t nwritten = std::min(len, buf_capacity_ - size_);
-  std::memcpy(buf_.get() + size_, s, nwritten);
+  const size_t nwritten = std::min(length, buffer_capacity_ - size_);
+  std::memcpy(buffer_.get() + size_, s, nwritten);
   size_ += nwritten;
   return nwritten;
 }
 
-void ReplyBuffer::AppendToList(const char* s, size_t len) {
+void ReplyBuffer::AppendToList(const char* s, size_t length) {
   if (reply_tail_ != nullptr && reply_tail_->Writable()) {
     const size_t nwritten =
-        std::min(len, reply_tail_->capacity - reply_tail_->used);
+        std::min(length, reply_tail_->capacity - reply_tail_->used);
     std::memcpy(reply_tail_->Data() + reply_tail_->used, s, nwritten);
     reply_tail_->used += nwritten;
     s += nwritten;
-    len -= nwritten;
+    length -= nwritten;
   }
-  if (len > 0) {
-    auto node = BufNode::CreateWritable(std::max(len, chunk_size_));
-    std::memcpy(node->Data(), s, len);
-    node->used = len;
+  if (length > 0) {
+    auto node = ReplyChunk::CreateWritable(std::max(length, chunk_size_));
+    std::memcpy(node->Data(), s, length);
+    node->used = length;
     PushNode(std::move(node));
   }
 }
@@ -78,10 +78,10 @@ void ReplyBuffer::FillBlocks(std::vector<iovec>* const blocks) {
   blocks->clear();
   blocks->reserve(node_count_ + (size_ > 0 ? 1 : 0));
   if (size_ > 0) {
-    blocks->push_back({buf_.get() + sent_, size_ - sent_});
+    blocks->push_back({buffer_.get() + sent_, size_ - sent_});
   }
   size_t offset = size_ > 0 ? 0 : sent_;
-  for (BufNode* node = reply_head_.get(); node != nullptr;
+  for (ReplyChunk* node = reply_head_.get(); node != nullptr;
        node = node->next.get()) {
     blocks->push_back({node->Data() + offset, node->used - offset});
     offset = 0;
@@ -123,10 +123,10 @@ void ReplyBuffer::ConsumeList(size_t nwritten) {
   }
 }
 
-void ReplyBuffer::PushNode(std::unique_ptr<BufNode> node) {
+void ReplyBuffer::PushNode(std::unique_ptr<ReplyChunk> node) {
   ++node_count_;
   reply_bytes_ += node->capacity;
-  BufNode* const node_ptr = node.get();
+  ReplyChunk* const node_ptr = node.get();
   if (reply_head_ == nullptr) {
     reply_head_ = std::move(node);
   } else {
