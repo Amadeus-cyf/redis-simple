@@ -13,7 +13,7 @@
 namespace redis_simple::in_memory {
 class ReplyBuffer {
  public:
-  // Matches Redis' PROTO_REPLY_CHUNK_BYTES.
+  // The size of each reply block, as Redis' PROTO_REPLY_CHUNK_BYTES.
   static constexpr size_t kDefaultBufferSize = size_t{16} * 1024;
   static constexpr size_t kDefaultChunkSize = size_t{16} * 1024;
   // Moved replies at least this large are queued without copying; smaller

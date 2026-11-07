@@ -13,9 +13,10 @@
 
 #include "connection/connection.h"
 #include "event_loop/loop.h"
-#include "server/aof.h"
+#include "server/aof/aof.h"
 #include "server/client.h"
 #include "server/io_thread.h"
+#include "server/server_context.h"
 #include "server/server_options.h"
 
 namespace redis_simple {
@@ -31,6 +32,8 @@ class Server {
   aof::Aof* Aof() { return aof_.get(); }
   // Password every new client must AUTH with; empty when auth is disabled.
   std::string_view RequirePass() const { return require_pass_; }
+  // What clients' commands reach of the server; valid while Run() runs.
+  const ServerContext* Context() const { return &context_; }
   bool ProtectedMode() const { return protected_mode_; }
   void AddClient(std::unique_ptr<Client> client) {
     Client* const key = client.get();
@@ -70,6 +73,7 @@ class Server {
   std::string require_pass_;
   bool protected_mode_{true};
   std::vector<std::unique_ptr<IoThread>> io_threads_;
+  ServerContext context_;
   // Clients of the handoff being run, reused between handoffs.
   std::vector<Client*> handed_over_;
 };

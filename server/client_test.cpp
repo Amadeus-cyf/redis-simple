@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-#include "server/aof.h"
+#include "server/aof/aof.h"
 #include "server/db/db.h"
 #include "server/reply.h"
 #include "tcp/tcp.h"
@@ -50,6 +50,25 @@ db::RedisDb* TestDb() {
   return kDb;
 }
 
+// The server context of test clients, with and without a password.
+const ServerContext* TestServer() {
+  static const ServerContext* const kServer =
+      new ServerContext{.db = TestDb(),
+                        .aof = nullptr,
+                        .required_password = {},
+                        .io_threads = {}};
+  return kServer;
+}
+
+const ServerContext* PasswordTestServer() {
+  static const ServerContext* const kServer =
+      new ServerContext{.db = TestDb(),
+                        .aof = nullptr,
+                        .required_password = "s3cret",
+                        .io_threads = {}};
+  return kServer;
+}
+
 std::array<ScopedFd, 2> CreateSocketPair() {
   std::array<int, 2> fds{-1, -1};
   EXPECT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds.data()), 0);
@@ -57,13 +76,14 @@ std::array<ScopedFd, 2> CreateSocketPair() {
 }
 
 std::pair<std::unique_ptr<Client>, ScopedFd> CreateClient(
-    OutputBufferLimits limits = {}) {
+    OutputBufferLimits limits = {},
+    const ServerContext* const server = TestServer()) {
   auto sockets = CreateSocketPair();
   EXPECT_EQ(tcp::NonBlock(sockets[0].Get()), tcp::TcpStatusCode::kOk);
   auto connection = std::make_unique<connection::Connection>(
       connection::Context{.loop = nullptr, .fd = sockets[0].Release()});
   connection->SetState(connection::ConnectionState::kConnected);
-  return {Client::Create(std::move(connection), TestDb(), nullptr, limits),
+  return {Client::Create(std::move(connection), server, limits),
           std::move(sockets[1])};
 }
 
@@ -126,7 +146,7 @@ TEST(ClientTest, ReadQueryReadsOncePerCall) {
   auto connection = std::make_unique<connection::Connection>(
       connection::Context{.loop = nullptr, .fd = sockets[0].Release()});
   connection->SetState(connection::ConnectionState::kConnected);
-  auto client = Client::Create(std::move(connection), TestDb(), nullptr);
+  auto client = Client::Create(std::move(connection), TestServer());
 
   const std::string query(8192, 'x');
   ASSERT_EQ(write(sockets[1].Get(), query.data(), query.size()),
@@ -279,8 +299,7 @@ TEST(ClientTest, RejectsInvalidArityBeforeDispatch) {
 }
 
 TEST(ClientTest, RequiresAuthWhenPasswordIsSet) {
-  auto [client, peer] = CreateClient();
-  client->RequirePassword("s3cret");
+  auto [client, peer] = CreateClient({}, PasswordTestServer());
   EXPECT_FALSE(client->Authenticated());
   const std::string request =
       EncodeRequest({"PING"}) + EncodeRequest({"GET", "key"}) +
@@ -306,8 +325,7 @@ TEST(ClientTest, RequiresAuthWhenPasswordIsSet) {
 }
 
 TEST(ClientTest, QuitWorksBeforeAuth) {
-  auto [client, peer] = CreateClient();
-  client->RequirePassword("s3cret");
+  auto [client, peer] = CreateClient({}, PasswordTestServer());
   const std::string request = EncodeRequest({"QUIT"});
 
   ASSERT_EQ(write(peer.Get(), request.data(), request.size()),
@@ -551,7 +569,11 @@ TEST(ClientTest, RejectsWritesWithMisconfWhileTheAofCannotWrite) {
   auto connection = std::make_unique<connection::Connection>(
       connection::Context{.loop = nullptr, .fd = sockets[0].Release()});
   connection->SetState(connection::ConnectionState::kConnected);
-  auto client = Client::Create(std::move(connection), db.get(), aof.get());
+  const ServerContext server{.db = db.get(),
+                             .aof = aof.get(),
+                             .required_password = {},
+                             .io_threads = {}};
+  auto client = Client::Create(std::move(connection), &server);
   const int peer = sockets[1].Get();
 
   EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"SET", "key", "v"})),
@@ -605,7 +627,11 @@ TEST(ClientTest, ExecRejectsQueuedWritesWhenTheAofFailsAfterQueueing) {
   auto connection = std::make_unique<connection::Connection>(
       connection::Context{.loop = nullptr, .fd = sockets[0].Release()});
   connection->SetState(connection::ConnectionState::kConnected);
-  auto client = Client::Create(std::move(connection), db.get(), aof.get());
+  const ServerContext server{.db = db.get(),
+                             .aof = aof.get(),
+                             .required_password = {},
+                             .io_threads = {}};
+  auto client = Client::Create(std::move(connection), &server);
   const int peer = sockets[1].Get();
 
   EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"MULTI"})), "+OK\r\n");

@@ -44,7 +44,7 @@ bool Authenticate(const Client& client, std::string_view user,
   if (user != "default") {
     return false;
   }
-  const std::string_view required = client.RequiredPassword();
+  const std::string_view required = client.Server().required_password;
   return required.empty() || utils::ConstantTimeEquals(password, required);
 }
 
@@ -62,7 +62,7 @@ void HandleAuth(Client* const client) {
     client->AddReply(reply::kSyntaxError);
     return;
   }
-  if (args.size() == 1 && client->RequiredPassword().empty()) {
+  if (args.size() == 1 && client->Server().required_password.empty()) {
     client->AddReply(reply::FromError(
         "ERR AUTH <password> called without any password configured for the "
         "default user. Are you sure your configuration is correct?"));

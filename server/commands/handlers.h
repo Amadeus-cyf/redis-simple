@@ -43,8 +43,11 @@ void HandleWatch(Client* client);
 
 namespace redis_simple::command::persistence {
 void HandleBgRewriteAof(Client* client);
-void HandleInfo(Client* client);
 }  // namespace redis_simple::command::persistence
+
+namespace redis_simple::command::server_info {
+void HandleInfo(Client* client);
+}  // namespace redis_simple::command::server_info
 
 namespace redis_simple::command::strings {
 void HandleAppend(Client* client);
