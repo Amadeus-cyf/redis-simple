@@ -189,9 +189,9 @@ Guidance for AI coding agents working in this repository.
   hooks pause the I/O threads and the reclaimer that frees `UNLINK`ed values,
   and the AOF background thread (Redis' bio thread), which fsyncs, closes,
   and deletes files, must not allocate or log: its jobs hold paths in
-  fixed-size buffers, and its queues are cleared without freeing. Pause any new thread that touches the heap the same way. Keep the
-  child free of locks and logging, since another thread may have held one at
-  the fork.
+  fixed-size buffers, and its queues are cleared without freeing. Pause any
+  new thread that touches the heap the same way. Keep the child free of locks
+  and logging, since another thread may have held one at the fork.
 - Bound AOF snapshot memory and replay command sizes together. Split large
   strings into replay-safe commands and batch collections by encoded bytes, not
   only element count.

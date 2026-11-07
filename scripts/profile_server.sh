@@ -174,7 +174,11 @@ profile() {
       # Builds with the multi-part AOF take a directory; older ones a path.
       local aof="${output_dir}/${tag}-aof.aof"
       local -a aof_args=(--appendfilename "${aof}")
-      if "${binary}" --no-such-option 2>&1 | grep -q -- --appenddirname; then
+      # The usage text comes with a failing exit status, which pipefail
+      # would carry into the test, so capture it first.
+      local usage
+      usage="$("${binary}" --no-such-option 2>&1 || true)"
+      if [[ "${usage}" == *--appenddirname* ]]; then
         aof_args=(--appenddirname "${output_dir}/${tag}-aof"
           --appendfilename appendonly.aof)
       fi
