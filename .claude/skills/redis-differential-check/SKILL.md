@@ -56,9 +56,11 @@ After any AOF change, check that each server loads the other's AOF directory:
 scripts/check_aof_interop.sh build/debug/redis_simple
 ```
 
-It writes every data type, a TTL, and a transaction, with a rewrite in
-between, so the directory holds a base file and an incremental file, then
-loads it in the other server and compares the keyspaces. Set
+It runs every write command this server supports, with its options, with a
+rewrite in between, so the directory holds a base file and an incremental
+file, then loads it in the other server and compares the keyspaces. Add new
+write commands to its list. Its command list also makes a quick reply
+comparison: extract it and send it to both servers in RESP2 and RESP3. Set
 `INTEROP_KEEP=1` to keep the directories when it fails. A failure to load
 usually means the other server wrote a command this one does not implement:
 Redis' rewrite writes `SET`, `RPUSH`, `SADD`, `ZADD`, `HMSET`, and

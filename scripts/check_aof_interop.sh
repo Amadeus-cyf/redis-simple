@@ -2,10 +2,10 @@
 # Checks that redis_simple and redis-server each load the other's AOF
 # directory, in the command format (no RDB preamble).
 #
-# Each direction writes the same data to one server, with a rewrite in the
-# middle so the directory holds a base file and incremental files, records
-# the keyspace, stops the server, starts the other server on the same
-# directory, and compares its keyspace with the recorded one.
+# Each direction runs every supported write command on one server, with a
+# rewrite in the middle so the directory holds a base file and incremental
+# files, records the keyspace, stops the server, starts the other server on
+# the same directory, and compares its keyspace with the recorded one.
 #
 # Usage: scripts/check_aof_interop.sh REDIS_SIMPLE_BINARY [REDIS_SERVER]
 #
@@ -113,33 +113,104 @@ stop_server() {
   server_pid=""
 }
 
-# Writes keys of every type, a TTL, and a transaction, with a rewrite after
-# the first half so both a base file and an incremental file hold data.
+# Runs every write command this server supports, with its options, in both
+# the base file (before the rewrite) and the incremental file (after it).
+# Redis records some commands in another form than they were sent (SET EX as
+# SET PXAT, EXPIRE as PEXPIREAT, a pop on the last element as a pop plus
+# DEL), so this checks that each server loads the other's forms.
 write_data() {
   local port="$1"
   local large_value
   large_value="$(head -c 70000 /dev/zero | tr '\0' 'x')"
-  cli "${port}" SET string hello >/dev/null
-  cli "${port}" SET counter 41 >/dev/null
-  cli "${port}" INCR counter >/dev/null
   cli "${port}" SET large "${large_value}" >/dev/null
-  cli "${port}" RPUSH list a b c >/dev/null
-  cli "${port}" LPUSH list z >/dev/null
-  cli "${port}" SADD set one two three 4 >/dev/null
-  cli "${port}" ZADD zset 1 a 2.5 b -3 c >/dev/null
-  cli "${port}" HSET hash field value other 2 >/dev/null
-  cli "${port}" SET with_ttl v EX 100000 >/dev/null
+  cli "${port}" >/dev/null <<'COMMANDS'
+SET string hello
+SET counter 41
+INCR counter
+RPUSH list a b c d e f g
+LPUSH list z
+SADD set one two three 4
+ZADD zset 1 a 2.5 b -3 c 0.1 d
+HSET hash field value other 2 count 10
+SET with_ttl v EX 100000
+COMMANDS
   cli "${port}" BGREWRITEAOF >/dev/null
   wait_for_rewrite "${port}"
-  cli "${port}" APPEND string " world" >/dev/null
-  cli "${port}" RPOP list >/dev/null
-  cli "${port}" SREM set two >/dev/null
-  cli "${port}" ZADD zset INCR 0.25 a >/dev/null
-  cli "${port}" HDEL hash other >/dev/null
-  cli "${port}" PEXPIRE list 200000000 >/dev/null
-  cli "${port}" DEL counter >/dev/null
-  printf 'MULTI\nSET in_transaction 1\nINCR in_transaction\nEXEC\n' |
-    cli "${port}" >/dev/null
+  cli "${port}" >/dev/null <<'COMMANDS'
+APPEND string " world"
+APPEND new_by_append abc
+INCRBY counter 5
+DECR counter
+DECRBY counter 3
+INCR fresh_counter
+SET set_ex v EX 100000
+SET set_px v PX 100000000
+SET set_exat v EXAT 4102444800
+SET set_pxat v PXAT 4102444800000
+SET with_ttl replaced KEEPTTL
+SET string_nx v NX
+SET string_nx ignored NX
+SET string_xx v XX
+SET string hello2 GET
+SET plain_after_ttl v EX 100
+SET plain_after_ttl v
+MSET m1 1 m2 two m3 3.5
+RPOP list
+RPOP list 2
+LPOP list
+LSET list 0 first
+LREM list 0 c
+LTRIM list 0 1
+RPUSH popped_empty x
+LPOP popped_empty
+RPUSH popped_count x y
+RPOP popped_count 5
+SREM set two
+SADD set five
+SADD removed_set only
+SREM removed_set only
+ZADD zset INCR 0.25 a
+ZADD zset GT CH 3 a 1 b
+ZADD zset LT 0 d
+ZADD zset NX 7 e 8 a
+ZADD zset XX 9 e 9.5 b
+ZREM zset c
+ZADD removed_zset 1 only
+ZREM removed_zset only
+HSET hash added yes
+HMSET hash bulk1 1 bulk2 2
+HINCRBY hash count -3
+HINCRBY hash new_count 4
+HDEL hash other
+HSET removed_hash f v
+HDEL removed_hash f
+PEXPIRE list 200000000
+EXPIRE set 100000
+EXPIREAT zset 4102444800
+PEXPIREAT hash 4102444800000
+EXPIRE set 200000 GT
+EXPIRE set 1 GT
+EXPIRE zset 50000 LT
+EXPIRE string 100000 NX
+EXPIRE m1 100000 XX
+SET persisted v EX 100000
+PERSIST persisted
+SET expired_now v
+EXPIRE expired_now 0
+SET expired_past v
+PEXPIREAT expired_past 1
+SET renamed_from v EX 100000
+RENAME renamed_from renamed_to
+SET deleted v
+DEL deleted counter
+SET unlinked v
+UNLINK unlinked
+MULTI
+SET in_transaction 1
+INCR in_transaction
+RPUSH in_transaction_list a
+EXEC
+COMMANDS
 }
 
 # Prints every key with its type, whether it has a TTL, and its value, in a

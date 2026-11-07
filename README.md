@@ -385,7 +385,7 @@ other's AOF directory:
 scripts/check_aof_interop.sh build/debug/redis_simple
 ```
 
-It writes every data type, a TTL, and a transaction, with a rewrite in
+It runs every write command this server supports, with a rewrite in
 between, loads the directory in the other server, and compares the
 keyspaces. Set `INTEROP_KEEP=1` to keep the directories for inspection.
 
