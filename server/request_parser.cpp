@@ -350,7 +350,8 @@ bool SplitInline(std::string_view line, std::deque<std::string>* storage,
   }
 }
 
-// Redis' processInlineBuffer.
+// Splits one inline command, a line of space-separated arguments that may be
+// quoted, as Redis' processInlineBuffer does.
 ParseResult ParseInline(std::string_view input, ParseState* const state,
                         std::string_view* const command,
                         command::CommandArgs* const args) {

@@ -17,16 +17,16 @@
 #include "server/commands/command.h"
 #include "server/db/db.h"
 #include "server/db/key_watcher.h"
+#include "server/multi_state.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
+#include "server/server_context.h"
 
 namespace redis_simple::aof {
 class Aof;
 }
 
 namespace redis_simple {
-class IoThread;
-
 enum class ClientStatus {
   kOk = 0,
   kError = -1,
@@ -40,21 +40,24 @@ struct OutputBufferLimits {
 
 class Client {
  public:
-  // `db` must outlive the client; `aof` is null when persistence is off.
+  // `server` must outlive the client. The client starts authenticated
+  // unless the server requires a password.
   static std::unique_ptr<Client> Create(
-      std::unique_ptr<connection::Connection> connection, db::RedisDb* db,
-      aof::Aof* aof, OutputBufferLimits output_limits = {}) {
+      std::unique_ptr<connection::Connection> connection,
+      const ServerContext* server, OutputBufferLimits output_limits = {}) {
     return std::unique_ptr<Client>(
-        new Client(std::move(connection), db, aof, output_limits));
+        new Client(std::move(connection), server, output_limits));
   }
   Client(const Client&) = delete;
   Client& operator=(const Client&) = delete;
   ~Client();
   connection::Connection* Connection() { return connection_.get(); }
   const connection::Connection* Connection() const { return connection_.get(); }
+  const ServerContext& Server() const { return *server_; }
   // Never null: every client is bound to a database.
-  db::RedisDb* Db() { return db_; }
-  aof::Aof* Aof() { return aof_; }
+  db::RedisDb* Db() { return server_->db; }
+  // Null when persistence is off.
+  aof::Aof* Aof() { return server_->aof; }
   ssize_t ReadQuery();
   ssize_t SendReply();
   size_t AddReply(std::string_view reply);
@@ -87,20 +90,7 @@ class Client {
   }
   // Whether the server has removed this client; it is destroyed later.
   bool Freed() const { return freed_; }
-  // The server's I/O threads, for INFO; null without a server.
-  const std::vector<std::unique_ptr<IoThread>>* IoThreads() const {
-    return io_threads_;
-  }
-  void SetIoThreads(const std::vector<std::unique_ptr<IoThread>>* threads) {
-    io_threads_ = threads;
-  }
   const command::CommandArgs& Args() const { return args_; }
-  // Requires AUTH before most commands. `password` must outlive the client.
-  void RequirePassword(std::string_view password) {
-    required_password_ = password;
-    authenticated_ = password.empty();
-  }
-  std::string_view RequiredPassword() const { return required_password_; }
   bool Authenticated() const { return authenticated_; }
   void SetAuthenticated(bool authenticated) { authenticated_ = authenticated; }
   // CLIENT ID: unique for the life of the process, as in Redis.
@@ -111,15 +101,15 @@ class Client {
   void MarkModified() { modified_ = true; }
   // MULTI/EXEC. Commands read while a transaction is open are copied into a
   // queue and run back to back by EXEC.
-  bool InTransaction() const { return in_multi_; }
-  void BeginTransaction() { in_multi_ = true; }
+  bool InTransaction() const { return multi_.Active(); }
+  void BeginTransaction() { multi_.Begin(); }
   // Drops the queued commands and every WATCHed key.
   void DiscardTransaction();
   // Runs the queued commands, or aborts when a command was rejected while
   // queueing or a WATCHed key changed; either way the transaction ends.
   void ExecTransaction();
-  void WatchKey(std::string_view key) { db_->WatchKey(key, &watcher_); }
-  void UnwatchKeys() { db_->UnwatchKeys(&watcher_); }
+  void WatchKey(std::string_view key) { Db()->WatchKey(key, &watcher_); }
+  void UnwatchKeys() { Db()->UnwatchKeys(&watcher_); }
 
  private:
   friend class aof::Aof;
@@ -130,19 +120,12 @@ class Client {
     kProtocolError,
   };
 
-  Client(std::unique_ptr<connection::Connection> connection, db::RedisDb* db,
-         aof::Aof* aof, OutputBufferLimits output_limits);
-  explicit Client(db::RedisDb* db);
+  Client(std::unique_ptr<connection::Connection> connection,
+         const ServerContext* server, OutputBufferLimits output_limits);
+  // A client for AOF replay, without a connection; it discards replies.
+  explicit Client(const ServerContext* server);
   bool ExecuteForReplay(const command::Command* command,
                         command::CommandArgs* args);
-  // A command queued by MULTI. Its arguments are the `arg_count` entries of
-  // `multi_arg_ends_` before `arg_end`, which index into `multi_args_`.
-  struct QueuedCommand {
-    const command::Command* command;
-    size_t arg_end;
-    size_t arg_count;
-  };
-
   RequestStatus ParseRequest();
   // RESP framing only: fills `args_` and consumes the request, with no
   // reply or other side effect.
@@ -156,16 +139,16 @@ class Client {
   std::string AofWriteError() const;
   ClientStatus ProcessCommand();
   void QueueCommand();
-  void ResetTransaction();
   // Propagates a successful mutation: touches WATCHed keys and appends the
-  // command to the AOF. Returns false if the AOF append failed.
-  bool PropagateMutation(const command::Command& command);
+  // command to the AOF. Returns false if the AOF append failed. Inlined into
+  // the per-command path.
+  [[gnu::always_inline]] inline bool PropagateMutation(
+      const command::Command& command);
   bool CanQueueReply(size_t size);
   ssize_t SendBufferReply();
   ssize_t SendListReply();
   std::unique_ptr<connection::Connection> connection_;
-  db::RedisDb* db_{nullptr};
-  aof::Aof* aof_{nullptr};
+  const ServerContext* server_;
   const command::Command* command_{nullptr};
   command::CommandArgs args_;
   // Requests framed by ParseQueries: each is `arg_count` arguments after its
@@ -186,19 +169,13 @@ class Client {
   reply::ProtocolVersion protocol_{reply::ProtocolVersion::kResp2};
   bool reads_paused_{};
   bool freed_{};
-  const std::vector<std::unique_ptr<IoThread>>* io_threads_{nullptr};
   bool close_after_reply_{};
   bool modified_{};
   bool propagation_failed_{};
-  bool in_multi_{};
-  bool multi_error_{};
-  std::vector<QueuedCommand> multi_commands_;
-  std::vector<size_t> multi_arg_ends_;
-  std::string multi_args_;
+  MultiState multi_;
   db::KeyWatcher watcher_;
   bool discard_replies_{};
   bool reply_error_{};
-  std::string_view required_password_;
   bool authenticated_{true};
   uint64_t id_{NextId()};
   std::string name_;
