@@ -419,7 +419,7 @@ bool ListPack::Insert(size_t offset, ListPack::Position where,
   EncodingGeneralType encoding_type = EncodingGeneralType::kInteger;
   int64_t integer_value = (element_integer != nullptr) ? *element_integer : 0;
   if ((element_integer != nullptr) ||
-      utils::ToCanonicalInt64(*element_string, &integer_value)) {
+      utils::ToInt64(*element_string, &integer_value)) {
     backlen = EncodeInteger(nullptr, integer_value);
     encoding_type = EncodingGeneralType::kInteger;
   } else {
@@ -473,7 +473,7 @@ bool ListPack::PlanEntry(const ListPackEntry& entry, Encoding* const encoding) {
     return false;
   }
   int64_t integer_value = entry.integer_value;
-  if (entry.is_integer || utils::ToCanonicalInt64(entry.str, &integer_value)) {
+  if (entry.is_integer || utils::ToInt64(entry.str, &integer_value)) {
     encoding->integer_value = integer_value;
     encoding->encoding_type = EncodingGeneralType::kInteger;
     encoding->backlen_bytes =
@@ -632,7 +632,7 @@ size_t ListPack::EstimateBytes(int64_t value, size_t repeat) {
 size_t ListPack::EstimateEntryBytes(std::string_view value) {
   int64_t integer = 0;
   constexpr size_t kMaxStringEncodingOverhead = 10;
-  const bool is_integer = utils::ToCanonicalInt64(value, &integer);
+  const bool is_integer = utils::ToInt64(value, &integer);
   if (!is_integer && value.size() > std::numeric_limits<uint32_t>::max() -
                                         kMaxStringEncodingOverhead) {
     return std::numeric_limits<size_t>::max();

@@ -25,12 +25,11 @@ bool EqualsIgnoreCase(std::string_view left, std::string_view right);
 bool ConstantTimeEquals(std::string_view left, std::string_view right);
 // Match Redis-style glob patterns without allocating temporary strings.
 bool MatchesGlob(std::string_view value, std::string_view pattern);
-// Return true if the string strictly represents a signed int64: no leading or
-// trailing spaces, no extra characters, and no leading zeroes except "0".
+// Parses `s` as Redis' string2ll does: the canonical decimal text of an
+// int64, with an optional '-' and no '+', spaces, leading zeros, or "-0".
+// Only canonical text parses, so compact encodings that store a value as an
+// integer reproduce the original bytes.
 bool ToInt64(std::string_view s, int64_t* v);
-// Parse an integer only when its text is the canonical decimal representation.
-// Compact encodings use this to preserve distinct values such as "+1" and "1".
-bool ToCanonicalInt64(std::string_view s, int64_t* v);
 // Convert an int64 to string and store it in dst.
 int Int64ToString(std::span<char> dst, int64_t svalue);
 // Convert a uint64 to string and store it in dst. Ref to

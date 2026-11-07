@@ -143,10 +143,9 @@ TEST(StringUtilsTest, ToInt64) {
   ASSERT_TRUE(ToInt64(s2, &v2));
   ASSERT_EQ(v2, -100234567);
 
+  // Redis' string2ll accepts no '+'.
   std::string s3("+100234567");
-  int64_t v3 = 0;
-  ASSERT_TRUE(ToInt64(s3, &v3));
-  ASSERT_EQ(v3, 100234567);
+  ASSERT_FALSE(ToInt64(s3, nullptr));
 
   std::string s4("0");
   int64_t v4 = 0;
@@ -169,14 +168,10 @@ TEST(StringUtilsTest, ToInt64) {
   ASSERT_FALSE(ToInt64(s9, nullptr));
 
   std::string s10("+0");
-  int64_t v10 = 0;
-  ASSERT_TRUE(ToInt64(s10, &v10));
-  ASSERT_EQ(v10, 0);
+  ASSERT_FALSE(ToInt64(s10, nullptr));
 
   std::string s11("-0");
-  int64_t v11 = 0;
-  ASSERT_TRUE(ToInt64(s11, &v11));
-  ASSERT_EQ(v11, 0);
+  ASSERT_FALSE(ToInt64(s11, nullptr));
 
   std::string s12("0123456");
   ASSERT_FALSE(ToInt64(s12, nullptr));
@@ -207,18 +202,6 @@ TEST(StringUtilsTest, ToInt64) {
 
   std::string s19;
   ASSERT_FALSE(ToInt64(s19, nullptr));
-}
-
-TEST(StringUtilsTest, ToCanonicalInt64) {
-  int64_t value = 0;
-
-  EXPECT_TRUE(ToCanonicalInt64("0", &value));
-  EXPECT_EQ(value, 0);
-  EXPECT_TRUE(ToCanonicalInt64("-42", &value));
-  EXPECT_EQ(value, -42);
-  EXPECT_FALSE(ToCanonicalInt64("+42", nullptr));
-  EXPECT_FALSE(ToCanonicalInt64("+0", nullptr));
-  EXPECT_FALSE(ToCanonicalInt64("-0", nullptr));
 }
 
 TEST(StringUtilsTest, Int64ToString) {

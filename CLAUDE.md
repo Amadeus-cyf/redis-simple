@@ -50,7 +50,17 @@ Guidance for AI coding agents working in this repository.
   (`std::string_view`s into the client query buffer). Copy arguments only at an
   ownership boundary, such as storing a key/value in the DB or data structure.
 - Keep request decoding incremental and zero-copy. Standard RESP arrays are the
-  primary wire format; inline commands remain a compatibility path.
+  primary wire format; inline commands remain a compatibility path. Frame both
+  as Redis' `processMultibulkBuffer` and `processInlineBuffer` do, with its
+  limits and `Protocol error` messages; only quoted inline arguments are
+  copied, into the client's `ParseState`, which releases them once the
+  requests have run. Keep the parser's hot path inlined: inner helpers return
+  a `ParseStatus` and report errors through an out-parameter, and rare cases
+  stay in cold functions.
+- Parse numbers as Redis does: integer arguments with `utils::ToInt64`
+  (`string2ll`), floats with `utils::ToDouble` (`string2d`), and score range
+  bounds with `utils::ToRangeDouble` (`zslParseRange`). Format doubles with
+  `utils::FormatFloat`, which prints them as Redis 8's `d2string` does.
 - Keep protocol-sensitive replies based on the client's negotiated RESP
   version. Connections default to RESP2 and may switch through `HELLO`.
 - Pass `CommandArgs` by const reference instead of copying its view vector.
@@ -123,9 +133,9 @@ Guidance for AI coding agents working in this repository.
   pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
   hash. Keep operations that touch more than one of those dicts on that path
   instead of looking the key up by `std::string_view` in each.
-- String-keyed `Dict`s hash with process-seeded SipHash-1-3
-  (`utils/siphash.h`) to resist hash flooding. Do not depend on iteration or
-  `SCAN` order in tests; it changes between runs.
+- String-keyed `Dict`s hash with process-seeded SipHash-1-2
+  (`utils/siphash.h`), as Redis does, to resist hash flooding. Do not depend
+  on iteration or `SCAN` order in tests; it changes between runs.
 - `Skiplist` stores keys by value, orders them with a three-way comparison,
   and searches by any probe type its comparator can compare a key against. A
   lookup probe must identify at most one key; a range-bound probe may match
@@ -159,8 +169,9 @@ Guidance for AI coding agents working in this repository.
   as `CreateWithString`, overwrites embedded values in place, reuses a small
   or well-filled raw buffer, and releases a buffer much larger than the new
   value. It accepts a value that views the object's own bytes.
-- Only commands marked `AllowBeforeAuth` in the command table run before a
-  client authenticates when `--requirepass` is set.
+- Only commands marked `AllowBeforeAuth` in the command table (`AUTH`,
+  `HELLO`, and `QUIT`, as in Redis) run before a client authenticates when
+  `--requirepass` is set.
 - Inside `MULTI`, every command is queued unless the command table marks it
   `RunsImmediatelyInMulti` (`EXEC`, `DISCARD`, `MULTI`, `WATCH`, `QUIT`).
   Queued arguments are copied once into the client's transaction buffer, the

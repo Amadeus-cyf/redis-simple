@@ -3,14 +3,18 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace redis_simple::utils {
@@ -78,31 +82,83 @@ TEST(FloatUtilsTest, FormatsWholeNumbersAsPlainIntegers) {
   EXPECT_EQ(FloatToString(-0.0), "-0");
   EXPECT_EQ(FloatToString(9007199254740994.0), "9007199254740994");
   EXPECT_EQ(FloatToString(72057594037927936.0), "72057594037927936");
-  EXPECT_EQ(FloatToString(1e17), "1e+17");
+  // Redis' double2ll: every integral double up to 2^62 prints in full.
+  EXPECT_EQ(FloatToString(1e17), "100000000000000000");
+  EXPECT_EQ(FloatToString(4611686018427387904.0), "4611686018427387904");
+  EXPECT_EQ(FloatToString(-4611686018427387904.0), "-4611686018427387904");
   EXPECT_EQ(FloatToString(1.5), "1.5");
   EXPECT_EQ(FloatToString(-2.25), "-2.25");
 }
 
+TEST(FloatUtilsTest, FormatsLikeRedisFpconv) {
+  // Outputs of Redis 8.10's fpconv_dtoa (deps/fpconv), run on these inputs.
+  const std::vector<std::pair<double, std::string_view>> cases = {
+      {694867.4738744653, "6.948674738744653e+5"},
+      {1e-05, "0.00001"},
+      {1e-07, "1e-7"},
+      {0.1, "0.1"},
+      {0.0001234567, "1.234567e-4"},
+      {-23141.51913071, "-2.314151913071e+4"},
+      {9.999e-05, "9.999e-5"},
+      {1.5e-07, "1.5e-7"},
+      {1e+21, "1e+21"},
+      {1.5e+308, "1.5e+308"},
+      {5e-324, "5e-324"},
+      {123456789.123, "123456789.123"},
+      {1234567.0001, "1234567.0001"},
+      {0.000123, "0.000123"},
+      {9.223372036854776e+18, "9223372036854776000"},
+      {1.2345678901234567e+19, "12345678901234567000"},
+      {0.30000000000000004, "0.30000000000000004"},
+      {0.3333333333333333, "0.3333333333333333"},
+      {-2.5e-06, "-2.5e-6"},
+      {1e+22, "1e+22"},
+      {12345.678901, "12345.678901"},
+      {1.7976931348623157e+308, "1.7976931348623157e+308"},
+  };
+  for (const auto& [value, expected] : cases) {
+    EXPECT_EQ(FloatToString(value), expected) << value;
+  }
+  EXPECT_EQ(FloatToString(std::numeric_limits<double>::infinity()), "inf");
+  EXPECT_EQ(FloatToString(-std::numeric_limits<double>::infinity()), "-inf");
+  EXPECT_EQ(FloatToString(std::numeric_limits<double>::quiet_NaN()), "nan");
+}
+
 namespace {
-// The general path: shortest round-trip digits, printed in fixed notation for
-// exponents from -4 to 16.
+// fpconv_dtoa's layout of the shortest round-trip digits, written
+// independently of FormatFloat for the cross-check below.
 std::string ReferenceFormat(double value) {
   std::array<char, 64> buffer{};
-  auto [end, error] =
-      std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+  const auto [end, error] =
+      std::to_chars(buffer.data(), buffer.data() + buffer.size(),
+                    std::abs(value), std::chars_format::scientific);
   EXPECT_EQ(error, std::errc());
-  std::string text(buffer.data(), end);
-  const size_t exponent_position = text.find('e');
-  if (exponent_position != std::string::npos) {
-    const int exponent = std::stoi(text.substr(exponent_position + 1));
-    if (exponent >= -4 && exponent <= 16) {
-      end = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
-                          std::chars_format::fixed)
-                .ptr;
-      text.assign(buffer.data(), end);
-    }
+  const std::string text(buffer.data(), end);
+  const size_t e = text.find('e');
+  std::string digits = text.substr(0, e);
+  std::erase(digits, '.');
+  const int exponent = std::stoi(text.substr(e + 1));
+  const auto n = static_cast<int>(digits.size());
+  const int k = exponent - (n - 1);
+  std::string out = value < 0 ? "-" : "";
+  if (k >= 0 && std::abs(exponent) < n + 7) {
+    return out + digits + std::string(static_cast<size_t>(k), '0');
   }
-  return text;
+  if (k < 0 && (k > -7 || std::abs(exponent) < 4)) {
+    const int integer_digits = n + k;
+    if (integer_digits <= 0) {
+      return out + "0." +
+             std::string(static_cast<size_t>(-integer_digits), '0') + digits;
+    }
+    const auto split = static_cast<size_t>(integer_digits);
+    return out + digits.substr(0, split) + "." + digits.substr(split);
+  }
+  out += digits.substr(0, 1);
+  if (n > 1) {
+    out += "." + digits.substr(1);
+  }
+  return out + "e" + (exponent < 0 ? "-" : "+") +
+         std::to_string(std::abs(exponent));
 }
 }  // namespace
 
@@ -144,21 +200,30 @@ TEST(FloatUtilsTest, ShortDecimalsMatchShortestRoundTripText) {
     values.push_back(std::nextafter(value, 0.0));
   }
   for (const double value : values) {
-    EXPECT_EQ(FloatToString(value), ReferenceFormat(value)) << value;
+    // Integers up to 2^62 print in full, which the reference also does below
+    // 10^16; the fast path must agree with the layout everywhere else.
+    if (value != 0) {
+      EXPECT_EQ(FloatToString(value), ReferenceFormat(value)) << value;
+    }
   }
 }
 
 TEST(FloatUtilsTest, PlainDecimalsParseLikeTheGeneralParser) {
-  // The plain-decimal fast path must return exactly what std::from_chars
-  // does, and leave every other form to it.
+  // The plain-decimal fast path must return exactly what Redis' string2d
+  // (strtod with its checks) does, and leave every other form to it.
   const auto reference = [](std::string_view text, double* value) {
-    if (!text.empty() && text.front() == '+') {
-      text.remove_prefix(1);
+    if (text.empty() ||
+        std::isspace(static_cast<unsigned char>(text[0])) != 0) {
+      return false;
     }
-    const auto result = std::from_chars(text.data(), text.data() + text.size(),
-                                        *value, std::chars_format::general);
-    return !text.empty() && result.ec == std::errc() &&
-           result.ptr == text.data() + text.size() && !std::isnan(*value);
+    const std::string copy(text);
+    char* end = nullptr;
+    errno = 0;
+    *value = std::strtod(copy.c_str(), &end);
+    const bool range_error =
+        errno == ERANGE && (std::isinf(*value) || *value == 0);
+    return end == copy.c_str() + copy.size() && !std::isnan(*value) &&
+           !range_error;
   };
   std::vector<std::string> inputs = {"0",
                                      "-0",
@@ -245,7 +310,31 @@ TEST(FloatUtilsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {
   EXPECT_FALSE(ToDouble("1.5junk", &value));
   EXPECT_FALSE(ToDouble(" 1.5", &value));
   EXPECT_FALSE(ToDouble("1.5 ", &value));
-  EXPECT_FALSE(ToDouble("0x1p2", &value));
   EXPECT_FALSE(ToDouble("", &value));
+  // strtod forms Redis accepts, and the overflow it does not.
+  EXPECT_TRUE(ToDouble("0x10", &value));
+  EXPECT_EQ(value, 16);
+  EXPECT_TRUE(ToDouble("0x1p2", &value));
+  EXPECT_EQ(value, 4);
+  EXPECT_TRUE(ToDouble("-Infinity", &value));
+  EXPECT_TRUE(std::isinf(value) && value < 0);
+  EXPECT_FALSE(ToDouble("1e400", &value));
+  EXPECT_FALSE(ToDouble("1e-400", &value));
+  EXPECT_FALSE(ToDouble(std::string(200, '1') + "x", &value));
+  EXPECT_TRUE(ToDouble(std::string(200, '1'), &value));
+}
+
+TEST(FloatUtilsTest, ParsesRangeBoundsLikeZslParseRange) {
+  double value = -1;
+  EXPECT_TRUE(ToRangeDouble("", &value));
+  EXPECT_EQ(value, 0);
+  EXPECT_TRUE(ToRangeDouble(" 2.5", &value));
+  EXPECT_EQ(value, 2.5);
+  EXPECT_TRUE(ToRangeDouble("1e400", &value));
+  EXPECT_TRUE(std::isinf(value));
+  EXPECT_TRUE(ToRangeDouble("-inf", &value));
+  EXPECT_FALSE(ToRangeDouble("nan", &value));
+  EXPECT_FALSE(ToRangeDouble("1 ", &value));
+  EXPECT_FALSE(ToRangeDouble("abc", &value));
 }
 }  // namespace redis_simple::utils

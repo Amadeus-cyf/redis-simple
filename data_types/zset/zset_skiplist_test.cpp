@@ -41,9 +41,9 @@ TEST(ZSetSkiplistStandaloneTest, EmptyRangeByScoreAndCountAreSafe) {
 
 TEST(ZSetSkiplistStandaloneTest, DeleteRecomputesRangeBoundaries) {
   ZSetSkiplist zset_skiplist;
-  ASSERT_TRUE(zset_skiplist.InsertOrUpdate("a", 1.0));
-  ASSERT_TRUE(zset_skiplist.InsertOrUpdate("b", 2.0));
-  ASSERT_TRUE(zset_skiplist.InsertOrUpdate("c", 3.0));
+  ASSERT_TRUE(zset_skiplist.InsertOrUpdate("a", 1.0, nullptr));
+  ASSERT_TRUE(zset_skiplist.InsertOrUpdate("b", 2.0, nullptr));
+  ASSERT_TRUE(zset_skiplist.InsertOrUpdate("c", 3.0, nullptr));
 
   ASSERT_TRUE(zset_skiplist.Delete("a"));
   ASSERT_TRUE(zset_skiplist.Delete("c"));

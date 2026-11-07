@@ -124,6 +124,31 @@ int Run() {
     }
   }
 
+  // LPOP and RPOP with a count, and Redis' order of checks.
+  const std::vector<Case> count_cases = {
+      {"RPUSH list_count a b c d\r\n", "4\n"},
+      {"LPOP list_count -1\r\n",
+       "ERR value is out of range, must be positive\n"},
+      {"LPOP list_count 1 2\r\n",
+       "ERR wrong number of arguments for 'lpop' command\n"},
+      {"LPOP missing_list 2\r\n", "(nil)\n"},
+      {"LINDEX missing_list notanumber\r\n", "(nil)\n"},
+      {"LSET missing_list notanumber value\r\n", "ERR no such key\n"},
+      {"LINDEX list_string notanumber\r\n",
+       "WRONGTYPE Operation against a key holding the wrong kind of value\n"},
+  };
+  for (const Case& test_case : count_cases) {
+    if (!ExpectReply(&cli, test_case)) {
+      return EXIT_FAILURE;
+    }
+  }
+  if (!ExpectLines(&cli, "LPOP list_count 0\r\n", {}) ||
+      !ExpectLines(&cli, "LPOP list_count 2\r\n", {"a", "b"}) ||
+      !ExpectLines(&cli, "RPOP list_count 5\r\n", {"d", "c"}) ||
+      !ExpectReply(&cli, {"EXISTS list_count\r\n", "0\n"})) {
+    return EXIT_FAILURE;
+  }
+
   return ExpectLines(&cli, "LRANGE missing_list 0 -1\r\n", {}) ? EXIT_SUCCESS
                                                                : EXIT_FAILURE;
 }

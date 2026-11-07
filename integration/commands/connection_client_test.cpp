@@ -21,6 +21,17 @@ bool ExpectReply(cli::RedisCli* const cli,
                actual.c_str());
   return false;
 }
+bool ExpectRawReply(cli::RedisCli* cli, const std::string& request,
+                    const std::string& expected) {
+  cli->AddCommand(request);
+  const std::string reply = cli->ReadReply();
+  if (reply != expected) {
+    RS_LOG_DEBUG("raw request failed: expected %s actual %s\n",
+                 expected.c_str(), reply.c_str());
+    return false;
+  }
+  return true;
+}
 }  // namespace
 
 int Run() {
@@ -75,6 +86,50 @@ int Run() {
   }
   if (!ExpectReply(&cli, {"ECHO"},
                    "ERR wrong number of arguments for 'echo' command\n")) {
+    return EXIT_FAILURE;
+  }
+  // AUTH with too many arguments, HELLO's options, CLIENT, and SELECT, as
+  // Redis answers them.
+  if (!ExpectReply(&cli, {"AUTH", "a", "b", "c"}, "ERR syntax error\n") ||
+      !ExpectReply(&cli, {"HELLO", "3", "BOGUS"},
+                   "ERR Syntax error in HELLO option 'BOGUS'\n") ||
+      !ExpectReply(&cli, {"HELLO", "3", "AUTH", "someone", "pw"},
+                   "WRONGPASS invalid username-password pair or user is "
+                   "disabled.\n") ||
+      !ExpectReply(&cli, {"HELLO", "3", "SETNAME", "a b"},
+                   "ERR Client names cannot contain spaces, newlines or "
+                   "special characters.\n")) {
+    return EXIT_FAILURE;
+  }
+  cli.AddCommand(std::vector<std::string_view>{"HELLO", "3", "AUTH", "default",
+                                               "pw", "SETNAME", "conn-1"});
+  if (!cli.ReadReply().contains("proto\n3\n")) {
+    RS_LOG_DEBUG("HELLO with AUTH and SETNAME failed\n");
+    return EXIT_FAILURE;
+  }
+  if (!ExpectReply(&cli, {"CLIENT", "GETNAME"}, "conn-1\n") ||
+      !ExpectReply(&cli, {"CLIENT", "SETNAME", ""}, "OK\n") ||
+      !ExpectReply(&cli, {"CLIENT", "GETNAME"}, "(nil)\n") ||
+      !ExpectReply(&cli, {"CLIENT", "SETINFO", "lib-name", "redis-simple"},
+                   "OK\n") ||
+      !ExpectReply(&cli, {"CLIENT", "GETNAME", "extra"},
+                   "ERR wrong number of arguments for 'client|getname' "
+                   "command\n") ||
+      !ExpectReply(&cli, {"CLIENT", "NOPE"},
+                   "ERR unknown subcommand 'NOPE'. Try CLIENT HELP.\n") ||
+      !ExpectReply(&cli, {"SELECT", "0"}, "OK\n") ||
+      !ExpectReply(&cli, {"SELECT", "1"}, "ERR DB index is out of range\n")) {
+    return EXIT_FAILURE;
+  }
+  cli.AddCommand(std::vector<std::string_view>{"CLIENT", "ID"});
+  if (cli.ReadReply().empty()) {
+    return EXIT_FAILURE;
+  }
+  // Inline requests are split as Redis splits them: quotes and escapes, and
+  // empty lines skipped.
+  if (!ExpectRawReply(&cli, "\r\nECHO \"a b\\x41\" 'c'\r\n",
+                      "ERR wrong number of arguments for 'echo' command\n") ||
+      !ExpectRawReply(&cli, "ECHO \"a b\\x41\"\r\n", "a bA\n")) {
     return EXIT_FAILURE;
   }
   if (!ExpectReply(&cli, {"QUIT", "now"},

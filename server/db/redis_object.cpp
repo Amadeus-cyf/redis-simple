@@ -18,10 +18,10 @@ StringValue::StringValue(int64_t value) {
 }
 
 std::unique_ptr<RedisObject> RedisObject::CreateWithString(std::string value) {
-  // ToCanonicalInt64 rejects forms like "+1" and "007" so GET returns the
+  // ToInt64 rejects forms like "+1" and "007" so GET returns the
   // exact bytes SET stored.
   int64_t integer = 0;
-  if (utils::ToCanonicalInt64(value, &integer)) {
+  if (utils::ToInt64(value, &integer)) {
     return CreateWithInt(integer);
   }
   if (value.size() <= EmbeddedString::kCapacity) {
@@ -33,7 +33,7 @@ std::unique_ptr<RedisObject> RedisObject::CreateWithString(std::string value) {
 std::unique_ptr<RedisObject> RedisObject::CreateWithStringCopy(
     std::string_view value) {
   int64_t integer = 0;
-  if (utils::ToCanonicalInt64(value, &integer)) {
+  if (utils::ToInt64(value, &integer)) {
     return CreateWithInt(integer);
   }
   if (value.size() <= EmbeddedString::kCapacity) {
@@ -98,7 +98,7 @@ void RedisObject::SetInt(int64_t value) {
 void RedisObject::AssignString(std::string_view value) {
   RS_CHECK(Type() == ObjectType::kString);
   int64_t integer = 0;
-  if (utils::ToCanonicalInt64(value, &integer)) {
+  if (utils::ToInt64(value, &integer)) {
     value_.emplace<int64_t>(integer);
     return;
   }

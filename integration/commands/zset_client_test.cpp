@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cli/cli.h"
@@ -89,6 +90,42 @@ int Run() {
       // Like Redis, the listpack encoding stores -0 as the integer 0.
       {"ZADD zset_negative_zero -0 member\r\n", "1\n"},
       {"ZSCORE zset_negative_zero member\r\n", "0\n"},
+      // ZADD options, checked in Redis' order.
+      {"ZADD zflags NX 1 a 2 b\r\n", "2\n"},
+      {"ZADD zflags GT CH\r\n", "ERR syntax error\n"},
+      {"ZADD zflags XX NX 1 a\r\n",
+       "ERR XX and NX options at the same time are not compatible\n"},
+      {"ZADD zflags GT LT 1 a\r\n",
+       "ERR GT, LT, and/or NX options at the same time are not compatible\n"},
+      {"ZADD zflags INCR 1 a 1 b\r\n",
+       "ERR INCR option supports a single increment-element pair\n"},
+      {"ZADD zflags XX CH 5 a 9 missing\r\n", "1\n"},
+      {"ZADD zflags GT CH 1 b\r\n", "0\n"},
+      {"ZADD zflags LT CH 1 b\r\n", "1\n"},
+      {"ZADD zflags INCR 2 a\r\n", "7\n"},
+      {"ZADD zflags NX INCR 2 a\r\n", "(nil)\n"},
+      {"ZCARD zflags\r\n", "2\n"},
+      {"ZREVRANK zflags a\r\n", "0\n"},
+      {"ZRANK zflags missing WITHSCORE\r\n", "(nil)\n"},
+      {"ZRANK zflags a WITHSCOR\r\n", "ERR syntax error\n"},
+      // Numbers as Redis 8 parses and prints them.
+      {"ZADD znumbers 0x10 hex 1e-5 small 1e17 big\r\n", "3\n"},
+      {"ZSCORE znumbers hex\r\n", "16\n"},
+      {"ZSCORE znumbers small\r\n", "0.00001\n"},
+      {"ZSCORE znumbers big\r\n", "100000000000000000\n"},
+      {"ZADD znumbers 1e400 overflow\r\n", "ERR value is not a valid float\n"},
+      {"ZCOUNT znumbers 1e400 +inf\r\n", "0\n"},
+      // Lexicographic ranges.
+      {"ZADD zlex 0 a 0 b 0 c 0 d\r\n", "4\n"},
+      {"ZLEXCOUNT zlex - +\r\n", "4\n"},
+      {"ZLEXCOUNT zlex [b (d\r\n", "2\n"},
+      {"ZRANGEBYLEX zlex a c\r\n",
+       "ERR min or max not valid string range item\n"},
+      {"ZRANGE zlex - + BYLEX WITHSCORES\r\n",
+       "ERR syntax error, WITHSCORES not supported in combination with "
+       "BYLEX\n"},
+      // Only ZRANGE takes REV, BYSCORE, and BYLEX.
+      {"ZRANGEBYSCORE zlex 0 1 REV\r\n", "ERR syntax error\n"},
   };
   for (const Case& test_case : cases) {
     if (!ExpectReply(&cli, test_case)) {
@@ -99,6 +136,19 @@ int Run() {
   if (!ExpectMembersInOrder(&cli, "ZRANGE integration_zset 0 1\r\n",
                             {"ele1", "ele2"})) {
     return EXIT_FAILURE;
+  }
+  for (const auto& [command, members] :
+       std::vector<std::pair<std::string, std::vector<std::string>>>{
+           {"ZRANGEBYLEX zlex [b (d\r\n", {"b", "c"}},
+           {"ZREVRANGEBYLEX zlex + - LIMIT 0 2\r\n", {"d", "c"}},
+           {"ZRANGE zlex + [b BYLEX REV\r\n", {"d", "c", "b"}},
+           {"ZREVRANGEBYSCORE zflags +inf -inf WITHSCORES\r\n",
+            {"a", "7", "b", "1"}},
+           {"ZRANK zflags a WITHSCORE\r\n", {"1", "7"}},
+       }) {
+    if (!ExpectMembersInOrder(&cli, command, members)) {
+      return EXIT_FAILURE;
+    }
   }
   // Like Redis, a rank range ignores LIMIT with a count of -1.
   if (!ExpectMembersInOrder(&cli, "ZRANGE integration_zset 0 1 LIMIT 0 -1\r\n",

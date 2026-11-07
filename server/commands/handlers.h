@@ -27,6 +27,8 @@ namespace redis_simple::command::session {
 void HandleAuth(Client* client);
 void HandleEcho(Client* client);
 void HandleHello(Client* client);
+void HandleClient(Client* client);
+void HandleSelect(Client* client);
 void HandlePing(Client* client);
 void HandleQuit(Client* client);
 }  // namespace redis_simple::command::session
@@ -87,7 +89,12 @@ void HandleZCard(Client* client);
 void HandleZCount(Client* client);
 void HandleZRange(Client* client);
 void HandleZRangeByScore(Client* client);
+void HandleZRevRangeByScore(Client* client);
+void HandleZRangeByLex(Client* client);
+void HandleZRevRangeByLex(Client* client);
+void HandleZLexCount(Client* client);
 void HandleZRank(Client* client);
+void HandleZRevRank(Client* client);
 void HandleZRevRange(Client* client);
 void HandleZRem(Client* client);
 void HandleZScore(Client* client);

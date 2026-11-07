@@ -214,10 +214,11 @@ bool MatchesGlob(std::string_view value, std::string_view pattern) {
 }
 
 bool ToInt64(std::string_view s, int64_t* const v) {
-  if (s.empty() || s.size() > 20) {
+  // Redis' string2ll: an optional '-', no "-0", no '+'.
+  if (s.empty() || s.size() > 20 || s.front() == '+' || s == "-0") {
     return false;
   }
-  const bool has_sign = s[0] == '+' || s[0] == '-';
+  const bool has_sign = s[0] == '-';
   if (has_sign && s.size() == 1) {
     return false;
   }
@@ -251,13 +252,6 @@ bool ToInt64(std::string_view s, int64_t* const v) {
     }
   }
   return true;
-}
-
-bool ToCanonicalInt64(std::string_view s, int64_t* const v) {
-  if (s.empty() || s.front() == '+' || s == "-0") {
-    return false;
-  }
-  return ToInt64(s, v);
 }
 
 int Int64ToString(std::span<char> dst, int64_t svalue) {

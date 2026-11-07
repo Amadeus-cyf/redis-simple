@@ -16,7 +16,8 @@ namespace redis_simple::zset {
 class ZSetSkiplist : public ZSetStorage {
  public:
   ZSetSkiplist();
-  bool InsertOrUpdate(std::string_view key, double score) override;
+  bool InsertOrUpdate(std::string_view key, double score,
+                      bool* changed) override;
   bool Delete(std::string_view key) override;
   std::optional<double> Score(std::string_view key) const override {
     const double* score = dict_->FindValue(key);
@@ -26,6 +27,8 @@ class ZSetSkiplist : public ZSetStorage {
   ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const override;
   ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const override;
   size_t Count(const RangeByScoreSpec* spec) const override;
+  ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const override;
+  size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
   size_t Size() const override { return skiplist_->Size(); }
 
@@ -56,10 +59,17 @@ class ZSetSkiplist : public ZSetStorage {
                                      double score) const {
       return entry.score <=> score;
     }
+    // Comparing against a lexicographic bound looks at the member only, as
+    // Redis' zslFirstInLexRange does while descending the skiplist.
+    std::partial_ordering operator()(const ZSetEntry& entry,
+                                     const LexBound& bound) const {
+      return CompareLex(entry.key, bound);
+    }
   };
 
   using SkiplistType = in_memory::Skiplist<ZSetEntry, EntryOrder>;
 
+  bool OverlapsLexRange(const RangeByLexSpec* spec) const;
   static std::optional<SkiplistType::Limit> ToLimit(
       const std::optional<LimitSpec>& limit);
 

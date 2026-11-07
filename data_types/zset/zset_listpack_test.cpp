@@ -26,7 +26,7 @@ TEST(ZSetListPackTest, RangeByRank) {
 
 TEST(ZSetListPackTest, PreservesNumericKeyWhileReadingScore) {
   ZSetListPack zset;
-  ASSERT_TRUE(zset.InsertOrUpdate("0", 42.0));
+  ASSERT_TRUE(zset.InsertOrUpdate("0", 42.0, nullptr));
   const RangeByRankSpec spec(0, 0, false, false);
 
   const ZSetEntryList entries = zset.RangeByRank(&spec);
@@ -40,7 +40,7 @@ TEST(ZSetListPackTest, StoresNegativeZeroAsZero) {
   // Redis stores whole-number listpack scores as integers, so -0 reads back
   // as 0; the skiplist encoding keeps the sign.
   ZSetListPack zset;
-  ASSERT_TRUE(zset.InsertOrUpdate("member", -0.0));
+  ASSERT_TRUE(zset.InsertOrUpdate("member", -0.0, nullptr));
   const double score = zset.Score("member").value_or(1.0);
   EXPECT_EQ(score, 0.0);
   EXPECT_FALSE(std::signbit(score));
@@ -61,7 +61,7 @@ TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {
   };
   ZSetListPack zset;
   for (const auto& [key, score] : entries) {
-    ASSERT_TRUE(zset.InsertOrUpdate(key, score));
+    ASSERT_TRUE(zset.InsertOrUpdate(key, score, nullptr));
   }
   for (const auto& [key, score] : entries) {
     EXPECT_EQ(zset.Score(key), score) << key;

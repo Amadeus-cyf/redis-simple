@@ -116,19 +116,23 @@ TEST(CommandRegistryTest, ExposesCommandMetadata) {
   EXPECT_TRUE(info->arity.Accepts(1));
 }
 
-TEST(CommandRegistryTest, OnlyAuthAndQuitRunBeforeAuth) {
+TEST(CommandRegistryTest, OnlyAuthHelloAndQuitRunBeforeAuth) {
   const Command* auth = Find("auth");
   ASSERT_NE(auth, nullptr);
   EXPECT_TRUE(auth->allowed_before_auth);
   EXPECT_TRUE(auth->arity.Accepts(1));
   EXPECT_TRUE(auth->arity.Accepts(2));
-  EXPECT_FALSE(auth->arity.Accepts(3));
+  // Like Redis, the handler answers more arguments with a syntax error.
+  EXPECT_TRUE(auth->arity.Accepts(3));
 
-  const Command* quit = Find("QUIT");
-  ASSERT_NE(quit, nullptr);
-  EXPECT_TRUE(quit->allowed_before_auth);
+  // HELLO can authenticate, with its AUTH option.
+  for (const auto* name : {"QUIT", "HELLO"}) {
+    const Command* command = Find(name);
+    ASSERT_NE(command, nullptr) << name;
+    EXPECT_TRUE(command->allowed_before_auth) << name;
+  }
 
-  for (const auto* name : {"PING", "HELLO", "GET", "SET", "INFO"}) {
+  for (const auto* name : {"PING", "CLIENT", "GET", "SET", "INFO"}) {
     const Command* command = Find(name);
     ASSERT_NE(command, nullptr) << name;
     EXPECT_FALSE(command->allowed_before_auth) << name;

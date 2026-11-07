@@ -112,6 +112,11 @@ int Run() {
       {"INCRBY string_counter -10\r\n", "-2\n"},
       {"DECRBY string_counter -3\r\n", "1\n"},
       {"INCRBY string_incrby_missing 5\r\n", "5\n"},
+      // Integers must be canonical, as Redis' string2ll requires.
+      {"SET string_plus +5\r\n", "OK\n"},
+      {"INCR string_plus\r\n", "ERR value is not an integer or out of range\n"},
+      {"INCRBY string_incrby_missing +1\r\n",
+       "ERR value is not an integer or out of range\n"},
       {"DECRBY string_decrby_missing 2\r\n", "-2\n"},
       {"SET string_max_integer 9223372036854775807\r\n", "OK\n"},
       {"INCRBY string_max_integer 1\r\n",

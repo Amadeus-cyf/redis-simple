@@ -130,9 +130,9 @@ uint64_t SipHash(std::string_view data, const SipHashKey& key) {
 // Process-wide random key for hash tables, generated once on first use.
 const SipHashKey& HashSeed();
 
-// Seeded SipHash-1-3, the variant Redis uses for its dictionaries.
+// Seeded SipHash-1-2, the variant Redis uses for its dictionaries.
 inline uint64_t SeededHash(std::string_view data) {
-  return SipHash<1, 3>(data, HashSeed());
+  return SipHash<1, 2>(data, HashSeed());
 }
 }  // namespace redis_simple::utils
 

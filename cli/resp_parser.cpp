@@ -95,9 +95,13 @@ ParseResult ParseInteger(std::string_view resp, size_t start,
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
+  // RESP allows a '+' sign, which ToInt64, like Redis' string2ll, does not.
+  std::string_view text = resp.substr(start + 1, line.consumed - start - 1);
+  if (text.starts_with('+') && !text.starts_with("+-")) {
+    text.remove_prefix(1);
+  }
   int64_t value = 0;
-  if (!utils::ToInt64(resp.substr(start + 1, line.consumed - start - 1),
-                      &value)) {
+  if (!utils::ToInt64(text, &value)) {
     return {ParseStatus::kInvalid, 0};
   }
   reply->push_back(std::to_string(value));

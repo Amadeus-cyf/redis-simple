@@ -14,13 +14,16 @@ namespace redis_simple::zset {
 class ZSetListPack : public ZSetStorage {
  public:
   ZSetListPack();
-  bool InsertOrUpdate(std::string_view key, double score) override;
+  bool InsertOrUpdate(std::string_view key, double score,
+                      bool* changed) override;
   bool Delete(std::string_view key) override;
   std::optional<double> Score(std::string_view key) const override;
   std::optional<size_t> Rank(std::string_view key) const override;
   ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const override;
   ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const override;
   size_t Count(const RangeByScoreSpec* spec) const override;
+  ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const override;
+  size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
   size_t Size() const override {
     // Since listpack include both keys and scores, the actual size should be
@@ -51,6 +54,7 @@ class ZSetListPack : public ZSetStorage {
   std::optional<size_t> FindKeyGreaterOrEqual(
       const RangeByScoreSpec* spec) const;
   std::optional<size_t> FindKeyLessOrEqual(const RangeByScoreSpec* spec) const;
+  bool OverlapsLexRange(const RangeByLexSpec* spec) const;
   static bool ValidateRangeRankSpec(const RangeByRankSpec* spec);
   static bool ValidateRangeScoreSpec(const RangeByScoreSpec* spec);
   static bool IsInRange(double score, const RangeByScoreSpec* spec);

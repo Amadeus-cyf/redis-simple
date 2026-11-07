@@ -4,6 +4,7 @@
 #include <sys/types.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -102,6 +103,11 @@ class Client {
   std::string_view RequiredPassword() const { return required_password_; }
   bool Authenticated() const { return authenticated_; }
   void SetAuthenticated(bool authenticated) { authenticated_ = authenticated; }
+  // CLIENT ID: unique for the life of the process, as in Redis.
+  uint64_t Id() const { return id_; }
+  // CLIENT SETNAME and HELLO SETNAME; empty means unnamed.
+  std::string_view Name() const { return name_; }
+  void SetName(std::string_view name) { name_.assign(name); }
   void MarkModified() { modified_ = true; }
   // MULTI/EXEC. Commands read while a transaction is open are copied into a
   // queue and run back to back by EXEC.
@@ -171,6 +177,7 @@ class Client {
   std::vector<ParsedRequest> parsed_requests_;
   std::vector<std::string_view> parsed_args_;
   bool protocol_error_{};
+  request_parser::ParseResult protocol_failure_;
   request_parser::ParseState parse_state_;
   in_memory::DynamicBuffer query_buffer_;
   in_memory::ReplyBuffer reply_buffer_;
@@ -193,6 +200,10 @@ class Client {
   bool reply_error_{};
   std::string_view required_password_;
   bool authenticated_{true};
+  uint64_t id_{NextId()};
+  std::string name_;
+
+  static uint64_t NextId();
 };
 }  // namespace redis_simple
 

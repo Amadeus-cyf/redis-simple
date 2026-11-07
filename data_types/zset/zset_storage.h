@@ -20,8 +20,10 @@ using ZSetEntryVisitor =
 class ZSetStorage {
  public:
   // Insert or update a key with the given score. Return true if the key is
-  // newly inserted.
-  virtual bool InsertOrUpdate(std::string_view key, double score) = 0;
+  // newly inserted. `*changed`, when given, reports whether the key was
+  // inserted or its score changed.
+  virtual bool InsertOrUpdate(std::string_view key, double score,
+                              bool* changed) = 0;
   // Return true if the key is deleted.
   virtual bool Delete(std::string_view key) = 0;
   // Return the score of the given key.
@@ -34,6 +36,10 @@ class ZSetStorage {
   virtual ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const = 0;
   // Count the number of keys within the given range of score.
   virtual size_t Count(const RangeByScoreSpec* spec) const = 0;
+  // Return the members in a lexicographic range, as Redis' ZRANGEBYLEX does.
+  virtual ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const = 0;
+  // Count the members in a lexicographic range, ignoring its limit.
+  virtual size_t LexCount(const RangeByLexSpec* spec) const = 0;
   // Visit entries without allocating a result container.
   virtual bool ForEachEntry(const ZSetEntryVisitor& visitor) const = 0;
   // Return the total number of keys.

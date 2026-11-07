@@ -13,7 +13,11 @@ ZSetSkiplist::ZSetSkiplist()
     : dict_(in_memory::Dict<std::string, double>::Create()),
       skiplist_(std::make_unique<SkiplistType>()) {}
 
-bool ZSetSkiplist::InsertOrUpdate(std::string_view key, double score) {
+bool ZSetSkiplist::InsertOrUpdate(std::string_view key, double score,
+                                  bool* const changed) {
+  if (changed != nullptr) {
+    *changed = false;
+  }
   if (std::isnan(score)) {
     return false;
   }
@@ -30,6 +34,9 @@ bool ZSetSkiplist::InsertOrUpdate(std::string_view key, double score) {
     skiplist_->Insert(ZSetEntry(key, score));
   }
   *current_score = score;
+  if (changed != nullptr) {
+    *changed = true;
+  }
   return inserted;
 }
 
@@ -104,6 +111,46 @@ size_t ZSetSkiplist::Count(const RangeByScoreSpec* spec) const {
     return 0;
   }
   return skiplist_->Count(SkiplistType::KeyRange<double>{
+      .min = spec->min,
+      .max = spec->max,
+      .min_exclusive = spec->minex,
+      .max_exclusive = spec->maxex,
+      .limit = std::nullopt,
+      .reverse = false,
+  });
+}
+
+bool ZSetSkiplist::OverlapsLexRange(const RangeByLexSpec* spec) const {
+  // Redis' zslIsInLexRange: the last member reaches the minimum and the
+  // first member the maximum.
+  return spec != nullptr && !spec->Empty() && skiplist_->Size() > 0 &&
+         spec->AboveMin((*skiplist_->Last()).key) &&
+         spec->BelowMax((*skiplist_->Begin()).key);
+}
+
+ZSetEntryList ZSetSkiplist::RangeByLex(const RangeByLexSpec* spec) const {
+  if (!OverlapsLexRange(spec)) {
+    return {};
+  }
+  ZSetEntryList entries;
+  skiplist_->ForEachInRange(
+      SkiplistType::KeyRange<LexBound>{
+          .min = spec->min,
+          .max = spec->max,
+          .min_exclusive = spec->minex,
+          .max_exclusive = spec->maxex,
+          .limit = ToLimit(spec->limit),
+          .reverse = spec->reverse,
+      },
+      [&entries](const ZSetEntry& entry) { entries.push_back(&entry); });
+  return entries;
+}
+
+size_t ZSetSkiplist::LexCount(const RangeByLexSpec* spec) const {
+  if (!OverlapsLexRange(spec)) {
+    return 0;
+  }
+  return skiplist_->Count(SkiplistType::KeyRange<LexBound>{
       .min = spec->min,
       .max = spec->max,
       .min_exclusive = spec->minex,

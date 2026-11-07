@@ -1,102 +1,139 @@
 #include "server/request_parser.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <limits>
+#include <string>
 #include <string_view>
+
+#include "utils/string_utils.h"
 
 namespace redis_simple::request_parser {
 namespace {
-constexpr size_t kMaxCommandElements = size_t{1024} * 1024;
-// Longest inline command or RESP header line, matching Redis'
-// PROTO_INLINE_MAX_SIZE. Larger lines are rejected instead of rescanned.
+// Redis' PROTO_INLINE_MAX_SIZE: the longest inline request or RESP header
+// line without its line ending.
 constexpr size_t kMaxLineBytes = size_t{64} * 1024;
+// Redis' default proto-max-bulk-len.
+constexpr int64_t kMaxBulkBytes = int64_t{512} * 1024 * 1024;
+// Redis' limits for clients that have not authenticated yet.
+constexpr int64_t kMaxUnauthenticatedElements = 10;
+constexpr int64_t kMaxUnauthenticatedBulkBytes = 16384;
 constexpr size_t kMinimumBulkStringBytes = 6;
-// Longest accepted length field. Any number this long fits in a size_t, so
-// digits accumulate without overflow checks. Longer fields, at least 10^19
-// bytes or elements, could never be satisfied and are rejected as invalid.
-constexpr size_t kMaxLengthDigits = std::numeric_limits<size_t>::digits10;
-constexpr std::string_view kCrlf = "\r\n";
+constexpr size_t kCrlfSize = 2;
 
-// Parses the decimal length that follows a RESP type byte, starting at
-// `start` and ending in CRLF, in one pass without searching for the CRLF
-// first. At most kMaxLengthDigits digits are read, which also stops a peer
-// from making each read rescan a long run of digits. On success, `*line_end`
-// is the offset of the CR.
+struct LengthLine {
+  int64_t value{};
+  // Offset just past the line ending.
+  size_t end{};
+};
+
+// Parses the length that follows a RESP type byte at `start`, as Redis'
+// processMultibulkBuffer does: up to the next CR, as string2ll text. Like
+// Redis, the byte after the CR is skipped without checking it. Kept out of
+// line, since it is rare, so the fast path stays small enough to inline.
+[[gnu::cold, gnu::noinline]] ParseStatus ParseLengthLineSlowly(
+    std::string_view input, size_t start, ProtocolError too_long,
+    ProtocolError invalid, LengthLine* const line, ProtocolError* const error) {
+  const size_t search = std::min(input.size(), start + kMaxLineBytes + 1);
+  const void* const found =
+      std::memchr(input.data() + start, '\r', search - start);
+  if (found == nullptr) {
+    if (input.size() - start > kMaxLineBytes) {
+      *error = too_long;
+      return ParseStatus::kInvalid;
+    }
+    return ParseStatus::kIncomplete;
+  }
+  const auto cr =
+      static_cast<size_t>(static_cast<const char*>(found) - input.data());
+  if (cr + 1 >= input.size()) {
+    return ParseStatus::kIncomplete;
+  }
+  if (!utils::ToInt64(input.substr(start, cr - start), &line->value)) {
+    *error = invalid;
+    return ParseStatus::kInvalid;
+  }
+  line->end = cr + kCrlfSize;
+  return ParseStatus::kComplete;
+}
+
+// The common case in one pass: a canonical non-negative length of at most
+// 18 digits, then a CR with a byte after it. Anything else, including a
+// line not fully received, takes the slow path, which applies Redis' rules.
+// On kInvalid, `*error` says why.
 inline ParseStatus ParseLengthLine(std::string_view input, size_t start,
-                                   size_t* const value,
-                                   size_t* const line_end) {
-  constexpr size_t kBase = 10;
-  size_t parsed = 0;
+                                   ProtocolError too_long,
+                                   ProtocolError invalid,
+                                   LengthLine* const line,
+                                   ProtocolError* const error) {
+  constexpr size_t kMaxFastDigits = 18;
   size_t position = start;
-  for (; position < input.size(); ++position) {
+  int64_t value = 0;
+  const size_t limit = std::min(input.size(), start + kMaxFastDigits);
+  for (; position < limit; ++position) {
     const char character = input[position];
     if (character < '0' || character > '9') {
       break;
     }
-    if (position - start == kMaxLengthDigits) {
-      return ParseStatus::kInvalid;
-    }
-    parsed = (parsed * kBase) + static_cast<size_t>(character - '0');
+    value = (value * 10) + (character - '0');
   }
-  if (position == input.size()) {
-    return ParseStatus::kIncomplete;
+  const size_t digits = position - start;
+  if (digits == 0 || (digits > 1 && input[start] == '0') ||
+      position + 1 >= input.size() || input[position] != '\r') {
+    return ParseLengthLineSlowly(input, start, too_long, invalid, line, error);
   }
-  if (position == start || input[position] != '\r') {
-    return ParseStatus::kInvalid;
-  }
-  if (position + 1 == input.size()) {
-    return ParseStatus::kIncomplete;
-  }
-  if (input[position + 1] != '\n') {
-    return ParseStatus::kInvalid;
-  }
-  *value = parsed;
-  *line_end = position;
+  line->value = value;
+  line->end = position + kCrlfSize;
   return ParseStatus::kComplete;
 }
 
 struct BulkString {
   size_t offset{};
   size_t length{};
-  // Offset just past the trailing CRLF.
+  // Offset just past the trailing line ending.
   size_t end{};
 };
 
 // Parses the bulk string at `start`. When only its header has arrived,
-// returns kIncomplete with `bulk->end` set to where the payload will end.
+// returns kIncomplete with `bulk->end` set to where the payload will end. On
+// kInvalid, `*failure` says why.
 inline ParseStatus ParseBulkString(std::string_view input, size_t start,
-                                   BulkString* const bulk) {
+                                   bool authenticated, BulkString* const bulk,
+                                   ParseResult* const failure) {
   bulk->end = 0;
   if (start >= input.size()) {
     return ParseStatus::kIncomplete;
   }
   if (input[start] != '$') {
+    failure->error = ProtocolError::kExpectedDollar;
+    failure->unexpected = input[start];
     return ParseStatus::kInvalid;
   }
-  size_t length = 0;
-  size_t header_end = 0;
-  const ParseStatus header =
-      ParseLengthLine(input, start + 1, &length, &header_end);
+  LengthLine line;
+  const ParseStatus header = ParseLengthLine(
+      input, start + 1, ProtocolError::kTooBigBulkCount,
+      ProtocolError::kInvalidBulkLength, &line, &failure->error);
   if (header != ParseStatus::kComplete) {
     return header;
   }
-  const size_t content_start = header_end + kCrlf.size();
-  if (length >
-      std::numeric_limits<size_t>::max() - content_start - kCrlf.size()) {
+  if (line.value < 0 || line.value > kMaxBulkBytes) {
+    failure->error = ProtocolError::kInvalidBulkLength;
     return ParseStatus::kInvalid;
   }
-  bulk->offset = content_start;
-  bulk->length = length;
-  bulk->end = content_start + length + kCrlf.size();
-  if (bulk->end > input.size()) {
-    return ParseStatus::kIncomplete;
-  }
-  if (input[content_start + length] != '\r' ||
-      input[content_start + length + 1] != '\n') {
+  if (!authenticated && line.value > kMaxUnauthenticatedBulkBytes) {
+    failure->error = ProtocolError::kUnauthenticatedBulkLength;
     return ParseStatus::kInvalid;
   }
-  return ParseStatus::kComplete;
+  bulk->offset = line.end;
+  bulk->length = static_cast<size_t>(line.value);
+  // Like Redis, the two bytes after the payload are taken as its line
+  // ending without checking them.
+  bulk->end = line.end + bulk->length + kCrlfSize;
+  return bulk->end > input.size() ? ParseStatus::kIncomplete
+                                  : ParseStatus::kComplete;
 }
 
 // Upper bound for reserving `count` elements, given what the buffered bytes
@@ -113,24 +150,39 @@ size_t ReservableElements(std::string_view input, size_t count) {
 ParseResult ParseFreshResp(std::string_view input, ParseState* const state,
                            std::string_view* const command,
                            command::CommandArgs* const args) {
-  size_t count = 0;
-  size_t header_end = 0;
-  const ParseStatus header = ParseLengthLine(input, 1, &count, &header_end);
-  if (header != ParseStatus::kComplete) {
-    return {header, 0};
+  LengthLine header;
+  ParseResult result;
+  result.status = ParseLengthLine(
+      input, 1, ProtocolError::kTooBigMultibulkCount,
+      ProtocolError::kInvalidMultibulkLength, &header, &result.error);
+  if (result.status != ParseStatus::kComplete) {
+    return result;
   }
-  if (count == 0 || count > kMaxCommandElements) {
-    return {ParseStatus::kInvalid, 0};
+  if (header.value > INT_MAX) {
+    return {.status = ParseStatus::kInvalid,
+            .error = ProtocolError::kInvalidMultibulkLength};
   }
+  if (!state->authenticated && header.value > kMaxUnauthenticatedElements) {
+    return {.status = ParseStatus::kInvalid,
+            .error = ProtocolError::kUnauthenticatedMultibulkLength};
+  }
+  if (header.value <= 0) {
+    // Redis skips empty and null arrays.
+    return {.status = ParseStatus::kComplete,
+            .empty_request = true,
+            .consumed = header.end};
+  }
+  const auto count = static_cast<size_t>(header.value);
   args->reserve(ReservableElements(input, count - 1));
-  size_t offset = header_end + kCrlf.size();
+  size_t offset = header.end;
   for (size_t index = 0; index < count; ++index) {
     BulkString bulk;
-    const ParseStatus status = ParseBulkString(input, offset, &bulk);
-    if (status == ParseStatus::kInvalid) {
-      return {status, 0};
+    result.status =
+        ParseBulkString(input, offset, state->authenticated, &bulk, &result);
+    if (result.status == ParseStatus::kInvalid) {
+      return result;
     }
-    if (status == ParseStatus::kIncomplete) {
+    if (result.status == ParseStatus::kIncomplete) {
       state->element_count = count;
       state->offset = offset;
       state->pending_bulk_end = bulk.end;
@@ -143,7 +195,7 @@ ParseResult ParseFreshResp(std::string_view input, ParseState* const state,
         save(*command);
         std::ranges::for_each(*args, save);
       }
-      return {status, 0};
+      return result;
     }
     const std::string_view element = input.substr(bulk.offset, bulk.length);
     if (index == 0) {
@@ -153,7 +205,7 @@ ParseResult ParseFreshResp(std::string_view input, ParseState* const state,
     }
     offset = bulk.end;
   }
-  return {ParseStatus::kComplete, offset};
+  return {.status = ParseStatus::kComplete, .consumed = offset};
 }
 
 // Continues a request that ParseFreshResp could not finish, after the last
@@ -161,54 +213,173 @@ ParseResult ParseFreshResp(std::string_view input, ParseState* const state,
 ParseResult ResumeResp(std::string_view input, ParseState* const state) {
   while (state->elements.size() < state->element_count) {
     BulkString bulk;
-    const ParseStatus status = ParseBulkString(input, state->offset, &bulk);
-    if (status != ParseStatus::kComplete) {
+    ParseResult result;
+    result.status = ParseBulkString(input, state->offset, state->authenticated,
+                                    &bulk, &result);
+    if (result.status != ParseStatus::kComplete) {
       state->pending_bulk_end = bulk.end;
-      return {status, 0};
+      return result;
     }
     state->elements.emplace_back(bulk.offset, bulk.length);
     state->offset = bulk.end;
   }
   state->pending_bulk_end = 0;
-  return {ParseStatus::kComplete, state->offset};
+  return {.status = ParseStatus::kComplete, .consumed = state->offset};
 }
 
-ParseResult ParseInline(std::string_view input, std::string_view* command,
-                        command::CommandArgs* args) {
+bool IsSpace(char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' ||
+         c == '\r';
+}
+
+int HexValue(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  return -1;
+}
+
+// Redis' sdssplitargs, which splits inline requests: whitespace separates
+// arguments, which may be "double quoted" with escapes or 'single quoted'.
+// Plain arguments stay views into `line`; an argument with quotes is
+// unescaped into `storage`. Returns false for unbalanced quotes.
+bool SplitInline(std::string_view line, std::deque<std::string>* storage,
+                 std::vector<std::string_view>* const out) {
+  // sdssplitargs reads a C string, so a NUL ends the line.
+  line = line.substr(0, line.find('\0'));
+  size_t position = 0;
+  const auto at = [line](size_t index) {
+    return index < line.size() ? line[index] : '\0';
+  };
+  while (true) {
+    while (position < line.size() && IsSpace(line[position])) {
+      ++position;
+    }
+    if (position >= line.size()) {
+      return true;
+    }
+    const size_t start = position;
+    std::string unescaped;
+    bool quoted = false;
+    bool in_double_quotes = false;
+    bool in_single_quotes = false;
+    bool done = false;
+    while (!done) {
+      const char c = at(position);
+      if (in_double_quotes) {
+        if (c == '\\' && at(position + 1) == 'x' &&
+            HexValue(at(position + 2)) >= 0 &&
+            HexValue(at(position + 3)) >= 0) {
+          unescaped.push_back(static_cast<char>(
+              (HexValue(at(position + 2)) * 16) + HexValue(at(position + 3))));
+          position += 3;
+        } else if (c == '\\' && at(position + 1) != '\0') {
+          ++position;
+          switch (at(position)) {
+            case 'n':
+              unescaped.push_back('\n');
+              break;
+            case 'r':
+              unescaped.push_back('\r');
+              break;
+            case 't':
+              unescaped.push_back('\t');
+              break;
+            case 'b':
+              unescaped.push_back('\b');
+              break;
+            case 'a':
+              unescaped.push_back('\a');
+              break;
+            default:
+              unescaped.push_back(at(position));
+              break;
+          }
+        } else if (c == '"') {
+          // The closing quote must be followed by a space or the end.
+          if (at(position + 1) != '\0' && !IsSpace(at(position + 1))) {
+            return false;
+          }
+          done = true;
+        } else if (c == '\0') {
+          return false;
+        } else {
+          unescaped.push_back(c);
+        }
+      } else if (in_single_quotes) {
+        if (c == '\\' && at(position + 1) == '\'') {
+          ++position;
+          unescaped.push_back('\'');
+        } else if (c == '\'') {
+          if (at(position + 1) != '\0' && !IsSpace(at(position + 1))) {
+            return false;
+          }
+          done = true;
+        } else if (c == '\0') {
+          return false;
+        } else {
+          unescaped.push_back(c);
+        }
+      } else if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\0') {
+        done = true;
+      } else if (c == '"') {
+        quoted = true;
+        in_double_quotes = true;
+      } else if (c == '\'') {
+        quoted = true;
+        in_single_quotes = true;
+      } else {
+        unescaped.push_back(c);
+      }
+      if (position < line.size()) {
+        ++position;
+      }
+    }
+    if (quoted) {
+      // A deque keeps earlier strings, and the views into them, in place.
+      out->emplace_back(storage->emplace_back(std::move(unescaped)));
+    } else {
+      out->push_back(line.substr(start, unescaped.size()));
+    }
+  }
+}
+
+// Redis' processInlineBuffer.
+ParseResult ParseInline(std::string_view input, ParseState* const state,
+                        std::string_view* const command,
+                        command::CommandArgs* const args) {
   const size_t newline =
-      input.substr(0, std::min(input.size(), kMaxLineBytes)).find('\n');
+      input.substr(0, std::min(input.size(), kMaxLineBytes + 1)).find('\n');
   if (newline == std::string_view::npos) {
-    return {input.size() >= kMaxLineBytes ? ParseStatus::kInvalid
-                                          : ParseStatus::kIncomplete,
-            0};
+    return {.status = input.size() > kMaxLineBytes ? ParseStatus::kInvalid
+                                                   : ParseStatus::kIncomplete,
+            .error = ProtocolError::kTooBigInlineRequest};
   }
   size_t line_end = newline;
   if (line_end > 0 && input[line_end - 1] == '\r') {
     --line_end;
   }
-  const std::string_view line = input.substr(0, line_end);
-  size_t position = line.find_first_not_of(' ');
-  if (position == std::string_view::npos) {
-    return {ParseStatus::kComplete, newline + 1};
+  std::vector<std::string_view>& tokens = state->inline_tokens;
+  tokens.clear();
+  if (!SplitInline(input.substr(0, line_end), &state->unescaped, &tokens)) {
+    return {.status = ParseStatus::kInvalid,
+            .error = ProtocolError::kUnbalancedQuotes};
   }
-
-  const size_t command_end = line.find(' ', position);
-  *command = line.substr(position, command_end == std::string_view::npos
-                                       ? std::string_view::npos
-                                       : command_end - position);
-  position = command_end;
-  while (position != std::string_view::npos) {
-    const size_t start = line.find_first_not_of(' ', position);
-    if (start == std::string_view::npos) {
-      break;
-    }
-    const size_t end = line.find(' ', start);
-    args->push_back(line.substr(start, end == std::string_view::npos
-                                           ? std::string_view::npos
-                                           : end - start));
-    position = end;
+  if (tokens.empty()) {
+    // An empty line is skipped, as in Redis.
+    return {.status = ParseStatus::kComplete,
+            .empty_request = true,
+            .consumed = newline + 1};
   }
-  return {ParseStatus::kComplete, newline + 1};
+  *command = tokens.front();
+  args->assign(tokens.begin() + 1, tokens.end());
+  return {.status = ParseStatus::kComplete, .consumed = newline + 1};
 }
 }  // namespace
 
@@ -219,19 +390,59 @@ void ParseState::Reset() {
   elements.clear();
 }
 
+ParseResult Parse(std::string_view input, std::string_view* const command,
+                  command::CommandArgs* const args) {
+  if (input.empty() || input.front() != '*') {
+    // Inline requests may need storage that outlives this call.
+    *command = {};
+    args->clear();
+    return {.status = input.empty() ? ParseStatus::kIncomplete
+                                    : ParseStatus::kInvalid};
+  }
+  ParseState state;
+  return Parse(input, &state, command, args);
+}
+
+std::string ProtocolErrorMessage(const ParseResult& result) {
+  switch (result.error) {
+    case ProtocolError::kNone:
+      break;
+    case ProtocolError::kTooBigInlineRequest:
+      return "Protocol error: too big inline request";
+    case ProtocolError::kUnbalancedQuotes:
+      return "Protocol error: unbalanced quotes in request";
+    case ProtocolError::kTooBigMultibulkCount:
+      return "Protocol error: too big mbulk count string";
+    case ProtocolError::kInvalidMultibulkLength:
+      return "Protocol error: invalid multibulk length";
+    case ProtocolError::kUnauthenticatedMultibulkLength:
+      return "Protocol error: unauthenticated multibulk length";
+    case ProtocolError::kTooBigBulkCount:
+      return "Protocol error: too big bulk count string";
+    case ProtocolError::kExpectedDollar:
+      return std::string("Protocol error: expected '$', got '") +
+             result.unexpected + "'";
+    case ProtocolError::kInvalidBulkLength:
+      return "Protocol error: invalid bulk length";
+    case ProtocolError::kUnauthenticatedBulkLength:
+      return "Protocol error: unauthenticated bulk length";
+  }
+  return "Protocol error";
+}
+
 ParseResult Parse(std::string_view input, ParseState* const state,
                   std::string_view* const command,
                   command::CommandArgs* const args) {
   if (state == nullptr || command == nullptr || args == nullptr) {
-    return {ParseStatus::kInvalid, 0};
+    return {.status = ParseStatus::kInvalid};
   }
   *command = {};
   args->clear();
   if (input.empty()) {
-    return {ParseStatus::kIncomplete, 0};
+    return {.status = ParseStatus::kIncomplete};
   }
   if (state->element_count == 0 && input.front() != '*') {
-    const ParseResult result = ParseInline(input, command, args);
+    const ParseResult result = ParseInline(input, state, command, args);
     if (result.status != ParseStatus::kComplete) {
       *command = {};
       args->clear();
@@ -266,11 +477,5 @@ ParseResult Parse(std::string_view input, ParseState* const state,
   }
   state->Reset();
   return result;
-}
-
-ParseResult Parse(std::string_view input, std::string_view* const command,
-                  command::CommandArgs* const args) {
-  ParseState state;
-  return Parse(input, &state, command, args);
 }
 }  // namespace redis_simple::request_parser

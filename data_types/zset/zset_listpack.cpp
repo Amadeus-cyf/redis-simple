@@ -16,7 +16,11 @@ namespace redis_simple::zset {
 ZSetListPack::ZSetListPack()
     : listpack_(std::make_unique<in_memory::ListPack>()) {}
 
-bool ZSetListPack::InsertOrUpdate(std::string_view key, double score) {
+bool ZSetListPack::InsertOrUpdate(std::string_view key, double score,
+                                  bool* const changed) {
+  if (changed != nullptr) {
+    *changed = false;
+  }
   if (std::isnan(score)) {
     return false;
   }
@@ -51,6 +55,9 @@ bool ZSetListPack::InsertOrUpdate(std::string_view key, double score) {
         listpack_->Delete(*offset);
         return false;
       }
+      if (changed != nullptr) {
+        *changed = true;
+      }
       return inserted;
     }
     offset = NextKeyAfterScore(entry->score_index);
@@ -64,6 +71,9 @@ bool ZSetListPack::InsertOrUpdate(std::string_view key, double score) {
       listpack_->Delete(*appended_key);
     }
     return false;
+  }
+  if (changed != nullptr) {
+    *changed = true;
   }
   return inserted;
 }
@@ -145,6 +155,109 @@ size_t ZSetListPack::Count(const RangeByScoreSpec* spec) const {
       break;
     }
     offset = NextKeyAfterScore(entry->score_index);
+  }
+  return count;
+}
+
+bool ZSetListPack::OverlapsLexRange(const RangeByLexSpec* spec) const {
+  // Redis' zzlIsInLexRange: the last member reaches the minimum and the
+  // first member the maximum.
+  if (spec == nullptr || spec->Empty()) {
+    return false;
+  }
+  const std::optional<size_t> first = listpack_->First();
+  const std::optional<size_t> last_score = listpack_->Last();
+  if (!first.has_value() || !last_score.has_value()) {
+    return false;
+  }
+  const std::optional<size_t> last = listpack_->Prev(*last_score);
+  // Check one member at a time: numeric members share a conversion buffer.
+  const std::optional<std::string_view> last_key =
+      last.has_value() ? ValueAt(*last) : std::nullopt;
+  if (!last_key.has_value() || !spec->AboveMin(*last_key)) {
+    return false;
+  }
+  const std::optional<std::string_view> first_key = ValueAt(*first);
+  return first_key.has_value() && spec->BelowMax(*first_key);
+}
+
+ZSetEntryList ZSetListPack::RangeByLex(const RangeByLexSpec* spec) const {
+  // Redis' zzlFirstInLexRange and zzlLastInLexRange: walk from one end to
+  // the first member inside the range, then on while members stay in it.
+  range_cache_.clear();
+  range_cache_.reserve(Size());
+  if (!OverlapsLexRange(spec)) {
+    return {};
+  }
+  const std::optional<size_t> count =
+      spec->limit ? spec->limit->count : std::nullopt;
+  size_t skip = spec->limit ? spec->limit->offset : 0;
+  ZSetEntryList keys;
+  if (count.has_value() && *count == 0) {
+    return keys;
+  }
+  const auto visit = [&](const EntryView& entry) {
+    if (skip > 0) {
+      --skip;
+      return true;
+    }
+    keys.push_back(AddRangeResult(entry.key, entry.score));
+    return !count.has_value() || keys.size() < *count;
+  };
+  if (!spec->reverse) {
+    bool started = false;
+    std::optional<size_t> key_offset = listpack_->First();
+    while (key_offset.has_value()) {
+      const std::optional<EntryView> entry = EntryAt(*key_offset);
+      if (!entry.has_value()) {
+        break;
+      }
+      started = started || spec->AboveMin(entry->key);
+      if (started && (!spec->BelowMax(entry->key) || !visit(*entry))) {
+        break;
+      }
+      key_offset = NextKeyAfterScore(entry->score_index);
+    }
+    return keys;
+  }
+  const std::optional<size_t> last_score = listpack_->Last();
+  std::optional<size_t> key_offset =
+      last_score.has_value() ? listpack_->Prev(*last_score) : std::nullopt;
+  bool started = false;
+  while (key_offset.has_value()) {
+    const std::optional<EntryView> entry = EntryAt(*key_offset);
+    if (!entry.has_value()) {
+      break;
+    }
+    started = started || spec->BelowMax(entry->key);
+    if (started && (!spec->AboveMin(entry->key) || !visit(*entry))) {
+      break;
+    }
+    key_offset = PrevKeyBeforeKey(entry->key_index);
+  }
+  return keys;
+}
+
+size_t ZSetListPack::LexCount(const RangeByLexSpec* spec) const {
+  if (!OverlapsLexRange(spec)) {
+    return 0;
+  }
+  size_t count = 0;
+  bool started = false;
+  std::optional<size_t> key_offset = listpack_->First();
+  while (key_offset.has_value()) {
+    const std::optional<EntryView> entry = EntryAt(*key_offset);
+    if (!entry.has_value()) {
+      break;
+    }
+    started = started || spec->AboveMin(entry->key);
+    if (started) {
+      if (!spec->BelowMax(entry->key)) {
+        break;
+      }
+      ++count;
+    }
+    key_offset = NextKeyAfterScore(entry->score_index);
   }
   return count;
 }

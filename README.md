@@ -58,8 +58,9 @@ startup and stop cleanly with `SIGINT` or `SIGTERM`:
 Like Redis, the server starts in protected mode: when no password is set, it
 only accepts clients connecting over loopback and answers others with a
 `DENIED` error. Set a password with `--requirepass`, after which clients must
-send `AUTH <password>` (or `AUTH default <password>`) before other commands,
-or disable the check with `--protected-mode no` on a trusted network.
+send `AUTH <password>` (or `AUTH default <password>`, or `HELLO <protover>
+AUTH default <password>`) before other commands, or disable the check with
+`--protected-mode no` on a trusted network.
 
 Enable AOF persistence with Redis-style fsync policies:
 
@@ -150,9 +151,14 @@ command format: Redis' default RDB-format base (`aof-use-rdb-preamble yes`)
 needs an RDB encoder and loader, which this server does not have yet.
 
 Clients can send standard RESP arrays of bulk strings or the legacy inline
-syntax. RESP2 is the default reply protocol; `HELLO 3` switches a connection to
-RESP3, including native null, map, set, and double replies. Request buffers are
-capped at 64 MiB. Pending output pauses reads at 8 MiB, resumes below 4 MiB,
+syntax, both framed as Redis frames them: inline arguments may be quoted and
+escaped as in `redis-cli`, empty lines and empty arrays are skipped, and
+malformed requests get Redis' `Protocol error` replies before the connection
+closes. Bulk strings may hold up to 512 MiB (Redis' `proto-max-bulk-len`), the
+request buffer up to 1 GiB (`client-query-buffer-limit`), and a client that
+has not authenticated may send at most 10 arguments of 16 KiB each, as in
+Redis. RESP2 is the default reply protocol; `HELLO 3` switches a connection to
+RESP3, including native null, map, set, and double replies. Pending output pauses reads at 8 MiB, resumes below 4 MiB,
 and closes the connection before exceeding 64 MiB.
 
 Threaded I/O, like Redis 8's `io-threads`, is off by default:
@@ -189,8 +195,14 @@ In another terminal, run a mock command client or your own TCP client against
 ## Command Coverage
 
 The server supports Redis-style RESP replies for the implemented command set.
-Error replies use Redis 7's wording, such as
+Error replies use Redis 8's wording, such as
 `ERR wrong number of arguments for 'get' command` and `WRONGTYPE`.
+
+Numbers follow Redis 8: integer arguments must be canonical (no `+`, leading
+zeros, or `-0`), scores and other floats parse like `strtod` (so `inf` and
+hex work) while range bounds also take overflow, and scores print as Redis 8
+prints them: integers up to 2^62 in full, otherwise the shortest digits in
+`fpconv_dtoa`'s layout, such as `0.00001`, `1e-7`, or `6.948674738744653e+5`.
 
 - Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `EXPIRE`, `EXPIREAT`, `PEXPIRE`,
   `PEXPIREAT` with `NX`, `XX`, `GT`, and `LT` (and `XX` combined with `GT` or
@@ -199,18 +211,26 @@ Error replies use Redis 7's wording, such as
 - Strings: `GET`, `SET` with `NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT`,
   and `KEEPTTL`, `INCR`, `INCRBY`, `DECR`, `DECRBY`, `APPEND`, `STRLEN`,
   `MGET`, `MSET`
-- Lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LRANGE`, `LINDEX`, `LSET`,
-  `LREM`, `LTRIM`
+- Lists: `LPUSH`, `RPUSH`, `LPOP` and `RPOP` with a count, `LLEN`, `LRANGE`,
+  `LINDEX`, `LSET`, `LREM`, `LTRIM`
 - Sets: `SADD`, `SCARD`, `SREM`, `SMEMBERS`, `SISMEMBER`, `SINTER`, `SUNION`,
   `SDIFF`
-- Sorted sets: `ZADD`, `ZCARD`, `ZREM`, `ZRANK`, `ZRANGE`, `ZREVRANGE`,
-  `ZRANGEBYSCORE`, `ZCOUNT`, `ZSCORE`
+- Sorted sets: `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, and `INCR`, `ZCARD`,
+  `ZREM`, `ZRANK` and `ZREVRANK` with `WITHSCORE`, `ZRANGE` with `BYSCORE`,
+  `BYLEX`, `REV`, `LIMIT`, and `WITHSCORES`, `ZREVRANGE`, `ZRANGEBYSCORE`,
+  `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZLEXCOUNT`, `ZCOUNT`,
+  `ZSCORE`
 - Hashes: `HSET`, `HGET`, `HDEL`, `HLEN`, `HEXISTS`, `HGETALL`, `HMGET`,
   `HKEYS`, `HVALS`, `HINCRBY`
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
 - Persistence and stats: `BGREWRITEAOF`, `INFO [persistence|stats]`
-- Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `PING`,
-  `ECHO`, `QUIT`
+- Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `AUTH`, and
+  `SETNAME`, `CLIENT ID|GETNAME|SETNAME|SETINFO`, `SELECT 0` (the only
+  database), `PING`, `ECHO`, `QUIT`
+
+Not implemented: `COMMAND`, `CONFIG`, the other `CLIENT` subcommands, and
+`BGREWRITEAOF` while AOF is off (Redis rewrites even then; this server
+replies with an error).
 
 Transactions follow Redis semantics. After `MULTI`, commands are queued and
 answered with `QUEUED`; `EXEC` runs them back to back, with no other client's

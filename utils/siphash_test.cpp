@@ -54,9 +54,9 @@ TEST(SipHashTest, TailLoadsMatchTheByteLoop) {
 
 TEST(SipHashTest, DependsOnKey) {
   SipHashKey key = SequentialKey();
-  const uint64_t original = SipHash<1, 3>("redis", key);
+  const uint64_t original = SipHash<1, 2>("redis", key);
   key[0] ^= 1;
-  EXPECT_NE((SipHash<1, 3>("redis", key)), original);
+  EXPECT_NE((SipHash<1, 2>("redis", key)), original);
 }
 
 TEST(SipHashTest, SeedIsStableWithinProcess) {
