@@ -6,7 +6,7 @@ option(REDIS_SIMPLE_BUILD_FUZZERS "Build Clang libFuzzer targets" OFF)
 option(REDIS_SIMPLE_USE_MIMALLOC
   "Allocate the server's C++ objects with the bundled mimalloc" ON)
 option(REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC
-  "Build memory_benchmark with mimalloc, to compare allocators" OFF)
+  "Build redis_simple_benchmarks with mimalloc, to compare allocators" OFF)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -172,7 +172,7 @@ target_link_libraries(
 )
 
 redis_simple_add_gtest_suite(StringUtilsTest)
-redis_simple_add_gtest_suite(DictStrTest)
+redis_simple_add_gtest_suite(DictStringTest)
 redis_simple_add_gtest_suite(DictIntTest)
 redis_simple_add_gtest_suite(DynamicBufferTest)
 redis_simple_add_gtest_suite(DynamicBufferDeathTest)
@@ -186,7 +186,7 @@ redis_simple_add_gtest_suite(ReplyBufferTest)
 redis_simple_add_gtest_suite(SkiplistTest)
 redis_simple_add_gtest_suite(SkiplistDeathTest)
 redis_simple_add_gtest_suite(CustomSkiplistTest)
-redis_simple_add_gtest_suite(CommandRegistryTest)
+redis_simple_add_gtest_suite(CommandTableTest)
 redis_simple_add_gtest_suite(RedisDbTest)
 redis_simple_add_gtest_suite(RedisObjectTest)
 redis_simple_add_gtest_suite(RedisObjectDeathTest)
@@ -213,87 +213,85 @@ redis_simple_add_gtest_suite(ZSetSkiplistStandaloneTest)
 redis_simple_add_gtest_suite(ZSetTest)
 redis_simple_add_gtest_suite(ZSetEncodingTest)
 redis_simple_add_gtest_suite(RespParserTest)
-redis_simple_add_gtest_suite(ReplyParserTest)
-redis_simple_add_gtest_suite(ReplyParseTest)
 redis_simple_add_gtest_suite(ConnectionTest)
 redis_simple_add_gtest_suite(ClientTest)
 redis_simple_add_gtest_suite(ProtectedModeTest)
 redis_simple_add_gtest_suite(RequestParserTest)
 redis_simple_add_gtest_suite(TcpTest)
 
-redis_simple_add_executable(mock_tcp_server "integration/tcp/server_test.cpp")
-target_link_libraries(mock_tcp_server PRIVATE redis_simple_core)
+redis_simple_add_executable(redis_simple_integration_tcp_server "integration/tcp/server_test.cpp")
+target_link_libraries(redis_simple_integration_tcp_server PRIVATE redis_simple_core)
 
-redis_simple_add_executable(mock_tcp_client "integration/tcp/client_test.cpp")
-target_link_libraries(mock_tcp_client PRIVATE redis_simple_core)
+redis_simple_add_executable(redis_simple_integration_tcp_client "integration/tcp/client_test.cpp")
+target_link_libraries(redis_simple_integration_tcp_client PRIVATE redis_simple_core)
 
 redis_simple_add_executable(
-  mock_key_client
+  redis_simple_integration_key_client
   "integration/commands/key_client_test.cpp"
 )
-target_link_libraries(mock_key_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_key_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_connection_client
+  redis_simple_integration_connection_client
   "integration/commands/connection_client_test.cpp"
 )
-target_link_libraries(mock_connection_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_connection_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_string_client
+  redis_simple_integration_string_client
   "integration/commands/string_client_test.cpp"
 )
-target_link_libraries(mock_string_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_string_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_set_client
+  redis_simple_integration_set_client
   "integration/commands/set_client_test.cpp"
 )
-target_link_libraries(mock_set_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_set_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_list_client
+  redis_simple_integration_list_client
   "integration/commands/list_client_test.cpp"
 )
-target_link_libraries(mock_list_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_list_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_zset_client
+  redis_simple_integration_zset_client
   "integration/commands/zset_client_test.cpp"
 )
-target_link_libraries(mock_zset_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_zset_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_hash_client
+  redis_simple_integration_hash_client
   "integration/commands/hash_client_test.cpp"
 )
-target_link_libraries(mock_hash_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_hash_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_transaction_client
+  redis_simple_integration_transaction_client
   "integration/commands/transaction_client_test.cpp"
 )
-target_link_libraries(mock_transaction_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_transaction_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_aof_client
+  redis_simple_integration_aof_client
   "integration/aof_client_test.cpp"
 )
-target_link_libraries(mock_aof_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_aof_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
-  mock_io_threads_client
+  redis_simple_integration_io_threads_client
   "integration/io_threads_client_test.cpp"
 )
-target_link_libraries(mock_io_threads_client PRIVATE redis_simple_cli)
+target_link_libraries(redis_simple_integration_io_threads_client PRIVATE redis_simple_cli)
 
 add_test(
   NAME redis_simple_integration_tcp
   COMMAND
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_tcp.sh"
-    $<TARGET_FILE:mock_tcp_server>
-    $<TARGET_FILE:mock_tcp_client>
+    $<TARGET_FILE:redis_simple_integration_tcp_server>
+    $<TARGET_FILE:redis_simple_integration_tcp_client>
 )
 
 add_test(
@@ -311,7 +309,7 @@ foreach(variant IN ITEMS "" _io_threads)
       /bin/sh
       "${CMAKE_SOURCE_DIR}/scripts/run_aof_integration_test.sh"
       $<TARGET_FILE:redis_simple>
-      $<TARGET_FILE:mock_aof_client>
+      $<TARGET_FILE:redis_simple_integration_aof_client>
   )
 endforeach()
 # Rewrites fork while the I/O threads run, which the fork hooks pause.
@@ -326,7 +324,7 @@ add_test(
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
     $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_key_client>
+    $<TARGET_FILE:redis_simple_integration_key_client>
 )
 
 add_test(
@@ -335,7 +333,7 @@ add_test(
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
     $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_connection_client>
+    $<TARGET_FILE:redis_simple_integration_connection_client>
 )
 
 add_test(
@@ -344,7 +342,7 @@ add_test(
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
     $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_string_client>
+    $<TARGET_FILE:redis_simple_integration_string_client>
 )
 
 add_test(
@@ -353,7 +351,7 @@ add_test(
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
     $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_set_client>
+    $<TARGET_FILE:redis_simple_integration_set_client>
 )
 
 add_test(
@@ -362,7 +360,7 @@ add_test(
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
     $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_list_client>
+    $<TARGET_FILE:redis_simple_integration_list_client>
 )
 
 add_test(
@@ -371,7 +369,7 @@ add_test(
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
     $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_zset_client>
+    $<TARGET_FILE:redis_simple_integration_zset_client>
 )
 
 add_test(
@@ -380,7 +378,7 @@ add_test(
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
     $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_hash_client>
+    $<TARGET_FILE:redis_simple_integration_hash_client>
 )
 
 add_test(
@@ -389,7 +387,7 @@ add_test(
     /bin/sh
     "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
     $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_transaction_client>
+    $<TARGET_FILE:redis_simple_integration_transaction_client>
 )
 
 # Many concurrent pipelined clients, against a server without I/O threads and
@@ -401,7 +399,7 @@ foreach(variant IN ITEMS plain io_threads)
       /bin/sh
       "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
       $<TARGET_FILE:redis_simple>
-      $<TARGET_FILE:mock_io_threads_client>
+      $<TARGET_FILE:redis_simple_integration_io_threads_client>
   )
   set_tests_properties(
     redis_simple_integration_concurrent_clients_${variant}
@@ -424,7 +422,7 @@ foreach(family IN ITEMS key connection string set list zset hash transaction)
       /bin/sh
       "${CMAKE_SOURCE_DIR}/scripts/run_integration_commands.sh"
       $<TARGET_FILE:redis_simple>
-      $<TARGET_FILE:mock_${family}_client>
+      $<TARGET_FILE:redis_simple_integration_${family}_client>
   )
   set_tests_properties(
     redis_simple_integration_command_${family}_io_threads
@@ -480,17 +478,17 @@ redis_simple_collect_sources(REDIS_SIMPLE_BENCHMARK_SOURCES benchmarks)
 redis_simple_exclude_sources(REDIS_SIMPLE_BENCHMARK_SOURCES
   "/benchmarks/mimalloc_new_delete\\.cpp$")
 
-redis_simple_add_executable(memory_benchmark ${REDIS_SIMPLE_BENCHMARK_SOURCES})
+redis_simple_add_executable(redis_simple_benchmarks ${REDIS_SIMPLE_BENCHMARK_SOURCES})
 target_link_libraries(
-  memory_benchmark
+  redis_simple_benchmarks
   PRIVATE
     redis_simple_core
     benchmark::benchmark
 )
 if(REDIS_SIMPLE_MIMALLOC_ALLOWED AND REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC)
-  target_sources(memory_benchmark
+  target_sources(redis_simple_benchmarks
     PRIVATE "${CMAKE_SOURCE_DIR}/benchmarks/mimalloc_new_delete.cpp")
-  target_link_libraries(memory_benchmark PRIVATE mimalloc-static)
+  target_link_libraries(redis_simple_benchmarks PRIVATE mimalloc-static)
 endif()
 
 if(REDIS_SIMPLE_BUILD_FUZZERS)

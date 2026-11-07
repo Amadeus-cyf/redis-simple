@@ -1,5 +1,5 @@
-#ifndef REDIS_SIMPLE_SERVER_EXPIRE_H_
-#define REDIS_SIMPLE_SERVER_EXPIRE_H_
+#ifndef REDIS_SIMPLE_SERVER_ACTIVE_EXPIRE_H_
+#define REDIS_SIMPLE_SERVER_ACTIVE_EXPIRE_H_
 
 namespace redis_simple {
 namespace db {
@@ -10,4 +10,4 @@ class RedisDb;
 void ActiveExpireCycle(db::RedisDb* db);
 }  // namespace redis_simple
 
-#endif  // REDIS_SIMPLE_SERVER_EXPIRE_H_
+#endif  // REDIS_SIMPLE_SERVER_ACTIVE_EXPIRE_H_

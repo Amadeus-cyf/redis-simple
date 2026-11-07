@@ -15,7 +15,7 @@
 #include "server/reply.h"
 #include "utils/check.h"
 
-namespace redis_simple::command::sets {
+namespace redis_simple::commands::sets {
 namespace {
 using Set = ::redis_simple::set::Set;
 
@@ -228,4 +228,4 @@ void HandleSUnion(Client* const client) {
 }
 
 void HandleSDiff(Client* const client) { AddSetOperationReply(client, SDiff); }
-}  // namespace redis_simple::command::sets
+}  // namespace redis_simple::commands::sets

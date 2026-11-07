@@ -315,7 +315,7 @@ ClientStatus Client::RunParsedQueries() {
 }
 
 Client::RequestStatus Client::ValidateRequest(std::string_view name) {
-  const command::Command* command = command::Find(name);
+  const commands::Command* command = commands::Find(name);
   if (command == nullptr) {
     RS_LOG_DEBUG("command not found\n");
     AddReply(reply::UnknownCommand(name, args_));
@@ -332,7 +332,7 @@ Client::RequestStatus Client::ValidateRequest(std::string_view name) {
     multi_.MarkRejected();
     return RequestStatus::kRejected;
   }
-  if (command->access == command::CommandAccess::kWrite &&
+  if (command->access == commands::CommandAccess::kWrite &&
       !AofAcceptsWrites()) {
     AddReply(AofWriteError());
     multi_.MarkRejected();
@@ -352,14 +352,14 @@ std::string Client::AofWriteError() const {
                           server_->aof->LastErrorText());
 }
 
-bool Client::PropagateMutation(const command::Command& command) {
+bool Client::PropagateMutation(const commands::Command& command) {
   if (!modified_) {
     return true;
   }
   modified_ = false;
   // Key-level database operations touch WATCHed keys themselves; this covers
   // single-key commands that edit a value in place.
-  const command::KeySpec& keys = command.keys;
+  const commands::KeySpec& keys = command.keys;
   if (keys.HasKeys() && keys.first == keys.last && keys.first < args_.size() &&
       Db()->HasWatchedKeys()) {
     Db()->TouchWatchedKey(args_[keys.first]);
@@ -431,13 +431,13 @@ void Client::ExecTransaction() {
   UnwatchKeys();
 
   AddReply(reply::FromArrayHeader(multi_.Size()));
-  const command::Command* const exec_command = command_;
+  const commands::Command* const exec_command = command_;
   if (Aof() != nullptr) {
     Aof()->BeginTransaction();
   }
   // Queued commands share the EXEC command's pinned clock, so the whole
   // transaction observes one time.
-  multi_.ForEach(&args_, [this](const command::Command* const queued) {
+  multi_.ForEach(&args_, [this](const commands::Command* const queued) {
     command_ = queued;
     modified_ = false;
     command_->callback(this);
@@ -456,8 +456,8 @@ void Client::ExecTransaction() {
   multi_.Reset();
 }
 
-bool Client::ExecuteForReplay(const command::Command* const command,
-                              command::CommandArgs* const args) {
+bool Client::ExecuteForReplay(const commands::Command* const command,
+                              commands::CommandArgs* const args) {
   if (command == nullptr || args == nullptr) {
     return false;
   }

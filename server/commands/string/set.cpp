@@ -13,7 +13,7 @@
 #include "utils/check.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::strings {
+namespace redis_simple::commands::strings {
 namespace {
 constexpr int64_t kMillisecondsPerSecond = 1000;
 
@@ -222,4 +222,4 @@ void HandleSet(Client* const client) {
     client->AddReply(reply::NullView(client->Protocol()));
   }
 }
-}  // namespace redis_simple::command::strings
+}  // namespace redis_simple::commands::strings

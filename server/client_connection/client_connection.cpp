@@ -47,14 +47,14 @@ bool AcceptOne(int listener_fd, Server* const server) {
     return true;
   }
   auto client = Client::Create(std::move(connection), server->Context());
-  Client* const client_ptr = client.get();
+  Client* const connected = client.get();
   if (io_thread != nullptr) {
     server->AddClient(std::move(client));
-    io_thread->Assign(client_ptr);
+    io_thread->Assign(connected);
     return true;
   }
-  if (!client_ptr->Connection()->SetReadCallback(
-          CreateCallback(CallbackType::kReadQuery, server, client_ptr))) {
+  if (!connected->Connection()->SetReadCallback(
+          CreateCallback(CallbackType::kReadQuery, server, connected))) {
     RS_LOG_DEBUG("failed to set the read callback\n");
     // Dropping `client` closes this connection; keep accepting the rest.
     return true;

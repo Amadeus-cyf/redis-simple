@@ -23,7 +23,7 @@ bool IsBorrowed(std::string_view value, std::string_view input) {
 
 void ParseOne(std::string_view input) {
   std::string_view command_name;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   const auto result = request_parser::Parse(input, &command_name, &args);
   if (result.status != request_parser::ParseStatus::kComplete) {
     Require(command_name.empty());
@@ -54,7 +54,7 @@ void ParseWithState(std::string_view input) {
   for (size_t command_count = 0; command_count < 64 && consumed < input.size();
        ++command_count) {
     std::string_view command_name;
-    command::CommandArgs args;
+    commands::CommandArgs args;
     const auto remaining = input.substr(consumed);
     const auto result =
         request_parser::Parse(remaining, &state, &command_name, &args);
@@ -84,7 +84,7 @@ void ParseSequence(std::string_view input) {
   for (size_t command_count = 0; command_count < 64 && consumed < input.size();
        ++command_count) {
     std::string_view command_name;
-    command::CommandArgs args;
+    commands::CommandArgs args;
     const auto remaining = input.substr(consumed);
     const auto result = request_parser::Parse(remaining, &command_name, &args);
     if (result.status != request_parser::ParseStatus::kComplete) {

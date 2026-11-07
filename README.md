@@ -189,7 +189,7 @@ As with Redis, threads pay off only when the main thread is the bottleneck,
 as with heavily pipelined traffic on a machine with spare cores; without
 pipelining, round trips limit throughput and the default of 1 is as fast.
 
-In another terminal, run a mock command client or your own TCP client against
+In another terminal, run an integration client or your own TCP client against
 `localhost:8080`.
 
 ## Command Coverage
@@ -355,7 +355,7 @@ For debugging a single executable directly:
 
 ```sh
 ./build/debug/redis_simple_tests
-./build/debug/mock_set_client
+./build/debug/redis_simple_integration_set_client
 ```
 
 For debugging one unit-test suite directly:
@@ -398,14 +398,14 @@ keyspaces. Set `INTEROP_KEEP=1` to keep the directories for inspection.
 
 ## Benchmarks
 
-Benchmarks use Google Benchmark and build into one `memory_benchmark`
+Benchmarks use Google Benchmark and build into one `redis_simple_benchmarks`
 executable. Build it with the release preset, since debug timings are not
 representative:
 
 ```sh
 cmake --preset release
-cmake --build --preset release --target memory_benchmark
-./build/release/memory_benchmark
+cmake --build --preset release --target redis_simple_benchmarks
+./build/release/redis_simple_benchmarks
 ```
 
 Run one group with `--benchmark_filter`, for example
@@ -430,15 +430,15 @@ Benchmarks that take a 0 or 1 argument compare two ways of doing the same
 work in one run. They are not part of CTest or CI, because timings vary
 between machines. Google Benchmark's own tests are disabled in this project.
 
-`memory_benchmark` uses the system allocator by default. To compare it with
-mimalloc, which the server uses, build a second copy with
+`redis_simple_benchmarks` uses the system allocator by default. To compare it
+with mimalloc, which the server uses, build a second copy with
 `REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC` and run the same filter in both:
 
 ```sh
 cmake -S . -B build/benchmark-mimalloc -DCMAKE_BUILD_TYPE=Release \
   -DREDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC=ON
-cmake --build build/benchmark-mimalloc --target memory_benchmark
-./build/benchmark-mimalloc/memory_benchmark --benchmark_filter=DbSetString
+cmake --build build/benchmark-mimalloc --target redis_simple_benchmarks
+./build/benchmark-mimalloc/redis_simple_benchmarks --benchmark_filter=DbSetString
 ```
 
 ### Server profiling

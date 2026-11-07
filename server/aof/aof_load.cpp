@@ -41,8 +41,8 @@ constexpr size_t kMaxAnnotationBytes = 1024;
 // Commands of one MULTI/EXEC block read during replay, held until EXEC.
 class ReplayTransaction {
  public:
-  void Queue(const command::Command* command,
-             const command::CommandArgs& args) {
+  void Queue(const commands::Command* command,
+             const commands::CommandArgs& args) {
     commands_.push_back({command, args.size()});
     for (const std::string_view arg : args) {
       args_.emplace_back(arg);
@@ -53,7 +53,7 @@ class ReplayTransaction {
   // false when a command fails; Apply then stops and returns false.
   template <typename Execute>
   bool Apply(const Execute& execute) {
-    command::CommandArgs views;
+    commands::CommandArgs views;
     size_t next_arg = 0;
     bool applied = true;
     for (const auto& [command, arg_count] : commands_) {
@@ -73,7 +73,7 @@ class ReplayTransaction {
 
  private:
   struct QueuedCommand {
-    const command::Command* command;
+    const commands::Command* command;
     size_t arg_count;
   };
   std::vector<QueuedCommand> commands_;
@@ -232,7 +232,7 @@ class FileReplayer {
   Client client_;
   const Limits* const limits_;
   memory::DynamicBuffer input_;
-  command::CommandArgs args_;
+  commands::CommandArgs args_;
   size_t complete_bytes_{};
   // Records between MULTI and EXEC are copied out of `input_` and applied
   // together at EXEC, so a transaction cut off by a crash is not applied.
@@ -333,8 +333,8 @@ bool FileReplayer::ApplyCommand(std::string_view name) {
   }
   if (name == "EXEC" && args_.empty()) {
     if (!transaction_start_.has_value() ||
-        !transaction_.Apply([this](const command::Command* command,
-                                   command::CommandArgs* views) {
+        !transaction_.Apply([this](const commands::Command* command,
+                                   commands::CommandArgs* views) {
           return client_.ExecuteForReplay(command, views);
         })) {
       return false;
@@ -342,8 +342,9 @@ bool FileReplayer::ApplyCommand(std::string_view name) {
     transaction_start_.reset();
     return true;
   }
-  const command::Command* const command = command::Find(name);
-  if (command == nullptr || command->access != command::CommandAccess::kWrite ||
+  const commands::Command* const command = commands::Find(name);
+  if (command == nullptr ||
+      command->access != commands::CommandAccess::kWrite ||
       !command->arity.Accepts(args_.size())) {
     return false;
   }

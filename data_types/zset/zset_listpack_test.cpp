@@ -24,7 +24,7 @@ TEST(ZSetListPackTest, RangeByRank) {
   zset_storage_test::TestRangeByRank<ZSetListPack>();
 }
 
-TEST(ZSetListPackTest, PreservesNumericKeyWhileReadingScore) {
+TEST(ZSetListPackTest, PreservesNumericMemberWhileReadingScore) {
   ZSetListPack zset;
   ASSERT_TRUE(zset.InsertOrUpdate("0", 42.0, nullptr));
   const RangeByRankSpec spec(0, 0, false, false);
@@ -32,7 +32,7 @@ TEST(ZSetListPackTest, PreservesNumericKeyWhileReadingScore) {
   const ZSetEntryList entries = zset.RangeByRank(&spec);
 
   ASSERT_EQ(entries.size(), 1);
-  EXPECT_EQ(entries.front()->key, "0");
+  EXPECT_EQ(entries.front()->member, "0");
   EXPECT_EQ(entries.front()->score, 42.0);
 }
 
@@ -60,18 +60,18 @@ TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {
       {"huge", 1.5e300},
   };
   ZSetListPack zset;
-  for (const auto& [key, score] : entries) {
-    ASSERT_TRUE(zset.InsertOrUpdate(key, score, nullptr));
+  for (const auto& [member, score] : entries) {
+    ASSERT_TRUE(zset.InsertOrUpdate(member, score, nullptr));
   }
-  for (const auto& [key, score] : entries) {
-    EXPECT_EQ(zset.Score(key), score) << key;
+  for (const auto& [member, score] : entries) {
+    EXPECT_EQ(zset.Score(member), score) << member;
   }
   const RangeByRankSpec spec(0, static_cast<int64_t>(entries.size()) - 1, false,
                              false);
   const ZSetEntryList range = zset.RangeByRank(&spec);
   ASSERT_EQ(range.size(), entries.size());
   for (size_t index = 0; index < entries.size(); ++index) {
-    EXPECT_EQ(range[index]->key, entries[index].first);
+    EXPECT_EQ(range[index]->member, entries[index].first);
     EXPECT_EQ(range[index]->score, entries[index].second);
   }
 }

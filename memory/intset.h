@@ -16,7 +16,7 @@ class IntSet {
   bool Add(int64_t value);
   int64_t Get(uint32_t index) const;
   bool Find(int64_t value) const;
-  bool Remove(int64_t value);
+  bool Delete(int64_t value);
   int64_t Max() const;
   int64_t Min() const;
   uint32_t Size() const { return length_; }

@@ -72,14 +72,14 @@ std::vector<std::string> Set::ListAllMembers() const {
   return members;
 }
 
-bool Set::Remove(std::string_view value) {
+bool Set::Delete(std::string_view value) {
   if (Size() == 0) {
     return false;
   }
   if (encoding_ == Encoding::kIntSet) {
     int64_t int_value = 0;
     if (utils::ToInt64(value, &int_value)) {
-      return intset_->Remove(int_value);
+      return intset_->Delete(int_value);
     }
     return false;
   }

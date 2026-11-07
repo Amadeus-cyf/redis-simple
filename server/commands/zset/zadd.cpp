@@ -15,7 +15,7 @@
 #include "utils/float_utils.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::zsets {
+namespace redis_simple::commands::zsets {
 namespace {
 struct AddOptions {
   bool nx{};
@@ -28,7 +28,7 @@ struct AddOptions {
 
 // Parses ZADD's leading options, as Redis does: they end at the first
 // argument that is not one. Returns the index of the first score.
-size_t ParseOptions(const command::CommandArgs& args,
+size_t ParseOptions(const commands::CommandArgs& args,
                     AddOptions* const options) {
   size_t index = 1;
   for (; index < args.size(); ++index) {
@@ -135,7 +135,7 @@ struct AddTotals {
 // Applies every score-member pair. Returns false after replying with an error
 // if INCR produced NaN.
 bool AddPairs(Client* const client, zset::ZSet* const zset,
-              const command::CommandArgs& args, size_t first_score,
+              const commands::CommandArgs& args, size_t first_score,
               const std::vector<double>& scores, const AddOptions& options,
               AddTotals* const totals) {
   const bool plain =
@@ -176,7 +176,7 @@ bool AddPairs(Client* const client, zset::ZSet* const zset,
 
 void HandleZAdd(Client* const client) {
   // Redis' zaddGenericCommand, including its order of checks.
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   AddOptions options;
   const size_t first_score = ParseOptions(args, &options);
   if (!ValidateOptions(client, options, args.size() - first_score)) {
@@ -224,4 +224,4 @@ void HandleZAdd(Client* const client) {
   client->AddReply(reply::FromInt64(options.ch ? totals.added + totals.updated
                                                : totals.added));
 }
-}  // namespace redis_simple::command::zsets
+}  // namespace redis_simple::commands::zsets

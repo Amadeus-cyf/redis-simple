@@ -4,7 +4,7 @@
 #include "server/commands/handlers.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::transaction {
+namespace redis_simple::commands::transaction {
 void HandleMulti(Client* const client) {
   if (client->InTransaction()) {
     client->AddReply(reply::FromError("ERR MULTI calls can not be nested"));
@@ -46,4 +46,4 @@ void HandleUnwatch(Client* const client) {
   client->UnwatchKeys();
   client->AddReply(reply::kOk);
 }
-}  // namespace redis_simple::command::transaction
+}  // namespace redis_simple::commands::transaction

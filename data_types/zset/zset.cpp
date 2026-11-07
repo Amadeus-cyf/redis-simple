@@ -19,7 +19,7 @@ ZSet::ZSet()
  * Insert a new element with score or update the score of an existing
  * element. Return true if the element is newly inserted.
  */
-bool ZSet::InsertOrUpdate(std::string_view key, double score,
+bool ZSet::InsertOrUpdate(std::string_view member, double score,
                           bool* const changed) {
   if (changed != nullptr) {
     *changed = false;
@@ -28,24 +28,24 @@ bool ZSet::InsertOrUpdate(std::string_view key, double score,
     return false;
   }
   if (encoding_ == Encoding::kListPack &&
-      key.size() > kListPackMaxElementLength) {
+      member.size() > kListPackMaxElementLength) {
     ConvertAndExpand();
   }
-  const bool inserted = storage_->InsertOrUpdate(key, score, changed);
-  if (ShouldConvertToSkiplist(key, inserted)) {
+  const bool inserted = storage_->InsertOrUpdate(member, score, changed);
+  if (ShouldConvertToSkiplist(member, inserted)) {
     ConvertAndExpand();
   }
   return inserted;
 }
 
-bool ZSet::Delete(std::string_view key) { return storage_->Delete(key); }
+bool ZSet::Delete(std::string_view member) { return storage_->Delete(member); }
 
-std::optional<double> ZSet::Score(std::string_view key) const {
-  return storage_->Score(key);
+std::optional<double> ZSet::Score(std::string_view member) const {
+  return storage_->Score(member);
 }
 
-std::optional<size_t> ZSet::Rank(std::string_view key) const {
-  return storage_->Rank(key);
+std::optional<size_t> ZSet::Rank(std::string_view member) const {
+  return storage_->Rank(member);
 }
 
 ZSetEntryList ZSet::RangeByRank(const RangeByRankSpec* spec) const {
@@ -69,18 +69,19 @@ bool ZSet::ForEachEntry(const ZSetEntryVisitor& visitor) const {
 
 enum ZSet::Encoding ZSet::Encoding() const { return encoding_; }
 
-bool ZSet::ShouldConvertToSkiplist(std::string_view key, bool inserted) const {
+bool ZSet::ShouldConvertToSkiplist(std::string_view member,
+                                   bool inserted) const {
   return encoding_ == Encoding::kListPack &&
          ((inserted && storage_->Size() > kListPackMaxEntries) ||
-          key.size() > kListPackMaxElementLength);
+          member.size() > kListPackMaxElementLength);
 }
 
 void ZSet::ConvertAndExpand() {
   RS_CHECK(encoding_ == Encoding::kListPack);
   auto zset_skiplist = std::make_unique<ZSetSkiplist>();
   if (!storage_->ForEachEntry(
-          [&zset_skiplist](std::string_view key, double score) {
-            return zset_skiplist->InsertOrUpdate(key, score, nullptr);
+          [&zset_skiplist](std::string_view member, double score) {
+            return zset_skiplist->InsertOrUpdate(member, score, nullptr);
           })) {
     return;
   }

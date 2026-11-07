@@ -90,7 +90,7 @@ class Client {
   }
   // Whether the server has removed this client; it is destroyed later.
   bool Freed() const { return freed_; }
-  const command::CommandArgs& Args() const { return args_; }
+  const commands::CommandArgs& Args() const { return args_; }
   bool Authenticated() const { return authenticated_; }
   void SetAuthenticated(bool authenticated) { authenticated_ = authenticated; }
   // CLIENT ID: unique for the life of the process, as in Redis.
@@ -125,8 +125,8 @@ class Client {
          const ServerContext* server, OutputBufferLimits output_limits);
   // A client for AOF replay, without a connection; it discards replies.
   explicit Client(const ServerContext* server);
-  bool ExecuteForReplay(const command::Command* command,
-                        command::CommandArgs* args);
+  bool ExecuteForReplay(const commands::Command* command,
+                        commands::CommandArgs* args);
   RequestStatus ParseRequest();
   // RESP framing only: fills `args_` and consumes the request, with no
   // reply or other side effect.
@@ -144,14 +144,14 @@ class Client {
   // command to the AOF. Returns false if the AOF append failed. Inlined into
   // the per-command path.
   [[gnu::always_inline]] inline bool PropagateMutation(
-      const command::Command& command);
+      const commands::Command& command);
   bool CanQueueReply(size_t size);
   ssize_t SendBufferReply();
   ssize_t SendListReply();
   std::unique_ptr<connection::Connection> connection_;
   const ServerContext* server_;
-  const command::Command* command_{nullptr};
-  command::CommandArgs args_;
+  const commands::Command* command_{nullptr};
+  commands::CommandArgs args_;
   // Requests framed by ParseQueries: each is `arg_count` arguments after its
   // name at `first` in `parsed_args_`.
   struct ParsedRequest {

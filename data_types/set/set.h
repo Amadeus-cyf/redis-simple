@@ -42,7 +42,7 @@ class Set {
   // otherwise. Set operations hand it to HasMember on the other sets.
   template <typename Visitor>
   bool ForEachMemberWithHash(Visitor&& visitor) const;
-  bool Remove(std::string_view value);
+  bool Delete(std::string_view value);
   size_t Size() const;
   Encoding Encoding() const { return encoding_; }
 

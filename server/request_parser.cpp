@@ -151,7 +151,7 @@ size_t ReservableElements(std::string_view input, size_t count) {
 // buffer moves, and ResumeResp continues from there after more bytes arrive.
 ParseResult ParseFreshResp(std::string_view input, ParseState* const state,
                            std::string_view* const command,
-                           command::CommandArgs* const args) {
+                           commands::CommandArgs* const args) {
   LengthLine header;
   ParseResult result;
   result.status = ParseLengthLine(
@@ -233,7 +233,7 @@ ParseResult ResumeResp(std::string_view input, ParseState* const state) {
 // quoted, as Redis' processInlineBuffer does.
 ParseResult ParseInline(std::string_view input, ParseState* const state,
                         std::string_view* const command,
-                        command::CommandArgs* const args) {
+                        commands::CommandArgs* const args) {
   const size_t newline =
       input.substr(0, std::min(input.size(), kMaxLineBytes + 1)).find('\n');
   if (newline == std::string_view::npos) {
@@ -280,7 +280,7 @@ void ParseState::Reset() {
 }
 
 ParseResult Parse(std::string_view input, std::string_view* const command,
-                  command::CommandArgs* const args) {
+                  commands::CommandArgs* const args) {
   if (input.empty() || input.front() != '*') {
     // Inline requests may need storage that outlives this call.
     *command = {};
@@ -321,7 +321,7 @@ std::string ProtocolErrorMessage(const ParseResult& result) {
 
 ParseResult Parse(std::string_view input, ParseState* const state,
                   std::string_view* const command,
-                  command::CommandArgs* const args) {
+                  commands::CommandArgs* const args) {
   if (state == nullptr || command == nullptr || args == nullptr) {
     return {.status = ParseStatus::kInvalid};
   }

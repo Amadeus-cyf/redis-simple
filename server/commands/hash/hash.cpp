@@ -15,7 +15,7 @@
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::hashes {
+namespace redis_simple::commands::hashes {
 namespace {
 using Hash = ::redis_simple::hash::Hash;
 constexpr auto kHash = db::RedisObject::ObjectType::kHash;
@@ -87,7 +87,7 @@ void AddHashListReply(Client* const client, Visit visit) {
 // error.
 std::optional<int64_t> SetFields(Client* const client,
                                  std::string_view command_name) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   if (args.size() % 2 == 0) {
     client->AddReply(reply::WrongNumberOfArguments(command_name));
     return std::nullopt;
@@ -120,7 +120,7 @@ void HandleHMSet(Client* const client) {
 }
 
 void HandleHGet(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const Hash* hash = nullptr;
   if (!LookupHash(client, args[0], &hash)) {
     return;
@@ -136,7 +136,7 @@ void HandleHGet(Client* const client) {
 }
 
 void HandleHDel(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const auto [object, wrong_type] =
       MutableLookupTyped(client->Db(), args[0], kHash);
   if (wrong_type) {
@@ -169,7 +169,7 @@ void HandleHLen(Client* const client) {
 }
 
 void HandleHExists(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const Hash* hash = nullptr;
   if (!LookupHash(client, args[0], &hash)) {
     return;
@@ -197,7 +197,7 @@ void HandleHGetAll(Client* const client) {
 }
 
 void HandleHMGet(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const Hash* hash = nullptr;
   if (!LookupHash(client, args[0], &hash)) {
     return;
@@ -230,7 +230,7 @@ void HandleHVals(Client* const client) {
 }
 
 void HandleHIncrBy(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   int64_t increment = 0;
   if (!utils::ToInt64(args[2], &increment)) {
     client->AddReply(reply::kNotAnIntegerError);
@@ -258,4 +258,4 @@ void HandleHIncrBy(Client* const client) {
   client->MarkModified();
   client->AddReply(reply::FromInt64(next));
 }
-}  // namespace redis_simple::command::hashes
+}  // namespace redis_simple::commands::hashes

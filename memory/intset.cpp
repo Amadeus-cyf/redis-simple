@@ -45,7 +45,7 @@ bool IntSet::Find(int64_t value) const {
   return encoding <= encoding_ && Search(value, nullptr);
 }
 
-bool IntSet::Remove(int64_t value) {
+bool IntSet::Delete(int64_t value) {
   uint32_t index = 0;
   bool exist = Search(value, &index);
   if (!exist) {

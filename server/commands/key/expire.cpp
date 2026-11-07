@@ -11,7 +11,7 @@
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::key {
+namespace redis_simple::commands::keys {
 namespace {
 constexpr int64_t kMillisecondsPerSecond = 1000;
 
@@ -211,7 +211,7 @@ void HandleDbSize(Client* const client) {
 void HandleFlushDb(Client* const client) {
   // FLUSHDB [ASYNC | SYNC]. Flushing is always synchronous here, so both
   // modes behave the same.
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   if (args.size() > 1 ||
       (args.size() == 1 && !utils::EqualsIgnoreCase(args[0], "ASYNC") &&
        !utils::EqualsIgnoreCase(args[0], "SYNC"))) {
@@ -225,4 +225,4 @@ void HandleFlushDb(Client* const client) {
   redis_db->Flush();
   client->AddReply(reply::kOk);
 }
-}  // namespace redis_simple::command::key
+}  // namespace redis_simple::commands::keys

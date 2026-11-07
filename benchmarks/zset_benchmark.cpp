@@ -35,10 +35,10 @@ std::vector<std::string> MemberNames(size_t count) {
 
 std::unique_ptr<zset::ZSet> FilledZSet(const std::vector<std::string>& names) {
   auto zset = zset::ZSet::Create();
-  std::mt19937 rng = SeededRng(0);
+  std::mt19937 generator = SeededRng(0);
   std::uniform_real_distribution<double> score(0, 1'000'000);
   for (const auto& name : names) {
-    zset->InsertOrUpdate(name, score(rng));
+    zset->InsertOrUpdate(name, score(generator));
   }
   return zset;
 }
@@ -58,13 +58,13 @@ void ZSetInsert(benchmark::State& state) {
 void ZSetUpdateScore(benchmark::State& state) {
   const auto names = MemberNames(static_cast<size_t>(state.range(0)));
   auto zset = FilledZSet(names);
-  std::mt19937 rng = SeededRng(1);
+  std::mt19937 generator = SeededRng(1);
   std::uniform_int_distribution<size_t> member(0, names.size() - 1);
   std::uniform_real_distribution<double> score(0, 1'000'000);
   for (auto _ : state) {
     (void)_;
     benchmark::DoNotOptimize(
-        zset->InsertOrUpdate(names[member(rng)], score(rng)));
+        zset->InsertOrUpdate(names[member(generator)], score(generator)));
   }
   state.SetItemsProcessed(state.iterations());
 }
@@ -73,11 +73,11 @@ void ZSetUpdateScore(benchmark::State& state) {
 void ZSetDeleteRandom(benchmark::State& state) {
   const auto names = MemberNames(static_cast<size_t>(state.range(0)));
   auto zset = FilledZSet(names);
-  std::mt19937 rng = SeededRng(2);
+  std::mt19937 generator = SeededRng(2);
   std::uniform_int_distribution<size_t> member(0, names.size() - 1);
   for (auto _ : state) {
     (void)_;
-    const std::string& name = names[member(rng)];
+    const std::string& name = names[member(generator)];
     const double score = zset->Score(name).value_or(0.0);
     zset->Delete(name);
     zset->InsertOrUpdate(name, score);
@@ -103,11 +103,11 @@ void ZSetDeleteSmallestName(benchmark::State& state) {
 void ZSetRank(benchmark::State& state) {
   const auto names = MemberNames(static_cast<size_t>(state.range(0)));
   auto zset = FilledZSet(names);
-  std::mt19937 rng = SeededRng(3);
+  std::mt19937 generator = SeededRng(3);
   std::uniform_int_distribution<size_t> member(0, names.size() - 1);
   for (auto _ : state) {
     (void)_;
-    benchmark::DoNotOptimize(zset->Rank(names[member(rng)]));
+    benchmark::DoNotOptimize(zset->Rank(names[member(generator)]));
   }
   state.SetItemsProcessed(state.iterations());
 }
@@ -119,11 +119,11 @@ void ZSetRangeByScore(benchmark::State& state) {
   const std::vector<std::string> names = MemberNames(size);
   auto zset = FilledZSet(names);
   const double width = 1'000'000.0 * 100 / static_cast<double>(size);
-  std::mt19937 rng = SeededRng(4);
+  std::mt19937 generator = SeededRng(4);
   std::uniform_real_distribution<double> start(0, 1'000'000 - width);
   for (auto _ : state) {
     (void)_;
-    const double min = start(rng);
+    const double min = start(generator);
     const zset::RangeByScoreSpec spec(min, min + width, true, false);
     benchmark::DoNotOptimize(zset->RangeByScore(&spec));
   }

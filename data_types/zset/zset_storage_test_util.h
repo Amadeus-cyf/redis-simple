@@ -15,18 +15,19 @@
 #include "data_types/zset/zset_storage.h"
 
 namespace redis_simple::zset::zset_storage_test {
-using KeyScorePair = std::pair<std::string, double>;
+using MemberScorePair = std::pair<std::string, double>;
 
 inline std::optional<LimitSpec> MakeLimit(size_t offset,
                                           std::optional<size_t> count) {
   return LimitSpec(offset, count);
 }
 
-inline std::vector<KeyScorePair> ToKeyScorePairs(const ZSetEntryList& entries) {
-  std::vector<KeyScorePair> pairs;
+inline std::vector<MemberScorePair> ToMemberScorePairs(
+    const ZSetEntryList& entries) {
+  std::vector<MemberScorePair> pairs;
   pairs.reserve(entries.size());
   for (const auto* entry : entries) {
-    pairs.emplace_back(entry->key, entry->score);
+    pairs.emplace_back(entry->member, entry->score);
   }
   return pairs;
 }
@@ -52,31 +53,31 @@ std::unique_ptr<Storage> MakeUpdatedStorage() {
 }
 
 template <typename Storage>
-void ExpectRank(const Storage& zset, const std::string& key,
+void ExpectRank(const Storage& zset, const std::string& member,
                 size_t expected_rank) {
-  const auto rank = zset.Rank(key);
-  ASSERT_TRUE(rank.has_value()) << key;
-  EXPECT_EQ(*rank, expected_rank) << key;
+  const auto rank = zset.Rank(member);
+  ASSERT_TRUE(rank.has_value()) << member;
+  EXPECT_EQ(*rank, expected_rank) << member;
 }
 
 template <typename Storage>
 void ExpectRangeByRank(const Storage& zset, int64_t min, int64_t max,
                        bool minex, bool maxex, size_t offset,
                        std::optional<size_t> count, bool reverse,
-                       const std::vector<KeyScorePair>& expected) {
+                       const std::vector<MemberScorePair>& expected) {
   const RangeByRankSpec spec(min, max, minex, maxex, MakeLimit(offset, count),
                              reverse);
-  EXPECT_EQ(ToKeyScorePairs(zset.RangeByRank(&spec)), expected);
+  EXPECT_EQ(ToMemberScorePairs(zset.RangeByRank(&spec)), expected);
 }
 
 template <typename Storage>
 void ExpectRangeByScore(const Storage& zset, double min, double max, bool minex,
                         bool maxex, size_t offset, std::optional<size_t> count,
                         bool reverse,
-                        const std::vector<KeyScorePair>& expected) {
+                        const std::vector<MemberScorePair>& expected) {
   const RangeByScoreSpec spec(min, max, minex, maxex, MakeLimit(offset, count),
                               reverse);
-  EXPECT_EQ(ToKeyScorePairs(zset.RangeByScore(&spec)), expected);
+  EXPECT_EQ(ToMemberScorePairs(zset.RangeByScore(&spec)), expected);
 }
 
 template <typename Storage>
@@ -112,7 +113,7 @@ void TestRank() {
   ExpectRank(*zset, "key2", 2);
   ExpectRank(*zset, "key3", 0);
   ExpectRank(*zset, "key4", 1);
-  ASSERT_FALSE(zset->Rank("key_not_exist").has_value());
+  ASSERT_FALSE(zset->Rank("member_not_exist").has_value());
 }
 
 template <typename Storage>
@@ -237,7 +238,7 @@ void TestDelete() {
   ASSERT_TRUE(zset->Delete("key1"));
   ASSERT_EQ(zset->Size(), 3);
   ASSERT_FALSE(zset->Rank("key1").has_value());
-  ASSERT_FALSE(zset->Delete("key not exist"));
+  ASSERT_FALSE(zset->Delete("member not exist"));
 }
 }  // namespace redis_simple::zset::zset_storage_test
 

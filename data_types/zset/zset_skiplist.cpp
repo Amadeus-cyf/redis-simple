@@ -13,7 +13,7 @@ ZSetSkiplist::ZSetSkiplist()
     : dict_(memory::Dict<std::string, double>::Create()),
       skiplist_(std::make_unique<SkiplistType>()) {}
 
-bool ZSetSkiplist::InsertOrUpdate(std::string_view key, double score,
+bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,
                                   bool* const changed) {
   if (changed != nullptr) {
     *changed = false;
@@ -21,17 +21,17 @@ bool ZSetSkiplist::InsertOrUpdate(std::string_view key, double score,
   if (std::isnan(score)) {
     return false;
   }
-  auto [current_score, inserted] = dict_->FindOrInsert(key);
+  auto [current_score, inserted] = dict_->FindOrInsert(member);
   if (!inserted) {
     if (*current_score == score) {
       return false;
     }
     // Change the score in place; the skiplist repositions the entry if its
     // order changed, without copying the member name.
-    skiplist_->Update(MemberRef{.score = *current_score, .key = key},
+    skiplist_->Update(MemberRef{.score = *current_score, .member = member},
                       [score](ZSetEntry& entry) { entry.score = score; });
   } else {
-    skiplist_->Insert(ZSetEntry(key, score));
+    skiplist_->Insert(ZSetEntry(member, score));
   }
   *current_score = score;
   if (changed != nullptr) {
@@ -40,21 +40,21 @@ bool ZSetSkiplist::InsertOrUpdate(std::string_view key, double score,
   return inserted;
 }
 
-bool ZSetSkiplist::Delete(std::string_view key) {
-  const double* score = dict_->FindValue(key);
+bool ZSetSkiplist::Delete(std::string_view member) {
+  const double* score = dict_->FindValue(member);
   if (score == nullptr) {
     return false;
   }
-  skiplist_->Delete(MemberRef{.score = *score, .key = key});
-  return dict_->Delete(key);
+  skiplist_->Delete(MemberRef{.score = *score, .member = member});
+  return dict_->Delete(member);
 }
 
-std::optional<size_t> ZSetSkiplist::Rank(std::string_view key) const {
-  const double* score = dict_->FindValue(key);
+std::optional<size_t> ZSetSkiplist::Rank(std::string_view member) const {
+  const double* score = dict_->FindValue(member);
   if (score == nullptr) {
     return std::nullopt;
   }
-  return skiplist_->FindRankOfKey(MemberRef{.score = *score, .key = key});
+  return skiplist_->FindRankOfKey(MemberRef{.score = *score, .member = member});
 }
 
 ZSetEntryList ZSetSkiplist::RangeByRank(const RangeByRankSpec* spec) const {
@@ -124,8 +124,8 @@ bool ZSetSkiplist::OverlapsLexRange(const RangeByLexSpec* spec) const {
   // Redis' zslIsInLexRange: the last member reaches the minimum and the
   // first member the maximum.
   return spec != nullptr && !spec->Empty() && skiplist_->Size() > 0 &&
-         spec->AboveMin((*skiplist_->Last()).key) &&
-         spec->BelowMax((*skiplist_->Begin()).key);
+         spec->AboveMin((*skiplist_->Last()).member) &&
+         spec->BelowMax((*skiplist_->Begin()).member);
 }
 
 ZSetEntryList ZSetSkiplist::RangeByLex(const RangeByLexSpec* spec) const {
@@ -162,7 +162,7 @@ size_t ZSetSkiplist::LexCount(const RangeByLexSpec* spec) const {
 
 bool ZSetSkiplist::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   for (auto entry = skiplist_->Begin(); entry != skiplist_->End(); ++entry) {
-    if (!visitor((*entry).key, (*entry).score)) {
+    if (!visitor((*entry).member, (*entry).score)) {
       return false;
     }
   }

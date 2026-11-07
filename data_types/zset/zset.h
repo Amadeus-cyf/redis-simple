@@ -22,13 +22,13 @@ class ZSet {
   static std::unique_ptr<ZSet> Create() {
     return std::unique_ptr<ZSet>(new ZSet());
   }
-  // Returns true if `key` is new. `*changed`, when given, reports whether it
+  // Returns true if `member` is new. `*changed`, when given, reports whether it
   // was inserted or its score changed.
-  bool InsertOrUpdate(std::string_view key, double score,
+  bool InsertOrUpdate(std::string_view member, double score,
                       bool* changed = nullptr);
-  bool Delete(std::string_view key);
-  std::optional<double> Score(std::string_view key) const;
-  std::optional<size_t> Rank(std::string_view key) const;
+  bool Delete(std::string_view member);
+  std::optional<double> Score(std::string_view member) const;
+  std::optional<size_t> Rank(std::string_view member) const;
   ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const;
   ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const;
   size_t Count(const RangeByScoreSpec* spec) const;
@@ -46,7 +46,7 @@ class ZSet {
   static constexpr size_t kListPackMaxEntries = 128;
   static constexpr size_t kListPackMaxElementLength = 64;
   ZSet();
-  bool ShouldConvertToSkiplist(std::string_view key, bool inserted) const;
+  bool ShouldConvertToSkiplist(std::string_view member, bool inserted) const;
   void ConvertAndExpand();
   enum Encoding encoding_;
   std::unique_ptr<ZSetStorage> storage_;

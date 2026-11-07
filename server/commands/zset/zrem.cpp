@@ -7,9 +7,9 @@
 #include "server/commands/lookup.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::zsets {
+namespace redis_simple::commands::zsets {
 void HandleZRem(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const auto [object, wrong_type] = MutableLookupTyped(
       client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
   if (wrong_type) {
@@ -32,4 +32,4 @@ void HandleZRem(Client* const client) {
   }
   client->AddReply(reply::FromInt64(removed));
 }
-}  // namespace redis_simple::command::zsets
+}  // namespace redis_simple::commands::zsets

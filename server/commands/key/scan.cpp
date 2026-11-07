@@ -14,7 +14,7 @@
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::key {
+namespace redis_simple::commands::keys {
 namespace {
 constexpr size_t kDefaultScanCount = 10;
 constexpr size_t kMaxInitialKeyCapacity = 1024;
@@ -151,4 +151,4 @@ void HandleScan(Client* const client) {
       redis_db->ScanKeys(args.cursor, args.count, collect_key);
   client->AddReply(EncodeScanReply(next_cursor, keys));
 }
-}  // namespace redis_simple::command::key
+}  // namespace redis_simple::commands::keys

@@ -46,7 +46,7 @@ void RunOperations(FuzzInput* input) {
         Require(intset.Add(value) == model.insert(value).second);
         break;
       case 1:
-        Require(intset.Remove(value) == (model.erase(value) != 0));
+        Require(intset.Delete(value) == (model.erase(value) != 0));
         break;
       case 2:
         Require(intset.Find(value) == model.contains(value));

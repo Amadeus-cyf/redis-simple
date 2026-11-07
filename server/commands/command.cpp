@@ -9,7 +9,7 @@
 
 #include "server/commands/handlers.h"
 
-namespace redis_simple::command {
+namespace redis_simple::commands {
 namespace {
 constexpr auto kUnlimited = std::numeric_limits<size_t>::max();
 
@@ -85,19 +85,19 @@ constexpr std::array kCommandTable = {
     AdminCommand("BGREWRITEAOF", persistence::HandleBgRewriteAof,
                  FixedArity(0)),
     ConnectionCommand("CLIENT", session::HandleClient, VariableArity(1)),
-    ReadCommand("DBSIZE", key::HandleDbSize, FixedArity(0)),
+    ReadCommand("DBSIZE", keys::HandleDbSize, FixedArity(0)),
     WriteCommand("DECR", strings::HandleDecr, FixedArity(1), OneKey()),
     WriteCommand("DECRBY", strings::HandleDecrBy, FixedArity(2), OneKey()),
-    WriteCommand("DEL", key::HandleDel, VariableArity(1), AllKeys()),
+    WriteCommand("DEL", keys::HandleDel, VariableArity(1), AllKeys()),
     RunsImmediatelyInMulti(ConnectionCommand(
         "DISCARD", transaction::HandleDiscard, FixedArity(0))),
     ConnectionCommand("ECHO", session::HandleEcho, FixedArity(1)),
     RunsImmediatelyInMulti(
         ConnectionCommand("EXEC", transaction::HandleExec, FixedArity(0))),
-    ReadCommand("EXISTS", key::HandleExists, VariableArity(1), AllKeys()),
-    WriteCommand("EXPIRE", key::HandleExpire, VariableArity(2), OneKey()),
-    WriteCommand("EXPIREAT", key::HandleExpireAt, VariableArity(2), OneKey()),
-    WriteCommand("FLUSHDB", key::HandleFlushDb, VariableArity(0)),
+    ReadCommand("EXISTS", keys::HandleExists, VariableArity(1), AllKeys()),
+    WriteCommand("EXPIRE", keys::HandleExpire, VariableArity(2), OneKey()),
+    WriteCommand("EXPIREAT", keys::HandleExpireAt, VariableArity(2), OneKey()),
+    WriteCommand("FLUSHDB", keys::HandleFlushDb, VariableArity(0)),
     ReadCommand("GET", strings::HandleGet, FixedArity(1), OneKey()),
     WriteCommand("HDEL", hashes::HandleHDel, VariableArity(2), OneKey()),
     AllowBeforeAuth(
@@ -127,18 +127,19 @@ constexpr std::array kCommandTable = {
     WriteCommand("MSET", strings::HandleMSet, VariableArity(2), AllKeys(0, 2)),
     RunsImmediatelyInMulti(
         ConnectionCommand("MULTI", transaction::HandleMulti, FixedArity(0))),
-    WriteCommand("PERSIST", key::HandlePersist, FixedArity(1), OneKey()),
-    WriteCommand("PEXPIRE", key::HandlePExpire, VariableArity(2), OneKey()),
-    WriteCommand("PEXPIREAT", key::HandlePExpireAt, VariableArity(2), OneKey()),
+    WriteCommand("PERSIST", keys::HandlePersist, FixedArity(1), OneKey()),
+    WriteCommand("PEXPIRE", keys::HandlePExpire, VariableArity(2), OneKey()),
+    WriteCommand("PEXPIREAT", keys::HandlePExpireAt, VariableArity(2),
+                 OneKey()),
     ConnectionCommand("PING", session::HandlePing, {0, 1}),
-    ReadCommand("PTTL", key::HandlePTtl, FixedArity(1), OneKey()),
+    ReadCommand("PTTL", keys::HandlePTtl, FixedArity(1), OneKey()),
     AllowBeforeAuth(RunsImmediatelyInMulti(
         ConnectionCommand("QUIT", session::HandleQuit, FixedArity(0)))),
-    WriteCommand("RENAME", key::HandleRename, FixedArity(2), {0, 1, 1}),
+    WriteCommand("RENAME", keys::HandleRename, FixedArity(2), {0, 1, 1}),
     WriteCommand("RPOP", lists::HandleRPop, {1, 2}, OneKey()),
     WriteCommand("RPUSH", lists::HandleRPush, VariableArity(2), OneKey()),
     WriteCommand("SADD", sets::HandleSAdd, VariableArity(2), OneKey()),
-    ReadCommand("SCAN", key::HandleScan, VariableArity(1)),
+    ReadCommand("SCAN", keys::HandleScan, VariableArity(1)),
     ReadCommand("SCARD", sets::HandleSCard, FixedArity(1), OneKey()),
     ReadCommand("SDIFF", sets::HandleSDiff, VariableArity(1), AllKeys()),
     ConnectionCommand("SELECT", session::HandleSelect, FixedArity(1)),
@@ -149,9 +150,9 @@ constexpr std::array kCommandTable = {
     WriteCommand("SREM", sets::HandleSRem, VariableArity(2), OneKey()),
     ReadCommand("STRLEN", strings::HandleStrLen, FixedArity(1), OneKey()),
     ReadCommand("SUNION", sets::HandleSUnion, VariableArity(1), AllKeys()),
-    ReadCommand("TTL", key::HandleTtl, FixedArity(1), OneKey()),
-    ReadCommand("TYPE", key::HandleType, FixedArity(1), OneKey()),
-    WriteCommand("UNLINK", key::HandleUnlink, VariableArity(1), AllKeys()),
+    ReadCommand("TTL", keys::HandleTtl, FixedArity(1), OneKey()),
+    ReadCommand("TYPE", keys::HandleType, FixedArity(1), OneKey()),
+    WriteCommand("UNLINK", keys::HandleUnlink, VariableArity(1), AllKeys()),
     ConnectionCommand("UNWATCH", transaction::HandleUnwatch, FixedArity(0)),
     RunsImmediatelyInMulti(
         ConnectionCommand("WATCH", transaction::HandleWatch, VariableArity(1))),
@@ -305,4 +306,4 @@ const Command* Find(std::string_view name) {
     }
   }
 }
-}  // namespace redis_simple::command
+}  // namespace redis_simple::commands

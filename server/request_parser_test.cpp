@@ -11,7 +11,7 @@ TEST(RequestParserTest, ParsesRespBulkStringArrayWithoutCopying) {
   constexpr std::string_view kRequest =
       "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$11\r\nhello world\r\n";
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
 
   const ParseResult result = Parse(kRequest, &command, &args);
 
@@ -27,7 +27,7 @@ TEST(RequestParserTest, ParsesRespBulkStringArrayWithoutCopying) {
 
 TEST(RequestParserTest, DistinguishesIncompleteAndInvalidResp) {
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
 
   EXPECT_EQ(Parse("*2\r\n$3\r\nGET\r\n$3\r\nke", &command, &args).status,
             ParseStatus::kIncomplete);
@@ -41,7 +41,7 @@ TEST(RequestParserTest, DistinguishesIncompleteAndInvalidResp) {
 
 TEST(RequestParserTest, SkipsEmptyAndNullArraysLikeRedis) {
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   for (const std::string_view request : {"*0\r\n", "*-1\r\n", "*-5\r\n"}) {
     const ParseResult result = Parse(request, &command, &args);
     EXPECT_EQ(result.status, ParseStatus::kComplete) << request;
@@ -52,7 +52,7 @@ TEST(RequestParserTest, SkipsEmptyAndNullArraysLikeRedis) {
 
 TEST(RequestParserTest, ValidatesLengthFieldsLikeRedis) {
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   const auto parse = [&](std::string_view input) {
     return Parse(input, &command, &args);
   };
@@ -94,7 +94,7 @@ TEST(RequestParserTest, ValidatesLengthFieldsLikeRedis) {
 
 TEST(RequestParserTest, LimitsUnauthenticatedRequestsLikeRedis) {
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   ParseState state;
   state.authenticated = false;
   const ParseResult many = Parse("*11\r\n", &state, &command, &args);
@@ -109,7 +109,7 @@ TEST(RequestParserTest, LimitsUnauthenticatedRequestsLikeRedis) {
 TEST(RequestParserTest, BoundsReservationForIncompleteResp) {
   constexpr std::string_view kRequest = "*1048576\r\n";
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
 
   EXPECT_EQ(Parse(kRequest, &command, &args).status, ParseStatus::kIncomplete);
   EXPECT_LE(args.capacity(), kRequest.size());
@@ -120,7 +120,7 @@ TEST(RequestParserTest, ResumesSplitRequestFromSavedState) {
       "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$11\r\nhello world\r\n";
   ParseState state;
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
 
   // Feed the request one byte at a time, copying it to a fresh buffer each
   // time so saved state cannot depend on stable addresses.
@@ -148,7 +148,7 @@ TEST(RequestParserTest, HandsOffFromAnySplitPointToResume) {
   for (size_t split = 1; split < kRequest.size(); ++split) {
     ParseState state;
     std::string_view command;
-    command::CommandArgs args;
+    commands::CommandArgs args;
     const std::string first(kRequest.substr(0, split));
     ASSERT_EQ(Parse(first, &state, &command, &args).status,
               ParseStatus::kIncomplete)
@@ -175,7 +175,7 @@ TEST(RequestParserTest, HandsOffFromAnySplitPointToResume) {
   // payload so the reader can read the rest in bigger steps.
   ParseState state;
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   const std::string large_header = "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$100000\r\n";
   const std::string partial = large_header + std::string(10, 'v');
   ASSERT_EQ(Parse(partial, &state, &command, &args).status,
@@ -187,7 +187,7 @@ TEST(RequestParserTest, ReportsPendingBulkBytes) {
   constexpr std::string_view kRequest = "*2\r\n$3\r\nSET\r\n$100\r\nabc";
   ParseState state;
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
 
   ASSERT_EQ(Parse(kRequest, &state, &command, &args).status,
             ParseStatus::kIncomplete);
@@ -197,7 +197,7 @@ TEST(RequestParserTest, ReportsPendingBulkBytes) {
 
 TEST(RequestParserTest, RejectsOverlongHeaderLines) {
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   ParseState state;
 
   const std::string long_count = "*" + std::string(size_t{70} * 1024, '1');
@@ -216,7 +216,7 @@ TEST(RequestParserTest, RejectsOverlongHeaderLines) {
 
 TEST(RequestParserTest, SplitsInlineRequestsLikeRedis) {
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   ParseState state;
 
   ParseResult result =

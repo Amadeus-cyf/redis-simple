@@ -8,7 +8,7 @@
 #include "server/commands/lookup.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::sets {
+namespace redis_simple::commands::sets {
 void HandleSMembers(Client* const client) {
   const auto [object, wrong_type] = LookupTyped(
       client->Db(), client->Args()[0], db::RedisObject::ObjectType::kSet);
@@ -28,4 +28,4 @@ void HandleSMembers(Client* const client) {
   });
   client->AddReply(std::move(encoded));
 }
-}  // namespace redis_simple::command::sets
+}  // namespace redis_simple::commands::sets

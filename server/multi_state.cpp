@@ -15,8 +15,8 @@ constexpr size_t kMaxQueuedBytes = size_t{1024} * 1024 * 1024;
 constexpr size_t kRetainedBytes = size_t{64} * 1024;
 }  // namespace
 
-bool MultiState::Queue(const command::Command* const command,
-                       const command::CommandArgs& args) {
+bool MultiState::Queue(const commands::Command* const command,
+                       const commands::CommandArgs& args) {
   size_t bytes = 0;
   for (const std::string_view arg : args) {
     bytes += arg.size();
@@ -38,7 +38,7 @@ bool MultiState::Queue(const command::Command* const command,
 
 bool MultiState::HasWriteCommand() const {
   return std::ranges::any_of(commands_, [](const QueuedCommand& queued) {
-    return queued.command->access == command::CommandAccess::kWrite;
+    return queued.command->access == commands::CommandAccess::kWrite;
   });
 }
 

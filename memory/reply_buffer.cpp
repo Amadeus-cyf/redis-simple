@@ -126,13 +126,13 @@ void ReplyBuffer::ConsumeList(size_t nwritten) {
 void ReplyBuffer::PushNode(std::unique_ptr<ReplyChunk> node) {
   ++node_count_;
   reply_bytes_ += node->capacity;
-  ReplyChunk* const node_ptr = node.get();
+  ReplyChunk* const chunk = node.get();
   if (reply_head_ == nullptr) {
     reply_head_ = std::move(node);
   } else {
     reply_tail_->next = std::move(node);
   }
-  reply_tail_ = node_ptr;
+  reply_tail_ = chunk;
 }
 
 void ReplyBuffer::PopFront() {

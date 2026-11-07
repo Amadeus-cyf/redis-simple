@@ -6,7 +6,7 @@
 #include "server/db/db.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::key {
+namespace redis_simple::commands::keys {
 void HandleExists(Client* const client) {
   int64_t existing = 0;
   for (const std::string_view key : client->Args()) {
@@ -16,4 +16,4 @@ void HandleExists(Client* const client) {
   }
   client->AddReply(reply::FromInt64(existing));
 }
-}  // namespace redis_simple::command::key
+}  // namespace redis_simple::commands::keys

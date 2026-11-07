@@ -14,7 +14,7 @@
 #include "utils/float_utils.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::zsets {
+namespace redis_simple::commands::zsets {
 namespace {
 using LimitSpec = ::redis_simple::zset::LimitSpec;
 using RangeByRankSpec = ::redis_simple::zset::RangeByRankSpec;
@@ -242,7 +242,7 @@ std::string EncodeZRangeReply(const ZSetEntryList& result, bool with_scores,
     if (nested_scores) {
       encoded.append(reply::FromArrayHeader(2));
     }
-    reply::AppendBulkString(entry->key, &encoded);
+    reply::AppendBulkString(entry->member, &encoded);
     if (with_scores) {
       reply::AppendFloat(entry->score, protocol, &encoded);
     }
@@ -284,7 +284,7 @@ void AddRangeError(Client* const client, RangeStatus status) {
 }
 
 void AddRangeReply(Client* const client, RangeType type, Direction direction) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   RangeOptions options;
   if (const RangeStatus parsed =
           ParseRangeOptions(args, type, direction, &options);
@@ -352,7 +352,7 @@ void HandleZRevRangeByLex(Client* const client) {
 
 void HandleZLexCount(Client* const client) {
   // Redis' zlexcountCommand: the range first, then the key.
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   zset::RangeByLexSpec spec;
   if (!ParseLexTerm(args[1], &spec.min, &spec.minex) ||
       !ParseLexTerm(args[2], &spec.max, &spec.maxex)) {
@@ -374,7 +374,7 @@ void HandleZLexCount(Client* const client) {
 }
 
 void HandleZCount(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   RangeByScoreSpec spec;
   if (!ParseScoreRange(args[1], args[2], &spec)) {
     client->AddReply(reply::kMinMaxNotFloatError);
@@ -397,4 +397,4 @@ void HandleZCount(Client* const client) {
                        ? reply::FromInt64(*count)
                        : reply::FromError("ERR zset count out of range"));
 }
-}  // namespace redis_simple::command::zsets
+}  // namespace redis_simple::commands::zsets

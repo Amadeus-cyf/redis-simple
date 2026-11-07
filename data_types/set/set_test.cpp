@@ -111,23 +111,23 @@ TEST(SetTest, OversizedFirstMemberUsesDict) {
 TEST(SetTest, RemoveMembersFromEachEncoding) {
   auto intset = Set::Create();
   ASSERT_TRUE(intset->Add("1"));
-  ASSERT_TRUE(intset->Remove("1"));
+  ASSERT_TRUE(intset->Delete("1"));
   ASSERT_FALSE(intset->HasMember("1"));
-  ASSERT_FALSE(intset->Remove("1"));
+  ASSERT_FALSE(intset->Delete("1"));
 
   auto listpack = Set::Create();
   ASSERT_TRUE(listpack->Add("member"));
-  ASSERT_TRUE(listpack->Remove("member"));
+  ASSERT_TRUE(listpack->Delete("member"));
   ASSERT_FALSE(listpack->HasMember("member"));
-  ASSERT_FALSE(listpack->Remove("member"));
+  ASSERT_FALSE(listpack->Delete("member"));
 
   auto dict = Set::Create();
   ASSERT_TRUE(dict->Add("member"));
   ASSERT_TRUE(dict->Add(std::string(65, 'x')));
   ASSERT_EQ(dict->Encoding(), Set::Encoding::kDict);
-  ASSERT_TRUE(dict->Remove("member"));
+  ASSERT_TRUE(dict->Delete("member"));
   ASSERT_FALSE(dict->HasMember("member"));
-  ASSERT_FALSE(dict->Remove("member"));
+  ASSERT_FALSE(dict->Delete("member"));
 }
 
 TEST(SetTest, MembershipWithStoredHashesMatchesPlainMembership) {

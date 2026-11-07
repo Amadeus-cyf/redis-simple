@@ -35,7 +35,7 @@ void ParseCompleteRequest(benchmark::State& state) {
       EncodeRequest(std::vector<std::string_view>(parts.begin(), parts.end()));
   request_parser::ParseState parse_state;
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   for (auto _ : state) {
     (void)_;
     request_parser::ParseResult result =
@@ -55,7 +55,7 @@ void ParseSplitRequest(benchmark::State& state) {
   const std::string_view first(request.data(), request.size() - 10);
   request_parser::ParseState parse_state;
   std::string_view command;
-  command::CommandArgs args;
+  commands::CommandArgs args;
   for (auto _ : state) {
     (void)_;
     benchmark::DoNotOptimize(
@@ -74,7 +74,7 @@ void FindCommand(benchmark::State& state) {
   size_t next = 0;
   for (auto _ : state) {
     (void)_;
-    benchmark::DoNotOptimize(command::Find(kNames[next]));
+    benchmark::DoNotOptimize(commands::Find(kNames[next]));
     next = (next + 1) % kNames.size();
   }
   state.SetItemsProcessed(state.iterations());

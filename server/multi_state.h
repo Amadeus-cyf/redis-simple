@@ -21,13 +21,14 @@ class MultiState {
   // Copies a command into the queue. When the queued arguments would pass
   // the size limit, it releases the queue and marks the transaction failed
   // instead, and returns false.
-  bool Queue(const command::Command* command, const command::CommandArgs& args);
+  bool Queue(const commands::Command* command,
+             const commands::CommandArgs& args);
   size_t Size() const { return commands_.size(); }
   bool HasWriteCommand() const;
   // Calls `run(command)` for each queued command in order, with `*args` set
   // to its arguments, until `run` returns false.
   template <typename Run>
-  void ForEach(command::CommandArgs* const args, const Run& run) const {
+  void ForEach(commands::CommandArgs* const args, const Run& run) const {
     for (const QueuedCommand& queued : commands_) {
       args->clear();
       const size_t first_arg = queued.arg_end - queued.arg_count;
@@ -49,7 +50,7 @@ class MultiState {
   // A queued command's arguments are the `arg_count` entries of `arg_ends_`
   // before `arg_end`, which index into `args_`.
   struct QueuedCommand {
-    const command::Command* command;
+    const commands::Command* command;
     size_t arg_end;
     size_t arg_count;
   };
