@@ -261,7 +261,7 @@ TEST(ClientTest, ProtocolErrorsCloseAfterReply) {
   EXPECT_TRUE(client->ShouldCloseAfterReply());
   EXPECT_TRUE(client->ShouldPauseReads());
   EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()),
-            "-ERR Protocol error: invalid request\r\n");
+            "-ERR Protocol error: expected '$', got '+'\r\n");
 }
 
 TEST(ClientTest, RejectsInvalidArityBeforeDispatch) {

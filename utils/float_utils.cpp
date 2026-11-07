@@ -1,10 +1,14 @@
 #include "utils/float_utils.h"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -73,50 +77,100 @@ size_t FormatShortDecimal(double value, char* const out) {
 }  // namespace
 
 std::string_view FormatFloat(double value, FloatBuffer* const buffer) {
+  // Redis 8's d2string: nan, infinities, and zeros spelled out; integers up
+  // to 2^62 as integers; anything else as the shortest digits that parse
+  // back, laid out by fpconv_dtoa's rules.
   char* const begin = buffer->data();
   char* const limit = begin + buffer->size();
-  // Every integer of magnitude at most 2^53 is exactly representable, so its
-  // shortest round-trip text is its digits: format it as an integer, which
-  // is several times cheaper. Negative zero keeps the general path's "-0".
-  constexpr double kMaxExactInteger = 9007199254740992.0;
-  // The cast is in range below 2^53, and converting back compares the value
-  // with its integer part without a libm trunc call.
-  if (std::abs(value) <= kMaxExactInteger &&
+  const auto literal = [begin](std::string_view text) {
+    std::ranges::copy(text, begin);
+    return std::string_view(begin, text.size());
+  };
+  // Redis' double2ll, checked first as the common case: in this range every
+  // double converts to int64 exactly, and an integral one prints as an
+  // integer. NaN and infinities fail the range check; negative zero is
+  // spelled out below.
+  constexpr double kMaxIntegral = 4611686018427387904.0;  // 2^62
+  if (std::abs(value) <= kMaxIntegral &&
       static_cast<double>(static_cast<int64_t>(value)) == value &&
       (value != 0 || !std::signbit(value))) {
     const auto integer =
         std::to_chars(begin, limit, static_cast<int64_t>(value));
     return {begin, integer.ptr};
   }
+  if (std::isnan(value)) {
+    return literal("nan");
+  }
+  if (std::isinf(value)) {
+    return literal(value < 0 ? "-inf" : "inf");
+  }
+  if (value == 0) {
+    return literal("-0");
+  }
   if (const size_t length = FormatShortDecimal(value, begin); length != 0) {
     return {begin, length};
   }
-  auto [end, error] = std::to_chars(begin, limit, value);
+  // The shortest digits, as "d.ddde±x", then laid out as fpconv_dtoa does.
+  std::array<char, 32> scientific{};
+  const auto [end, error] =
+      std::to_chars(scientific.data(), scientific.data() + scientific.size(),
+                    std::abs(value), std::chars_format::scientific);
   if (error != std::errc()) {
     return {};
   }
-
-  const std::string_view general(begin, static_cast<size_t>(end - begin));
-  const size_t exponent_position = general.find('e');
-  if (exponent_position != std::string_view::npos) {
-    int exponent = 0;
-    const std::string_view exponent_text =
-        general.substr(exponent_position + 1);
-    const char* exponent_start = exponent_text.data();
-    if (!exponent_text.empty() && exponent_text.front() == '+') {
-      ++exponent_start;
-    }
-    const auto exponent_result = std::from_chars(
-        exponent_start, exponent_text.data() + exponent_text.size(), exponent);
-    if (exponent_result.ec == std::errc() && exponent >= -4 && exponent <= 16) {
-      const auto fixed =
-          std::to_chars(begin, limit, value, std::chars_format::fixed);
-      if (fixed.ec == std::errc()) {
-        end = fixed.ptr;
-      }
+  const std::string_view text(scientific.data(),
+                              static_cast<size_t>(end - scientific.data()));
+  const size_t exponent_position = text.find('e');
+  std::array<char, 20> digits{};
+  size_t count = 0;
+  for (const char c : text.substr(0, exponent_position)) {
+    if (c != '.') {
+      digits[count++] = c;
     }
   }
-  return {begin, end};
+  int exponent = 0;
+  const std::string_view exponent_text = text.substr(exponent_position + 1);
+  std::from_chars(exponent_text.data() + (exponent_text.front() == '+' ? 1 : 0),
+                  exponent_text.data() + exponent_text.size(), exponent);
+  const auto digit_count = static_cast<int>(count);
+  // value = digits * 10^k, and `magnitude` is the decimal exponent's size.
+  const int k = exponent - (digit_count - 1);
+  const int magnitude = std::abs(exponent);
+  char* out = begin;
+  if (value < 0) {
+    *out++ = '-';
+  }
+  const std::string_view all_digits(digits.data(), count);
+  if (k >= 0 && magnitude < digit_count + 7) {
+    // An integer beyond 2^62: its digits, then zeros.
+    out = std::ranges::copy(all_digits, out).out;
+    out = std::fill_n(out, k, '0');
+  } else if (k < 0 && (k > -7 || magnitude < 4)) {
+    // Plain decimal notation.
+    const int integer_digits = digit_count + k;
+    if (integer_digits <= 0) {
+      *out++ = '0';
+      *out++ = '.';
+      out = std::fill_n(out, -integer_digits, '0');
+      out = std::ranges::copy(all_digits, out).out;
+    } else {
+      const auto split = static_cast<size_t>(integer_digits);
+      out = std::ranges::copy(all_digits.substr(0, split), out).out;
+      *out++ = '.';
+      out = std::ranges::copy(all_digits.substr(split), out).out;
+    }
+  } else {
+    // Scientific notation, with an unpadded exponent such as "1e-7".
+    *out++ = all_digits.front();
+    if (count > 1) {
+      *out++ = '.';
+      out = std::ranges::copy(all_digits.substr(1), out).out;
+    }
+    *out++ = 'e';
+    *out++ = exponent < 0 ? '-' : '+';
+    out = std::to_chars(out, limit, magnitude).ptr;
+  }
+  return {begin, static_cast<size_t>(out - begin)};
 }
 
 std::string FloatToString(double value) {
@@ -172,32 +226,66 @@ bool ParsePlainDecimal(std::string_view value, double* const result) {
 }
 }  // namespace
 
+namespace {
+// C's strtod over all of `value`, which need not be NUL-terminated. Returns
+// false unless it consumes every byte; `*overflow` reports ERANGE.
+bool ParseWithStrtod(std::string_view value, double* const result,
+                     bool* const overflow) {
+  // Long inputs are rare; numbers that need more digits than this to
+  // round correctly do not exist.
+  constexpr size_t kInlineBytes = 128;
+  std::array<char, kInlineBytes> inline_buffer{};
+  std::string heap_buffer;
+  char* text = inline_buffer.data();
+  if (value.size() >= kInlineBytes) {
+    heap_buffer.assign(value);
+    text = heap_buffer.data();
+  } else {
+    std::ranges::copy(value, inline_buffer.begin());
+  }
+  errno = 0;
+  char* end = nullptr;
+  *result = std::strtod(text, &end);
+  *overflow = errno == ERANGE;
+  return end == text + value.size();
+}
+}  // namespace
+
 bool ToDouble(std::string_view value, double* const result) {
-  if (value.empty()) {
+  // Redis' string2d: no leading space, the whole text, no NaN, and no
+  // overflow or underflow to zero; strtod also takes "inf" and hex.
+  if (value.empty() ||
+      std::isspace(static_cast<unsigned char>(value[0])) != 0) {
     return false;
   }
-  double fast = 0;
-  if (ParsePlainDecimal(value, &fast)) {
+  double parsed = 0;
+  if (ParsePlainDecimal(value, &parsed)) {
     if (result != nullptr) {
-      *result = fast;
+      *result = parsed;
     }
     return true;
   }
-  const char* begin = value.data();
-  const char* const end = begin + value.size();
-  if (*begin == '+') {
-    ++begin;
-  }
-  double parsed = 0;
-  const auto conversion =
-      std::from_chars(begin, end, parsed, std::chars_format::general);
-  if (begin == end || conversion.ec != std::errc() || conversion.ptr != end ||
-      std::isnan(parsed)) {
+  bool overflow = false;
+  if (!ParseWithStrtod(value, &parsed, &overflow) || std::isnan(parsed) ||
+      (overflow && (std::isinf(parsed) || parsed == 0))) {
     return false;
   }
   if (result != nullptr) {
     *result = parsed;
   }
+  return true;
+}
+
+bool ToRangeDouble(std::string_view value, double* const result) {
+  // Redis' zslParseRange: strtod over the whole text, NaN rejected. Unlike
+  // ToDouble, it takes leading spaces, an empty text as 0, and overflow as
+  // an infinity.
+  double parsed = 0;
+  bool overflow = false;
+  if (!ParseWithStrtod(value, &parsed, &overflow) || std::isnan(parsed)) {
+    return false;
+  }
+  *result = parsed;
   return true;
 }
 }  // namespace redis_simple::utils

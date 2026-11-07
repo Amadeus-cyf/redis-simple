@@ -34,20 +34,20 @@ inline std::vector<KeyScorePair> ToKeyScorePairs(const ZSetEntryList& entries) {
 template <typename Storage>
 std::unique_ptr<Storage> MakeBaseStorage() {
   auto zset = std::make_unique<Storage>();
-  zset->InsertOrUpdate("key1", 3.0);
-  zset->InsertOrUpdate("key2", 2.0);
-  zset->InsertOrUpdate("key3", 1.0);
-  zset->InsertOrUpdate("key4", 1.0);
+  zset->InsertOrUpdate("key1", 3.0, nullptr);
+  zset->InsertOrUpdate("key2", 2.0, nullptr);
+  zset->InsertOrUpdate("key3", 1.0, nullptr);
+  zset->InsertOrUpdate("key4", 1.0, nullptr);
   return zset;
 }
 
 template <typename Storage>
 std::unique_ptr<Storage> MakeUpdatedStorage() {
   auto zset = MakeBaseStorage<Storage>();
-  zset->InsertOrUpdate("key1", 10.0);
-  zset->InsertOrUpdate("key1", 1.0);
-  zset->InsertOrUpdate("key3", 4.0);
-  zset->InsertOrUpdate("key1", 5.0);
+  zset->InsertOrUpdate("key1", 10.0, nullptr);
+  zset->InsertOrUpdate("key1", 1.0, nullptr);
+  zset->InsertOrUpdate("key3", 4.0, nullptr);
+  zset->InsertOrUpdate("key1", 5.0, nullptr);
   return zset;
 }
 
@@ -89,19 +89,19 @@ void ExpectCount(const Storage& zset, double min, double max, bool minex,
 template <typename Storage>
 void TestAdd() {
   auto zset = std::make_unique<Storage>();
-  ASSERT_FALSE(zset->InsertOrUpdate("not-a-number",
-                                    std::numeric_limits<double>::quiet_NaN()));
+  ASSERT_FALSE(zset->InsertOrUpdate(
+      "not-a-number", std::numeric_limits<double>::quiet_NaN(), nullptr));
   ASSERT_EQ(zset->Size(), 0);
-  ASSERT_TRUE(zset->InsertOrUpdate("key1", 3.0));
+  ASSERT_TRUE(zset->InsertOrUpdate("key1", 3.0, nullptr));
   ASSERT_EQ(zset->Size(), 1);
 
-  ASSERT_TRUE(zset->InsertOrUpdate("key2", 2.0));
+  ASSERT_TRUE(zset->InsertOrUpdate("key2", 2.0, nullptr));
   ASSERT_EQ(zset->Size(), 2);
 
-  ASSERT_TRUE(zset->InsertOrUpdate("key3", 1.0));
+  ASSERT_TRUE(zset->InsertOrUpdate("key3", 1.0, nullptr));
   ASSERT_EQ(zset->Size(), 3);
 
-  ASSERT_TRUE(zset->InsertOrUpdate("key4", 1.0));
+  ASSERT_TRUE(zset->InsertOrUpdate("key4", 1.0, nullptr));
   ASSERT_EQ(zset->Size(), 4);
 }
 
@@ -119,13 +119,13 @@ template <typename Storage>
 void TestUpdate() {
   auto zset = MakeBaseStorage<Storage>();
 
-  ASSERT_FALSE(zset->InsertOrUpdate("key1", 10.0));
+  ASSERT_FALSE(zset->InsertOrUpdate("key1", 10.0, nullptr));
   ASSERT_EQ(zset->Size(), 4);
   ExpectRank(*zset, "key1", 3);
 
-  ASSERT_FALSE(zset->InsertOrUpdate("key1", 1.0));
+  ASSERT_FALSE(zset->InsertOrUpdate("key1", 1.0, nullptr));
   ASSERT_EQ(zset->Size(), 4);
-  ASSERT_FALSE(zset->InsertOrUpdate("key3", 4.0));
+  ASSERT_FALSE(zset->InsertOrUpdate("key3", 4.0, nullptr));
   ASSERT_EQ(zset->Size(), 4);
 
   ExpectRank(*zset, "key1", 0);
@@ -133,7 +133,7 @@ void TestUpdate() {
   ExpectRank(*zset, "key3", 3);
   ExpectRank(*zset, "key4", 1);
 
-  ASSERT_FALSE(zset->InsertOrUpdate("key1", 5.0));
+  ASSERT_FALSE(zset->InsertOrUpdate("key1", 5.0, nullptr));
   ASSERT_EQ(zset->Size(), 4);
 
   ExpectRank(*zset, "key1", 3);

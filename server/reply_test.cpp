@@ -84,8 +84,8 @@ TEST(ReplyTest, AppendsFloatsForEachProtocol) {
   EXPECT_EQ(encoded, "*2\r\n$3\r\n2.5\r\n$2\r\n-3\r\n");
   encoded.clear();
   AppendFloat(2.5, ProtocolVersion::kResp3, &encoded);
-  AppendFloat(1e17, ProtocolVersion::kResp3, &encoded);
-  EXPECT_EQ(encoded, ",2.5\r\n,1e+17\r\n");
+  AppendFloat(1e21, ProtocolVersion::kResp3, &encoded);
+  EXPECT_EQ(encoded, ",2.5\r\n,1e+21\r\n");
   EXPECT_EQ(FromFloat(7, ProtocolVersion::kResp2), "$1\r\n7\r\n");
 }
 

@@ -139,7 +139,56 @@ void HandlePush(Client* const client, Side side) {
   client->AddReply(reply::FromInt64(static_cast<int64_t>(list->Size())));
 }
 
+// Redis' popGenericCommand: with a count, pops up to that many elements
+// into an array, from the side popped first.
+void HandlePopCount(Client* const client, Side side) {
+  const command::CommandArgs& args = client->Args();
+  int64_t count = 0;
+  if (!utils::ToInt64(args[1], &count) || count < 0) {
+    client->AddReply(
+        reply::FromError("ERR value is out of range, must be positive"));
+    return;
+  }
+  List* list = nullptr;
+  if (!LookupMutableList(client, args[0], &list)) {
+    return;
+  }
+  if (list == nullptr) {
+    client->AddReply(reply::NullArrayView(client->Protocol()));
+    return;
+  }
+  const size_t size = list->Size();
+  const size_t popped = std::min(static_cast<size_t>(count), size);
+  std::string encoded = reply::FromArrayHeader(popped);
+  if (popped == 0) {
+    client->AddReply(std::move(encoded));
+    return;
+  }
+  const auto append = [&encoded](std::string_view value) {
+    reply::AppendBulkString(value, &encoded);
+    return true;
+  };
+  if (side == Side::kLeft) {
+    list->ForEach(0, popped - 1, append);
+  } else {
+    list->ForEachReverse(size - popped, size - 1, append);
+  }
+  if (popped == size) {
+    client->Db()->DeleteKey(args[0]);
+  } else if (side == Side::kLeft) {
+    list->Trim(popped, size - 1);
+  } else {
+    list->Trim(0, size - popped - 1);
+  }
+  client->MarkModified();
+  client->AddReply(std::move(encoded));
+}
+
 void HandlePop(Client* const client, Side side) {
+  if (client->Args().size() == 2) {
+    HandlePopCount(client, side);
+    return;
+  }
   const std::string_view key = client->Args()[0];
   List* list = nullptr;
   if (!LookupMutableList(client, key, &list)) {
@@ -208,17 +257,21 @@ void HandleLRange(Client* const client) {
 }
 
 void HandleLIndex(Client* const client) {
+  // Redis checks the key before the index.
   const command::CommandArgs& args = client->Args();
-  int64_t index = 0;
-  if (!ParseInteger(client, args[1], &index)) {
-    return;
-  }
   const List* list = nullptr;
   if (!LookupList(client, args[0], &list)) {
     return;
   }
-  const std::optional<size_t> position =
-      list == nullptr ? std::nullopt : NormalizeIndex(index, list->Size());
+  if (list == nullptr) {
+    client->AddReply(reply::NullView(client->Protocol()));
+    return;
+  }
+  int64_t index = 0;
+  if (!ParseInteger(client, args[1], &index)) {
+    return;
+  }
+  const std::optional<size_t> position = NormalizeIndex(index, list->Size());
   const std::optional<std::string> value =
       position.has_value() ? list->At(*position) : std::nullopt;
   if (value.has_value()) {
@@ -229,17 +282,18 @@ void HandleLIndex(Client* const client) {
 }
 
 void HandleLSet(Client* const client) {
+  // Redis checks the key before the index.
   const command::CommandArgs& args = client->Args();
-  int64_t index = 0;
-  if (!ParseInteger(client, args[1], &index)) {
-    return;
-  }
   List* list = nullptr;
   if (!LookupMutableList(client, args[0], &list)) {
     return;
   }
   if (list == nullptr) {
     client->AddReply(reply::FromError("ERR no such key"));
+    return;
+  }
+  int64_t index = 0;
+  if (!ParseInteger(client, args[1], &index)) {
     return;
   }
   const std::optional<size_t> position = NormalizeIndex(index, list->Size());

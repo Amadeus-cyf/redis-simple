@@ -22,13 +22,22 @@ class ZSet {
   static std::unique_ptr<ZSet> Create() {
     return std::unique_ptr<ZSet>(new ZSet());
   }
-  bool InsertOrUpdate(std::string_view key, double score);
+  // Returns true if `key` is new. `*changed`, when given, reports whether it
+  // was inserted or its score changed.
+  bool InsertOrUpdate(std::string_view key, double score,
+                      bool* changed = nullptr);
   bool Delete(std::string_view key);
   std::optional<double> Score(std::string_view key) const;
   std::optional<size_t> Rank(std::string_view key) const;
   ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const;
   ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const;
   size_t Count(const RangeByScoreSpec* spec) const;
+  ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const {
+    return storage_->RangeByLex(spec);
+  }
+  size_t LexCount(const RangeByLexSpec* spec) const {
+    return storage_->LexCount(spec);
+  }
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const;
   size_t Size() const { return storage_->Size(); }
   Encoding Encoding() const;

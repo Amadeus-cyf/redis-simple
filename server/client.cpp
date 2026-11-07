@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <limits>
 #include <memory>
 #include <string>
@@ -20,7 +21,8 @@ namespace {
 constexpr const size_t kReadBufferSize = size_t{16} * 1024;
 // Upper bound for one read while receiving a large bulk argument.
 constexpr const size_t kMaxBulkReadSize = size_t{1024} * 1024;
-constexpr const size_t kMaxQueryBufferSize = size_t{64} * 1024 * 1024;
+// Redis' default client-query-buffer-limit.
+constexpr const size_t kMaxQueryBufferSize = size_t{1024} * 1024 * 1024;
 // Upper bound for the argument bytes one MULTI may queue.
 constexpr const size_t kMaxTransactionBytes = kMaxQueryBufferSize;
 // Queue buffers larger than this are released after a transaction ends.
@@ -57,6 +59,12 @@ Client::Client(std::unique_ptr<connection::Connection> connection,
 Client::Client(db::RedisDb* const db) : db_(db), discard_replies_(true) {}
 
 Client::~Client() { db_->UnwatchKeys(&watcher_); }
+
+uint64_t Client::NextId() {
+  // Clients are created on the main thread and on I/O threads.
+  static std::atomic<uint64_t> next_id{1};
+  return next_id.fetch_add(1, std::memory_order_relaxed);
+}
 
 size_t Client::AddReply(std::string_view reply_text) {
   if (discard_replies_) {
@@ -213,6 +221,7 @@ ClientStatus Client::ProcessInputBuffer() {
       return ClientStatus::kError;
     }
   }
+  parse_state_.ReleaseUnescaped();
   query_buffer_.Compact();
   return ClientStatus::kOk;
 }
@@ -224,6 +233,9 @@ Client::RequestStatus Client::ParseRequest() {
     FailProtocol();
     return framed;
   }
+  if (framed == RequestStatus::kRejected) {
+    return framed;
+  }
   if (framed != RequestStatus::kReady) {
     return framed;
   }
@@ -233,20 +245,27 @@ Client::RequestStatus Client::ParseRequest() {
 Client::RequestStatus Client::FrameRequest(std::string_view* const name) {
   command_ = nullptr;
   args_.clear();
+  // Redis bounds request sizes until the client authenticates.
+  parse_state_.authenticated = authenticated_;
   const request_parser::ParseResult parsed =
       request_parser::Parse(query_buffer_.View(), &parse_state_, name, &args_);
   if (parsed.status == request_parser::ParseStatus::kIncomplete) {
     return RequestStatus::kIncomplete;
   }
   if (parsed.status == request_parser::ParseStatus::kInvalid) {
+    // The message is built only when the error is replied to.
+    protocol_failure_ = parsed;
     return RequestStatus::kProtocolError;
   }
   query_buffer_.Consume(parsed.consumed);
-  return RequestStatus::kReady;
+  // Empty requests are skipped without a reply, as in Redis.
+  return parsed.empty_request ? RequestStatus::kRejected
+                              : RequestStatus::kReady;
 }
 
 void Client::FailProtocol() {
-  AddReply(reply::FromError("ERR Protocol error: invalid request"));
+  AddReply(reply::FromError(
+      "ERR " + request_parser::ProtocolErrorMessage(protocol_failure_)));
   close_after_reply_ = true;
   query_buffer_.Clear();
 }
@@ -259,6 +278,9 @@ bool Client::ParseQueries() {
     const RequestStatus framed = FrameRequest(&name);
     if (framed == RequestStatus::kIncomplete) {
       break;
+    }
+    if (framed == RequestStatus::kRejected) {
+      continue;
     }
     if (framed == RequestStatus::kProtocolError) {
       // Replied to on the main thread, after the requests before it.
@@ -292,6 +314,7 @@ ClientStatus Client::RunParsedQueries() {
   }
   parsed_requests_.clear();
   parsed_args_.clear();
+  parse_state_.ReleaseUnescaped();
   if (protocol_error_) {
     protocol_error_ = false;
     if (!close_after_reply_) {
@@ -303,10 +326,6 @@ ClientStatus Client::RunParsedQueries() {
 }
 
 Client::RequestStatus Client::ValidateRequest(std::string_view name) {
-  if (name.empty()) {
-    AddReply(reply::FromError("ERR empty command"));
-    return RequestStatus::kRejected;
-  }
   RS_LOG_DEBUG("command name %.*s\n", static_cast<int>(name.size()),
                name.data());
   const command::Command* command = command::Find(name);

@@ -40,7 +40,7 @@ bool Set::HasMember(std::string_view value) const {
   }
   if (encoding_ == Encoding::kIntSet) {
     int64_t int_value = 0;
-    if (!utils::ToCanonicalInt64(value, &int_value)) {
+    if (!utils::ToInt64(value, &int_value)) {
       return false;
     }
     return intset_->Find(int_value);
@@ -78,7 +78,7 @@ bool Set::Remove(std::string_view value) {
   }
   if (encoding_ == Encoding::kIntSet) {
     int64_t int_value = 0;
-    if (utils::ToCanonicalInt64(value, &int_value)) {
+    if (utils::ToInt64(value, &int_value)) {
       return intset_->Remove(int_value);
     }
     return false;
@@ -112,7 +112,7 @@ size_t Set::Size() const {
 
 bool Set::IntSetAddAndMaybeConvert(std::string_view value) {
   int64_t int_value = 0;
-  if (utils::ToCanonicalInt64(value, &int_value)) {
+  if (utils::ToInt64(value, &int_value)) {
     if (!intset_) {
       intset_ = std::make_unique<in_memory::IntSet>();
     }

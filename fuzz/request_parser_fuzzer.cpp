@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 #include "fuzz/fuzz_input.h"
@@ -37,6 +39,46 @@ void ParseOne(std::string_view input) {
   }
 }
 
+// The client's path: a ParseState, which also takes inline requests, whose
+// quoted arguments live in the state.
+bool IsInState(std::string_view value,
+               const request_parser::ParseState& state) {
+  return std::ranges::any_of(state.unescaped, [value](const std::string& s) {
+    return value.data() == s.data() && value.size() == s.size();
+  });
+}
+
+void ParseWithState(std::string_view input) {
+  request_parser::ParseState state;
+  size_t consumed = 0;
+  for (size_t command_count = 0; command_count < 64 && consumed < input.size();
+       ++command_count) {
+    std::string_view command_name;
+    command::CommandArgs args;
+    const auto remaining = input.substr(consumed);
+    const auto result =
+        request_parser::Parse(remaining, &state, &command_name, &args);
+    if (result.status != request_parser::ParseStatus::kComplete) {
+      Require(command_name.empty());
+      Require(args.empty());
+      if (result.status == request_parser::ParseStatus::kInvalid) {
+        Require(!request_parser::ProtocolErrorMessage(result).empty());
+      }
+      break;
+    }
+    Require(result.consumed > 0);
+    Require(result.consumed <= remaining.size());
+    Require(!result.empty_request || command_name.empty());
+    Require(IsBorrowed(command_name, remaining) ||
+            IsInState(command_name, state));
+    for (const auto arg : args) {
+      Require(IsBorrowed(arg, remaining) || IsInState(arg, state));
+    }
+    consumed += result.consumed;
+  }
+  state.ReleaseUnescaped();
+}
+
 void ParseSequence(std::string_view input) {
   size_t consumed = 0;
   for (size_t command_count = 0; command_count < 64 && consumed < input.size();
@@ -62,5 +104,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   redis_simple::fuzz::ParseOne(input);
   redis_simple::fuzz::ParseOne(input.substr(0, size / 2));
   redis_simple::fuzz::ParseSequence(input);
+  redis_simple::fuzz::ParseWithState(input);
   return 0;
 }

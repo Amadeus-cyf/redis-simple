@@ -19,7 +19,11 @@ ZSet::ZSet()
  * Insert a new element with score or update the score of an existing
  * element. Return true if the element is newly inserted.
  */
-bool ZSet::InsertOrUpdate(std::string_view key, double score) {
+bool ZSet::InsertOrUpdate(std::string_view key, double score,
+                          bool* const changed) {
+  if (changed != nullptr) {
+    *changed = false;
+  }
   if (std::isnan(score)) {
     return false;
   }
@@ -27,7 +31,7 @@ bool ZSet::InsertOrUpdate(std::string_view key, double score) {
       key.size() > kListPackMaxElementLength) {
     ConvertAndExpand();
   }
-  bool inserted = storage_->InsertOrUpdate(key, score);
+  const bool inserted = storage_->InsertOrUpdate(key, score, changed);
   if (ShouldConvertToSkiplist(key, inserted)) {
     ConvertAndExpand();
   }
@@ -76,7 +80,7 @@ void ZSet::ConvertAndExpand() {
   auto zset_skiplist = std::make_unique<ZSetSkiplist>();
   if (!storage_->ForEachEntry(
           [&zset_skiplist](std::string_view key, double score) {
-            return zset_skiplist->InsertOrUpdate(key, score);
+            return zset_skiplist->InsertOrUpdate(key, score, nullptr);
           })) {
     return;
   }
