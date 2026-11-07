@@ -123,20 +123,20 @@ class RedisDb {
   void SetLoading(bool loading) { loading_ = loading; }
   // Each public operation hashes its key once and passes the HashedKey to
   // the keyspace, TTL, and WATCH tables, which share one hash seed.
-  RedisObject* Lookup(const in_memory::HashedKey& key);
+  RedisObject* Lookup(const memory::HashedKey& key);
   // TTL and WATCH bookkeeping shared by SetKey and SetStringKey once the
   // value is stored.
-  void FinishSet(const in_memory::HashedKey& key, int64_t expire,
+  void FinishSet(const memory::HashedKey& key, int64_t expire,
                  ExistingTtl existing_ttl);
-  DbStatus Delete(const in_memory::HashedKey& key);
-  void TouchWatchedKey(const in_memory::HashedKey& key);
+  DbStatus Delete(const memory::HashedKey& key);
+  void TouchWatchedKey(const memory::HashedKey& key);
   bool IsKeyExpired(std::string_view key) const;
-  bool IsKeyExpired(const in_memory::HashedKey& key) const;
+  bool IsKeyExpired(const memory::HashedKey& key) const;
   // Reads the clock, and keeps the time if it is pinned.
   int64_t ReadClock() const;
-  std::unique_ptr<in_memory::Dict<std::string, RedisObjectPtr>> dict_;
-  std::unique_ptr<in_memory::Dict<std::string, int64_t>> expires_;
-  std::unique_ptr<in_memory::Dict<std::string, std::vector<KeyWatcher*>>>
+  std::unique_ptr<memory::Dict<std::string, RedisObjectPtr>> dict_;
+  std::unique_ptr<memory::Dict<std::string, int64_t>> expires_;
+  std::unique_ptr<memory::Dict<std::string, std::vector<KeyWatcher*>>>
       watched_keys_;
   AsyncReclaimer reclaimer_;
   size_t expire_cursor_{};

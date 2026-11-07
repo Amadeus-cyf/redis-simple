@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 TEST(DictStrTest, Init) {
   auto dict_str = Dict<std::string, std::string>::Create();
   ASSERT_TRUE(dict_str);
@@ -281,7 +281,7 @@ TEST(DictIntTest, BatchInsert) {
 
 TEST(DictIntTest, Iterator) {
   auto dict_int = MakeIntDictWithEntries();
-  auto it = in_memory::Dict<int, int>::Iterator(dict_int.get());
+  auto it = memory::Dict<int, int>::Iterator(dict_int.get());
   // Bucket order depends on the table size, so check coverage instead.
   std::vector<int> seen(129, 0);
   for (it.SeekToFirst(); it.Valid(); it.Next()) {
@@ -311,4 +311,4 @@ TEST(DictIntTest, Clear) {
   ASSERT_EQ(dict_int->Size(), 1);
   ASSERT_EQ(dict_int->Get(1), 10);
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

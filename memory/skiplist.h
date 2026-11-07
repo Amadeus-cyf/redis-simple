@@ -17,7 +17,7 @@
 
 #include "utils/check.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 // Redis skiplists begin with one level and promote at a probability of 0.25.
 inline constexpr size_t kInitSkiplistLevel = 1;
 
@@ -504,6 +504,6 @@ class Skiplist<Key, Compare>::Iterator {
   explicit Iterator(const Node* node) : node_(node) {}
   const Node* node_;
 };
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory
 
 #endif  // REDIS_SIMPLE_MEMORY_SKIPLIST_H_

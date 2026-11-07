@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 // Compact Redis-style sequential encoding. See:
 // https://github.com/antirez/listpack/blob/master/listpack.md
 class ListPack {
@@ -246,6 +246,6 @@ bool ListPack::ForEachPair(Visitor&& visitor) const {
   }
   return true;
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory
 
 #endif  // REDIS_SIMPLE_MEMORY_LISTPACK_H_

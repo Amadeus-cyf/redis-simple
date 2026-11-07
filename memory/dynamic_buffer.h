@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 class DynamicBuffer {
  public:
   DynamicBuffer();
@@ -43,6 +43,6 @@ class DynamicBuffer {
   size_t size_;
   size_t processed_;
 };
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory
 
 #endif  // REDIS_SIMPLE_MEMORY_DYNAMIC_BUFFER_H_

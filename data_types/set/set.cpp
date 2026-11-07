@@ -55,7 +55,7 @@ bool Set::HasMember(std::string_view value) const {
 }
 
 bool Set::HasMember(std::string_view value,
-                    const in_memory::HashedKey* const hashed) const {
+                    const memory::HashedKey* const hashed) const {
   if (hashed != nullptr && encoding_ == Encoding::kDict) {
     return dict_->FindValue(*hashed) != nullptr;
   }
@@ -114,7 +114,7 @@ bool Set::IntSetAddAndMaybeConvert(std::string_view value) {
   int64_t int_value = 0;
   if (utils::ToInt64(value, &int_value)) {
     if (!intset_) {
-      intset_ = std::make_unique<in_memory::IntSet>();
+      intset_ = std::make_unique<memory::IntSet>();
     }
     bool success = intset_->Add(int_value);
     if (success) {
@@ -136,8 +136,8 @@ bool Set::ListPackAddAndMaybeConvert(std::string_view value) {
   }
   if (listpack_->Size() < kListPackMaxEntries &&
       length <= kListPackElementMaxLength &&
-      in_memory::ListPack::SafeToAdd(
-          listpack_.get(), in_memory::ListPack::EstimateEntryBytes(value))) {
+      memory::ListPack::SafeToAdd(
+          listpack_.get(), memory::ListPack::EstimateEntryBytes(value))) {
     return listpack_->Append(value);
   }
   ConvertListPackToDict(listpack_->Size() + 1);
@@ -146,7 +146,7 @@ bool Set::ListPackAddAndMaybeConvert(std::string_view value) {
 
 bool Set::DictAdd(std::string_view value) {
   if (!dict_) {
-    dict_ = in_memory::Dict<std::string, std::nullptr_t>::Create();
+    dict_ = memory::Dict<std::string, std::nullptr_t>::Create();
   }
   return dict_->FindOrInsert(value).second;
 }
@@ -161,7 +161,7 @@ void Set::MaybeConvertIntsetToDict() {
 void Set::ConvertIntSetToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kIntSet);
   encoding_ = Encoding::kDict;
-  dict_ = in_memory::Dict<std::string, std::nullptr_t>::Create(capacity);
+  dict_ = memory::Dict<std::string, std::nullptr_t>::Create(capacity);
   if (!intset_) {
     return;
   }
@@ -179,7 +179,7 @@ bool Set::MaybeConvertIntSetToListPack(std::string_view value) {
   size_t length = value.size();
   size_t max_integer_length = 0;
   size_t estimated_bytes = 0;
-  const size_t entry_bytes = in_memory::ListPack::EstimateEntryBytes(value);
+  const size_t entry_bytes = memory::ListPack::EstimateEntryBytes(value);
   int64_t estimated_integer = 0;
   if (intset_) {
     int64_t max_integer = intset_->Max();
@@ -190,14 +190,14 @@ bool Set::MaybeConvertIntSetToListPack(std::string_view value) {
     estimated_integer =
         max_integer_digits > min_integer_digits ? max_integer : min_integer;
     estimated_bytes =
-        in_memory::ListPack::EstimateBytes(estimated_integer, intset_->Size());
+        memory::ListPack::EstimateBytes(estimated_integer, intset_->Size());
   }
   const size_t current_size = intset_ ? intset_->Size() : 0;
   if (current_size < kListPackMaxEntries &&
       length <= kListPackElementMaxLength &&
       max_integer_length <= kListPackElementMaxLength &&
       estimated_bytes <= std::numeric_limits<size_t>::max() - entry_bytes &&
-      in_memory::ListPack::SafeToAdd(nullptr, estimated_bytes + entry_bytes)) {
+      memory::ListPack::SafeToAdd(nullptr, estimated_bytes + entry_bytes)) {
     ConvertIntSetToListPack(value);
     return true;
   }
@@ -207,7 +207,7 @@ bool Set::MaybeConvertIntSetToListPack(std::string_view value) {
 void Set::ConvertIntSetToListPack(std::string_view value) {
   RS_CHECK(encoding_ == Encoding::kIntSet);
   encoding_ = Encoding::kListPack;
-  listpack_ = std::make_unique<in_memory::ListPack>();
+  listpack_ = std::make_unique<memory::ListPack>();
   if (intset_) {
     for (uint32_t i = 0; i < intset_->Size(); ++i) {
       listpack_->Append(intset_->Get(i));
@@ -220,7 +220,7 @@ void Set::ConvertIntSetToListPack(std::string_view value) {
 void Set::ConvertListPackToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kListPack);
   encoding_ = Encoding::kDict;
-  dict_ = in_memory::Dict<std::string, std::nullptr_t>::Create(capacity);
+  dict_ = memory::Dict<std::string, std::nullptr_t>::Create(capacity);
   if (!listpack_) {
     return;
   }

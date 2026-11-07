@@ -12,7 +12,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
-void Verify(in_memory::ReplyBuffer* buffer, const std::string& model) {
+void Verify(memory::ReplyBuffer* buffer, const std::string& model) {
   Require(buffer->PendingBytes() == model.size());
   Require(buffer->Empty() == model.empty());
 
@@ -28,7 +28,7 @@ void Verify(in_memory::ReplyBuffer* buffer, const std::string& model) {
   Require(actual == model);
 }
 
-void BoundPendingBytes(in_memory::ReplyBuffer* buffer, std::string* model) {
+void BoundPendingBytes(memory::ReplyBuffer* buffer, std::string* model) {
   constexpr size_t kMaxPendingBytes = 32768;
   constexpr size_t kRetainedBytes = 16384;
   if (model->size() <= kMaxPendingBytes) {
@@ -40,7 +40,7 @@ void BoundPendingBytes(in_memory::ReplyBuffer* buffer, std::string* model) {
 }
 
 void RunOperations(FuzzInput* input) {
-  in_memory::ReplyBuffer buffer;
+  memory::ReplyBuffer buffer;
   std::string model;
 
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();

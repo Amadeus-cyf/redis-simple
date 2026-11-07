@@ -7,8 +7,8 @@
 
 namespace redis_simple {
 namespace {
-in_memory::DynamicBuffer& DynamicBufferBenchmarkBuffer() {
-  static in_memory::DynamicBuffer buffer;
+memory::DynamicBuffer& DynamicBufferBenchmarkBuffer() {
+  static memory::DynamicBuffer buffer;
   return buffer;
 }
 

@@ -61,7 +61,7 @@ class ZSetListPack : public ZSetStorage {
   static bool GreaterOrEqual(double score, const RangeByScoreSpec* spec);
   static bool LessOrEqual(double score, const RangeByScoreSpec* spec);
   // Listpack storing key score pairs
-  std::unique_ptr<in_memory::ListPack> listpack_;
+  std::unique_ptr<memory::ListPack> listpack_;
   mutable std::vector<ZSetEntry> range_cache_;
 };
 }  // namespace redis_simple::zset

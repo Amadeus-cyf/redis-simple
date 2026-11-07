@@ -24,7 +24,7 @@ bool CanStoreInListPack(std::string_view field, std::string_view value) {
 
 Hash::Hash()
     : encoding_(Encoding::kListPack),
-      listpack_(std::make_unique<in_memory::ListPack>()),
+      listpack_(std::make_unique<memory::ListPack>()),
       dict_(nullptr) {}
 
 bool Hash::Set(std::string_view field, std::string_view value) {
@@ -93,10 +93,9 @@ std::vector<Hash::Entry> Hash::Entries() const {
 bool Hash::CanAppendToListPack(std::string_view field,
                                std::string_view value) const {
   return Size() < kListPackMaxEntries && CanStoreInListPack(field, value) &&
-         in_memory::ListPack::SafeToAdd(
-             listpack_.get(),
-             in_memory::ListPack::EstimateEntryBytes(field) +
-                 in_memory::ListPack::EstimateEntryBytes(value));
+         memory::ListPack::SafeToAdd(
+             listpack_.get(), memory::ListPack::EstimateEntryBytes(field) +
+                                  memory::ListPack::EstimateEntryBytes(value));
 }
 
 bool Hash::SetListPack(std::string_view field, std::string_view value) {
@@ -127,7 +126,7 @@ bool Hash::SetListPack(std::string_view field, std::string_view value) {
 bool Hash::SetDict(std::string_view field, std::string_view value) {
   RS_CHECK(encoding_ == Encoding::kDict);
   if (dict_ == nullptr) {
-    dict_ = in_memory::Dict<std::string, std::string>::Create();
+    dict_ = memory::Dict<std::string, std::string>::Create();
   }
   auto [stored, inserted] = dict_->FindOrInsert(field);
   stored->assign(value);
@@ -136,7 +135,7 @@ bool Hash::SetDict(std::string_view field, std::string_view value) {
 
 void Hash::ConvertListPackToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kListPack);
-  dict_ = in_memory::Dict<std::string, std::string>::Create(capacity);
+  dict_ = memory::Dict<std::string, std::string>::Create(capacity);
   if (listpack_ != nullptr) {
     listpack_->ForEachPair(
         [this](std::string_view field, std::string_view value) {

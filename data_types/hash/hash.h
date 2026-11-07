@@ -56,8 +56,8 @@ class Hash {
   std::optional<size_t> FindListPackField(std::string_view field) const;
 
   enum Encoding encoding_;
-  std::unique_ptr<in_memory::ListPack> listpack_;
-  std::unique_ptr<in_memory::Dict<std::string, std::string>> dict_;
+  std::unique_ptr<memory::ListPack> listpack_;
+  std::unique_ptr<memory::Dict<std::string, std::string>> dict_;
 };
 
 template <typename Visitor>
@@ -99,7 +99,7 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
     return listpack_->ForEachPair(visitor);
   }
   if (encoding_ == Encoding::kDict) {
-    auto it = in_memory::Dict<std::string, std::string>::Iterator(dict_.get());
+    auto it = memory::Dict<std::string, std::string>::Iterator(dict_.get());
     it.SeekToFirst();
     while (it.Valid()) {
       if (!visitor(it.Key(), it.Value())) {

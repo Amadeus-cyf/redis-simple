@@ -11,7 +11,7 @@
 
 #include "memory/listpack.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 class QuickList {
  public:
   static constexpr size_t kDefaultNodeMaxBytes = 8192;
@@ -152,6 +152,6 @@ bool QuickList::ForEachReverse(size_t start, size_t stop,
     node_start -= node->listpack->Size();
   }
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory
 
 #endif  // REDIS_SIMPLE_MEMORY_QUICKLIST_H_

@@ -93,7 +93,7 @@ std::optional<SetReply> SInter(db::RedisDb* const redis_db,
   size_t count = 0;
   (*smallest)->ForEachMemberWithHash(
       [&sets, &body, &count, smallest](std::string_view member,
-                                       const in_memory::HashedKey* hashed) {
+                                       const memory::HashedKey* hashed) {
         bool present = true;
         for (const auto* set : sets) {
           if (set != *smallest && !set->HasMember(member, hashed)) {
@@ -125,7 +125,7 @@ std::optional<SetReply> SUnion(db::RedisDb* const redis_db,
 
   // Dedupe through a Dict, which reuses the hashes stored by dict-encoded
   // sources instead of hashing each member again.
-  using MemberDict = in_memory::Dict<std::string, std::nullptr_t>;
+  using MemberDict = memory::Dict<std::string, std::nullptr_t>;
   std::vector<const Set*> sets;
   sets.reserve(keys.size());
   size_t total = 0;
@@ -144,15 +144,15 @@ std::optional<SetReply> SUnion(db::RedisDb* const redis_db,
   // Sizing fails only past the address space, which existing sets cannot reach.
   RS_CHECK(members != nullptr);
   for (const Set* set : sets) {
-    set->ForEachMemberWithHash([&members](std::string_view member,
-                                          const in_memory::HashedKey* hashed) {
-      if (hashed != nullptr) {
-        members->FindOrInsert(*hashed);
-      } else {
-        members->FindOrInsert(member);
-      }
-      return true;
-    });
+    set->ForEachMemberWithHash(
+        [&members](std::string_view member, const memory::HashedKey* hashed) {
+          if (hashed != nullptr) {
+            members->FindOrInsert(*hashed);
+          } else {
+            members->FindOrInsert(member);
+          }
+          return true;
+        });
   }
   std::string body;
   auto it = MemberDict::Iterator(members.get());
@@ -191,7 +191,7 @@ std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
   size_t count = 0;
   first.set->ForEachMemberWithHash(
       [&subtract_sets, &body, &count](std::string_view member,
-                                      const in_memory::HashedKey* hashed) {
+                                      const memory::HashedKey* hashed) {
         bool removed = false;
         for (const auto* set : subtract_sets) {
           if (set->HasMember(member, hashed)) {

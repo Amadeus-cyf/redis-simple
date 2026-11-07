@@ -12,7 +12,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
-using in_memory::ListPack;
+using memory::ListPack;
 
 void Verify(const ListPack& listpack, const std::vector<std::string>& model) {
   Require(listpack.Size() == model.size());

@@ -14,7 +14,7 @@
 
 namespace redis_simple::zset {
 ZSetListPack::ZSetListPack()
-    : listpack_(std::make_unique<in_memory::ListPack>()) {}
+    : listpack_(std::make_unique<memory::ListPack>()) {}
 
 bool ZSetListPack::InsertOrUpdate(std::string_view key, double score,
                                   bool* const changed) {

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 std::unique_ptr<IntSet> MakeFullIntSet() {
   auto intset = std::make_unique<IntSet>();
@@ -120,4 +120,4 @@ TEST(IntSetDeathTest, RejectsOutOfRangeIndex) {
   EXPECT_DEATH(intset->Get(-1), "Check failed");
   EXPECT_DEATH(intset->Get(intset->Size()), "Check failed");
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

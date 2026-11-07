@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 // One chunk of a reply list: either writable fixed-size storage or a moved
 // std::string that is sent without copying.
 struct ReplyChunk {
@@ -36,6 +36,6 @@ struct ReplyChunk {
   size_t capacity{};
   std::unique_ptr<ReplyChunk> next;
 };
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory
 
 #endif  // REDIS_SIMPLE_MEMORY_REPLY_CHUNK_H_

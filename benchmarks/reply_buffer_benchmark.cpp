@@ -8,8 +8,8 @@
 
 namespace redis_simple {
 namespace {
-in_memory::ReplyBuffer& ReplyBufferBenchmarkBuffer() {
-  static in_memory::ReplyBuffer buffer;
+memory::ReplyBuffer& ReplyBufferBenchmarkBuffer() {
+  static memory::ReplyBuffer buffer;
   return buffer;
 }
 

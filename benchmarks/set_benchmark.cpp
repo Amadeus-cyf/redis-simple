@@ -34,7 +34,7 @@ void SetIntersect(benchmark::State& state) {
     (void)_;
     size_t matches = 0;
     left->ForEachMemberWithHash(
-        [&](std::string_view member, const in_memory::HashedKey* hashed) {
+        [&](std::string_view member, const memory::HashedKey* hashed) {
           matches +=
               right->HasMember(member, reuse_hash ? hashed : nullptr) ? 1 : 0;
           return true;

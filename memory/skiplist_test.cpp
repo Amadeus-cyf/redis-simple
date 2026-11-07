@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 using StringSkiplist = Skiplist<std::string>;
 using Limit = StringSkiplist::Limit;
@@ -432,4 +432,4 @@ TEST(SkiplistDeathTest, RejectsOutOfRangeRanks) {
   EXPECT_DEATH(skiplist->FindKeyByRank(INT_MAX), "Check failed");
   EXPECT_DEATH(skiplist->FindKeyByRank(INT_MIN), "Check failed");
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

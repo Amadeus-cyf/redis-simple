@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 size_t RequireIndex(std::optional<size_t> index) {
   EXPECT_TRUE(index.has_value());
@@ -873,4 +873,4 @@ TEST(ListPackDeathTest, RejectsOutOfBoundsIndexes) {
                "Check failed");
   EXPECT_DEATH(listpack->Delete(end), "Check failed");
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

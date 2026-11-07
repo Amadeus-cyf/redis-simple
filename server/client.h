@@ -163,8 +163,8 @@ class Client {
   bool protocol_error_{};
   request_parser::ParseResult protocol_failure_;
   request_parser::ParseState parse_state_;
-  in_memory::DynamicBuffer query_buffer_;
-  in_memory::ReplyBuffer reply_buffer_;
+  memory::DynamicBuffer query_buffer_;
+  memory::ReplyBuffer reply_buffer_;
   std::vector<iovec> reply_blocks_;
   OutputBufferLimits output_limits_;
   reply::ProtocolVersion protocol_{reply::ProtocolVersion::kResp2};

@@ -8,10 +8,10 @@
 #include "memory/dict.h"
 
 namespace redis_simple {
-in_memory::Dict<std::string, std::string>& BenchmarkDict() {
+memory::Dict<std::string, std::string>& BenchmarkDict() {
   // Leaked, so the static has no destructor to run at exit.
   static auto& dict =
-      *in_memory::Dict<std::string, std::string>::Create().release();
+      *memory::Dict<std::string, std::string>::Create().release();
   return dict;
 }
 

@@ -10,7 +10,7 @@
 
 #include "utils/check.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 bool HasRemoveLimit(size_t limit) { return limit != 0; }
 
@@ -459,4 +459,4 @@ void QuickList::Clear() {
   size_ = 0;
   node_count_ = 0;
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

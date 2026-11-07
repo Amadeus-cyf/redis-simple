@@ -16,7 +16,7 @@
 #include "utils/check.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 ListPack::ListPack()
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
     : listpack_(std::make_unique<unsigned char[]>(kListPackHeaderSize + 1)),
@@ -1000,4 +1000,4 @@ void ListPack::Realloc(size_t bytes) {
   listpack_ = std::move(new_listpack);
   capacity_ = new_capacity;
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

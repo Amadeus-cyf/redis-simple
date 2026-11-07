@@ -231,7 +231,7 @@ class FileReplayer {
   const ServerContext server_;
   Client client_;
   const Limits* const limits_;
-  in_memory::DynamicBuffer input_;
+  memory::DynamicBuffer input_;
   command::CommandArgs args_;
   size_t complete_bytes_{};
   // Records between MULTI and EXEC are copied out of `input_` and applied

@@ -67,14 +67,14 @@ class ZSetSkiplist : public ZSetStorage {
     }
   };
 
-  using SkiplistType = in_memory::Skiplist<ZSetEntry, EntryOrder>;
+  using SkiplistType = memory::Skiplist<ZSetEntry, EntryOrder>;
 
   bool OverlapsLexRange(const RangeByLexSpec* spec) const;
   static std::optional<SkiplistType::Limit> ToLimit(
       const std::optional<LimitSpec>& limit);
 
   // Maps each member to its score.
-  std::unique_ptr<in_memory::Dict<std::string, double>> dict_;
+  std::unique_ptr<memory::Dict<std::string, double>> dict_;
   // Entries ordered by score, then member name.
   std::unique_ptr<SkiplistType> skiplist_;
 };

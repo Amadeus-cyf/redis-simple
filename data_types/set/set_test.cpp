@@ -150,7 +150,7 @@ TEST(SetTest, MembershipWithStoredHashesMatchesPlainMembership) {
   for (const Set* source : sets) {
     size_t visited = 0;
     ASSERT_TRUE(source->ForEachMemberWithHash(
-        [&](std::string_view member, const in_memory::HashedKey* hashed) {
+        [&](std::string_view member, const memory::HashedKey* hashed) {
           // Only dict-encoded sets store hashes.
           EXPECT_EQ(hashed != nullptr,
                     source->Encoding() == Set::Encoding::kDict);
@@ -170,7 +170,7 @@ TEST(SetTest, MembershipWithStoredHashesMatchesPlainMembership) {
   // A visitor returning false stops the dict-encoded walk too.
   size_t calls = 0;
   EXPECT_FALSE(large->ForEachMemberWithHash(
-      [&calls](std::string_view, const in_memory::HashedKey*) {
+      [&calls](std::string_view, const memory::HashedKey*) {
         ++calls;
         return false;
       }));
