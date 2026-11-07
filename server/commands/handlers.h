@@ -113,6 +113,7 @@ void HandleHKeys(Client* client);
 void HandleHLen(Client* client);
 void HandleHMGet(Client* client);
 void HandleHSet(Client* client);
+void HandleHMSet(Client* client);
 void HandleHVals(Client* client);
 }  // namespace redis_simple::command::hashes
 

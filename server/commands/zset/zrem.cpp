@@ -22,6 +22,10 @@ void HandleZRem(Client* const client) {
     for (size_t i = 1; i < args.size(); ++i) {
       removed += zset->Delete(args[i]) ? 1 : 0;
     }
+    // Redis deletes a key once its last member is removed.
+    if (zset->Size() == 0) {
+      client->Db()->DeleteKey(args[0]);
+    }
   }
   if (removed > 0) {
     client->MarkModified();
