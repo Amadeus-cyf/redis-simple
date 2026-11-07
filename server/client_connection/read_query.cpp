@@ -4,7 +4,7 @@
 
 #include "connection/connection.h"
 #include "logging/logger.h"
-#include "server/aof.h"
+#include "server/aof/aof.h"
 #include "server/client.h"
 #include "server/client_connection/write_reply.h"
 #include "server/server.h"

@@ -81,6 +81,10 @@ bool Server::Run(const ServerOptions& options) {
     aof_.reset();
     return false;
   }
+  context_ = {.db = db_.get(),
+              .aof = aof_.get(),
+              .required_password = require_pass_,
+              .io_threads = io_threads_};
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
   loop_->Run();
@@ -113,6 +117,7 @@ void Server::StopIoThreads() {
     thread->Stop();
   }
   clients_.clear();
+  context_ = {};
   aof_.reset();
   io_threads_.clear();
 }

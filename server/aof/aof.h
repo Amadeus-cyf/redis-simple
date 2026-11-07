@@ -1,24 +1,23 @@
-#ifndef REDIS_SIMPLE_SERVER_AOF_H_
-#define REDIS_SIMPLE_SERVER_AOF_H_
+#ifndef REDIS_SIMPLE_SERVER_AOF_AOF_H_
+#define REDIS_SIMPLE_SERVER_AOF_AOF_H_
 
 #include <sys/types.h>
-#include <sys/uio.h>
 
-#include <array>
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
+
+#include "server/aof/background_jobs.h"
+#include "server/aof/file_ops.h"
+#include "server/aof/manifest.h"
+#include "server/aof/snapshot.h"
 
 namespace redis_simple::db {
 class RedisDb;
@@ -29,22 +28,6 @@ enum class FsyncPolicy {
   kAlways,
   kEverySecond,
   kNo,
-};
-
-class FileOps {
- public:
-  virtual ssize_t Write(int fd, const void* data, size_t size) = 0;
-  virtual ssize_t WriteVector(int fd, const iovec* blocks, int count) = 0;
-  virtual int Sync(int fd) = 0;
-  virtual int Rename(const char* source, const char* destination) = 0;
-  virtual ~FileOps() = default;
-};
-
-struct Limits {
-  size_t max_replay_command_bytes{size_t{64} * 1024 * 1024};
-  // The rewrite writes the snapshot in blocks of about this size, and splits
-  // large values and collections into commands no larger.
-  size_t snapshot_block_bytes{size_t{1024} * 1024};
 };
 
 struct Options {
@@ -127,43 +110,6 @@ struct AofState {
 };
 
 std::string_view ErrorName(AofError error);
-
-// One file of a multi-part AOF, as listed in its manifest.
-struct ManifestFile {
-  enum class Type {
-    kBase,
-    kIncrement,
-    // Replaced by a rewrite and deleted soon after.
-    kHistory,
-  };
-  std::string name;
-  int64_t sequence{};
-  Type type{};
-  // Redis' replication offsets for an incremental file. This server has no
-  // replication and writes none, but keeps those of a Redis manifest.
-  std::optional<int64_t> start_offset;
-  std::optional<int64_t> end_offset;
-};
-
-// The manifest of a multi-part AOF, in Redis' format: one line per file, such
-// as "file appendonly.aof.1.base.aof seq 1 type b". Loading replays the base
-// file, then the incremental files in order.
-struct Manifest {
-  std::optional<ManifestFile> base;
-  std::vector<ManifestFile> increments;
-  std::vector<ManifestFile> history;
-  // The sequence numbers of the base and the last incremental file, which the
-  // next ones follow, as Redis' curr_base_file_seq and curr_incr_file_seq.
-  int64_t base_sequence{};
-  int64_t increment_sequence{};
-
-  // The base first, then history files, then incremental files, as Redis
-  // writes them; names that need it are quoted as by Redis' sdscatrepr.
-  std::string Encode() const;
-  // Parses as Redis' aofLoadManifestFromFile does, and returns nullopt where
-  // it would refuse to start.
-  static std::optional<Manifest> Parse(std::string_view text);
-};
 
 // A multi-part append-only file, as in Redis 8.10: a directory with one base
 // file (the last rewrite's snapshot), incremental files with the mutations
@@ -253,34 +199,16 @@ class Aof {
 
  private:
   Aof(const Options& options, std::string directory);
+
+  // Startup and loading (aof_load.cpp).
   bool LoadManifest();
   bool Replay(db::RedisDb* db);
   bool ReplayFile(db::RedisDb* db, int fd, bool last);
   bool CutTail(int fd, size_t valid_bytes) const;
-  std::string FilePath(std::string_view name) const;
-  std::string ManifestPath() const;
-  // Writes `manifest` to a temporary file, syncs it, renames it over the
-  // manifest, and syncs the directory.
-  AofError PersistManifest(const Manifest& manifest);
   bool CreateBaseIfMissing(db::RedisDb* db);
   bool OpenLastIncrement();
-  // Creates the next incremental file, lists it in the manifest, and makes it
-  // the file appends go to.
-  bool OpenNextIncrement();
-  void SwitchFile(int fd);
-  void DeleteHistory();
-  static bool Encode(std::string_view command,
-                     const std::vector<std::string_view>& args, db::RedisDb* db,
-                     std::string* output);
-  void FailWrite(ssize_t written);
-  bool FsyncInProgress() const;
-  void QueueFsync(int fd, bool close_after);
-  void QueueDeletion(const std::string& path);
-  void RunBackgroundThread();
-  void RunJob(int fd, bool close_after);
-  void LogSyncFailure();
-  static void RecordError(AofError error, int error_number);
-  int WriteSnapshotFile(db::RedisDb* db, const std::string& path) const;
+
+  // Rewriting (aof_rewrite.cpp).
   [[noreturn]] void RunRewriteChild(db::RedisDb* db) const;
   std::string RewriteTempPath(pid_t child) const;
   void FinishRewrite(int wait_status);
@@ -288,34 +216,23 @@ class Aof {
   void AbandonRewrite();
   void RemoveRewriteTempFiles(pid_t child);
   bool RewriteLimited();
-  void FailDirectorySync(int error_number);
-  bool SyncFile(int fd) const;
-  bool SyncParentDirectory() const;
 
-  // Shared with the background thread, guarded by `mutex_`: its queues of
-  // jobs. Each job only syncs, closes, or deletes a file, and the queues are
-  // cleared without freeing, so the thread never allocates or frees memory.
-  mutable std::mutex mutex_;
-  std::condition_variable jobs_queued_;
-  std::condition_variable jobs_done_;
-  struct SyncJob {
-    int fd;
-    // Close the file after syncing it: Redis' BIO_CLOSE_AOF.
-    bool close_after;
-  };
-  std::vector<SyncJob> sync_jobs_;
-  size_t next_sync_job_{};
-  static constexpr size_t kMaxPathBytes = 4096;
-  using DeletionPath = std::array<char, kMaxPathBytes>;
-  std::vector<DeletionPath> deletions_;
-  bool running_job_{false};
-  bool stopping_{false};
-  // Shared without the lock: sync jobs queued and not finished (Redis'
-  // aof_pending_bio_fsync), and the result of the last background sync
-  // (aof_bio_fsync_status and aof_bio_fsync_errno).
-  std::atomic<size_t> pending_fsyncs_{0};
-  std::atomic<bool> fsync_failed_{false};
-  std::atomic<int> fsync_errno_{0};
+  // Files and the manifest (aof.cpp).
+  std::string FilePath(std::string_view name) const;
+  std::string ManifestPath() const;
+  // Writes `manifest` to a temporary file, syncs it, renames it over the
+  // manifest, and syncs the directory.
+  AofError PersistManifest(const Manifest& manifest);
+  // Creates the next incremental file, lists it in the manifest, and makes it
+  // the file appends go to.
+  bool OpenNextIncrement();
+  void SwitchFile(int fd);
+  void DeleteHistory();
+  void FailDirectorySync(int error_number);
+  void FailWrite(ssize_t written);
+  void LogSyncFailure();
+  static void RecordError(AofError error, int error_number);
+  SnapshotOptions SnapshotSettings() const;
 
   // Event-loop thread only.
   std::string directory_;
@@ -331,11 +248,14 @@ class Aof {
   bool rewrite_incremental_fsync_;
   bool no_fsync_on_rewrite_;
   std::shared_ptr<FileOps> file_ops_;
+  // Syncs, closes, and deletes files on its own thread.
+  BackgroundJobs jobs_;
   // The current incremental file.
   int fd_{-1};
   // Redis' aof_buf: encoded mutations not yet written.
   std::string batch_;
-  // Redis' aof_last_write_status and aof_last_write_errno.
+  // Whether the last write failed, and why (Redis' aof_last_write_status and
+  // aof_last_write_errno).
   bool write_failed_{false};
   int write_errno_{0};
   std::chrono::steady_clock::time_point last_write_error_log_{};
@@ -359,7 +279,6 @@ class Aof {
   std::chrono::steady_clock::time_point last_fsync_{};
   std::optional<std::chrono::steady_clock::time_point> flush_postponed_start_;
   size_t delayed_fsyncs_{};
-  std::thread background_thread_;
 
   // The running rewrite's child, and Redis' rewrite statistics.
   pid_t rewrite_child_{-1};
@@ -382,4 +301,4 @@ class Aof {
 };
 }  // namespace redis_simple::aof
 
-#endif  // REDIS_SIMPLE_SERVER_AOF_H_
+#endif  // REDIS_SIMPLE_SERVER_AOF_AOF_H_

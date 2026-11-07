@@ -4,7 +4,7 @@
 #include <string>
 #include <string_view>
 
-#include "server/aof.h"
+#include "server/aof/aof.h"
 
 namespace redis_simple {
 struct ServerOptions {

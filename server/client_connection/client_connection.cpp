@@ -46,10 +46,7 @@ bool AcceptOne(int listener_fd, Server* const server) {
     connection->Write(kProtectedModeError);
     return true;
   }
-  auto client =
-      Client::Create(std::move(connection), server->Db(), server->Aof());
-  client->RequirePassword(server->RequirePass());
-  client->SetIoThreads(&server->IoThreads());
+  auto client = Client::Create(std::move(connection), server->Context());
   Client* const client_ptr = client.get();
   if (io_thread != nullptr) {
     server->AddClient(std::move(client));

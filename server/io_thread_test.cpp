@@ -60,7 +60,7 @@ class MainThread {
     auto connection = std::make_unique<connection::Connection>(
         connection::Context{.loop = thread->Loop(), .fd = fds[0]});
     connection->SetState(connection::ConnectionState::kConnected);
-    auto client = Client::Create(std::move(connection), db_.get(), nullptr);
+    auto client = Client::Create(std::move(connection), &server_);
     thread->Assign(client.get());
     peers_.push_back(fds[1]);
     return {std::move(client), fds[1]};
@@ -103,6 +103,10 @@ class MainThread {
  private:
   std::unique_ptr<event_loop::Loop> loop_;
   std::unique_ptr<db::RedisDb> db_;
+  ServerContext server_{.db = db_.get(),
+                        .aof = nullptr,
+                        .required_password = {},
+                        .io_threads = {}};
   std::vector<int> peers_;
   std::vector<Client*> closed_;
   int handoff_batches_{0};
