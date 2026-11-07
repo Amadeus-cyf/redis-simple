@@ -457,6 +457,7 @@ benchmarks, they are not part of CTest or CI.
 ```text
 cli/                  Simple client and RESP parsing
 connection/           Connection abstraction
+docs/                 Design notes (docs/design.md)
 event_loop/           Event loop with kqueue and epoll pollers
 fuzz/                 Stateful libFuzzer harnesses and reference models
 integration/commands/ Server/client command integration tests
@@ -467,6 +468,7 @@ logging/              Project logging wrapper
 memory/               Core in-memory data structures
 scripts/              Project automation and CTest runner scripts
 server/               Server, client connection glue, commands, replies, DB
+server/aof/           Append-only file: writing, loading, rewriting
 data_types/           Redis hash, list, set, and sorted-set implementations
 tcp/                  TCP helpers
 utils/                Small shared utilities
@@ -478,9 +480,11 @@ individual command `.cpp` files keep implementation details local. Handlers
 rely on the command table for arity and use `server/commands/lookup.h` for
 typed key lookups that report `WRONGTYPE`.
 Reply encoding helpers live directly under `server/`, while database state and
-Redis object wrappers stay under `server/db/`. The AOF writer and replay logic
-also live directly under `server/` because they coordinate command execution,
-database loading, and server lifecycle.
+Redis object wrappers stay under `server/db/`, and the append-only file under
+`server/aof/`. Commands reach server-wide state (the database, the AOF, the
+password, the I/O threads) through the client's `ServerContext`.
+`docs/design.md` explains how a request flows through these parts, how
+threaded I/O hands clients between threads, and how the AOF is organized.
 
 ## Tooling
 

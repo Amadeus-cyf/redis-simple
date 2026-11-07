@@ -14,7 +14,7 @@
 #include <system_error>
 #include <vector>
 
-#include "server/aof.h"
+#include "server/aof/aof.h"
 #include "server/db/db.h"
 
 namespace redis_simple::fuzz {
