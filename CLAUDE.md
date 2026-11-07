@@ -77,6 +77,13 @@ Guidance for AI coding agents working in this repository.
 - `Aof::Append` only encodes into the pending batch. The read handler calls
   `Aof::Flush` once per batch of commands, before any replies are written;
   call `Flush` before arming test failures that depend on file-write order.
+  `Flush` writes the batch on the event-loop thread for every fsync policy, so
+  a process crash cannot lose an acknowledged write; with `everysec` a
+  separate thread only fsyncs, once a second, independently of the writes.
+- After an AOF write error, `Flush` keeps the unwritten bytes and retries
+  them, and write commands get `-MISCONF` until a write succeeds; a failed
+  fsync keeps writes rejected until a rewrite installs a new synced file.
+  Only `always` stops the server, through `Flush` returning false.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
 - With `--io-threads` above 1, I/O works like Redis 8: each client belongs
@@ -161,6 +168,13 @@ Guidance for AI coding agents working in this repository.
   the snapshot and buffered mutation delta have been synced and atomically
   installed. The normal append path should pay no copy cost when no rewrite is
   active.
+- `BGREWRITEAOF` forks; the child writes the snapshot and exits, and the
+  server cron finishes the rewrite through `Aof::CheckRewrite`. No other
+  thread may allocate or free memory during the fork: the server's fork
+  hooks pause the I/O threads and the reclaimer that frees `UNLINK`ed values,
+  and the fsync thread must not allocate or log. Pause any new thread that
+  touches the heap the same way. Keep the child free
+  of locks and logging, since another thread may have held one at the fork.
 - Bound AOF snapshot memory and replay command sizes together. Split large
   strings into replay-safe commands and batch collections by encoded bytes, not
   only element count.
@@ -219,6 +233,9 @@ does not include the libFuzzer runtime.
 
 The leak-check script uses Apple `leaks` for the macOS unit-test binary and
 explicit LeakSanitizer options for the complete Linux sanitizer test suite.
+Forked children stall `leaks`, so the macOS run skips death tests and
+`AofTest`, whose rewrites fork; keep other forking tests out of it the same
+way.
 
 Use Docker for a local Linux build and test check from macOS:
 

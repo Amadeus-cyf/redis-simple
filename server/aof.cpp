@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -93,7 +95,35 @@ size_t MaxIovCount() {
   return kMaxIovCount;
 }
 
-bool WriteAll(FileOps* const file_ops, int fd, std::string_view data) {
+bool SyncFile(FileOps* const file_ops, int fd) {
+  while (file_ops->Sync(fd) < 0) {
+    if (errno != EINTR) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Exit codes of the rewrite child, which cannot log.
+constexpr int kChildSucceeded = 0;
+constexpr int kChildWriteFailed = 1;
+constexpr int kChildSyncFailed = 2;
+constexpr int kChildSnapshotFailed = 3;
+
+std::optional<size_t> FileSize(int fd) {
+  struct stat file_info{};
+  if (fstat(fd, &file_info) < 0 || file_info.st_size < 0 ||
+      static_cast<uintmax_t>(file_info.st_size) >
+          std::numeric_limits<size_t>::max()) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(file_info.st_size);
+}
+
+// Writes as much of `data` as the file takes, retrying short and interrupted
+// writes. Returns the bytes written; on an error, sets `error_number`.
+size_t WritePrefix(FileOps* const file_ops, int fd, std::string_view data,
+                   int* const error_number) {
   size_t written = 0;
   while (written < data.size()) {
     const ssize_t result =
@@ -105,18 +135,81 @@ bool WriteAll(FileOps* const file_ops, int fd, std::string_view data) {
     if (result < 0 && errno == EINTR) {
       continue;
     }
-    return false;
+    *error_number = result < 0 ? errno : EIO;
+    break;
+  }
+  return written;
+}
+
+// Writes every block with vectored writes, retrying short and interrupted
+// writes.
+template <typename Blocks>
+bool WriteBlocks(FileOps* const file_ops, int fd, Blocks& blocks) {
+  const size_t max_iov_count = MaxIovCount();
+  std::vector<iovec> vectors;
+  auto block = std::begin(blocks);
+  while (block != std::end(blocks)) {
+    vectors.clear();
+    for (; block != std::end(blocks) && vectors.size() < max_iov_count;
+         ++block) {
+      if (!block->empty()) {
+        vectors.push_back({block->data(), block->size()});
+      }
+    }
+    size_t index = 0;
+    while (index < vectors.size()) {
+      ssize_t written = -1;
+      while (true) {
+        written =
+            file_ops->WriteVector(fd, vectors.data() + index,
+                                  static_cast<int>(vectors.size() - index));
+        if (written >= 0 || errno != EINTR) {
+          break;
+        }
+      }
+      if (written <= 0) {
+        return false;
+      }
+      auto consumed = static_cast<size_t>(written);
+      while (consumed > 0) {
+        iovec& vector = vectors[index];
+        if (consumed < vector.iov_len) {
+          vector.iov_base = static_cast<char*>(vector.iov_base) + consumed;
+          vector.iov_len -= consumed;
+          consumed = 0;
+        } else {
+          consumed -= vector.iov_len;
+          ++index;
+        }
+      }
+    }
   }
   return true;
 }
 
-bool SyncFile(FileOps* const file_ops, int fd) {
-  while (file_ops->Sync(fd) < 0) {
-    if (errno != EINTR) {
-      return false;
+// waitpid, retried when interrupted. Returns the child's pid, 0 if it is
+// still running (with WNOHANG), or -1.
+pid_t WaitForChild(pid_t child, int* const wait_status, int options) {
+  while (true) {
+    const pid_t result = waitpid(child, wait_status, options);
+    if (result >= 0 || errno != EINTR) {
+      return result;
     }
   }
-  return true;
+}
+
+AofError ChildError(int wait_status) {
+  if (!WIFEXITED(wait_status)) {
+    return AofError::kSnapshot;
+  }
+  switch (WEXITSTATUS(wait_status)) {
+    case kChildWriteFailed:
+      return AofError::kWrite;
+    case kChildSyncFailed:
+      return AofError::kSync;
+    default:
+      return AofError::kSnapshot;
+  }
 }
 
 size_t RespBulkSize(std::string_view value) {
@@ -512,8 +605,8 @@ std::string_view ErrorName(AofError error) {
   switch (error) {
     case AofError::kNone:
       return "none";
-    case AofError::kQueueFull:
-      return "queue-full";
+    case AofError::kRewriteBufferFull:
+      return "rewrite-buffer-full";
     case AofError::kWrite:
       return "write";
     case AofError::kSync:
@@ -540,25 +633,10 @@ std::string_view RewriteStatusName(RewriteStatus status) {
   return "unknown";
 }
 
-char* Aof::Record::Data() {
-  if (auto* owned = std::get_if<std::string>(&data_)) {
-    return owned->data();
-  }
-  return (*std::get_if<std::shared_ptr<std::string>>(&data_))->data();
-}
-
-size_t Aof::Record::Size() const {
-  if (const auto* owned = std::get_if<std::string>(&data_)) {
-    return owned->size();
-  }
-  return (*std::get_if<std::shared_ptr<std::string>>(&data_))->size();
-}
-
 std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
   if (db == nullptr || options.path.empty() ||
       options.limits.max_replay_command_bytes == 0 ||
-      options.limits.snapshot_block_bytes == 0 ||
-      options.limits.max_snapshot_queue_bytes == 0) {
+      options.limits.snapshot_block_bytes == 0) {
     return nullptr;
   }
   int open_flags = O_RDWR | O_CREAT;
@@ -569,30 +647,30 @@ std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
   if (fd < 0) {
     return nullptr;
   }
-  struct stat file_info{};
-  if (fstat(fd, &file_info) < 0 || file_info.st_size < 0 ||
-      static_cast<uintmax_t>(file_info.st_size) >
-          std::numeric_limits<size_t>::max()) {
+  const std::optional<size_t> file_size = FileSize(fd);
+  if (!file_size.has_value()) {
     close(fd);
     return nullptr;
   }
-  std::unique_ptr<Aof> aof = std::unique_ptr<Aof>(
-      new Aof(fd, options, static_cast<size_t>(file_info.st_size)));
+  auto aof = std::unique_ptr<Aof>(new Aof(fd, options, *file_size));
   if (!aof->SyncParentDirectory() || !aof->Replay(db) ||
-      lseek(fd, 0, SEEK_END) < 0 || fstat(fd, &file_info) < 0 ||
-      file_info.st_size < 0 ||
-      static_cast<uintmax_t>(file_info.st_size) >
-          std::numeric_limits<size_t>::max()) {
+      lseek(fd, 0, SEEK_END) < 0) {
     return nullptr;
   }
-  aof->current_size_ = static_cast<size_t>(file_info.st_size);
-  aof->base_size_ = aof->current_size_;
-  if (options.fsync != FsyncPolicy::kAlways) {
+  // Replay may have truncated a torn final record.
+  const std::optional<size_t> replayed_size = FileSize(fd);
+  if (!replayed_size.has_value()) {
+    return nullptr;
+  }
+  aof->current_size_ = *replayed_size;
+  aof->base_size_ = *replayed_size;
+  if (options.fsync == FsyncPolicy::kEverySecond) {
     // The project does not throw, but std::thread reports a failure to start
     // only by throwing std::system_error; catch it at this boundary so the
     // caller sees an ordinary error.
     try {
-      aof->worker_ = std::thread([instance = aof.get()] { instance->Run(); });
+      aof->sync_thread_ =
+          std::thread([instance = aof.get()] { instance->RunSyncThread(); });
     } catch (const std::system_error&) {
       return nullptr;
     }
@@ -610,8 +688,27 @@ Aof::Aof(int fd, const Options& options, size_t file_size)
       file_ops_(options.file_ops != nullptr ? options.file_ops
                                             : DefaultFileOps()),
       current_size_(file_size),
-      base_size_(file_size),
-      last_sync_(std::chrono::steady_clock::now()) {}
+      base_size_(file_size) {}
+
+Aof::~Aof() {
+  // Installs a rewrite whose child already finished, and stops one still
+  // running, as Redis does on shutdown.
+  CheckRewrite();
+  if (rewrite_child_ > 0) {
+    AbandonRewrite(AofError::kSnapshot);
+  }
+  // Redis syncs on shutdown whatever the policy.
+  SyncNow();
+  {
+    const std::scoped_lock lock(mutex_);
+    stopping_ = true;
+  }
+  sync_wakeup_.notify_all();
+  if (sync_thread_.joinable()) {
+    sync_thread_.join();
+  }
+  close(fd_);
+}
 
 bool Aof::Append(std::string_view command,
                  const std::vector<std::string_view>& args,
@@ -647,187 +744,390 @@ void Aof::EndTransaction() {
 }
 
 bool Aof::Flush() {
+  LogSyncFailure();
+  if (batch_.empty()) {
+    const bool written = WriteUnwritten();
+    return fsync_ != FsyncPolicy::kAlways || written;
+  }
   // A flush inside EXEC (BGREWRITEAOF queued in MULTI) closes the records so
   // far as one atomic segment and starts another for the rest.
   const bool in_transaction = in_transaction_;
   if (in_transaction) {
     EndTransaction();
   }
-  bool flushed = Healthy();
-  if (!batch_.empty()) {
-    std::string batch;
-    batch.swap(batch_);
-    flushed = Submit(std::move(batch));
+  bool written = false;
+  if (unwritten_.empty()) {
+    int error_number = 0;
+    const size_t size =
+        WritePrefix(file_ops_.get(), fd_, batch_, &error_number);
+    AddWritten(size);
+    written = size == batch_.size();
+    if (!written) {
+      unwritten_.assign(batch_, size);
+      FailWrite(error_number);
+    }
+  } else {
+    unwritten_.append(batch_);
+    written = WriteUnwritten();
   }
+  if (rewrite_child_ > 0) {
+    // The child's snapshot predates these mutations; the new file replays
+    // them after it. Moving the batch costs an allocation only while a
+    // rewrite runs.
+    BufferForRewrite(std::move(batch_));
+    batch_ = std::string();
+  }
+  batch_.clear();
   if (in_transaction) {
     BeginTransaction();
   }
-  return flushed;
-}
-
-bool Aof::Submit(std::string batch) {
-  if (fsync_ == FsyncPolicy::kAlways) {
-    const std::scoped_lock lock(mutex_);
-    if (!healthy_ || stopping_) {
-      return false;
-    }
-    std::shared_ptr<std::string> shared;
-    std::string_view data = batch;
-    if (rewriting_ && !rewrite_failed_) {
-      shared = std::make_shared<std::string>(std::move(batch));
-      data = *shared;
-      BufferRewriteCommandLocked(shared);
-    }
-    // One write and one fsync cover every mutation in the batch.
-    if (!WriteAll(file_ops_.get(), fd_, data)) {
-      FailLocked(AofError::kWrite);
-      return false;
-    }
-    if (!SyncFile(fd_)) {
-      FailLocked(AofError::kSync);
-      return false;
-    }
-    if (current_size_ > std::numeric_limits<size_t>::max() - data.size()) {
-      FailLocked(AofError::kWrite);
-      return false;
-    }
-    current_size_ += data.size();
+  if (fsync_ != FsyncPolicy::kAlways) {
     return true;
   }
+  return written && SyncWritten();
+}
 
-  {
-    std::unique_lock<std::mutex> lock(mutex_);
-    // Apply backpressure instead of failing when the writer falls behind. An
-    // empty queue always admits one batch, so an oversized batch cannot wait
-    // forever.
-    space_available_.wait(lock, [this, &batch] {
-      return !healthy_ || stopping_ || pending_.empty() ||
-             (batch.size() <= limits_.max_pending_bytes &&
-              pending_bytes_ <= limits_.max_pending_bytes - batch.size() &&
-              pending_.size() < limits_.max_pending_commands);
-    });
-    if (!healthy_ || stopping_) {
-      return false;
-    }
-    if (current_size_ > std::numeric_limits<size_t>::max() - batch.size()) {
-      FailLocked(AofError::kWrite);
-      return false;
-    }
-    pending_bytes_ += batch.size();
-    current_size_ += batch.size();
-    if (rewriting_ && !rewrite_failed_) {
-      auto shared = std::make_shared<std::string>(std::move(batch));
-      BufferRewriteCommandLocked(shared);
-      pending_.emplace_back(std::move(shared));
-    } else {
-      pending_.emplace_back(std::move(batch));
-    }
+bool Aof::AcceptingWrites() const {
+  return !write_failed_ && !sync_failed_.load(std::memory_order_relaxed);
+}
+
+std::string Aof::LastErrorText() const {
+  const std::scoped_lock lock(mutex_);
+  return last_errno_ != 0 ? std::strerror(last_errno_) : "unknown error";
+}
+
+bool Aof::SyncNow() {
+  const bool written = Flush() && WriteUnwritten();
+  return SyncWritten() && written;
+}
+
+bool Aof::WriteUnwritten() {
+  if (unwritten_.empty()) {
+    write_failed_ = false;
+    return true;
   }
-  work_available_.notify_one();
+  int error_number = 0;
+  const size_t size =
+      WritePrefix(file_ops_.get(), fd_, unwritten_, &error_number);
+  AddWritten(size);
+  unwritten_.erase(0, size);
+  if (!unwritten_.empty()) {
+    FailWrite(error_number);
+    return false;
+  }
+  if (write_failed_) {
+    write_failed_ = false;
+    RS_LOG_WARN("AOF writes recovered\n");
+  }
   return true;
 }
 
+void Aof::AddWritten(size_t size) {
+  if (size == 0) {
+    return;
+  }
+  current_size_ += size;
+  written_bytes_.fetch_add(size, std::memory_order_release);
+}
+
+void Aof::FailWrite(int error_number) {
+  if (write_failed_) {
+    return;
+  }
+  write_failed_ = true;
+  RecordError(AofError::kWrite, error_number);
+}
+
+bool Aof::SyncWritten() {
+  const std::scoped_lock lock(mutex_);
+  if (sync_failed_.load(std::memory_order_relaxed)) {
+    return false;
+  }
+  const uint64_t written = written_bytes_.load(std::memory_order_acquire);
+  if (written == synced_bytes_) {
+    return true;
+  }
+  if (!SyncFile(fd_)) {
+    FailSyncLocked(errno);
+    return false;
+  }
+  synced_bytes_ = written;
+  return true;
+}
+
+void Aof::RunSyncThread() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (true) {
+    sync_wakeup_.wait_for(lock, kSyncInterval, [this] { return stopping_; });
+    if (stopping_) {
+      // The destructor syncs once the event-loop thread is done writing.
+      return;
+    }
+    const uint64_t written = written_bytes_.load(std::memory_order_acquire);
+    if (written == synced_bytes_ ||
+        sync_failed_.load(std::memory_order_relaxed)) {
+      continue;
+    }
+    // A duplicate keeps the file open if a rewrite replaces fd_ meanwhile;
+    // syncing it syncs the same file.
+    const int fd = dup(fd_);
+    lock.unlock();
+    const bool synced = fd >= 0 && SyncFile(fd);
+    const int error_number = errno;
+    if (fd >= 0) {
+      close(fd);
+    }
+    lock.lock();
+    if (!synced) {
+      FailSyncLocked(error_number);
+    } else if (written > synced_bytes_) {
+      synced_bytes_ = written;
+    }
+  }
+}
+
+void Aof::FailSyncLocked(int error_number) {
+  // No logging here: on the sync thread, formatting a message allocates, and
+  // a fork at that moment could hand the child a held allocator lock. The
+  // event-loop thread logs it instead (LogSyncFailure).
+  sync_failed_.store(true, std::memory_order_relaxed);
+  last_error_ = AofError::kSync;
+  last_errno_ = error_number;
+}
+
+void Aof::LogSyncFailure() {
+  if (sync_failure_logged_ || !sync_failed_.load(std::memory_order_relaxed)) {
+    return;
+  }
+  sync_failure_logged_ = true;
+  RS_LOG_ERROR("AOF fsync failed: %s; rejecting writes\n",
+               LastErrorText().c_str());
+}
+
+void Aof::RecordError(AofError error, int error_number) {
+  {
+    const std::scoped_lock lock(mutex_);
+    last_error_ = error;
+    last_errno_ = error_number;
+  }
+  RS_LOG_ERROR("AOF %.*s failed: %s\n",
+               static_cast<int>(ErrorName(error).size()),
+               ErrorName(error).data(),
+               error_number != 0 ? std::strerror(error_number) : "unknown");
+}
+
 RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
+  if (db == nullptr) {
+    return RewriteResult::kError;
+  }
+  if (rewrite_child_ > 0) {
+    return RewriteResult::kInProgress;
+  }
   // Mutations already applied to `db` belong in the current file; the
-  // snapshot covers them, so they must not land in the rewrite delta.
+  // snapshot covers them, so they must not land in the rewrite buffer.
   if (!Flush()) {
     return RewriteResult::kError;
   }
-  std::thread completed_rewrite;
-  {
-    const std::scoped_lock lock(mutex_);
-    if (!healthy_ || stopping_ || db == nullptr) {
-      return RewriteResult::kError;
-    }
-    if (rewriting_) {
-      return RewriteResult::kInProgress;
-    }
-    if (rewrite_worker_.joinable()) {
-      completed_rewrite = std::move(rewrite_worker_);
-    }
-    rewriting_ = true;
-    rewrite_failed_ = false;
-    snapshot_complete_ = false;
-    snapshot_pending_.clear();
-    rewrite_pending_.clear();
-    snapshot_pending_bytes_ = 0;
-    rewrite_pending_bytes_ = 0;
-    last_error_ = AofError::kNone;
-    last_rewrite_attempt_ = std::chrono::steady_clock::now();
-  }
-  if (completed_rewrite.joinable()) {
-    completed_rewrite.join();
-  }
+  last_rewrite_attempt_ = std::chrono::steady_clock::now();
 
-  std::string path_template = path_ + ".rewrite.XXXXXX";
-  std::vector<char> writable_path(path_template.begin(), path_template.end());
-  writable_path.push_back('\0');
-  const int rewrite_fd = mkstemp(writable_path.data());
+  std::string path = path_ + ".rewrite.XXXXXX";
+  const int rewrite_fd = mkstemp(path.data());
   if (rewrite_fd < 0) {
-    const std::scoped_lock lock(mutex_);
-    FinishRewriteLocked(RewriteStatus::kFailed, AofError::kWrite);
+    rewrite_status_ = RewriteStatus::kFailed;
+    RecordError(AofError::kWrite, errno);
     return RewriteResult::kError;
   }
-#ifdef FD_CLOEXEC
-  if (fcntl(rewrite_fd, F_SETFD, FD_CLOEXEC) < 0) {
-    close(rewrite_fd);
-    unlink(writable_path.data());
-    const std::scoped_lock lock(mutex_);
-    FinishRewriteLocked(RewriteStatus::kFailed, AofError::kWrite);
-    return RewriteResult::kError;
-  }
-#endif
-
   struct stat file_info{};
   const mode_t mode = fstat(fd_, &file_info) == 0
                           ? static_cast<mode_t>(file_info.st_mode & 0777)
                           : static_cast<mode_t>(0644);
-  if (fchmod(rewrite_fd, mode) < 0) {
+  if (fcntl(rewrite_fd, F_SETFD, FD_CLOEXEC) < 0 ||
+      fchmod(rewrite_fd, mode) < 0) {
+    const int error_number = errno;
     close(rewrite_fd);
-    unlink(writable_path.data());
-    const std::scoped_lock lock(mutex_);
-    FinishRewriteLocked(RewriteStatus::kFailed, AofError::kWrite);
+    unlink(path.c_str());
+    rewrite_status_ = RewriteStatus::kFailed;
+    RecordError(AofError::kWrite, error_number);
     return RewriteResult::kError;
   }
 
-  // See Open(): std::thread signals start failure only via an exception.
-  try {
-    rewrite_worker_ = std::thread(
-        [this, rewrite_fd, temp_path = std::string(writable_path.data())] {
-          RunRewrite(rewrite_fd, temp_path);
-        });
-  } catch (const std::system_error&) {
+  if (before_fork_) {
+    before_fork_();
+  }
+  const pid_t child = fork();
+  if (child == 0) {
+    RunRewriteChild(db, rewrite_fd);
+  }
+  if (after_fork_) {
+    after_fork_();
+  }
+  if (child < 0) {
+    const int error_number = errno;
     close(rewrite_fd);
-    unlink(writable_path.data());
-    const std::scoped_lock lock(mutex_);
-    FinishRewriteLocked(RewriteStatus::kFailed, AofError::kWrite);
+    unlink(path.c_str());
+    rewrite_status_ = RewriteStatus::kFailed;
+    RecordError(AofError::kSnapshot, error_number);
     return RewriteResult::kError;
   }
-
-  const bool snapshot_built = BuildSnapshot(db);
-  {
-    const std::scoped_lock lock(mutex_);
-    if (rewriting_) {
-      snapshot_complete_ = true;
-      if (!snapshot_built) {
-        rewrite_failed_ = true;
-        rewrite_status_ = RewriteStatus::kFailed;
-        last_error_ = AofError::kSnapshot;
-      }
-    }
-  }
-  rewrite_state_changed_.notify_all();
-  if (!snapshot_built) {
-    WaitUntilRewriteIdle();
-    return RewriteResult::kError;
-  }
+  rewrite_child_ = child;
+  rewrite_fd_ = rewrite_fd;
+  rewrite_path_ = std::move(path);
+  rewrite_buffer_.clear();
+  rewrite_buffer_bytes_ = 0;
   return RewriteResult::kStarted;
 }
 
+void Aof::RunRewriteChild(db::RedisDb* const db, int rewrite_fd) const {
+  // The child has only this thread. It takes no locks and does not log, since
+  // another thread may have held one at the fork; allocating is safe because
+  // the parent forks only while no other thread allocates.
+  int status = kChildSucceeded;
+  std::string block;
+  auto sink = [this, rewrite_fd, &status, &block](std::string record) {
+    if (block.empty()) {
+      block = std::move(record);
+    } else {
+      block.append(record);
+    }
+    if (block.size() < limits_.snapshot_block_bytes) {
+      return true;
+    }
+    std::array<std::string, 1> blocks{std::move(block)};
+    block.clear();
+    if (!WriteBlocks(file_ops_.get(), rewrite_fd, blocks)) {
+      status = kChildWriteFailed;
+      return false;
+    }
+    return true;
+  };
+  if (!BuildSnapshotRecords(db, limits_, &sink)) {
+    if (status == kChildSucceeded) {
+      status = kChildSnapshotFailed;
+    }
+  } else {
+    std::array<std::string, 1> blocks{std::move(block)};
+    if (!WriteBlocks(file_ops_.get(), rewrite_fd, blocks)) {
+      status = kChildWriteFailed;
+    } else if (!SyncFile(rewrite_fd)) {
+      status = kChildSyncFailed;
+    }
+  }
+  _exit(status);
+}
+
+void Aof::CheckRewrite() {
+  if (rewrite_child_ <= 0) {
+    return;
+  }
+  int wait_status = 0;
+  const pid_t result = WaitForChild(rewrite_child_, &wait_status, WNOHANG);
+  if (result != 0) {
+    FinishRewrite(result < 0 ? -1 : wait_status);
+  }
+}
+
+void Aof::WaitForRewrite() {
+  if (rewrite_child_ <= 0) {
+    return;
+  }
+  int wait_status = 0;
+  const pid_t result = WaitForChild(rewrite_child_, &wait_status, 0);
+  FinishRewrite(result < 0 ? -1 : wait_status);
+}
+
+void Aof::BufferForRewrite(std::string batch) {
+  if (batch.size() > limits_.max_rewrite_buffer_bytes ||
+      rewrite_buffer_bytes_ > limits_.max_rewrite_buffer_bytes - batch.size()) {
+    AbandonRewrite(AofError::kRewriteBufferFull);
+    return;
+  }
+  rewrite_buffer_bytes_ += batch.size();
+  rewrite_buffer_.push_back(std::move(batch));
+}
+
+void Aof::FinishRewrite(int wait_status) {
+  rewrite_child_ = -1;
+  const bool child_succeeded = wait_status != -1 && WIFEXITED(wait_status) &&
+                               WEXITSTATUS(wait_status) == kChildSucceeded;
+  int error_number = 0;
+  const AofError error =
+      child_succeeded ? InstallRewrite(&error_number) : ChildError(wait_status);
+  if (rewrite_fd_ >= 0) {
+    close(rewrite_fd_);
+    rewrite_fd_ = -1;
+    unlink(rewrite_path_.c_str());
+  }
+  rewrite_buffer_.clear();
+  rewrite_buffer_bytes_ = 0;
+  if (error == AofError::kNone) {
+    rewrite_status_ = RewriteStatus::kSucceeded;
+    return;
+  }
+  rewrite_status_ = RewriteStatus::kFailed;
+  RecordError(error, error_number);
+}
+
+AofError Aof::InstallRewrite(int* const error_number) {
+  if (!WriteBlocks(file_ops_.get(), rewrite_fd_, rewrite_buffer_)) {
+    *error_number = errno;
+    return AofError::kWrite;
+  }
+  if (!SyncFile(rewrite_fd_)) {
+    *error_number = errno;
+    return AofError::kSync;
+  }
+  const std::optional<size_t> size = FileSize(rewrite_fd_);
+  if (!size.has_value()) {
+    *error_number = errno;
+    return AofError::kWrite;
+  }
+  if (file_ops_->Rename(rewrite_path_.c_str(), path_.c_str()) < 0) {
+    *error_number = errno;
+    return AofError::kRename;
+  }
+  int old_fd = -1;
+  {
+    // The new file holds every mutation and is synced, so it also clears a
+    // failed write or sync on the old one.
+    const std::scoped_lock lock(mutex_);
+    old_fd = fd_;
+    fd_ = rewrite_fd_;
+    synced_bytes_ = written_bytes_.load(std::memory_order_acquire);
+    sync_failed_.store(false, std::memory_order_relaxed);
+  }
+  sync_failure_logged_ = false;
+  rewrite_fd_ = -1;
+  close(old_fd);
+  unwritten_.clear();
+  write_failed_ = false;
+  current_size_ = *size;
+  base_size_ = *size;
+  if (!SyncParentDirectory()) {
+    *error_number = errno;
+    const std::scoped_lock lock(mutex_);
+    FailSyncLocked(*error_number);
+    return AofError::kDirectorySync;
+  }
+  return AofError::kNone;
+}
+
+void Aof::AbandonRewrite(AofError error) {
+  kill(rewrite_child_, SIGKILL);
+  int wait_status = 0;
+  WaitForChild(rewrite_child_, &wait_status, 0);
+  rewrite_child_ = -1;
+  close(rewrite_fd_);
+  rewrite_fd_ = -1;
+  unlink(rewrite_path_.c_str());
+  rewrite_buffer_.clear();
+  rewrite_buffer_bytes_ = 0;
+  rewrite_status_ = RewriteStatus::kFailed;
+  RecordError(error, 0);
+}
+
 bool Aof::ShouldAutoRewrite() const {
-  const std::scoped_lock lock(mutex_);
   const size_t current_size = current_size_ + batch_.size();
-  if (!healthy_ || stopping_ || rewriting_ || auto_rewrite_percentage_ == 0 ||
+  if (rewrite_child_ > 0 || auto_rewrite_percentage_ == 0 ||
       current_size == 0 || current_size < auto_rewrite_min_bytes_) {
     return false;
   }
@@ -848,53 +1148,37 @@ bool Aof::ShouldAutoRewrite() const {
 
 AofState Aof::State() const {
   const std::scoped_lock lock(mutex_);
-  return {healthy_,
-          rewriting_,
+  const size_t pending = batch_.size() + unwritten_.size();
+  return {!write_failed_ && !sync_failed_.load(std::memory_order_relaxed),
+          rewrite_child_ > 0,
           rewrite_status_,
           last_error_,
-          current_size_ + batch_.size(),
+          current_size_ + pending,
           base_size_,
-          pending_bytes_ + batch_.size()};
+          pending};
 }
 
-bool Aof::Healthy() const {
-  const std::scoped_lock lock(mutex_);
-  return healthy_;
-}
+bool Aof::SyncFile(int fd) const { return aof::SyncFile(file_ops_.get(), fd); }
 
-void Aof::WaitUntilIdle() {
-  Flush();
-  if (fsync_ == FsyncPolicy::kAlways) {
-    return;
+bool Aof::SyncParentDirectory() const {
+  std::filesystem::path parent = std::filesystem::path(path_).parent_path();
+  if (parent.empty()) {
+    parent = ".";
   }
-  std::unique_lock<std::mutex> lock(mutex_);
-  idle_.wait(lock, [this] {
-    return (!writing_ && !syncing_ && pending_.empty()) || !healthy_;
-  });
-}
-
-void Aof::WaitUntilRewriteIdle() {
-  Flush();
-  std::unique_lock<std::mutex> lock(mutex_);
-  rewrite_state_changed_.wait(lock, [this] { return !rewriting_; });
-}
-
-Aof::~Aof() {
-  Flush();
-  {
-    const std::scoped_lock lock(mutex_);
-    stopping_ = true;
+  int open_flags = O_RDONLY;
+#ifdef O_CLOEXEC
+  open_flags |= O_CLOEXEC;
+#endif
+#ifdef O_DIRECTORY
+  open_flags |= O_DIRECTORY;
+#endif
+  const int directory_fd = open(parent.c_str(), open_flags);
+  if (directory_fd < 0) {
+    return false;
   }
-  work_available_.notify_all();
-  space_available_.notify_all();
-  rewrite_state_changed_.notify_all();
-  if (rewrite_worker_.joinable()) {
-    rewrite_worker_.join();
-  }
-  if (worker_.joinable()) {
-    worker_.join();
-  }
-  close(fd_);
+  const bool synced = SyncFile(directory_fd);
+  const bool closed = close(directory_fd) == 0;
+  return synced && closed;
 }
 
 bool Aof::Replay(db::RedisDb* const db) {
@@ -1043,345 +1327,4 @@ bool Aof::Encode(std::string_view command,
   return AppendCommand(command, args, output);
 }
 
-bool Aof::BuildSnapshot(db::RedisDb* const db) {
-  auto sink = [this](std::string block) {
-    return QueueSnapshotBlock(std::move(block));
-  };
-  return BuildSnapshotRecords(db, limits_, &sink);
-}
-
-bool Aof::QueueSnapshotBlock(std::string block) {
-  if (block.empty()) {
-    return true;
-  }
-  const size_t block_size = block.size();
-  std::unique_lock<std::mutex> lock(mutex_);
-  rewrite_state_changed_.wait(lock, [this, block_size] {
-    // One oversized block may enter an empty queue so a valid replay command
-    // cannot deadlock behind the softer snapshot queue limit.
-    return !rewriting_ || rewrite_failed_ || stopping_ ||
-           snapshot_pending_.empty() ||
-           (block_size <= limits_.max_snapshot_queue_bytes &&
-            snapshot_pending_bytes_ <=
-                limits_.max_snapshot_queue_bytes - block_size);
-  });
-  if (!rewriting_ || rewrite_failed_ || stopping_) {
-    return false;
-  }
-  if (snapshot_pending_bytes_ >
-      std::numeric_limits<size_t>::max() - block_size) {
-    rewrite_failed_ = true;
-    last_error_ = AofError::kSnapshot;
-    return false;
-  }
-  snapshot_pending_bytes_ += block_size;
-  snapshot_pending_.emplace_back(std::move(block));
-  rewrite_state_changed_.notify_all();
-  return true;
-}
-
-bool Aof::WriteBatch(int fd, RecordQueue& batch,
-                     std::vector<iovec>* const blocks) const {
-  const size_t max_iov_count = MaxIovCount();
-  blocks->reserve(std::min(batch.size(), max_iov_count));
-  auto record = batch.begin();
-
-  while (record != batch.end()) {
-    blocks->clear();
-    for (; record != batch.end() && blocks->size() < max_iov_count; ++record) {
-      blocks->push_back({record->Data(), record->Size()});
-    }
-
-    size_t index = 0;
-    while (index < blocks->size()) {
-      ssize_t written = -1;
-      while (true) {
-        written =
-            file_ops_->WriteVector(fd, blocks->data() + index,
-                                   static_cast<int>(blocks->size() - index));
-        if (written >= 0 || errno != EINTR) {
-          break;
-        }
-      }
-      if (written <= 0) {
-        return false;
-      }
-      auto consumed = static_cast<size_t>(written);
-      while (consumed > 0) {
-        iovec& block = (*blocks)[index];
-        if (consumed < block.iov_len) {
-          auto* data = static_cast<char*>(block.iov_base);
-          block.iov_base = data + consumed;
-          block.iov_len -= consumed;
-          consumed = 0;
-        } else {
-          consumed -= block.iov_len;
-          ++index;
-        }
-      }
-    }
-  }
-  return true;
-}
-
-void Aof::Run() {
-  RecordQueue batch;
-  std::vector<iovec> blocks;
-  while (true) {
-    bool should_sync = false;
-    {
-      std::unique_lock<std::mutex> lock(mutex_);
-      while (healthy_ && pending_.empty() && !stopping_) {
-        if (fsync_ == FsyncPolicy::kEverySecond && dirty_) {
-          const auto deadline = last_sync_ + kSyncInterval;
-          if (!work_available_.wait_until(lock, deadline, [this] {
-                return stopping_ || !pending_.empty() || !healthy_;
-              })) {
-            break;
-          }
-        } else {
-          work_available_.wait(lock, [this] {
-            return stopping_ || !pending_.empty() || !healthy_;
-          });
-        }
-      }
-      if (!healthy_) {
-        return;
-      }
-      if (!pending_.empty()) {
-        batch.swap(pending_);
-        pending_bytes_ = 0;
-        writing_ = true;
-        space_available_.notify_all();
-      } else if (dirty_ &&
-                 (stopping_ || (fsync_ == FsyncPolicy::kEverySecond &&
-                                std::chrono::steady_clock::now() - last_sync_ >=
-                                    kSyncInterval))) {
-        syncing_ = true;
-        should_sync = true;
-      } else if (stopping_) {
-        return;
-      }
-    }
-
-    if (!batch.empty()) {
-      const bool written = WriteBatch(fd_, batch, &blocks);
-      {
-        const std::scoped_lock lock(mutex_);
-        writing_ = false;
-        if (!written) {
-          FailLocked(AofError::kWrite);
-          return;
-        }
-        dirty_ = true;
-        NotifyIfIdleLocked();
-      }
-      batch.clear();
-      continue;
-    }
-
-    if (should_sync) {
-      const bool synced = SyncFile(fd_);
-      {
-        const std::scoped_lock lock(mutex_);
-        syncing_ = false;
-        if (!synced) {
-          FailLocked(AofError::kSync);
-          return;
-        }
-        dirty_ = false;
-        last_sync_ = std::chrono::steady_clock::now();
-        NotifyIfIdleLocked();
-      }
-    }
-  }
-}
-
-void Aof::RunRewrite(int rewrite_fd, const std::string& temp_path) {
-  RecordQueue batch;
-  std::vector<iovec> blocks;
-  bool succeeded = true;
-  AofError error = AofError::kNone;
-
-  while (succeeded) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    rewrite_state_changed_.wait(lock, [this] {
-      return !healthy_ || rewrite_failed_ || stopping_ ||
-             !snapshot_pending_.empty() || snapshot_complete_;
-    });
-    if (!healthy_ || rewrite_failed_ || stopping_) {
-      error =
-          last_error_ == AofError::kNone ? AofError::kSnapshot : last_error_;
-      break;
-    }
-    if (snapshot_pending_.empty()) {
-      break;
-    }
-    batch.swap(snapshot_pending_);
-    snapshot_pending_bytes_ = 0;
-    rewrite_state_changed_.notify_all();
-    lock.unlock();
-    succeeded = WriteBatch(rewrite_fd, batch, &blocks);
-    if (!succeeded) {
-      error = AofError::kWrite;
-    }
-    batch.clear();
-  }
-
-  while (succeeded) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    rewrite_state_changed_.wait(lock, [this] {
-      return !healthy_ || rewrite_failed_ || !rewrite_pending_.empty() ||
-             (!writing_ && !syncing_ && pending_.empty());
-    });
-    if (!healthy_ || rewrite_failed_) {
-      error =
-          last_error_ == AofError::kNone ? AofError::kSnapshot : last_error_;
-      break;
-    }
-    if (!rewrite_pending_.empty()) {
-      batch.swap(rewrite_pending_);
-      rewrite_pending_bytes_ = 0;
-      lock.unlock();
-      succeeded = WriteBatch(rewrite_fd, batch, &blocks);
-      if (!succeeded) {
-        error = AofError::kWrite;
-      }
-      batch.clear();
-      continue;
-    }
-
-    struct stat file_info{};
-    if (fstat(rewrite_fd, &file_info) < 0 || file_info.st_size < 0) {
-      succeeded = false;
-      error = AofError::kWrite;
-    } else if (!SyncFile(rewrite_fd)) {
-      succeeded = false;
-      error = AofError::kSync;
-    } else if (file_ops_->Rename(temp_path.c_str(), path_.c_str()) < 0) {
-      succeeded = false;
-      error = AofError::kRename;
-    } else {
-      const int old_fd = fd_;
-      fd_ = rewrite_fd;
-      rewrite_fd = -1;
-      dirty_ = false;
-      last_sync_ = std::chrono::steady_clock::now();
-      close(old_fd);
-      current_size_ = static_cast<size_t>(file_info.st_size);
-      base_size_ = current_size_;
-      if (!SyncParentDirectory()) {
-        succeeded = false;
-        error = AofError::kDirectorySync;
-        FailLocked(error);
-      }
-    }
-    FinishRewriteLocked(
-        succeeded ? RewriteStatus::kSucceeded : RewriteStatus::kFailed, error);
-    work_available_.notify_all();
-    lock.unlock();
-    if (rewrite_fd >= 0) {
-      close(rewrite_fd);
-      unlink(temp_path.c_str());
-    }
-    if (!succeeded) {
-      RS_LOG_ERROR("AOF rewrite failed: %.*s\n",
-                   static_cast<int>(ErrorName(error).size()),
-                   ErrorName(error).data());
-    }
-    return;
-  }
-
-  close(rewrite_fd);
-  unlink(temp_path.c_str());
-  {
-    const std::scoped_lock lock(mutex_);
-    FinishRewriteLocked(RewriteStatus::kFailed,
-                        error == AofError::kNone ? AofError::kSnapshot : error);
-  }
-  RS_LOG_ERROR("AOF rewrite failed: %.*s\n",
-               static_cast<int>(ErrorName(error).size()),
-               ErrorName(error).data());
-}
-
-void Aof::BufferRewriteCommandLocked(
-    const std::shared_ptr<std::string>& command) {
-  if (!rewriting_ || rewrite_failed_) {
-    return;
-  }
-  if (command->size() > limits_.max_pending_bytes ||
-      rewrite_pending_bytes_ > limits_.max_pending_bytes - command->size() ||
-      rewrite_pending_.size() >= limits_.max_pending_commands) {
-    rewrite_failed_ = true;
-    rewrite_status_ = RewriteStatus::kFailed;
-    last_error_ = AofError::kQueueFull;
-    rewrite_pending_.clear();
-    rewrite_pending_bytes_ = 0;
-  } else {
-    rewrite_pending_bytes_ += command->size();
-    rewrite_pending_.emplace_back(command);
-  }
-  rewrite_state_changed_.notify_all();
-}
-
-void Aof::FinishRewriteLocked(RewriteStatus status, AofError error) {
-  snapshot_pending_.clear();
-  rewrite_pending_.clear();
-  snapshot_pending_bytes_ = 0;
-  rewrite_pending_bytes_ = 0;
-  snapshot_complete_ = false;
-  rewriting_ = false;
-  rewrite_failed_ = status == RewriteStatus::kFailed;
-  rewrite_status_ = status;
-  if (error != AofError::kNone) {
-    last_error_ = error;
-  }
-  rewrite_state_changed_.notify_all();
-}
-
-bool Aof::SyncFile(int fd) const { return aof::SyncFile(file_ops_.get(), fd); }
-
-bool Aof::SyncParentDirectory() const {
-  std::filesystem::path parent = std::filesystem::path(path_).parent_path();
-  if (parent.empty()) {
-    parent = ".";
-  }
-  int open_flags = O_RDONLY;
-#ifdef O_CLOEXEC
-  open_flags |= O_CLOEXEC;
-#endif
-#ifdef O_DIRECTORY
-  open_flags |= O_DIRECTORY;
-#endif
-  const int directory_fd = open(parent.c_str(), open_flags);
-  if (directory_fd < 0) {
-    return false;
-  }
-  const bool synced = SyncFile(directory_fd);
-  const bool closed = close(directory_fd) == 0;
-  return synced && closed;
-}
-
-void Aof::FailLocked(AofError error) {
-  healthy_ = false;
-  last_error_ = error;
-  pending_.clear();
-  pending_bytes_ = 0;
-  writing_ = false;
-  syncing_ = false;
-  dirty_ = false;
-  idle_.notify_all();
-  space_available_.notify_all();
-  rewrite_state_changed_.notify_all();
-  RS_LOG_ERROR("AOF became unhealthy: %.*s\n",
-               static_cast<int>(ErrorName(error).size()),
-               ErrorName(error).data());
-}
-
-void Aof::NotifyIfIdleLocked() {
-  rewrite_state_changed_.notify_all();
-  if (!writing_ && !syncing_ && pending_.empty()) {
-    idle_.notify_all();
-  }
-}
 }  // namespace redis_simple::aof

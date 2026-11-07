@@ -326,8 +326,24 @@ Client::RequestStatus Client::ValidateRequest(std::string_view name) {
     multi_error_ = in_multi_;
     return RequestStatus::kRejected;
   }
+  if (command->access == command::CommandAccess::kWrite &&
+      !AofAcceptsWrites()) {
+    AddReply(AofWriteError());
+    multi_error_ = in_multi_;
+    return RequestStatus::kRejected;
+  }
   command_ = command;
   return RequestStatus::kReady;
+}
+
+bool Client::AofAcceptsWrites() const {
+  return aof_ == nullptr || aof_->AcceptingWrites();
+}
+
+std::string Client::AofWriteError() const {
+  // Redis' reply while it cannot write the append-only file.
+  return reply::FromError("MISCONF Errors writing to the AOF file: " +
+                          aof_->LastErrorText());
 }
 
 ClientStatus Client::ProcessCommand() {
@@ -422,6 +438,15 @@ void Client::DiscardTransaction() {
 void Client::ExecTransaction() {
   if (multi_error_) {
     AddReply(kExecAbort);
+    DiscardTransaction();
+    return;
+  }
+  // The AOF may have failed after the writes were queued.
+  if (!AofAcceptsWrites() &&
+      std::ranges::any_of(multi_commands_, [](const QueuedCommand& queued) {
+        return queued.command->access == command::CommandAccess::kWrite;
+      })) {
+    AddReply(AofWriteError());
     DiscardTransaction();
     return;
   }

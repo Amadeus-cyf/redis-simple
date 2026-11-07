@@ -6,12 +6,16 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cerrno>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "server/aof.h"
 #include "server/db/db.h"
 #include "server/reply.h"
 #include "tcp/tcp.h"
@@ -60,6 +64,27 @@ std::pair<std::unique_ptr<Client>, ScopedFd> CreateClient(
   return {Client::Create(std::move(connection), TestDb(), nullptr, limits),
           std::move(sockets[1])};
 }
+
+// File operations whose writes can be made to fail, as on a full disk.
+class FailableFileOps final : public aof::FileOps {
+ public:
+  ssize_t Write(int fd, const void* data, size_t size) override {
+    if (fail_writes.load()) {
+      errno = ENOSPC;
+      return -1;
+    }
+    return write(fd, data, size);
+  }
+  ssize_t WriteVector(int fd, const iovec* blocks, int count) override {
+    return writev(fd, blocks, count);
+  }
+  int Sync(int fd) override { return fsync(fd); }
+  int Rename(const char* source, const char* destination) override {
+    return std::rename(source, destination);
+  }
+
+  std::atomic<bool> fail_writes{false};
+};
 
 std::string EncodeRequest(const std::vector<std::string_view>& parts) {
   std::string request = reply::FromArrayHeader(parts.size());
@@ -507,5 +532,96 @@ TEST(ClientTest, SetOverwritesStringsInPlaceAndReplacesOtherTypes) {
             ":1\r\n:1\r\n+OK\r\n+string\r\n$4\r\ntext\r\n");
   client->Db()->DeleteKey("overwrite-key");
   client->Db()->DeleteKey("overwrite-list");
+}
+TEST(ClientTest, RejectsWritesWithMisconfWhileTheAofCannotWrite) {
+  std::string path = "/tmp/redis_simple_client_aof.XXXXXX";
+  const int temp_fd = mkstemp(path.data());
+  ASSERT_GE(temp_fd, 0);
+  close(temp_fd);
+  auto file_ops = std::make_shared<FailableFileOps>();
+  auto db = db::RedisDb::Create();
+  aof::Options options{path, aof::FsyncPolicy::kEverySecond};
+  options.file_ops = file_ops;
+  auto aof = aof::Aof::Open(options, db.get());
+  ASSERT_NE(aof, nullptr);
+
+  auto sockets = CreateSocketPair();
+  ASSERT_EQ(tcp::NonBlock(sockets[0].Get()), tcp::TcpStatusCode::kOk);
+  auto connection = std::make_unique<connection::Connection>(
+      connection::Context{.loop = nullptr, .fd = sockets[0].Release()});
+  connection->SetState(connection::ConnectionState::kConnected);
+  auto client = Client::Create(std::move(connection), db.get(), aof.get());
+  const int peer = sockets[1].Get();
+
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"SET", "key", "v"})),
+            "+OK\r\n");
+  // The server flushes after each read; this flush fails, as on a full disk.
+  // Without `always` the reply already sent stands: the bytes are kept and
+  // retried.
+  file_ops->fail_writes.store(true);
+  ASSERT_TRUE(aof->Flush());
+  ASSERT_FALSE(aof->AcceptingWrites());
+
+  const std::string misconf =
+      "-MISCONF Errors writing to the AOF file: No space left on device\r\n";
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"SET", "key", "w"})),
+            misconf);
+  // Reads keep working.
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"GET", "key"})),
+            "$1\r\nv\r\n");
+  // A transaction with a write aborts, whether the write was rejected while
+  // queueing or the AOF failed after it was queued.
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"MULTI"})), "+OK\r\n");
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"SET", "key", "w"})),
+            misconf);
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"EXEC"})),
+            "-EXECABORT Transaction discarded because of previous errors.\r\n");
+
+  // The retried write succeeds once the disk has room again.
+  file_ops->fail_writes.store(false);
+  ASSERT_TRUE(aof->Flush());
+  EXPECT_TRUE(aof->AcceptingWrites());
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"SET", "key", "w"})),
+            "+OK\r\n");
+  client.reset();
+  aof.reset();
+  std::remove(path.c_str());
+}
+
+TEST(ClientTest, ExecRejectsQueuedWritesWhenTheAofFailsAfterQueueing) {
+  std::string path = "/tmp/redis_simple_client_aof.XXXXXX";
+  const int temp_fd = mkstemp(path.data());
+  ASSERT_GE(temp_fd, 0);
+  close(temp_fd);
+  auto file_ops = std::make_shared<FailableFileOps>();
+  auto db = db::RedisDb::Create();
+  aof::Options options{path, aof::FsyncPolicy::kEverySecond};
+  options.file_ops = file_ops;
+  auto aof = aof::Aof::Open(options, db.get());
+  ASSERT_NE(aof, nullptr);
+  auto sockets = CreateSocketPair();
+  ASSERT_EQ(tcp::NonBlock(sockets[0].Get()), tcp::TcpStatusCode::kOk);
+  auto connection = std::make_unique<connection::Connection>(
+      connection::Context{.loop = nullptr, .fd = sockets[0].Release()});
+  connection->SetState(connection::ConnectionState::kConnected);
+  auto client = Client::Create(std::move(connection), db.get(), aof.get());
+  const int peer = sockets[1].Get();
+
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"MULTI"})), "+OK\r\n");
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"SET", "key", "v"})),
+            "+QUEUED\r\n");
+  // Another client's write fails to reach the file.
+  file_ops->fail_writes.store(true);
+  ASSERT_TRUE(aof->Append("SET", {"key", "v"}, db.get()));
+  ASSERT_TRUE(aof->Flush());
+  EXPECT_EQ(
+      Roundtrip(client.get(), peer, EncodeRequest({"EXEC"})),
+      "-MISCONF Errors writing to the AOF file: No space left on device\r\n");
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"GET", "key"})),
+            "$-1\r\n");
+  file_ops->fail_writes.store(false);
+  client.reset();
+  aof.reset();
+  std::remove(path.c_str());
 }
 }  // namespace redis_simple

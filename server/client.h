@@ -144,6 +144,10 @@ class Client {
   // Command lookup, arity, AUTH, and MISCONF checks; sets `command_`.
   RequestStatus ValidateRequest(std::string_view name);
   void FailProtocol();
+  // False while the AOF cannot store writes; write commands are then
+  // rejected with AofWriteError(), as Redis replies with MISCONF.
+  bool AofAcceptsWrites() const;
+  std::string AofWriteError() const;
   ClientStatus ProcessCommand();
   void QueueCommand();
   void ResetTransaction();

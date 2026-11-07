@@ -57,6 +57,7 @@ void AppendPersistenceSection(const aof::Aof* const append_only_file,
   if (append_only_file == nullptr) {
     AppendField("aof_rewrite_in_progress", "0", info);
     AppendField("aof_last_bgrewrite_status", "none", info);
+    AppendField("aof_last_write_status", "ok", info);
     AppendField("aof_last_error", "none", info);
     AppendField("aof_current_size", size_t{0}, info);
     AppendField("aof_base_size", size_t{0}, info);
@@ -68,6 +69,8 @@ void AppendPersistenceSection(const aof::Aof* const append_only_file,
               info);
   AppendField("aof_last_bgrewrite_status",
               aof::RewriteStatusName(state.rewrite_status), info);
+  AppendField("aof_last_write_status", state.accepting_writes ? "ok" : "err",
+              info);
   AppendField("aof_last_error", aof::ErrorName(state.last_error), info);
   AppendField("aof_current_size", state.current_size, info);
   AppendField("aof_base_size", state.base_size, info);

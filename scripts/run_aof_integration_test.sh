@@ -17,9 +17,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# REDIS_SIMPLE_SERVER_ARGS adds server flags, such as "--io-threads 4"; it is
+# split on spaces on purpose.
 start_server() {
+  # shellcheck disable=SC2086
   "$server" --bind 127.0.0.1 --port 18081 --appendonly yes \
-    --appendfilename "$aof_file" --appendfsync everysec "$@" &
+    --appendfilename "$aof_file" --appendfsync everysec \
+    ${REDIS_SIMPLE_SERVER_ARGS:-} "$@" &
   server_pid=$!
   sleep 1
   if ! kill -0 "$server_pid" 2>/dev/null; then

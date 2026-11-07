@@ -302,13 +302,20 @@ add_test(
     $<TARGET_FILE:redis_simple>
 )
 
-add_test(
-  NAME redis_simple_integration_aof
-  COMMAND
-    /bin/sh
-    "${CMAKE_SOURCE_DIR}/scripts/run_aof_integration_test.sh"
-    $<TARGET_FILE:redis_simple>
-    $<TARGET_FILE:mock_aof_client>
+foreach(variant IN ITEMS "" _io_threads)
+  add_test(
+    NAME redis_simple_integration_aof${variant}
+    COMMAND
+      /bin/sh
+      "${CMAKE_SOURCE_DIR}/scripts/run_aof_integration_test.sh"
+      $<TARGET_FILE:redis_simple>
+      $<TARGET_FILE:mock_aof_client>
+  )
+endforeach()
+# Rewrites fork while the I/O threads run, which the fork hooks pause.
+set_tests_properties(
+  redis_simple_integration_aof_io_threads
+  PROPERTIES ENVIRONMENT "REDIS_SIMPLE_SERVER_ARGS=--io-threads 4"
 )
 
 add_test(
@@ -430,6 +437,7 @@ set_tests_properties(
   redis_simple_integration_tcp
   redis_simple_integration_server_lifecycle
   redis_simple_integration_aof
+  redis_simple_integration_aof_io_threads
   redis_simple_integration_command_connection
   redis_simple_integration_command_key
   redis_simple_integration_command_string
@@ -458,6 +466,7 @@ set_tests_properties(
 )
 set_tests_properties(
   redis_simple_integration_aof
+  redis_simple_integration_aof_io_threads
   PROPERTIES RESOURCE_LOCK redis_simple_port_18081
 )
 

@@ -43,6 +43,18 @@ bool Server::Run(const ServerOptions& options) {
     if (aof_ == nullptr) {
       return false;
     }
+    // Threads that allocate or free memory wait out the rewrite's fork: the
+    // I/O threads, as they read and parse, and the database's thread that
+    // frees UNLINKed values.
+    aof_->SetForkHooks(
+        [this] {
+          PauseIoThreads();
+          db_->PauseBackgroundFrees();
+        },
+        [this] {
+          db_->ResumeBackgroundFrees();
+          ResumeIoThreads();
+        });
   }
   connection::Connection connection(
       connection::Context{.loop = loop_.get(), .fd = -1});
@@ -180,13 +192,21 @@ bool Server::InstallAcceptCallback() {
 
 int64_t Server::ServerCron() {
   constexpr int64_t kCronIntervalMs = 100;
-  if (shutdown::StopRequested() || (aof_ != nullptr && !aof_->Healthy())) {
+  if (shutdown::StopRequested()) {
     Stop();
     return event_loop::TimeEvent::kNoMore;
   }
-  if (aof_ != nullptr && aof_->ShouldAutoRewrite() &&
-      aof_->StartRewrite(db_.get()) == aof::RewriteResult::kError) {
-    RS_LOG_WARN("automatic AOF rewrite failed to start\n");
+  if (aof_ != nullptr) {
+    // Retries bytes a failed write left behind; only `always` stops on it.
+    if (!aof_->Flush()) {
+      Stop();
+      return event_loop::TimeEvent::kNoMore;
+    }
+    aof_->CheckRewrite();
+    if (aof_->ShouldAutoRewrite() &&
+        aof_->StartRewrite(db_.get()) == aof::RewriteResult::kError) {
+      RS_LOG_WARN("automatic AOF rewrite failed to start\n");
+    }
   }
   ActiveExpireCycle(db_.get());
   return kCronIntervalMs;

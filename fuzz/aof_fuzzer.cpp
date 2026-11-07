@@ -64,9 +64,9 @@ void FuzzAof(const uint8_t* data, size_t size) {
                            0) == db::DbStatus::kOk) {
         const std::vector<std::string_view> args = {"fuzz", value};
         append_only_file->Append("SET", args, database.get());
-        if (append_only_file->Healthy()) {
+        if (append_only_file->AcceptingWrites()) {
           append_only_file->StartRewrite(database.get());
-          append_only_file->WaitUntilRewriteIdle();
+          append_only_file->WaitForRewrite();
         }
       }
     }
