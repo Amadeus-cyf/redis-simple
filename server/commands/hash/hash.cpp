@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -80,24 +81,42 @@ void AddHashListReply(Client* const client, Visit visit) {
   });
   client->AddReply(std::move(encoded));
 }
-}  // namespace
 
-void HandleHSet(Client* const client) {
+// Sets field-value pairs, as Redis' hsetCommand does for both HSET and
+// HMSET. Returns the number of new fields, or nullopt after replying with an
+// error.
+std::optional<int64_t> SetFields(Client* const client,
+                                 std::string_view command_name) {
   const command::CommandArgs& args = client->Args();
   if (args.size() % 2 == 0) {
-    client->AddReply(reply::WrongNumberOfArguments("hset"));
-    return;
+    client->AddReply(reply::WrongNumberOfArguments(command_name));
+    return std::nullopt;
   }
   Hash* hash = nullptr;
   if (!LookupOrCreateHash(client, args[0], &hash)) {
-    return;
+    return std::nullopt;
   }
   int64_t added = 0;
   for (size_t i = 1; i < args.size(); i += 2) {
     added += hash->Set(args[i], args[i + 1]) ? 1 : 0;
   }
   client->MarkModified();
-  client->AddReply(reply::FromInt64(added));
+  return added;
+}
+}  // namespace
+
+void HandleHSet(Client* const client) {
+  if (const std::optional<int64_t> added = SetFields(client, "hset")) {
+    client->AddReply(reply::FromInt64(*added));
+  }
+}
+
+// HSET under its older name, which replies OK. Redis' AOF rewrite writes
+// hashes as HMSET, so loading a Redis AOF needs it.
+void HandleHMSet(Client* const client) {
+  if (SetFields(client, "hmset").has_value()) {
+    client->AddReply(reply::kOk);
+  }
 }
 
 void HandleHGet(Client* const client) {

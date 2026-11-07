@@ -109,6 +109,7 @@ constexpr std::array kCommandTable = {
     ReadCommand("HKEYS", hashes::HandleHKeys, FixedArity(1), OneKey()),
     ReadCommand("HLEN", hashes::HandleHLen, FixedArity(1), OneKey()),
     ReadCommand("HMGET", hashes::HandleHMGet, VariableArity(2), OneKey()),
+    WriteCommand("HMSET", hashes::HandleHMSet, VariableArity(3), OneKey()),
     WriteCommand("HSET", hashes::HandleHSet, VariableArity(3), OneKey()),
     ReadCommand("HVALS", hashes::HandleHVals, FixedArity(1), OneKey()),
     WriteCommand("INCR", strings::HandleIncr, FixedArity(1), OneKey()),

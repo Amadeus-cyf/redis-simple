@@ -220,8 +220,8 @@ prints them: integers up to 2^62 in full, otherwise the shortest digits in
   `BYLEX`, `REV`, `LIMIT`, and `WITHSCORES`, `ZREVRANGE`, `ZRANGEBYSCORE`,
   `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZLEXCOUNT`, `ZCOUNT`,
   `ZSCORE`
-- Hashes: `HSET`, `HGET`, `HDEL`, `HLEN`, `HEXISTS`, `HGETALL`, `HMGET`,
-  `HKEYS`, `HVALS`, `HINCRBY`
+- Hashes: `HSET`, `HMSET`, `HGET`, `HDEL`, `HLEN`, `HEXISTS`, `HGETALL`,
+  `HMGET`, `HKEYS`, `HVALS`, `HINCRBY`
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
 - Persistence and stats: `BGREWRITEAOF`, `INFO [persistence|stats]`
 - Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `AUTH`, and
@@ -378,6 +378,17 @@ The script uses `redis-cli` against both servers and covers RESP requests,
 spaces in arguments, expiration replies, sorted-set range semantics, and
 transaction replies.
 
+With `redis-server` 7 or later installed, check that each server loads the
+other's AOF directory:
+
+```sh
+scripts/check_aof_interop.sh build/debug/redis_simple
+```
+
+It runs every write command this server supports, with a rewrite in
+between, loads the directory in the other server, and compares the
+keyspaces. Set `INTEROP_KEEP=1` to keep the directories for inspection.
+
 ## Benchmarks
 
 Benchmarks use Google Benchmark and build into one `memory_benchmark`
@@ -445,6 +456,10 @@ percent are reliable even on a busy or small machine. Counts miss cache-miss
 costs, so confirm large changes with `redis-benchmark` throughput on a quiet
 machine. Set `PROFILE_OUTPUT_DIR` to keep the callgrind files, which
 `callgrind_annotate` breaks down by function.
+
+`scripts/compare_callgrind.py BASELINE.cg BINARY.cg` lists the functions
+whose instruction counts changed most between two such files, which shows
+where a regression comes from.
 
 `measure_server_memory.sh` reports idle and loaded RSS and bytes per key.
 `MEMORY_VALUE_SIZES`, `MEMORY_REQUESTS`, and `MEMORY_KEY_RANGE` change the

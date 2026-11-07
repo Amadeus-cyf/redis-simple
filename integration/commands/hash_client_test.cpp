@@ -89,6 +89,12 @@ int Run() {
   const std::vector<Case> cases = {
       {"HSET integration_hash name redis version 7\r\n", "2\n"},
       {"HSET integration_hash version 8 mode simple\r\n", "1\n"},
+      {"HMSET hmset_hash a 1 b 2\r\n", "OK\n"},
+      {"HMSET hmset_hash a 3\r\n", "OK\n"},
+      {"HGET hmset_hash a\r\n", "3\n"},
+      {"HGET hmset_hash b\r\n", "2\n"},
+      {"HMSET hmset_hash a\r\n",
+       "ERR wrong number of arguments for 'hmset' command\n"},
       {"HGET integration_hash name\r\n", "redis\n"},
       {"HGET integration_hash version\r\n", "8\n"},
       {"HGET integration_hash missing\r\n", "(nil)\n"},

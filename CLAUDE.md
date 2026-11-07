@@ -215,10 +215,12 @@ ctest --preset debug -L integration --output-on-failure
 ```
 
 When changing behavior shared with Redis and a reference server is available,
-run:
+run the following, as the `redis-differential-check` skill describes (the
+second checks that each server loads the other's AOF):
 
 ```sh
 scripts/run_redis_compatibility_check.sh build/debug/redis_simple
+scripts/check_aof_interop.sh build/debug/redis_simple
 ```
 
 Run release and sanitizer checks after changes to ownership, memory layout,
@@ -310,7 +312,8 @@ Before committing, run the relevant build and tests.
 - Agent skills live in `.claude/skills/<name>/SKILL.md`, and `.agents/skills`
   is a symlink to that folder, so keep one copy. Use the `pre-pr-check` skill
   before committing or opening a pull request, and update it when the checks
-  in this file change.
+  in this file change. `benchmark-against-baseline` and
+  `redis-differential-check` cover performance and Redis comparisons.
 - Keep CMake target-based. Source files are discovered by scoped directory
   globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
   explicitly when they do not belong in a library target.
@@ -328,7 +331,9 @@ Before committing, run the relevant build and tests.
 - Measure performance changes to the server with
   `scripts/profile_server.sh` (callgrind instruction counts per workload)
   and memory changes with `scripts/measure_server_memory.sh` (RSS per key),
-  passing the previous build as the baseline. Use `memory_benchmark` for
+  passing the previous build as the baseline, as the
+  `benchmark-against-baseline` skill describes; `scripts/compare_callgrind.py`
+  shows which functions a regression comes from. Use `memory_benchmark` for
   changes to one component. Report instruction counts, not
   `redis-benchmark` throughput from a small or shared machine, which varies
   more than the effects being measured.
