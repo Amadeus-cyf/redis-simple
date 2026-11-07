@@ -35,7 +35,8 @@ check that could not run, with the reason.
 | Change | Also run |
 | --- | --- |
 | Ownership, memory layout, assertions, low-level data structures | `release` and `sanitizer` presets (build plus `ctest`), then `scripts/run_leak_check.sh` |
-| Request parsing, data types, core containers, buffers, expiration, persistence, event loop | `fuzz` preset: build `redis_simple_fuzzers`, then `ctest --preset fuzz -L fuzz` |
+| Request parsing, data types, core containers, buffers, expiration, persistence, event loop | `fuzz` preset: build `redis_simple_fuzzers`, then `ctest --preset fuzz -L fuzz`. Where the fuzz preset cannot link (no libFuzzer runtime), still compile every changed harness (`clang++ -std=c++23 -fsyntax-only -I. fuzz/<harness>.cpp`) and run it through a small `main` that calls `LLVMFuzzerTestOneInput` on a few inputs, linked with the sanitizer build's `libredis_simple_core.a`; otherwise CI is the first to build them |
+| AOF (`server/aof*`) | `redis_simple_integration_aof` and `redis_simple_integration_aof_io_threads`, the sanitizer suite, and the `AofTest` and `ClientTest` suites under a ThreadSanitizer build (the AOF background thread and the rewrite's `fork`). With a `redis-server` installed, check that each server loads the other's AOF directory (Redis with `--aof-use-rdb-preamble no`), and compare behavior changes with the latest Redis `src/aof.c` |
 | Threaded I/O (`server/io_thread*`, client handoff, `Client::ParseQueries`/`RunParsedQueries`) | the `*_io_threads` integration variants, and the concurrent-clients test under a ThreadSanitizer build |
 | Behavior shared with Redis, when a reference server is available | `scripts/run_redis_compatibility_check.sh build/debug/redis_simple` |
 | Server performance or memory | `scripts/profile_server.sh` and `scripts/measure_server_memory.sh` against the previous build; report instruction counts, not throughput |
@@ -47,7 +48,20 @@ after, in a clean build, and compare the warnings. A renamed local can take
 the name of a variable in an enclosing scope and silently change which one
 the code uses, while still compiling.
 
-## 4. Before pushing
+When renaming or removing a function or option, search every caller, not only
+the library and its tests: `fuzz/`, `benchmarks/`, `integration/`, and
+`scripts/` build or run separately and are easy to miss.
+
+## 4. Stacked pull requests
+
+After the base pull request is squash-merged, the stacked branch conflicts
+with `main`, because it still holds the base's original commits. If
+`git diff <base branch tip> origin/main` is empty, `main` adds nothing the
+stacked branch lacks: merge it with `git merge -s ours origin/main`, then check
+that `git diff origin/main` shows only the stacked change. Otherwise resolve
+the conflicts normally. Neither needs a force push.
+
+## 5. Before pushing
 
 - `git status` is clean apart from the intended change, and no build output
   or scratch files are staged.

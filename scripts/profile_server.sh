@@ -171,9 +171,19 @@ profile() {
       load_collections
       ;;
     aof-writes)
+      # Builds with the multi-part AOF take a directory; older ones a path.
       local aof="${output_dir}/${tag}-aof.aof"
+      local -a aof_args=(--appendfilename "${aof}")
+      # The usage text comes with a failing exit status, which pipefail
+      # would carry into the test, so capture it first.
+      local usage
+      usage="$("${binary}" --no-such-option 2>&1 || true)"
+      if [[ "${usage}" == *--appenddirname* ]]; then
+        aof_args=(--appenddirname "${output_dir}/${tag}-aof"
+          --appendfilename appendonly.aof)
+      fi
       start_server "${binary}" "${output}" --appendonly yes \
-        --appendfilename "${aof}" --appendfsync no
+        "${aof_args[@]}" --appendfsync no
       bench -n 30000 -c 10 -P 16 -r 10000 -t set,incr,lpush,hset,zadd
       ;;
     key-expiry)
@@ -186,7 +196,7 @@ profile() {
       ;;
   esac
   stop_server
-  rm -f "${output_dir}/${tag}-aof.aof"*
+  rm -rf "${output_dir}/${tag}-aof.aof"* "${output_dir}/${tag}-aof"
   instructions="$(callgrind_annotate "${output}" 2>/dev/null |
     awk '/PROGRAM TOTALS/ { gsub(",", "", $1); print $1 }')"
 }

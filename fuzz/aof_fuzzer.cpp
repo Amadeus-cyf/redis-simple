@@ -1,13 +1,17 @@
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "server/aof.h"
@@ -35,26 +39,51 @@ bool WriteAll(int fd, const uint8_t* data, size_t size) {
 }  // namespace
 
 void FuzzAof(const uint8_t* data, size_t size) {
-  std::array<char, 32> path{};
-  constexpr char kTemplate[] = "/tmp/redis_aof_XXXXXX";
-  static_assert(sizeof(kTemplate) <= path.size());
-  for (size_t index = 0; index < sizeof(kTemplate); ++index) {
-    path[index] = kTemplate[index];
-  }
+  // The bytes as a manifest.
+  aof::Manifest::Parse(
+      std::string_view(reinterpret_cast<const char*>(data), size));
 
-  const int fd = mkstemp(path.data());
-  if (fd < 0) {
+  // The bytes after a valid record, as the only incremental file of a
+  // multi-part AOF.
+  constexpr std::string_view kTemplate = "/tmp/redis_aof_XXXXXX";
+  std::array<char, kTemplate.size() + 1> root{};
+  std::ranges::copy(kTemplate, root.begin());
+  if (mkdtemp(root.data()) == nullptr) {
     return;
   }
-  const bool prefixed =
-      WriteAll(fd, reinterpret_cast<const uint8_t*>(kValidCommand.data()),
-               kValidCommand.size());
-  const bool written = prefixed && WriteAll(fd, data, size);
-  close(fd);
+  const std::string directory = std::string(root.data()) + "/appendonlydir";
+  bool written = mkdir(directory.c_str(), 0755) == 0;
+  if (written) {
+    constexpr std::string_view kManifest =
+        "file appendonly.aof.1.incr.aof seq 1 type i\n";
+    const int manifest_fd =
+        open((directory + "/appendonly.aof.manifest").c_str(),
+             O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    written = manifest_fd >= 0 &&
+              WriteAll(manifest_fd,
+                       reinterpret_cast<const uint8_t*>(kManifest.data()),
+                       kManifest.size());
+    if (manifest_fd >= 0) {
+      close(manifest_fd);
+    }
+  }
+  if (written) {
+    const int fd = open((directory + "/appendonly.aof.1.incr.aof").c_str(),
+                        O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    written =
+        fd >= 0 &&
+        WriteAll(fd, reinterpret_cast<const uint8_t*>(kValidCommand.data()),
+                 kValidCommand.size()) &&
+        WriteAll(fd, data, size);
+    if (fd >= 0) {
+      close(fd);
+    }
+  }
   if (written) {
     auto database = db::RedisDb::Create();
-    auto append_only_file = aof::Aof::Open(
-        {path.data(), aof::FsyncPolicy::kAlways}, database.get());
+    auto append_only_file =
+        aof::Aof::Open({directory, "appendonly.aof", aof::FsyncPolicy::kAlways},
+                       database.get());
     if (append_only_file != nullptr) {
       std::string value;
       if (size > 0) {
@@ -71,7 +100,8 @@ void FuzzAof(const uint8_t* data, size_t size) {
       }
     }
   }
-  unlink(path.data());
+  std::error_code error;
+  std::filesystem::remove_all(root.data(), error);
 }
 }  // namespace redis_simple::fuzz
 

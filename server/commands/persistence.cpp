@@ -24,6 +24,11 @@ void AppendField(std::string_view name, size_t value,
                  std::string* const output) {
   AppendField(name, std::to_string(value), output);
 }
+
+void AppendField(std::string_view name, int64_t value,
+                 std::string* const output) {
+  AppendField(name, std::to_string(value), output);
+}
 }  // namespace
 
 void HandleBgRewriteAof(Client* const client) {
@@ -33,48 +38,62 @@ void HandleBgRewriteAof(Client* const client) {
     return;
   }
 
-  switch (aof->StartRewrite(client->Db())) {
-    case aof::RewriteResult::kStarted:
-      client->AddReply(
-          reply::FromString("Background append only file rewriting started"));
-      return;
-    case aof::RewriteResult::kInProgress:
-      client->AddReply(reply::FromError(
-          "ERR background append only file rewrite already in progress"));
-      return;
-    case aof::RewriteResult::kError:
-      client->AddReply(
-          reply::FromError("ERR background append only file rewrite failed"));
-      return;
+  // Redis' bgrewriteaofCommand.
+  if (aof->RewriteInProgress()) {
+    client->AddReply(reply::FromError(
+        "ERR Background append only file rewriting already in progress"));
+    return;
   }
+  if (client->InTransaction()) {
+    // Inside EXEC: the cron starts it once the transaction is done.
+    aof->ScheduleRewrite();
+    client->AddReply(
+        reply::FromString("Background append only file rewriting scheduled"));
+    return;
+  }
+  if (aof->StartRewrite(client->Db()) == aof::RewriteResult::kStarted) {
+    client->AddReply(
+        reply::FromString("Background append only file rewriting started"));
+    return;
+  }
+  client->AddReply(reply::FromError(
+      "ERR Can't execute an AOF background rewriting. Please check the server "
+      "logs for more information."));
 }
 
 namespace {
 void AppendPersistenceSection(const aof::Aof* const append_only_file,
                               std::string* const info) {
+  // Redis' AOF fields, in its order; the size fields only when enabled.
   info->append("# Persistence\r\n");
+  const aof::AofState state =
+      append_only_file != nullptr ? append_only_file->State() : aof::AofState{};
   AppendField("aof_enabled", append_only_file == nullptr ? "0" : "1", info);
-  if (append_only_file == nullptr) {
-    AppendField("aof_rewrite_in_progress", "0", info);
-    AppendField("aof_last_bgrewrite_status", "none", info);
-    AppendField("aof_last_write_status", "ok", info);
-    AppendField("aof_last_error", "none", info);
-    AppendField("aof_current_size", size_t{0}, info);
-    AppendField("aof_base_size", size_t{0}, info);
-    AppendField("aof_pending_bytes", size_t{0}, info);
-    return;
-  }
-  const aof::AofState state = append_only_file->State();
   AppendField("aof_rewrite_in_progress", state.rewrite_in_progress ? "1" : "0",
               info);
-  AppendField("aof_last_bgrewrite_status",
-              aof::RewriteStatusName(state.rewrite_status), info);
-  AppendField("aof_last_write_status", state.accepting_writes ? "ok" : "err",
+  AppendField("aof_rewrite_scheduled", state.rewrite_scheduled ? "1" : "0",
               info);
-  AppendField("aof_last_error", aof::ErrorName(state.last_error), info);
+  AppendField("aof_last_rewrite_time_sec", state.last_rewrite_seconds, info);
+  AppendField("aof_current_rewrite_time_sec", state.current_rewrite_seconds,
+              info);
+  AppendField("aof_last_bgrewrite_status", state.last_rewrite_ok ? "ok" : "err",
+              info);
+  AppendField("aof_rewrites", state.rewrites, info);
+  AppendField("aof_rewrites_consecutive_failures",
+              state.consecutive_rewrite_failures, info);
+  AppendField(
+      "aof_last_write_status",
+      append_only_file == nullptr || state.accepting_writes ? "ok" : "err",
+      info);
+  if (append_only_file == nullptr) {
+    return;
+  }
   AppendField("aof_current_size", state.current_size, info);
   AppendField("aof_base_size", state.base_size, info);
-  AppendField("aof_pending_bytes", state.pending_bytes, info);
+  AppendField("aof_pending_rewrite", state.rewrite_scheduled ? "1" : "0", info);
+  AppendField("aof_buffer_length", state.buffer_length, info);
+  AppendField("aof_pending_bio_fsync", state.pending_fsyncs, info);
+  AppendField("aof_delayed_fsync", state.delayed_fsyncs, info);
 }
 
 using IoThreadList = std::vector<std::unique_ptr<IoThread>>;

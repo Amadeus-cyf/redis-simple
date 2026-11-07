@@ -74,16 +74,28 @@ Guidance for AI coding agents working in this repository.
 - Keep AOF propagation at the successful command-mutation boundary. Preserve
   command order, encode relative TTLs as absolute `PEXPIREAT` records, and do
   not copy argument payloads beyond the owned persistence record.
-- `Aof::Append` only encodes into the pending batch. The read handler calls
-  `Aof::Flush` once per batch of commands, before any replies are written;
-  call `Flush` before arming test failures that depend on file-write order.
-  `Flush` writes the batch on the event-loop thread for every fsync policy, so
-  a process crash cannot lose an acknowledged write; with `everysec` a
-  separate thread only fsyncs, once a second, independently of the writes.
-- After an AOF write error, `Flush` keeps the unwritten bytes and retries
-  them, and write commands get `-MISCONF` until a write succeeds; a failed
-  fsync keeps writes rejected until a rewrite installs a new synced file.
-  Only `always` stops the server, through `Flush` returning false.
+- Keep the AOF's logic aligned with the latest Redis release's `src/aof.c`
+  (8.10 at the time of writing): manifest format and parsing, file naming
+  and sequence numbers, startup, upgrade, loading, flushing, fsync errors,
+  rewrite scheduling and limiting, and `INFO` fields. Document any deliberate
+  difference in the README. Two exist, where Redis can lose data: a manifest
+  whose directory sync failed is adopted and keeps its files, and a rewrite
+  does not start while a failed write is pending. Check interoperability with
+  a `redis-server` when one is available: each must load the other's AOF
+  directory in the command format.
+- `Aof::Append` only encodes into the buffer (Redis' `aof_buf`). The read
+  handler calls `Aof::Flush` once per batch of commands, before any replies
+  are written; call `Flush` before arming test failures that depend on
+  file-write order. `Flush` is Redis' `flushAppendOnlyFile`: with `everysec`
+  and no `force`, it postpones the write for up to two seconds while a
+  background fsync runs, and queues an fsync once a second; with `always` it
+  syncs on the event-loop thread.
+- After an AOF write error, `Flush` cuts a partial write back off the file,
+  keeps the buffer, and retries it, and write commands get `-MISCONF` until a
+  write succeeds. A failed background fsync rejects writes until the next one
+  succeeds. Only `always` stops the server, through `Flush` returning false.
+  `BGREWRITEAOF` inside `EXEC` is scheduled for `Aof::Cron`, so `Flush` never
+  runs inside a transaction.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
 - With `--io-threads` above 1, I/O works like Redis 8: each client belongs
@@ -164,23 +176,37 @@ Guidance for AI coding agents working in this repository.
   `Aof::EndTransaction`, which add `MULTI`/`EXEC` records when there is more
   than one. Replay applies a `MULTI` block only at its `EXEC` and truncates a
   block cut off at the end of the file.
-- Keep AOF rewrite snapshots visitor-based and preserve the original AOF until
-  the snapshot and buffered mutation delta have been synced and atomically
-  installed. The normal append path should pay no copy cost when no rewrite is
-  active.
+- The AOF is multi-part, as in Redis: a directory with a base file,
+  incremental files, and a manifest in Redis' format (`Manifest`). A rewrite
+  first switches appends to a new incremental file (`OpenNextIncrement`), so
+  writes made during it need no buffer; the new base and the files it
+  replaces change only through a new manifest. Keep rewrite snapshots
+  visitor-based, and keep the previous manifest and files until the new
+  manifest is safely renamed into place.
 - `BGREWRITEAOF` forks; the child writes the snapshot and exits, and the
-  server cron finishes the rewrite through `Aof::CheckRewrite`. No other
+  server cron finishes the rewrite through `Aof::Cron`. No other
   thread may allocate or free memory during the fork: the server's fork
   hooks pause the I/O threads and the reclaimer that frees `UNLINK`ed values,
-  and the fsync thread must not allocate or log. Pause any new thread that
-  touches the heap the same way. Keep the child free
-  of locks and logging, since another thread may have held one at the fork.
+  and the AOF background thread (Redis' bio thread), which fsyncs, closes,
+  and deletes files, must not allocate or log: its jobs hold paths in
+  fixed-size buffers, and its queues are cleared without freeing. Pause any
+  new thread that touches the heap the same way. Keep the child free of locks
+  and logging, since another thread may have held one at the fork.
 - Bound AOF snapshot memory and replay command sizes together. Split large
   strings into replay-safe commands and batch collections by encoded bytes, not
   only element count.
-- Complete durable AOF replacement in this order: sync the temporary file,
-  rename it, then sync the parent directory. Keep failed rewrites observable
-  through `INFO persistence` without disabling a still-healthy original AOF.
+- Replace the manifest in this order: write and sync a temporary file, rename
+  it, then sync the directory (`PersistManifest`). After a rename whose
+  directory sync failed, the new manifest is live but may not survive a
+  crash: adopt it, reject writes, and keep the replaced files until a later
+  manifest persists safely. Delete history files only after the manifest that
+  retires them is durable, on the background thread. Keep failed rewrites
+  observable through `INFO persistence` without disabling a still-healthy AOF.
+- Replay the base, then the incremental files in manifest order; a listed
+  file that is missing is fatal, and only the last file may end in a torn
+  record. Accept `SELECT 0` and `#` annotations, as Redis writes them.
+  Restarts keep appending to the last incremental file; only a rewrite starts
+  a new one.
 
 ## Build And Test
 

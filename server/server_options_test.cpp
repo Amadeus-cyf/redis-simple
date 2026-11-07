@@ -14,7 +14,8 @@ TEST(ServerOptionsTest, UsesDefaults) {
   EXPECT_EQ(result.options.bind_address, "127.0.0.1");
   EXPECT_EQ(result.options.port, 8080);
   EXPECT_FALSE(result.options.append_only);
-  EXPECT_EQ(result.options.aof_options.path, "appendonly.aof");
+  EXPECT_EQ(result.options.aof_options.file_name, "appendonly.aof");
+  EXPECT_EQ(result.options.aof_options.directory, "appendonlydir");
   EXPECT_EQ(result.options.aof_options.fsync, aof::FsyncPolicy::kEverySecond);
   EXPECT_EQ(result.options.aof_options.auto_rewrite_min_bytes,
             size_t{64} * 1024 * 1024);
@@ -67,12 +68,64 @@ TEST(ServerOptionsTest, ParsesBindAddressAndPort) {
   EXPECT_EQ(result.options.port, 6380);
 }
 
+TEST(ServerOptionsTest, ParsesAofLoadCorruptTailMaxSize) {
+  const std::array argv = {"redis_simple", "--aof-load-corrupt-tail-max-size",
+                           "4096"};
+  const OptionsResult result = ParseServerOptions(argv.size(), argv.data());
+  EXPECT_EQ(result.status, OptionsStatus::kOk);
+  EXPECT_EQ(result.options.aof_options.load_corrupt_tail_max_bytes, 4096);
+  EXPECT_EQ(ParseServerOptions(1, argv.data())
+                .options.aof_options.load_corrupt_tail_max_bytes,
+            0);
+}
+
+TEST(ServerOptionsTest, RejectsAppendFileNamesWithDirectories) {
+  // As in Redis: a file name, not a path. Spaces are fine; the manifest
+  // quotes them.
+  for (const char* name : {"dir/appendonly.aof", "/tmp/appendonly.aof",
+                           "dir\\appendonly.aof", ""}) {
+    const std::array argv = {"redis_simple", "--appendfilename", name};
+    EXPECT_EQ(ParseServerOptions(argv.size(), argv.data()).status,
+              OptionsStatus::kError)
+        << name;
+  }
+  const std::array argv = {"redis_simple", "--appendfilename",
+                           "append only.aof"};
+  EXPECT_EQ(ParseServerOptions(argv.size(), argv.data()).status,
+            OptionsStatus::kOk);
+}
+
+TEST(ServerOptionsTest, ParsesRedisAofSwitches) {
+  constexpr std::array kArgv = {
+      "redis_simple", "--aof-load-truncated",
+      "no",           "--aof-timestamp-enabled",
+      "yes",          "--aof-rewrite-incremental-fsync",
+      "no",           "--no-appendfsync-on-rewrite",
+      "yes"};
+  const OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
+  ASSERT_EQ(result.status, OptionsStatus::kOk);
+  const aof::Options& options = result.options.aof_options;
+  EXPECT_FALSE(options.load_truncated);
+  EXPECT_TRUE(options.timestamp_enabled);
+  EXPECT_FALSE(options.rewrite_incremental_fsync);
+  EXPECT_TRUE(options.no_fsync_on_rewrite);
+  // Redis' defaults.
+  const aof::Options defaults =
+      ParseServerOptions(1, kArgv.data()).options.aof_options;
+  EXPECT_TRUE(defaults.load_truncated);
+  EXPECT_FALSE(defaults.timestamp_enabled);
+  EXPECT_TRUE(defaults.rewrite_incremental_fsync);
+  EXPECT_FALSE(defaults.no_fsync_on_rewrite);
+}
+
 TEST(ServerOptionsTest, ParsesAofOptions) {
   constexpr std::array kArgv = {"redis_simple",
                                 "--appendonly",
                                 "yes",
                                 "--appendfilename",
-                                "/tmp/appendonly.aof",
+                                "data.aof",
+                                "--appenddirname",
+                                "/tmp/aof",
                                 "--appendfsync",
                                 "always",
                                 "--auto-aof-rewrite-min-size",
@@ -84,7 +137,8 @@ TEST(ServerOptionsTest, ParsesAofOptions) {
 
   EXPECT_EQ(result.status, OptionsStatus::kOk);
   EXPECT_TRUE(result.options.append_only);
-  EXPECT_EQ(result.options.aof_options.path, "/tmp/appendonly.aof");
+  EXPECT_EQ(result.options.aof_options.file_name, "data.aof");
+  EXPECT_EQ(result.options.aof_options.directory, "/tmp/aof");
   EXPECT_EQ(result.options.aof_options.fsync, aof::FsyncPolicy::kAlways);
   EXPECT_EQ(result.options.aof_options.auto_rewrite_min_bytes, 4096);
   EXPECT_EQ(result.options.aof_options.auto_rewrite_percentage, 50);
