@@ -468,21 +468,22 @@ bool ListPack::Insert(size_t offset, ListPack::Position where,
 bool ListPack::PlanEntry(const ListPackEntry& entry, Encoding* const encoding) {
   constexpr size_t kMaxStringEncodingOverhead = 10;
   if (!entry.is_integer &&
-      entry.str.size() >
+      entry.string_value.size() >
           std::numeric_limits<uint32_t>::max() - kMaxStringEncodingOverhead) {
     return false;
   }
   int64_t integer_value = entry.integer_value;
-  if (entry.is_integer || utils::ToInt64(entry.str, &integer_value)) {
+  if (entry.is_integer || utils::ToInt64(entry.string_value, &integer_value)) {
     encoding->integer_value = integer_value;
     encoding->encoding_type = EncodingGeneralType::kInteger;
     encoding->backlen_bytes =
         BacklenBytes(EncodeInteger(nullptr, integer_value));
   } else {
-    encoding->str = entry.str;
+    encoding->string_value = entry.string_value;
     encoding->integer_value = 0;
     encoding->encoding_type = EncodingGeneralType::kString;
-    encoding->backlen_bytes = BacklenBytes(EncodeString(nullptr, entry.str));
+    encoding->backlen_bytes =
+        BacklenBytes(EncodeString(nullptr, entry.string_value));
   }
   return true;
 }
@@ -490,7 +491,7 @@ bool ListPack::PlanEntry(const ListPackEntry& entry, Encoding* const encoding) {
 size_t ListPack::EncodedEntryBytes(const Encoding& encoding) {
   const size_t backlen = encoding.encoding_type == EncodingGeneralType::kInteger
                              ? EncodeInteger(nullptr, encoding.integer_value)
-                             : EncodeString(nullptr, encoding.str);
+                             : EncodeString(nullptr, encoding.string_value);
   return backlen + encoding.backlen_bytes;
 }
 
@@ -552,7 +553,7 @@ bool ListPack::BatchInsert(size_t offset, ListPack::Position where,
     if (encoding.encoding_type == EncodingGeneralType::kInteger) {
       offset += EncodeInteger(listpack_.get() + offset, encoding.integer_value);
     } else {
-      offset += EncodeString(listpack_.get() + offset, encoding.str);
+      offset += EncodeString(listpack_.get() + offset, encoding.string_value);
     }
     offset += encoding.backlen_bytes;
   }

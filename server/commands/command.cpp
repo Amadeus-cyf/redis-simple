@@ -209,19 +209,22 @@ constexpr unsigned char FoldForLookup(char value) {
   return static_cast<unsigned char>(value) | kCaseBit;
 }
 
-// Case-insensitive comparison against a table name, which is upper-case
-// letters only.
-constexpr bool EqualsCommandName(std::string_view name,
-                                 std::string_view table_name) {
-  if (name.size() != table_name.size()) {
-    return false;
-  }
-  unsigned char difference = 0;
-  for (size_t position = 0; position < name.size(); ++position) {
-    difference |=
-        FoldForLookup(name[position]) ^ FoldForLookup(table_name[position]);
-  }
-  return difference == 0;
+// A name folded to lower case and zero-padded to kMaxNameLength bytes, so
+// two names compare with two 8-byte comparisons. Folding never yields zero,
+// so the padding cannot match a folded byte.
+struct FoldedName {
+  uint64_t low{};
+  uint64_t high{};
+
+  constexpr bool operator==(const FoldedName&) const = default;
+};
+
+// Packs folded bytes into the two words, the same way at compile time and at
+// run time.
+constexpr void AddFoldedByte(size_t position, unsigned char value,
+                             FoldedName* const folded) {
+  uint64_t& word = position < 8 ? folded->low : folded->high;
+  word |= uint64_t{value} << ((position % 8) * 8);
 }
 
 constexpr uint32_t HashStep(uint32_t hash, char value) {
@@ -264,24 +267,41 @@ constexpr std::array<uint8_t, kIndexSize> BuildIndex() {
 }
 
 constexpr const std::array<uint8_t, kIndexSize> kCommandIndex = BuildIndex();
+
+constexpr std::array<FoldedName, kCommandTable.size()> BuildFoldedNames() {
+  std::array<FoldedName, kCommandTable.size()> names{};
+  for (size_t position = 0; position < kCommandTable.size(); ++position) {
+    const std::string_view name = kCommandTable[position].name;
+    for (size_t offset = 0; offset < name.size(); ++offset) {
+      AddFoldedByte(offset, FoldForLookup(name[offset]), &names[position]);
+    }
+  }
+  return names;
+}
+
+constexpr const std::array<FoldedName, kCommandTable.size()> kFoldedNames =
+    BuildFoldedNames();
 }  // namespace
 
 const Command* Find(std::string_view name) {
   if (name.empty() || name.size() > kMaxNameLength) {
     return nullptr;
   }
+  // One pass folds the name, hashes it, and packs it for the comparison.
   uint32_t hash = kFnvOffsetBasis;
-  for (const char value : name) {
-    hash = HashStep(hash, value);
+  FoldedName folded;
+  for (size_t position = 0; position < name.size(); ++position) {
+    const unsigned char value = FoldForLookup(name[position]);
+    hash = (hash ^ value) * kFnvPrime;
+    AddFoldedByte(position, value, &folded);
   }
   for (size_t slot = hash & kIndexMask;; slot = (slot + 1) & kIndexMask) {
     const uint8_t entry = kCommandIndex[slot];
     if (entry == 0) {
       return nullptr;
     }
-    const Command& command = kCommandTable[entry - 1];
-    if (EqualsCommandName(name, command.name)) {
-      return &command;
+    if (kFoldedNames[entry - 1] == folded) {
+      return &kCommandTable[entry - 1];
     }
   }
 }

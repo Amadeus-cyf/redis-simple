@@ -52,11 +52,12 @@ Guidance for AI coding agents working in this repository.
 - Keep request decoding incremental and zero-copy. Standard RESP arrays are the
   primary wire format; inline commands remain a compatibility path. Frame both
   as Redis' `processMultibulkBuffer` and `processInlineBuffer` do, with its
-  limits and `Protocol error` messages; only quoted inline arguments are
-  copied, into the client's `ParseState`, which releases them once the
-  requests have run. Keep the parser's hot path inlined: inner helpers return
-  a `ParseStatus` and report errors through an out-parameter, and rare cases
-  stay in cold functions.
+  limits and `Protocol error` messages. Inline requests and AOF manifest
+  lines split with `utils::SplitArgs` (Redis' `sdssplitargs`); only quoted
+  inline arguments are copied, into the client's `ParseState`, which
+  releases them once the requests have run. Keep the parser's hot path
+  inlined: inner helpers return a `ParseStatus` and report errors through an
+  out-parameter, and rare cases stay in cold functions.
 - Parse numbers as Redis does: integer arguments with `utils::ToInt64`
   (`string2ll`), floats with `utils::ToDouble` (`string2d`), and score range
   bounds with `utils::ToRangeDouble` (`zslParseRange`). Format doubles with
@@ -170,6 +171,10 @@ Guidance for AI coding agents working in this repository.
   Queued arguments are copied once into the client's `MultiState`, the
   ownership boundary for arguments that outlive a read. `EXEC` runs the queue
   under the `EXEC` command's pinned clock.
+- Read the time in commands through `RedisDb::Now()`, never the system clock
+  directly: it is pinned per command (and per `EXEC`), as Redis'
+  `commandTimeSnapshot` is, and read lazily, so commands that touch no TTL
+  never read the clock.
 - `WATCH` invalidation lives in `RedisDb`: its key-level mutations (set,
   delete, unlink, expire, persist, rename, flush, and expiration) touch watched
   keys. Commands that edit a value in place are covered by `Client`, which
@@ -216,12 +221,17 @@ ctest --preset debug -L integration --output-on-failure
 
 When changing behavior shared with Redis and a reference server is available,
 run the following, as the `redis-differential-check` skill describes (the
-second checks that each server loads the other's AOF):
+last checks that each server loads the other's AOF):
 
 ```sh
 scripts/run_redis_compatibility_check.sh build/debug/redis_simple
+scripts/compare_with_redis.py build/debug/redis_simple
 scripts/check_aof_interop.sh build/debug/redis_simple
 ```
+
+`compare_with_redis.py` compares every supported command's replies, edge
+cases and random operations included; add cases when adding commands or
+options.
 
 Run release and sanitizer checks after changes to ownership, memory layout,
 assertions, or low-level data structures:

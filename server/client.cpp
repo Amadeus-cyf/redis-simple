@@ -14,7 +14,6 @@
 #include "server/aof/aof.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
-#include "utils/time_utils.h"
 
 namespace redis_simple {
 namespace {
@@ -31,13 +30,13 @@ constexpr std::string_view kExecAbort =
 class CommandTimeScope {
  public:
   explicit CommandTimeScope(db::RedisDb* const db) : db_(db) {
-    db_->SetCommandTime(utils::NowInMilliseconds());
+    db_->PinCommandTime();
   }
   CommandTimeScope(const CommandTimeScope&) = delete;
   CommandTimeScope& operator=(const CommandTimeScope&) = delete;
   CommandTimeScope(CommandTimeScope&&) = delete;
   CommandTimeScope& operator=(CommandTimeScope&&) = delete;
-  ~CommandTimeScope() { db_->ClearCommandTime(); }
+  ~CommandTimeScope() { db_->UnpinCommandTime(); }
 
  private:
   db::RedisDb* const db_;
@@ -176,11 +175,6 @@ ssize_t Client::SendReply() {
 }
 
 ssize_t Client::SendBufferReply() {
-  const size_t reply_length = reply_buffer_.UnsentLength();
-  const int logged_length = static_cast<int>(std::min(
-      reply_length, static_cast<size_t>(std::numeric_limits<int>::max())));
-  RS_LOG_DEBUG("SendBufferReply %.*s %zu\n", logged_length,
-               reply_buffer_.UnsentBuffer(), reply_length);
   ssize_t nwritten = connection_->Write(
       {reply_buffer_.UnsentBuffer(), reply_buffer_.UnsentLength()});
   if (nwritten < 0) {
@@ -204,8 +198,6 @@ ssize_t Client::SendListReply() {
 ClientStatus Client::ProcessInputBuffer() {
   while (!close_after_reply_ &&
          query_buffer_.Consumed() < query_buffer_.Size()) {
-    RS_LOG_DEBUG("process loop %zu %zu\n", query_buffer_.Consumed(),
-                 query_buffer_.Size());
     const RequestStatus status = ParseRequest();
     if (status == RequestStatus::kIncomplete ||
         status == RequestStatus::kProtocolError) {
@@ -323,8 +315,6 @@ ClientStatus Client::RunParsedQueries() {
 }
 
 Client::RequestStatus Client::ValidateRequest(std::string_view name) {
-  RS_LOG_DEBUG("command name %.*s\n", static_cast<int>(name.size()),
-               name.data());
   const command::Command* command = command::Find(name);
   if (command == nullptr) {
     RS_LOG_DEBUG("command not found\n");
@@ -386,8 +376,6 @@ ClientStatus Client::ProcessCommand() {
   if (command_ == nullptr) {
     return ClientStatus::kError;
   }
-  RS_LOG_DEBUG("process command: %.*s\n",
-               static_cast<int>(command_->name.size()), command_->name.data());
   if (multi_.Active() && command_->queued_in_multi) {
     QueueCommand();
     return ClientStatus::kOk;

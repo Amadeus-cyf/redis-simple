@@ -18,7 +18,7 @@ namespace redis_simple::in_memory {
 class ListPack {
  public:
   struct ListPackEntry {
-    std::string_view str;
+    std::string_view string_value;
     int64_t integer_value;
     bool is_integer;
   };
@@ -117,7 +117,7 @@ class ListPack {
     kSize5BytesBacklenMax = (1ULL << 35) - 1,
   };
   struct Encoding {
-    std::string_view str;
+    std::string_view string_value;
     int64_t integer_value;
     EncodingGeneralType encoding_type;
     size_t backlen_bytes;

@@ -41,9 +41,9 @@ inline Level ParseLevel(const char* value) {
     return Level::kInfo;
   }
   std::string level(value);
-  for (char& ch : level) {
-    if (ch >= 'A' && ch <= 'Z') {
-      ch = static_cast<char>(ch - 'A' + 'a');
+  for (char& character : level) {
+    if (character >= 'A' && character <= 'Z') {
+      character = static_cast<char>(character - 'A' + 'a');
     }
   }
   if (level == "debug") {
@@ -71,10 +71,9 @@ inline Level& MinLevel() {
 
 inline void SetLevel(Level level) { MinLevel() = level; }
 
+// kOff is above every level a message can have, so it disables them all.
 inline bool Enabled(Level level) {
-  const Level min_level = MinLevel();
-  return min_level != Level::kOff &&
-         static_cast<int>(level) >= static_cast<int>(min_level);
+  return static_cast<int>(level) >= static_cast<int>(MinLevel());
 }
 
 inline std::mutex& LogMutex() {
@@ -156,8 +155,8 @@ inline void VLogf(Level level, const char* file, int line, const char* fmt,
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((format(printf, 4, 5)))
 #endif
-inline void Logf(Level level, const char* file, int line, const char* fmt,
-                 ...) {
+inline void
+Logf(Level level, const char* file, int line, const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
   VLogf(level, file, line, fmt, args);

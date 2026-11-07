@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 
+#include "utils/split_args.h"
 #include "utils/string_utils.h"
 
 namespace redis_simple::request_parser {
@@ -74,11 +75,12 @@ inline ParseStatus ParseLengthLine(std::string_view input, size_t start,
   int64_t value = 0;
   const size_t limit = std::min(input.size(), start + kMaxFastDigits);
   for (; position < limit; ++position) {
-    const char character = input[position];
-    if (character < '0' || character > '9') {
+    // Wraps for bytes below '0', so one comparison rejects every non-digit.
+    const auto digit = static_cast<unsigned char>(input[position] - '0');
+    if (digit > 9) {
       break;
     }
-    value = (value * 10) + (character - '0');
+    value = (value * 10) + digit;
   }
   const size_t digits = position - start;
   if (digits == 0 || (digits > 1 && input[start] == '0') ||
@@ -227,129 +229,6 @@ ParseResult ResumeResp(std::string_view input, ParseState* const state) {
   return {.status = ParseStatus::kComplete, .consumed = state->offset};
 }
 
-bool IsSpace(char c) {
-  return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' ||
-         c == '\r';
-}
-
-int HexValue(char c) {
-  if (c >= '0' && c <= '9') {
-    return c - '0';
-  }
-  if (c >= 'a' && c <= 'f') {
-    return c - 'a' + 10;
-  }
-  if (c >= 'A' && c <= 'F') {
-    return c - 'A' + 10;
-  }
-  return -1;
-}
-
-// Redis' sdssplitargs, which splits inline requests: whitespace separates
-// arguments, which may be "double quoted" with escapes or 'single quoted'.
-// Plain arguments stay views into `line`; an argument with quotes is
-// unescaped into `storage`. Returns false for unbalanced quotes.
-bool SplitInline(std::string_view line, std::deque<std::string>* storage,
-                 std::vector<std::string_view>* const out) {
-  // sdssplitargs reads a C string, so a NUL ends the line.
-  line = line.substr(0, line.find('\0'));
-  size_t position = 0;
-  const auto at = [line](size_t index) {
-    return index < line.size() ? line[index] : '\0';
-  };
-  while (true) {
-    while (position < line.size() && IsSpace(line[position])) {
-      ++position;
-    }
-    if (position >= line.size()) {
-      return true;
-    }
-    const size_t start = position;
-    std::string unescaped;
-    bool quoted = false;
-    bool in_double_quotes = false;
-    bool in_single_quotes = false;
-    bool done = false;
-    while (!done) {
-      const char c = at(position);
-      if (in_double_quotes) {
-        if (c == '\\' && at(position + 1) == 'x' &&
-            HexValue(at(position + 2)) >= 0 &&
-            HexValue(at(position + 3)) >= 0) {
-          unescaped.push_back(static_cast<char>(
-              (HexValue(at(position + 2)) * 16) + HexValue(at(position + 3))));
-          position += 3;
-        } else if (c == '\\' && at(position + 1) != '\0') {
-          ++position;
-          switch (at(position)) {
-            case 'n':
-              unescaped.push_back('\n');
-              break;
-            case 'r':
-              unescaped.push_back('\r');
-              break;
-            case 't':
-              unescaped.push_back('\t');
-              break;
-            case 'b':
-              unescaped.push_back('\b');
-              break;
-            case 'a':
-              unescaped.push_back('\a');
-              break;
-            default:
-              unescaped.push_back(at(position));
-              break;
-          }
-        } else if (c == '"') {
-          // The closing quote must be followed by a space or the end.
-          if (at(position + 1) != '\0' && !IsSpace(at(position + 1))) {
-            return false;
-          }
-          done = true;
-        } else if (c == '\0') {
-          return false;
-        } else {
-          unescaped.push_back(c);
-        }
-      } else if (in_single_quotes) {
-        if (c == '\\' && at(position + 1) == '\'') {
-          ++position;
-          unescaped.push_back('\'');
-        } else if (c == '\'') {
-          if (at(position + 1) != '\0' && !IsSpace(at(position + 1))) {
-            return false;
-          }
-          done = true;
-        } else if (c == '\0') {
-          return false;
-        } else {
-          unescaped.push_back(c);
-        }
-      } else if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\0') {
-        done = true;
-      } else if (c == '"') {
-        quoted = true;
-        in_double_quotes = true;
-      } else if (c == '\'') {
-        quoted = true;
-        in_single_quotes = true;
-      } else {
-        unescaped.push_back(c);
-      }
-      if (position < line.size()) {
-        ++position;
-      }
-    }
-    if (quoted) {
-      // A deque keeps earlier strings, and the views into them, in place.
-      out->emplace_back(storage->emplace_back(std::move(unescaped)));
-    } else {
-      out->push_back(line.substr(start, unescaped.size()));
-    }
-  }
-}
-
 // Splits one inline command, a line of space-separated arguments that may be
 // quoted, as Redis' processInlineBuffer does.
 ParseResult ParseInline(std::string_view input, ParseState* const state,
@@ -368,7 +247,16 @@ ParseResult ParseInline(std::string_view input, ParseState* const state,
   }
   std::vector<std::string_view>& tokens = state->inline_tokens;
   tokens.clear();
-  if (!SplitInline(input.substr(0, line_end), &state->unescaped, &tokens)) {
+  const bool split = utils::SplitArgs(
+      input.substr(0, line_end),
+      [state, &tokens](std::string_view argument, bool quoted) {
+        // Quoted arguments are unescaped copies; the deque keeps each one,
+        // and the views into it, in place until the requests have run.
+        tokens.push_back(
+            quoted ? std::string_view(state->unescaped.emplace_back(argument))
+                   : argument);
+      });
+  if (!split) {
     return {.status = ParseStatus::kInvalid,
             .error = ProtocolError::kUnbalancedQuotes};
   }

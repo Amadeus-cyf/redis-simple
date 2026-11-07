@@ -204,6 +204,8 @@ class Aof {
   bool LoadManifest();
   bool Replay(db::RedisDb* db);
   bool ReplayFile(db::RedisDb* db, int fd, bool last);
+  bool HandleTruncatedFile(int fd, bool last, size_t valid_bytes) const;
+  bool HandleCorruptTail(int fd, bool last, size_t corrupt_from) const;
   bool CutTail(int fd, size_t valid_bytes) const;
   bool CreateBaseIfMissing(db::RedisDb* db);
   bool OpenLastIncrement();

@@ -341,7 +341,7 @@ TEST(RedisDbTest, ExpirationAndFlushDirtyWatchedKeys) {
   EXPECT_FALSE(active.Dirty());
   EXPECT_EQ(redis_db->ExpireSome(16, later).expired, 1);
   EXPECT_TRUE(active.Dirty());
-  redis_db->ClearCommandTime();
+  redis_db->UnpinCommandTime();
 
   redis_db->Flush();
   EXPECT_TRUE(flushed.Dirty());

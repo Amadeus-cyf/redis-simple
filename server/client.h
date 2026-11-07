@@ -23,7 +23,7 @@
 #include "server/server_context.h"
 
 namespace redis_simple::aof {
-class Aof;
+class FileReplayer;
 }
 
 namespace redis_simple {
@@ -112,7 +112,8 @@ class Client {
   void UnwatchKeys() { Db()->UnwatchKeys(&watcher_); }
 
  private:
-  friend class aof::Aof;
+  // Replays AOF commands through a client without a connection.
+  friend class aof::FileReplayer;
   enum class RequestStatus {
     kReady,
     kIncomplete,

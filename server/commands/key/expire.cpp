@@ -10,7 +10,6 @@
 #include "server/db/db.h"
 #include "server/reply.h"
 #include "utils/string_utils.h"
-#include "utils/time_utils.h"
 
 namespace redis_simple::command::key {
 namespace {
@@ -136,9 +135,9 @@ void AddExpireReply(Client* const client, int64_t multiplier, bool absolute,
   }
   int64_t expire = 0;
   const bool valid_expire =
-      absolute ? ScaleAbsoluteExpiration(args.ttl, multiplier, &expire)
-               : ExpireAtFromTtl(args.ttl, multiplier,
-                                 utils::NowInMilliseconds(), &expire);
+      absolute
+          ? ScaleAbsoluteExpiration(args.ttl, multiplier, &expire)
+          : ExpireAtFromTtl(args.ttl, multiplier, client->Db()->Now(), &expire);
   if (!valid_expire) {
     std::string message = "ERR invalid expire time in '";
     message.append(command).append("' command");

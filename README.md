@@ -378,6 +378,13 @@ The script uses `redis-cli` against both servers and covers RESP requests,
 spaces in arguments, expiration replies, sorted-set range semantics, and
 transaction replies.
 
+To compare every supported command's replies, edge cases and seeded random
+operations included, in RESP2 and RESP3 (the script starts both servers):
+
+```sh
+scripts/compare_with_redis.py build/debug/redis_simple
+```
+
 With `redis-server` 7 or later installed, check that each server loads the
 other's AOF directory:
 

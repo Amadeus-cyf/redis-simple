@@ -34,7 +34,7 @@ std::string StringAt(const ListPack& listpack, size_t offset) {
 void ExpectEntryAt(const ListPack& listpack, size_t offset,
                    const ListPack::ListPackEntry& entry) {
   if (!entry.is_integer) {
-    EXPECT_EQ(StringAt(listpack, offset), entry.str);
+    EXPECT_EQ(StringAt(listpack, offset), entry.string_value);
     return;
   }
 
@@ -622,9 +622,10 @@ TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
         return true;
       }));
       const size_t last = std::min(stop, expected.size() - 1);
-      EXPECT_EQ(forward, std::vector<std::string>(
-                             expected.begin() + static_cast<long>(start),
-                             expected.begin() + static_cast<long>(last) + 1))
+      EXPECT_EQ(forward,
+                std::vector<std::string>(
+                    expected.begin() + static_cast<std::ptrdiff_t>(start),
+                    expected.begin() + static_cast<std::ptrdiff_t>(last) + 1))
           << start << ".." << stop;
 
       std::vector<std::string> reverse;

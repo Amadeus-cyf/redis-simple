@@ -334,9 +334,12 @@ void RedisDb::TouchWatchedKey(const HashedKey& key) {
   }
 }
 
-int64_t RedisDb::Now() const {
-  return command_time_.has_value() ? *command_time_
-                                   : utils::NowInMilliseconds();
+int64_t RedisDb::ReadClock() const {
+  const int64_t now = utils::NowInMilliseconds();
+  if (time_pinned_) {
+    command_time_ = now;
+  }
+  return now;
 }
 
 bool RedisDb::IsKeyExpired(std::string_view key) const {
