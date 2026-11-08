@@ -56,8 +56,11 @@ Guidance for AI coding agents working in this repository.
   lines split with `utils::SplitArgs` (Redis' `sdssplitargs`); only quoted
   inline arguments are copied, into the client's `ParseState`, which
   releases them once the requests have run. Keep the parser's hot path
-  inlined: inner helpers return a `ParseStatus` and report errors through an
-  out-parameter, and rare cases stay in cold functions.
+  inlined: inner helpers return small structs by value (status, error, and
+  values together) instead of filling out-parameters, so their fields stay in
+  registers; length lines of one or two digits skip the digit loop; and rare
+  cases (slow length lines, inline requests, resuming a split request) stay
+  in out-of-line functions.
 - Parse numbers as Redis does: integer arguments with `utils::ToInt64`
   (`string2ll`), floats with `utils::ToDouble` (`string2d`), and score range
   bounds with `utils::ToRangeDouble` (`zslParseRange`). Format doubles with
