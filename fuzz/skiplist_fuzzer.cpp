@@ -10,7 +10,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
-using IntSkiplist = in_memory::Skiplist<int64_t>;
+using IntSkiplist = memory::Skiplist<int64_t>;
 
 std::vector<int64_t> ToVector(const std::set<int64_t>& model) {
   return {model.begin(), model.end()};

@@ -11,7 +11,7 @@
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::session {
+namespace redis_simple::commands::session {
 namespace {
 constexpr std::string_view kWrongPass =
     "WRONGPASS invalid username-password pair or user is disabled.";
@@ -57,7 +57,7 @@ bool ValidClientAttribute(std::string_view value) {
 
 void HandleAuth(Client* const client) {
   // Redis' authCommand: AUTH <password> or AUTH <username> <password>.
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   if (args.size() > 2) {
     client->AddReply(reply::kSyntaxError);
     return;
@@ -79,7 +79,7 @@ void HandleAuth(Client* const client) {
 
 void HandleHello(Client* const client) {
   // Redis' helloCommand: [protover [AUTH username password] [SETNAME name]].
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   int64_t version = 0;
   size_t next = 0;
   if (!args.empty()) {
@@ -144,7 +144,7 @@ void HandleHello(Client* const client) {
 
 void HandleClient(Client* const client) {
   // The CLIENT subcommands a connection uses for itself.
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const std::string_view subcommand = args[0];
   const auto check_arity = [&](size_t count, std::string_view name) {
     if (args.size() == count) {
@@ -223,7 +223,7 @@ void HandleSelect(Client* const client) {
 
 void HandlePing(Client* const client) {
   constexpr std::string_view kPong = "+PONG\r\n";
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   if (args.empty()) {
     client->AddReply(kPong);
   } else {
@@ -239,4 +239,4 @@ void HandleQuit(Client* const client) {
   client->AddReply(reply::kOk);
   client->CloseAfterReply();
 }
-}  // namespace redis_simple::command::session
+}  // namespace redis_simple::commands::session

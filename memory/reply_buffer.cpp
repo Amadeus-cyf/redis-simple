@@ -8,7 +8,7 @@
 
 #include "utils/check.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 ReplyBuffer::ReplyBuffer(size_t buffer_size, size_t chunk_size)
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
     : buffer_(new char[buffer_size]),
@@ -126,13 +126,13 @@ void ReplyBuffer::ConsumeList(size_t nwritten) {
 void ReplyBuffer::PushNode(std::unique_ptr<ReplyChunk> node) {
   ++node_count_;
   reply_bytes_ += node->capacity;
-  ReplyChunk* const node_ptr = node.get();
+  ReplyChunk* const chunk = node.get();
   if (reply_head_ == nullptr) {
     reply_head_ = std::move(node);
   } else {
     reply_tail_->next = std::move(node);
   }
-  reply_tail_ = node_ptr;
+  reply_tail_ = chunk;
 }
 
 void ReplyBuffer::PopFront() {
@@ -143,4 +143,4 @@ void ReplyBuffer::PopFront() {
     reply_tail_ = nullptr;
   }
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

@@ -105,13 +105,16 @@ class State {
 // SipHash-c-d keyed with a 128-bit key (Aumasson and Bernstein, 2012).
 // Keyed hashing keeps attackers from precomputing colliding keys that would
 // degrade hash tables into long chains.
-template <int kCompressionRounds, int kFinalizationRounds>
-uint64_t SipHash(std::string_view data, const SipHashKey& key) {
+namespace siphash_internal {
+inline State KeyedState(const SipHashKey& key) {
   const std::span<const uint8_t, 16> key_bytes(key);
-  siphash_internal::State state(
-      siphash_internal::LoadLittleEndian64(key_bytes.first<8>()),
-      siphash_internal::LoadLittleEndian64(key_bytes.last<8>()));
+  return {LoadLittleEndian64(key_bytes.first<8>()),
+          LoadLittleEndian64(key_bytes.last<8>())};
+}
 
+// Hashes `data` from a state already keyed.
+template <int kCompressionRounds, int kFinalizationRounds>
+uint64_t HashFrom(State state, std::string_view data) {
   const std::span<const uint8_t> input(
       reinterpret_cast<const uint8_t*>(data.data()), data.size());
   const size_t full_words = input.size() / 8;
@@ -122,17 +125,27 @@ uint64_t SipHash(std::string_view data, const SipHashKey& key) {
 
   uint64_t last = static_cast<uint64_t>(input.size() & 0xff) << 56;
   const std::span<const uint8_t> tail = input.subspan(full_words * 8);
-  last |= siphash_internal::LoadTail(tail);
+  last |= LoadTail(tail);
   state.Absorb<kCompressionRounds>(last);
   return state.Finish<kFinalizationRounds>();
+}
+}  // namespace siphash_internal
+
+template <int kCompressionRounds, int kFinalizationRounds>
+uint64_t SipHash(std::string_view data, const SipHashKey& key) {
+  return siphash_internal::HashFrom<kCompressionRounds, kFinalizationRounds>(
+      siphash_internal::KeyedState(key), data);
 }
 
 // Process-wide random key for hash tables, generated once on first use.
 const SipHashKey& HashSeed();
 
-// Seeded SipHash-1-2, the variant Redis uses for its dictionaries.
+// Seeded SipHash-1-2, the variant Redis uses for its dictionaries. The keyed
+// starting state is computed once, so each hash starts from a copy of it.
 inline uint64_t SeededHash(std::string_view data) {
-  return SipHash<1, 2>(data, HashSeed());
+  static const siphash_internal::State kSeededState =
+      siphash_internal::KeyedState(HashSeed());
+  return siphash_internal::HashFrom<1, 2>(kSeededState, data);
 }
 }  // namespace redis_simple::utils
 

@@ -1,32 +1,42 @@
 #include <benchmark/benchmark.h>
 
+#include <array>
+#include <cstddef>
 #include <random>
 
-#include "benchmarks/buffer.h"
 #include "memory/dynamic_buffer.h"
 
 namespace redis_simple {
 namespace {
-in_memory::DynamicBuffer& DynamicBufferBenchmarkBuffer() {
-  static in_memory::DynamicBuffer buffer;
+constexpr size_t kPayloadSize = 4096;
+
+// Leaked, so the static has no destructor to run at exit.
+memory::DynamicBuffer& DynamicBufferBenchmarkBuffer() {
+  static auto& buffer = *new memory::DynamicBuffer;
   return buffer;
 }
 
-void FillBenchmarkBuffer() {
-  static std::mt19937 rng(std::random_device{}());
-  std::uniform_int_distribution<int> letter_dist(0, 25);
-  std::uniform_int_distribution<int> newline_dist(0, 1023);
-  for (char& i : g_buffer) {
-    i = newline_dist(rng) == 0 ? '\n'
-                               : static_cast<char>(letter_dist(rng) + 'a');
-  }
+// Lower-case letters with a newline about every KiB, like request text.
+const std::array<char, kPayloadSize>& Payload() {
+  static const std::array<char, kPayloadSize> kPayload = [] {
+    std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<int> letter(0, 25);
+    std::uniform_int_distribution<int> newline(0, 1023);
+    std::array<char, kPayloadSize> payload{};
+    for (char& character : payload) {
+      character = newline(generator) == 0
+                      ? '\n'
+                      : static_cast<char>(letter(generator) + 'a');
+    }
+    return payload;
+  }();
+  return kPayload;
 }
 
 void DynamicBufferWrite(benchmark::State& state) {
-  FillBenchmarkBuffer();
   for (auto _ : state) {
     (void)_;
-    DynamicBufferBenchmarkBuffer().Append(g_buffer.data(), g_buffer.size());
+    DynamicBufferBenchmarkBuffer().Append(Payload().data(), Payload().size());
   }
 }
 

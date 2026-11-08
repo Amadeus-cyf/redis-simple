@@ -6,8 +6,8 @@
 #include <string>
 #include <string_view>
 
-namespace redis_simple::command {
-TEST(CommandRegistryTest, FindsCommandsCaseInsensitively) {
+namespace redis_simple::commands {
+TEST(CommandTableTest, FindsCommandsCaseInsensitively) {
   const Command* get = Find("get");
   ASSERT_NE(get, nullptr);
   EXPECT_EQ(get->name, "GET");
@@ -24,7 +24,7 @@ TEST(CommandRegistryTest, FindsCommandsCaseInsensitively) {
   EXPECT_NE(hset->callback, nullptr);
 }
 
-TEST(CommandRegistryTest, FindsExpandedRedisCommandSet) {
+TEST(CommandTableTest, FindsExpandedRedisCommandSet) {
   const std::array names = {
       "EXPIRE", "EXPIREAT",  "PEXPIRE",       "PEXPIREAT", "TTL",
       "PTTL",   "PERSIST",   "RENAME",        "DBSIZE",    "FLUSHDB",
@@ -41,7 +41,7 @@ TEST(CommandRegistryTest, FindsExpandedRedisCommandSet) {
   }
 }
 
-TEST(CommandRegistryTest, ReturnsNullForUnknownCommand) {
+TEST(CommandTableTest, ReturnsNullForUnknownCommand) {
   EXPECT_EQ(Find("UNKNOWN"), nullptr);
   EXPECT_EQ(Find(""), nullptr);
   // Prefixes, extensions, and names longer than any command never match.
@@ -54,7 +54,7 @@ TEST(CommandRegistryTest, ReturnsNullForUnknownCommand) {
   EXPECT_EQ(Find("G\xc5T"), nullptr);
 }
 
-TEST(CommandRegistryTest, CaseFoldingMatchesOnlyTheSameLetter) {
+TEST(CommandTableTest, CaseFoldingMatchesOnlyTheSameLetter) {
   for (const std::string_view name : {"GET", "ZADD", "BGREWRITEAOF"}) {
     for (size_t position = 0; position < name.size(); ++position) {
       for (int byte = 0; byte < 256; ++byte) {
@@ -72,7 +72,7 @@ TEST(CommandRegistryTest, CaseFoldingMatchesOnlyTheSameLetter) {
   }
 }
 
-TEST(CommandRegistryTest, FindsEveryCaseVariant) {
+TEST(CommandTableTest, FindsEveryCaseVariant) {
   for (const std::string_view name :
        {"get", "Get", "gEt", "GET", "zRaNgEbYsCoRe", "bgrewriteaof", "Exec",
         "unwatch"}) {
@@ -82,7 +82,7 @@ TEST(CommandRegistryTest, FindsEveryCaseVariant) {
   }
 }
 
-TEST(CommandRegistryTest, ExposesCommandMetadata) {
+TEST(CommandTableTest, ExposesCommandMetadata) {
   const Command* get = Find("GET");
   ASSERT_NE(get, nullptr);
   EXPECT_TRUE(get->arity.Accepts(1));
@@ -116,7 +116,7 @@ TEST(CommandRegistryTest, ExposesCommandMetadata) {
   EXPECT_TRUE(info->arity.Accepts(1));
 }
 
-TEST(CommandRegistryTest, OnlyAuthHelloAndQuitRunBeforeAuth) {
+TEST(CommandTableTest, OnlyAuthHelloAndQuitRunBeforeAuth) {
   const Command* auth = Find("auth");
   ASSERT_NE(auth, nullptr);
   EXPECT_TRUE(auth->allowed_before_auth);
@@ -139,7 +139,7 @@ TEST(CommandRegistryTest, OnlyAuthHelloAndQuitRunBeforeAuth) {
   }
 }
 
-TEST(CommandRegistryTest, OnlyTransactionControlRunsImmediatelyInMulti) {
+TEST(CommandTableTest, OnlyTransactionControlRunsImmediatelyInMulti) {
   for (const auto* name : {"EXEC", "DISCARD", "MULTI", "WATCH", "QUIT"}) {
     const Command* command = Find(name);
     ASSERT_NE(command, nullptr) << name;
@@ -151,4 +151,4 @@ TEST(CommandRegistryTest, OnlyTransactionControlRunsImmediatelyInMulti) {
     EXPECT_TRUE(command->queued_in_multi) << name;
   }
 }
-}  // namespace redis_simple::command
+}  // namespace redis_simple::commands

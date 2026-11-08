@@ -11,7 +11,7 @@ namespace redis_simple {
 class Client;
 }  // namespace redis_simple
 
-namespace redis_simple::command {
+namespace redis_simple::commands {
 using CommandArgs = std::vector<std::string_view>;
 using CommandCallback = void (*)(Client* client);
 
@@ -55,6 +55,6 @@ struct Command {
 };
 
 const Command* Find(std::string_view name);
-}  // namespace redis_simple::command
+}  // namespace redis_simple::commands
 
 #endif  // REDIS_SIMPLE_SERVER_COMMANDS_COMMAND_H_

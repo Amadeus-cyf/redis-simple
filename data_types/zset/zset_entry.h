@@ -5,13 +5,14 @@
 #include <string_view>
 
 namespace redis_simple::zset {
-// Entry storing key and score
+// Entry storing member and score
 struct ZSetEntry {
   ZSetEntry() = default;
-  ZSetEntry(const std::string& key, double score) : key(key), score(score) {}
-  ZSetEntry(std::string_view key, double score)
-      : key(key.data(), key.size()), score(score) {}
-  std::string key;
+  ZSetEntry(const std::string& member, double score)
+      : member(member), score(score) {}
+  ZSetEntry(std::string_view member, double score)
+      : member(member.data(), member.size()), score(score) {}
+  std::string member;
   double score{};
 };
 }  // namespace redis_simple::zset

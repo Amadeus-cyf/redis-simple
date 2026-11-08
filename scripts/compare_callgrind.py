@@ -49,8 +49,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("baseline")
     parser.add_argument("binary")
-    parser.add_argument("-n", "--count", type=int, default=15,
-                        help="functions to list (default 15)")
+    parser.add_argument(
+        "-n",
+        "--count",
+        type=int,
+        default=15,
+        help="functions to list (default 15)",
+    )
     args = parser.parse_args()
 
     baseline = function_costs(args.baseline)
@@ -58,19 +63,25 @@ def main():
     baseline_total = sum(baseline.values())
     binary_total = sum(binary.values())
     changes = sorted(
-        ((binary.get(name, 0) - baseline.get(name, 0), name)
-         for name in baseline.keys() | binary.keys()),
+        (
+            (binary.get(name, 0) - baseline.get(name, 0), name)
+            for name in baseline.keys() | binary.keys()
+        ),
         key=lambda change: -abs(change[0]),
     )
-    print(f"total: {baseline_total:,} -> {binary_total:,} "
-          f"({binary_total - baseline_total:+,})")
+    print(
+        f"total: {baseline_total:,} -> {binary_total:,} "
+        f"({binary_total - baseline_total:+,})"
+    )
     print(f"{'change':>14}  {'baseline':>14}  {'binary':>14}  function")
-    for difference, name in changes[:args.count]:
+    for difference, name in changes[: args.count]:
         if difference == 0:
             break
         shown = name if len(name) <= 100 else name[:97] + "..."
-        print(f"{difference:>+14,}  {baseline.get(name, 0):>14,}  "
-              f"{binary.get(name, 0):>14,}  {shown}")
+        print(
+            f"{difference:>+14,}  {baseline.get(name, 0):>14,}  "
+            f"{binary.get(name, 0):>14,}  {shown}"
+        )
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 std::unique_ptr<IntSet> MakeFullIntSet() {
   auto intset = std::make_unique<IntSet>();
@@ -26,9 +26,9 @@ std::unique_ptr<IntSet> MakeFullIntSet() {
 
 std::unique_ptr<IntSet> MakeIntSetAfterRemovals() {
   auto intset = MakeFullIntSet();
-  intset->Remove(INT16_MAX);
-  intset->Remove(INT64_MIN);
-  intset->Remove(INT64_MAX);
+  intset->Delete(INT16_MAX);
+  intset->Delete(INT64_MIN);
+  intset->Delete(INT64_MAX);
   return intset;
 }
 }  // namespace
@@ -74,22 +74,22 @@ TEST(IntSetTest, Find) {
 
 TEST(IntSetTest, Remove) {
   auto intset = MakeFullIntSet();
-  ASSERT_TRUE(intset->Remove(INT16_MAX));
+  ASSERT_TRUE(intset->Delete(INT16_MAX));
   ASSERT_FALSE(intset->Find(INT16_MAX));
   ASSERT_EQ(intset->Size(), 11);
-  ASSERT_FALSE(intset->Remove(INT16_MAX));
+  ASSERT_FALSE(intset->Delete(INT16_MAX));
   ASSERT_EQ(intset->Size(), 11);
 
-  ASSERT_TRUE(intset->Remove(INT64_MIN));
+  ASSERT_TRUE(intset->Delete(INT64_MIN));
   ASSERT_FALSE(intset->Find(INT64_MIN));
   ASSERT_EQ(intset->Size(), 10);
-  ASSERT_FALSE(intset->Remove(INT64_MIN));
+  ASSERT_FALSE(intset->Delete(INT64_MIN));
   ASSERT_EQ(intset->Size(), 10);
 
-  ASSERT_TRUE(intset->Remove(INT64_MAX));
+  ASSERT_TRUE(intset->Delete(INT64_MAX));
   ASSERT_FALSE(intset->Find(INT64_MAX));
   ASSERT_EQ(intset->Size(), 9);
-  ASSERT_FALSE(intset->Remove(INT64_MAX));
+  ASSERT_FALSE(intset->Delete(INT64_MAX));
   ASSERT_EQ(intset->Size(), 9);
 }
 
@@ -120,4 +120,4 @@ TEST(IntSetDeathTest, RejectsOutOfRangeIndex) {
   EXPECT_DEATH(intset->Get(-1), "Check failed");
   EXPECT_DEATH(intset->Get(intset->Size()), "Check failed");
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

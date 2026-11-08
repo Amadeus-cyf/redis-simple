@@ -19,7 +19,7 @@
 
 #include "utils/siphash.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 // Default hash and key-equality policies. The std::string specializations
 // accept std::string_view so lookups by borrowed key do not allocate.
 template <typename K>
@@ -719,6 +719,6 @@ size_t Dict<K, V, Hash, KeyEqual>::ReverseBits(size_t value) {
   }
   return value;
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory
 
 #endif  // REDIS_SIMPLE_MEMORY_DICT_H_

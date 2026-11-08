@@ -12,15 +12,15 @@
 #include <utility>
 #include <vector>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 size_t RequireIndex(std::optional<size_t> index) {
   EXPECT_TRUE(index.has_value());
   return index.value_or(0);
 }
 
-ListPack::ListPackEntry StrEntry(std::string_view str) {
-  return {str, 0, false};
+ListPack::ListPackEntry StringEntry(std::string_view value) {
+  return {value, 0, false};
 }
 
 ListPack::ListPackEntry IntEntry(int64_t value) { return {"", value, true}; }
@@ -34,7 +34,7 @@ std::string StringAt(const ListPack& listpack, size_t offset) {
 void ExpectEntryAt(const ListPack& listpack, size_t offset,
                    const ListPack::ListPackEntry& entry) {
   if (!entry.is_integer) {
-    EXPECT_EQ(StringAt(listpack, offset), entry.str);
+    EXPECT_EQ(StringAt(listpack, offset), entry.string_value);
     return;
   }
 
@@ -73,40 +73,31 @@ size_t Advance(const ListPack& listpack, size_t offset, size_t steps) {
 std::vector<ListPack::ListPackEntry> MakeBatchAppendEntries(
     std::string_view s0, std::string_view s1, std::string_view s2) {
   return {
-      StrEntry(s0),        IntEntry(INT64_MIN), IntEntry(INT64_MAX),
+      StringEntry(s0),     IntEntry(INT64_MIN), IntEntry(INT64_MAX),
       IntEntry(INT32_MIN), IntEntry(INT32_MAX), IntEntry(INT32_MAX >> 8),
-      IntEntry(127),       StrEntry(s1),        StrEntry(s2),
+      IntEntry(127),       StringEntry(s1),     StringEntry(s2),
   };
 }
 
 std::vector<ListPack::ListPackEntry> MakeBatchPrependEntries(
     std::string_view s0, std::string_view s1, std::string_view s2) {
   return {
-      StrEntry(s0),
-      IntEntry(INT64_MIN + 7),
-      IntEntry(INT64_MAX - 9),
-      IntEntry(INT32_MIN + 7),
-      IntEntry(INT32_MAX - 9),
-      IntEntry((INT32_MAX >> 8) - 1),
-      IntEntry(125),
-      StrEntry(s1),
-      StrEntry(s2),
+      StringEntry(s0),         IntEntry(INT64_MIN + 7),
+      IntEntry(INT64_MAX - 9), IntEntry(INT32_MIN + 7),
+      IntEntry(INT32_MAX - 9), IntEntry((INT32_MAX >> 8) - 1),
+      IntEntry(125),           StringEntry(s1),
+      StringEntry(s2),
   };
 }
 
 std::vector<ListPack::ListPackEntry> MakeBatchInsertEntries(
     std::string_view s0, std::string_view s1, std::string_view s2) {
   return {
-      StrEntry(s0),
-      IntEntry(INT64_MIN + 21),
-      IntEntry(INT64_MAX - 17),
-      IntEntry(INT32_MIN + 21),
-      IntEntry(INT32_MAX - 17),
-      IntEntry((INT32_MAX >> 8) - 17),
-      IntEntry(INT16_MAX - 17),
-      IntEntry(123),
-      StrEntry(s1),
-      StrEntry(s2),
+      StringEntry(s0),          IntEntry(INT64_MIN + 21),
+      IntEntry(INT64_MAX - 17), IntEntry(INT32_MIN + 21),
+      IntEntry(INT32_MAX - 17), IntEntry((INT32_MAX >> 8) - 17),
+      IntEntry(INT16_MAX - 17), IntEntry(123),
+      StringEntry(s1),          StringEntry(s2),
   };
 }
 
@@ -281,7 +272,7 @@ TEST(ListPackTest, PreservesNonCanonicalIntegerStrings) {
   ListPack listpack;
   ASSERT_TRUE(listpack.Append("+44"));
   ASSERT_TRUE(listpack.Prepend("-0"));
-  ASSERT_TRUE(listpack.BatchAppend({StrEntry("+0"), StrEntry("-42")}));
+  ASSERT_TRUE(listpack.BatchAppend({StringEntry("+0"), StringEntry("-42")}));
 
   std::vector<std::string> values;
   ASSERT_TRUE(listpack.ForEach(0, listpack.Size() - 1,
@@ -622,9 +613,10 @@ TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
         return true;
       }));
       const size_t last = std::min(stop, expected.size() - 1);
-      EXPECT_EQ(forward, std::vector<std::string>(
-                             expected.begin() + static_cast<long>(start),
-                             expected.begin() + static_cast<long>(last) + 1))
+      EXPECT_EQ(forward,
+                std::vector<std::string>(
+                    expected.begin() + static_cast<std::ptrdiff_t>(start),
+                    expected.begin() + static_cast<std::ptrdiff_t>(last) + 1))
           << start << ".." << stop;
 
       std::vector<std::string> reverse;
@@ -872,4 +864,4 @@ TEST(ListPackDeathTest, RejectsOutOfBoundsIndexes) {
                "Check failed");
   EXPECT_DEATH(listpack->Delete(end), "Check failed");
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

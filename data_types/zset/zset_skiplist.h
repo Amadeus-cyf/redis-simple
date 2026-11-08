@@ -16,14 +16,14 @@ namespace redis_simple::zset {
 class ZSetSkiplist : public ZSetStorage {
  public:
   ZSetSkiplist();
-  bool InsertOrUpdate(std::string_view key, double score,
+  bool InsertOrUpdate(std::string_view member, double score,
                       bool* changed) override;
-  bool Delete(std::string_view key) override;
-  std::optional<double> Score(std::string_view key) const override {
-    const double* score = dict_->FindValue(key);
+  bool Delete(std::string_view member) override;
+  std::optional<double> Score(std::string_view member) const override {
+    const double* score = dict_->FindValue(member);
     return score == nullptr ? std::nullopt : std::optional<double>(*score);
   }
-  std::optional<size_t> Rank(std::string_view key) const override;
+  std::optional<size_t> Rank(std::string_view member) const override;
   ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const override;
   ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const override;
   size_t Count(const RangeByScoreSpec* spec) const override;
@@ -36,7 +36,7 @@ class ZSetSkiplist : public ZSetStorage {
   // Looks up a member by score and name without copying the name.
   struct MemberRef {
     double score;
-    std::string_view key;
+    std::string_view member;
   };
 
   // Orders entries by score, then by member name. NaN scores are rejected on
@@ -49,11 +49,12 @@ class ZSetSkiplist : public ZSetStorage {
           order != 0) {
         return order;
       }
-      return std::string_view(entry.key) <=> member.key;
+      return std::string_view(entry.member) <=> member.member;
     }
     std::partial_ordering operator()(const ZSetEntry& left,
                                      const ZSetEntry& right) const {
-      return (*this)(left, MemberRef{.score = right.score, .key = right.key});
+      return (*this)(left,
+                     MemberRef{.score = right.score, .member = right.member});
     }
     std::partial_ordering operator()(const ZSetEntry& entry,
                                      double score) const {
@@ -63,18 +64,18 @@ class ZSetSkiplist : public ZSetStorage {
     // Redis' zslFirstInLexRange does while descending the skiplist.
     std::partial_ordering operator()(const ZSetEntry& entry,
                                      const LexBound& bound) const {
-      return CompareLex(entry.key, bound);
+      return CompareLex(entry.member, bound);
     }
   };
 
-  using SkiplistType = in_memory::Skiplist<ZSetEntry, EntryOrder>;
+  using SkiplistType = memory::Skiplist<ZSetEntry, EntryOrder>;
 
   bool OverlapsLexRange(const RangeByLexSpec* spec) const;
   static std::optional<SkiplistType::Limit> ToLimit(
       const std::optional<LimitSpec>& limit);
 
   // Maps each member to its score.
-  std::unique_ptr<in_memory::Dict<std::string, double>> dict_;
+  std::unique_ptr<memory::Dict<std::string, double>> dict_;
   // Entries ordered by score, then member name.
   std::unique_ptr<SkiplistType> skiplist_;
 };

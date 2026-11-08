@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 TEST(QuickListTest, PushAndPopPreserveDequeOrder) {
   QuickList quicklist;
 
@@ -304,4 +304,4 @@ TEST(QuickListTest, SetSplitsOnlyTheReplacedNode) {
   expected[8] = large;
   EXPECT_EQ(quicklist.Range(0, 8), expected);
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

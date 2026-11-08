@@ -6,7 +6,7 @@
 #include "server/db/db.h"
 #include "server/db/redis_object.h"
 
-namespace redis_simple::command {
+namespace redis_simple::commands {
 // Result of looking up a key that must hold one object type. `object` is null
 // when the key is missing or holds another type; `wrong_type` tells which.
 template <typename Object>
@@ -40,6 +40,6 @@ inline TypedLookup<db::RedisObject> MutableLookupTyped(
   }
   return {object, false};
 }
-}  // namespace redis_simple::command
+}  // namespace redis_simple::commands
 
 #endif  // REDIS_SIMPLE_SERVER_COMMANDS_LOOKUP_H_

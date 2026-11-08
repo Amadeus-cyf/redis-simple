@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 constexpr size_t kExpectedSentAfterConsume = 5000 - (4096 - 2047) - 2000;
 
@@ -209,4 +209,4 @@ TEST(ReplyBufferTest, CopiesSmallMovedRepliesIntoSharedChunks) {
   }
   EXPECT_EQ(sent, expected);
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

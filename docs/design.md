@@ -34,7 +34,7 @@ Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
    quoted inline arguments, which need unescaping, are copied, into the
    client's `ParseState`.
 3. **Validate.** `Client::ValidateRequest` looks the command up in the table
-   (`command::Find`), then checks arity, authentication, and whether the AOF
+   (`commands::Find`), then checks arity, authentication, and whether the AOF
    accepts writes.
 4. **Run.** The handler reads its arguments, works on the database, and
    appends its reply to the client's output buffer. Inside `MULTI` the

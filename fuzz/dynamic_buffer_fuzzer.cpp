@@ -25,7 +25,7 @@ std::optional<std::string> ReadModelLine(std::string* model) {
   return line;
 }
 
-void Verify(const in_memory::DynamicBuffer& buffer, const std::string& model) {
+void Verify(const memory::DynamicBuffer& buffer, const std::string& model) {
   Require(buffer.View() == std::string_view(model));
   Require(buffer.ToString() == model);
   Require(buffer.Empty() == model.empty());
@@ -34,7 +34,7 @@ void Verify(const in_memory::DynamicBuffer& buffer, const std::string& model) {
 }
 
 void RunOperations(FuzzInput* input) {
-  in_memory::DynamicBuffer buffer;
+  memory::DynamicBuffer buffer;
   std::string model;
 
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();

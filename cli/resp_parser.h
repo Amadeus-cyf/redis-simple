@@ -19,7 +19,7 @@ struct ParseResult {
 };
 
 // Parse one response and append its rendered values to reply.
-ParseResult Parse(std::string_view resp, std::vector<std::string>& reply);
+ParseResult Parse(std::string_view input, std::vector<std::string>& reply);
 }  // namespace redis_simple::cli::resp_parser
 
 #endif  // REDIS_SIMPLE_CLI_RESP_PARSER_H_

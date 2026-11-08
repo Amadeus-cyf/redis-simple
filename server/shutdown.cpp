@@ -6,17 +6,17 @@ namespace redis_simple::shutdown {
 namespace {
 // Signal handlers may only update signal-safe state.
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-volatile std::sig_atomic_t g_stop_requested = 0;
+volatile std::sig_atomic_t stop_requested = 0;
 
-void RequestStop(int /*signal*/) { g_stop_requested = 1; }
+void RequestStop(int /*signal*/) { stop_requested = 1; }
 }  // namespace
 
 bool InstallSignalHandlers() {
-  g_stop_requested = 0;
+  stop_requested = 0;
   return std::signal(SIGINT, RequestStop) != SIG_ERR &&
          std::signal(SIGTERM, RequestStop) != SIG_ERR &&
          std::signal(SIGPIPE, SIG_IGN) != SIG_ERR;
 }
 
-bool StopRequested() { return g_stop_requested != 0; }
+bool StopRequested() { return stop_requested != 0; }
 }  // namespace redis_simple::shutdown

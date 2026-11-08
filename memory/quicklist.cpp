@@ -10,7 +10,7 @@
 
 #include "utils/check.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 bool HasRemoveLimit(size_t limit) { return limit != 0; }
 
@@ -347,17 +347,17 @@ QuickList::Node* QuickList::InsertNodeAfter(Node* node,
     return nullptr;
   }
 
-  Node* new_node_ptr = new_node.get();
+  Node* inserted = new_node.get();
   new_node->prev = node;
   new_node->next = std::move(node->next);
   if (new_node->next) {
-    new_node->next->prev = new_node_ptr;
+    new_node->next->prev = inserted;
   } else {
-    tail_ = new_node_ptr;
+    tail_ = inserted;
   }
   node->next = std::move(new_node);
   ++node_count_;
-  return new_node_ptr;
+  return inserted;
 }
 
 void QuickList::MergeNext(Node* left) {
@@ -399,33 +399,33 @@ void QuickList::MergeAll() {
 
 QuickList::Node* QuickList::AppendNode() {
   auto node = std::make_unique<Node>();
-  Node* node_ptr = node.get();
+  Node* inserted = node.get();
   if (!head_) {
     head_ = std::move(node);
-    tail_ = node_ptr;
+    tail_ = inserted;
   } else {
     RS_CHECK(tail_ != nullptr);
     node->prev = tail_;
     tail_->next = std::move(node);
-    tail_ = node_ptr;
+    tail_ = inserted;
   }
   ++node_count_;
-  return node_ptr;
+  return inserted;
 }
 
 QuickList::Node* QuickList::PrependNode() {
   auto node = std::make_unique<Node>();
-  Node* node_ptr = node.get();
+  Node* inserted = node.get();
   if (!head_) {
     head_ = std::move(node);
-    tail_ = node_ptr;
+    tail_ = inserted;
   } else {
     node->next = std::move(head_);
-    node->next->prev = node_ptr;
+    node->next->prev = inserted;
     head_ = std::move(node);
   }
   ++node_count_;
-  return node_ptr;
+  return inserted;
 }
 
 void QuickList::DeleteNode(Node* node) {
@@ -459,4 +459,4 @@ void QuickList::Clear() {
   size_ = 0;
   node_count_ = 0;
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

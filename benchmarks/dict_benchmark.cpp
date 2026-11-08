@@ -8,40 +8,43 @@
 #include "memory/dict.h"
 
 namespace redis_simple {
-in_memory::Dict<std::string, std::string>& BenchmarkDict() {
-  static auto dict = in_memory::Dict<std::string, std::string>::Create();
-  return *dict;
+memory::Dict<std::string, std::string>& BenchmarkDict() {
+  // Leaked, so the static has no destructor to run at exit.
+  static auto& dict =
+      *memory::Dict<std::string, std::string>::Create().release();
+  return dict;
 }
 
 std::vector<std::string>& BenchmarkKeys() {
-  static std::vector<std::string> keys;
+  static auto& keys = *new std::vector<std::string>;
   return keys;
 }
 
-static std::mt19937& Rng() {
-  static std::mt19937 rng(std::random_device{}());
-  return rng;
+static std::mt19937& Generator() {
+  static std::mt19937 generator(std::random_device{}());
+  return generator;
 }
 
 static size_t RandomIndex(size_t size) {
-  std::uniform_int_distribution<size_t> dist(0, size - 1);
-  return dist(Rng());
+  std::uniform_int_distribution<size_t> distribution(0, size - 1);
+  return distribution(Generator());
 }
 
 static std::string RandomString(int length) {
-  static constexpr std::string_view kAlphaNum =
+  static constexpr std::string_view kAlphanumeric =
       "0123456789"
       "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
       "abcdefghijklmnopqrstuvwxyz";
-  std::uniform_int_distribution<size_t> dist(0, kAlphaNum.size() - 1);
-  std::string str;
-  str.reserve(length);
+  std::uniform_int_distribution<size_t> distribution(0,
+                                                     kAlphanumeric.size() - 1);
+  std::string value;
+  value.reserve(length);
 
   for (int i = 0; i < length; ++i) {
-    str += kAlphaNum[dist(Rng())];
+    value += kAlphanumeric[distribution(Generator())];
   }
 
-  return str;
+  return value;
 }
 
 static void DictAdd(benchmark::State& state) {
@@ -67,7 +70,7 @@ static void DictUpdate(benchmark::State& state) {
   std::bernoulli_distribution use_existing(0.5);
   for (auto _ : state) {
     (void)_;
-    if (use_existing(Rng()) && !BenchmarkKeys().empty()) {
+    if (use_existing(Generator()) && !BenchmarkKeys().empty()) {
       BenchmarkDict().Set(BenchmarkKeys()[RandomIndex(BenchmarkKeys().size())],
                           RandomString(10));
     } else {
@@ -80,7 +83,7 @@ static void DictDelete(benchmark::State& state) {
   std::bernoulli_distribution use_existing(0.5);
   for (auto _ : state) {
     (void)_;
-    if (use_existing(Rng()) && !BenchmarkKeys().empty()) {
+    if (use_existing(Generator()) && !BenchmarkKeys().empty()) {
       BenchmarkDict().Delete(
           BenchmarkKeys()[RandomIndex(BenchmarkKeys().size())]);
     } else {

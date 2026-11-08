@@ -13,7 +13,7 @@
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::strings {
+namespace redis_simple::commands::strings {
 namespace {
 constexpr auto kString = db::RedisObject::ObjectType::kString;
 
@@ -75,7 +75,7 @@ void UpdateInteger(Client* const client, std::string_view key, int64_t operand,
 }
 
 void HandleIncrementBy(Client* const client, IntegerOperation operation) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   int64_t operand = 0;
   if (!utils::ToInt64(args[1], &operand)) {
     client->AddReply(reply::kNotAnIntegerError);
@@ -110,7 +110,7 @@ void HandleDecrBy(Client* const client) {
 }
 
 void HandleAppend(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const std::string_view key = args[0];
   const std::string_view value_to_append = args[1];
   const auto [object, wrong_type] =
@@ -144,7 +144,7 @@ void HandleStrLen(Client* const client) {
 }
 
 void HandleMGet(Client* const client) {
-  const command::CommandArgs& keys = client->Args();
+  const commands::CommandArgs& keys = client->Args();
   std::string encoded = reply::FromArrayHeader(keys.size());
   for (const auto& key : keys) {
     // MGET reports keys of other types as missing instead of failing.
@@ -160,7 +160,7 @@ void HandleMGet(Client* const client) {
 }
 
 void HandleMSet(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   if (args.size() % 2 != 0) {
     client->AddReply(reply::WrongNumberOfArguments("mset"));
     return;
@@ -171,4 +171,4 @@ void HandleMSet(Client* const client) {
   client->MarkModified();
   client->AddReply(reply::kOk);
 }
-}  // namespace redis_simple::command::strings
+}  // namespace redis_simple::commands::strings

@@ -86,12 +86,12 @@ struct ParseState {
 // input that starts at the same request, until the result is complete or
 // invalid.
 ParseResult Parse(std::string_view input, ParseState* state,
-                  std::string_view* command, command::CommandArgs* args);
+                  std::string_view* command, commands::CommandArgs* args);
 
 // Parses one RESP array request that must be fully contained in `input`'s
 // prefix, as the AOF stores them; inline requests are invalid here.
 ParseResult Parse(std::string_view input, std::string_view* command,
-                  command::CommandArgs* args);
+                  commands::CommandArgs* args);
 }  // namespace redis_simple::request_parser
 
 #endif  // REDIS_SIMPLE_SERVER_REQUEST_PARSER_H_

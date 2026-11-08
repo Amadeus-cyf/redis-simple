@@ -7,7 +7,7 @@
 #include "data_types/zset/zset_storage_test_util.h"
 
 namespace redis_simple::zset {
-using zset_storage_test::KeyScorePair;
+using zset_storage_test::MemberScorePair;
 
 TEST(ZSetSkiplistTest, Add) { zset_storage_test::TestAdd<ZSetSkiplist>(); }
 
@@ -49,9 +49,9 @@ TEST(ZSetSkiplistStandaloneTest, DeleteRecomputesRangeBoundaries) {
   ASSERT_TRUE(zset_skiplist.Delete("c"));
 
   const RangeByScoreSpec spec(0.0, 10.0, false, false);
-  const std::vector<KeyScorePair> pairs =
-      zset_storage_test::ToKeyScorePairs(zset_skiplist.RangeByScore(&spec));
-  ASSERT_EQ(pairs, std::vector<KeyScorePair>({{"b", 2.0}}));
+  const std::vector<MemberScorePair> pairs =
+      zset_storage_test::ToMemberScorePairs(zset_skiplist.RangeByScore(&spec));
+  ASSERT_EQ(pairs, std::vector<MemberScorePair>({{"b", 2.0}}));
   ASSERT_EQ(zset_skiplist.Count(&spec), 1);
 }
 }  // namespace redis_simple::zset

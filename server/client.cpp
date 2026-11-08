@@ -14,7 +14,6 @@
 #include "server/aof/aof.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
-#include "utils/time_utils.h"
 
 namespace redis_simple {
 namespace {
@@ -31,13 +30,13 @@ constexpr std::string_view kExecAbort =
 class CommandTimeScope {
  public:
   explicit CommandTimeScope(db::RedisDb* const db) : db_(db) {
-    db_->SetCommandTime(utils::NowInMilliseconds());
+    db_->PinCommandTime();
   }
   CommandTimeScope(const CommandTimeScope&) = delete;
   CommandTimeScope& operator=(const CommandTimeScope&) = delete;
   CommandTimeScope(CommandTimeScope&&) = delete;
   CommandTimeScope& operator=(CommandTimeScope&&) = delete;
-  ~CommandTimeScope() { db_->ClearCommandTime(); }
+  ~CommandTimeScope() { db_->UnpinCommandTime(); }
 
  private:
   db::RedisDb* const db_;
@@ -176,11 +175,6 @@ ssize_t Client::SendReply() {
 }
 
 ssize_t Client::SendBufferReply() {
-  const size_t reply_length = reply_buffer_.UnsentLength();
-  const int logged_length = static_cast<int>(std::min(
-      reply_length, static_cast<size_t>(std::numeric_limits<int>::max())));
-  RS_LOG_DEBUG("SendBufferReply %.*s %zu\n", logged_length,
-               reply_buffer_.UnsentBuffer(), reply_length);
   ssize_t nwritten = connection_->Write(
       {reply_buffer_.UnsentBuffer(), reply_buffer_.UnsentLength()});
   if (nwritten < 0) {
@@ -204,8 +198,6 @@ ssize_t Client::SendListReply() {
 ClientStatus Client::ProcessInputBuffer() {
   while (!close_after_reply_ &&
          query_buffer_.Consumed() < query_buffer_.Size()) {
-    RS_LOG_DEBUG("process loop %zu %zu\n", query_buffer_.Consumed(),
-                 query_buffer_.Size());
     const RequestStatus status = ParseRequest();
     if (status == RequestStatus::kIncomplete ||
         status == RequestStatus::kProtocolError) {
@@ -323,9 +315,7 @@ ClientStatus Client::RunParsedQueries() {
 }
 
 Client::RequestStatus Client::ValidateRequest(std::string_view name) {
-  RS_LOG_DEBUG("command name %.*s\n", static_cast<int>(name.size()),
-               name.data());
-  const command::Command* command = command::Find(name);
+  const commands::Command* command = commands::Find(name);
   if (command == nullptr) {
     RS_LOG_DEBUG("command not found\n");
     AddReply(reply::UnknownCommand(name, args_));
@@ -342,7 +332,7 @@ Client::RequestStatus Client::ValidateRequest(std::string_view name) {
     multi_.MarkRejected();
     return RequestStatus::kRejected;
   }
-  if (command->access == command::CommandAccess::kWrite &&
+  if (command->access == commands::CommandAccess::kWrite &&
       !AofAcceptsWrites()) {
     AddReply(AofWriteError());
     multi_.MarkRejected();
@@ -362,14 +352,14 @@ std::string Client::AofWriteError() const {
                           server_->aof->LastErrorText());
 }
 
-bool Client::PropagateMutation(const command::Command& command) {
+bool Client::PropagateMutation(const commands::Command& command) {
   if (!modified_) {
     return true;
   }
   modified_ = false;
   // Key-level database operations touch WATCHed keys themselves; this covers
   // single-key commands that edit a value in place.
-  const command::KeySpec& keys = command.keys;
+  const commands::KeySpec& keys = command.keys;
   if (keys.HasKeys() && keys.first == keys.last && keys.first < args_.size() &&
       Db()->HasWatchedKeys()) {
     Db()->TouchWatchedKey(args_[keys.first]);
@@ -386,8 +376,6 @@ ClientStatus Client::ProcessCommand() {
   if (command_ == nullptr) {
     return ClientStatus::kError;
   }
-  RS_LOG_DEBUG("process command: %.*s\n",
-               static_cast<int>(command_->name.size()), command_->name.data());
   if (multi_.Active() && command_->queued_in_multi) {
     QueueCommand();
     return ClientStatus::kOk;
@@ -443,13 +431,13 @@ void Client::ExecTransaction() {
   UnwatchKeys();
 
   AddReply(reply::FromArrayHeader(multi_.Size()));
-  const command::Command* const exec_command = command_;
+  const commands::Command* const exec_command = command_;
   if (Aof() != nullptr) {
     Aof()->BeginTransaction();
   }
   // Queued commands share the EXEC command's pinned clock, so the whole
   // transaction observes one time.
-  multi_.ForEach(&args_, [this](const command::Command* const queued) {
+  multi_.ForEach(&args_, [this](const commands::Command* const queued) {
     command_ = queued;
     modified_ = false;
     command_->callback(this);
@@ -468,8 +456,8 @@ void Client::ExecTransaction() {
   multi_.Reset();
 }
 
-bool Client::ExecuteForReplay(const command::Command* const command,
-                              command::CommandArgs* const args) {
+bool Client::ExecuteForReplay(const commands::Command* const command,
+                              commands::CommandArgs* const args) {
   if (command == nullptr || args == nullptr) {
     return false;
   }

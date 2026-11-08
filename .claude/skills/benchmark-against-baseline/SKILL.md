@@ -33,7 +33,7 @@ Pick the tools the change calls for:
 | --- | --- |
 | Anything on the request path (parsing, command dispatch, replies, the database, the AOF) | `scripts/profile_server.sh build/release/redis_simple "${base}/build/release/redis_simple"` |
 | Object layout, encodings, or anything that changes memory per key | `scripts/measure_server_memory.sh build/release/redis_simple "${base}/build/release/redis_simple"` |
-| One component (a container, the parser, reply encoding) | `memory_benchmark`, below |
+| One component (a container, the parser, reply encoding) | `redis_simple_benchmarks`, below |
 
 `profile_server.sh` runs eight workloads under callgrind; `-w` picks some
 (`-w pipelined-get,aof-writes`). Set `PROFILE_OUTPUT_DIR` to keep the
@@ -41,14 +41,14 @@ callgrind files for step 3. A change that should not affect performance,
 such as a refactor, stays within about 1% on every workload; anything more
 has a cause worth finding.
 
-For a component, build `memory_benchmark` in both trees and compare them with
-Google Benchmark's tool:
+For a component, build `redis_simple_benchmarks` in both trees and compare them
+with Google Benchmark's tool:
 
 ```sh
-cmake --build --preset release --target memory_benchmark
-(cd "${base}" && cmake --build --preset release --target memory_benchmark)
+cmake --build --preset release --target redis_simple_benchmarks
+(cd "${base}" && cmake --build --preset release --target redis_simple_benchmarks)
 python3 third_party/benchmark/tools/compare.py benchmarks \
-  "${base}/build/release/memory_benchmark" build/release/memory_benchmark \
+  "${base}/build/release/redis_simple_benchmarks" build/release/redis_simple_benchmarks \
   --benchmark_filter=<Group> --benchmark_repetitions=5
 ```
 

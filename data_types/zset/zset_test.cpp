@@ -30,8 +30,8 @@ TEST(ZSetTest, InsertAndConvert) {
   spec.reverse = false;
   const ZSetEntryList entries = zset->RangeByRank(&spec);
   ASSERT_EQ(entries.size(), 256);
-  ASSERT_EQ(entries.front()->key, "key_0");
-  ASSERT_EQ(entries.back()->key, "key_255");
+  ASSERT_EQ(entries.front()->member, "key_0");
+  ASSERT_EQ(entries.back()->member, "key_255");
 }
 
 TEST(ZSetEncodingTest, ConvertsToSkiplistWhenMemberIsLong) {
@@ -68,8 +68,8 @@ TEST(ZSetTest, VisitsEntriesAcrossEncodings) {
 
   std::vector<std::pair<std::string, double>> entries;
   ASSERT_TRUE(
-      zset->ForEachEntry([&entries](std::string_view key, double score) {
-        entries.emplace_back(key, score);
+      zset->ForEachEntry([&entries](std::string_view member, double score) {
+        entries.emplace_back(member, score);
         return true;
       }));
   EXPECT_EQ(entries, (std::vector<std::pair<std::string, double>>{

@@ -12,13 +12,13 @@
 #include <string_view>
 #include <vector>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 // Compact Redis-style sequential encoding. See:
 // https://github.com/antirez/listpack/blob/master/listpack.md
 class ListPack {
  public:
   struct ListPackEntry {
-    std::string_view str;
+    std::string_view string_value;
     int64_t integer_value;
     bool is_integer;
   };
@@ -117,7 +117,7 @@ class ListPack {
     kSize5BytesBacklenMax = (1ULL << 35) - 1,
   };
   struct Encoding {
-    std::string_view str;
+    std::string_view string_value;
     int64_t integer_value;
     EncodingGeneralType encoding_type;
     size_t backlen_bytes;
@@ -246,6 +246,6 @@ bool ListPack::ForEachPair(Visitor&& visitor) const {
   }
   return true;
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory
 
 #endif  // REDIS_SIMPLE_MEMORY_LISTPACK_H_

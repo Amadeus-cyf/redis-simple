@@ -89,9 +89,9 @@ std::string FromInt64(int64_t i64) {
 
 std::string FromArray(const std::vector<std::string>& array) {
   std::string reply = FromArrayHeader(array.size());
-  for (const std::string& str : array) {
-    RS_CHECK(str.ends_with(kCrlf));
-    reply.append(str);
+  for (const std::string& element : array) {
+    RS_CHECK(element.ends_with(kCrlf));
+    reply.append(element);
   }
   return reply;
 }

@@ -73,7 +73,7 @@ TEST(RespParserTest, ParseInt64) {
   ASSERT_EQ(ParseBytes(":123456", reply), -1);
 }
 
-TEST(ReplyParserTest, ParseArray) {
+TEST(RespParserTest, ParseArray) {
   // Base
   std::vector<std::string> reply1;
   const std::string& s1 =
@@ -105,7 +105,7 @@ TEST(ReplyParserTest, ParseArray) {
                                               "7", "8", "9", "\n"}));
 }
 
-TEST(ReplyParserTest, ParseMap) {
+TEST(RespParserTest, ParseMap) {
   std::vector<std::string> reply;
   constexpr std::string_view kResponse =
       "%2\r\n$6\r\nserver\r\n$12\r\nredis_simple\r\n$5\r\nproto\r\n:3\r\n";
@@ -115,7 +115,7 @@ TEST(ReplyParserTest, ParseMap) {
                        {"server", "redis_simple", "proto", "3", "\n"}));
 }
 
-TEST(ReplyParserTest, ParseSet) {
+TEST(RespParserTest, ParseSet) {
   std::vector<std::string> reply;
   constexpr std::string_view kResponse = "~2\r\n$3\r\none\r\n$3\r\ntwo\r\n";
 
@@ -123,21 +123,21 @@ TEST(ReplyParserTest, ParseSet) {
   EXPECT_EQ(reply, std::vector<std::string>({"one", "two", "\n"}));
 }
 
-TEST(ReplyParserTest, ParseNullArray) {
+TEST(RespParserTest, ParseNullArray) {
   std::vector<std::string> reply;
   ASSERT_EQ(ParseBytes("*-1\r\n", reply), 5);
   ASSERT_EQ(reply.back(), "(nil)");
   ASSERT_EQ(ParseBytes("~-1\r\n", reply), -1);
 }
 
-TEST(ReplyParseTest, ParseNull) {
+TEST(RespParserTest, ParseNull) {
   std::vector<std::string> reply;
   ASSERT_EQ(ParseBytes("_\r\n", reply), 3);
   ASSERT_EQ(reply.back(), "(nil)");
   ASSERT_EQ(ParseBytes("_123\r\n", reply), -1);
 }
 
-TEST(ReplyParserTest, ParseFloat) {
+TEST(RespParserTest, ParseFloat) {
   std::vector<std::string> reply;
   ASSERT_EQ(ParseBytes(",123.000002300000\r\n", reply), 19);
   ASSERT_EQ(reply.back(), "123.0000023");

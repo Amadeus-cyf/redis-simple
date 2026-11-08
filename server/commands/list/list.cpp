@@ -16,7 +16,7 @@
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::lists {
+namespace redis_simple::commands::lists {
 namespace {
 using List = ::redis_simple::list::List;
 constexpr auto kList = db::RedisObject::ObjectType::kList;
@@ -113,7 +113,7 @@ std::pair<size_t, List::RemoveDirection> NormalizeRemoveCount(int64_t count) {
 }
 
 void HandlePush(Client* const client, Side side) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   auto [object, wrong_type] = MutableLookupTyped(client->Db(), args[0], kList);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
@@ -142,7 +142,7 @@ void HandlePush(Client* const client, Side side) {
 // Redis' popGenericCommand: with a count, pops up to that many elements
 // into an array, from the side popped first.
 void HandlePopCount(Client* const client, Side side) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   int64_t count = 0;
   if (!utils::ToInt64(args[1], &count) || count < 0) {
     client->AddReply(
@@ -228,7 +228,7 @@ void HandleLLen(Client* const client) {
 }
 
 void HandleLRange(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   int64_t start = 0;
   int64_t stop = 0;
   if (!ParseInteger(client, args[1], &start) ||
@@ -258,7 +258,7 @@ void HandleLRange(Client* const client) {
 
 void HandleLIndex(Client* const client) {
   // Redis checks the key before the index.
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const List* list = nullptr;
   if (!LookupList(client, args[0], &list)) {
     return;
@@ -283,7 +283,7 @@ void HandleLIndex(Client* const client) {
 
 void HandleLSet(Client* const client) {
   // Redis checks the key before the index.
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   List* list = nullptr;
   if (!LookupMutableList(client, args[0], &list)) {
     return;
@@ -306,7 +306,7 @@ void HandleLSet(Client* const client) {
 }
 
 void HandleLRem(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   int64_t count = 0;
   if (!ParseInteger(client, args[1], &count)) {
     return;
@@ -328,7 +328,7 @@ void HandleLRem(Client* const client) {
 }
 
 void HandleLTrim(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   int64_t start = 0;
   int64_t stop = 0;
   if (!ParseInteger(client, args[1], &start) ||
@@ -355,4 +355,4 @@ void HandleLTrim(Client* const client) {
   client->MarkModified();
   client->AddReply(reply::kOk);
 }
-}  // namespace redis_simple::command::lists
+}  // namespace redis_simple::commands::lists

@@ -29,24 +29,28 @@ redis-cli -p 6379 shutdown nosave
 Profiling (`scripts/profile_server.sh`, ports from 8200) and the memory
 script (8500) use other ports and can run at the same time.
 
-## 2. Ad hoc comparisons
+## 2. Every command, edge cases and random operations
 
-For behavior the script does not cover, send the same commands to both
-servers and diff the replies. Cover the error paths and edge arguments, not
-only the success case, and both protocols:
+`scripts/compare_with_redis.py` starts both servers itself and compares
+replies to about 1,900 fixed edge cases (boundary indices and counts,
+invalid numbers, wrong types and arities, option combinations) and to seeded
+random operations whose collections grow past their compact encodings, in
+RESP2 and RESP3:
 
 ```sh
-build/debug/redis_simple --port 8090 &
-for port in 6379 8090; do
-  redis-cli -p "${port}" <commands.txt >"replies.${port}.txt" 2>&1
-  redis-cli -3 -p "${port}" <commands.txt >"replies3.${port}.txt" 2>&1
-done
-diff replies.6379.txt replies.8090.txt; diff replies3.6379.txt replies3.8090.txt
+scripts/compare_with_redis.py build/debug/redis_simple
+scripts/compare_with_redis.py build/debug/redis_simple --io-threads 3 --seeds 1
 ```
 
-Use `FLUSHALL` between runs, and do not compare `SCAN`, `SMEMBERS`, or
-`HGETALL` order, which depends on the hash seed. Repeat with
-`--io-threads 3` after changing the request path.
+It exits nonzero and prints each differing command when replies differ. Add
+cases for new commands and options to its `edge_cases` and
+`random_operations`. Against Redis 7 it compares non-integer numbers by
+value, since only their formatting changed in Redis 8.
+
+For a one-off question, send the same commands to both servers with
+`redis-cli` and diff the replies. Clear data with `FLUSHDB`, since this
+server has no `FLUSHALL`, and do not compare `SCAN`, `SMEMBERS`, or
+`HGETALL` order, which depends on the hash seed.
 
 ## 3. AOF interoperability
 
@@ -74,8 +78,9 @@ Not bugs; leave them unless the task is about them.
   Redis 8 (and this server) uses `d2string`'s shortest form; `SCAN` accepts
   invalid cursors; `ZRANK`/`ZREVRANK` have no `WITHSCORE` before 7.2.
 - `HELLO` reports this server's name, version, and client id.
-- `COMMAND`, `CONFIG`, `KEYS`, and most `CLIENT` subcommands are not
-  implemented; tools such as `redis-benchmark` warn about `CONFIG` and carry
+- `SELECT` accepts only database 0, the only one.
+- `COMMAND`, `CONFIG`, `KEYS`, `FLUSHALL`, and most `CLIENT` subcommands are
+  not implemented; tools such as `redis-benchmark` warn about `CONFIG` and carry
   on.
 - `BGREWRITEAOF` with the AOF off replies with an error instead of writing a
   one-off file.

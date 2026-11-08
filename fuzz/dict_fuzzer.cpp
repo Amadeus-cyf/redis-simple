@@ -10,7 +10,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
-using StringDict = in_memory::Dict<std::string, std::string>;
+using StringDict = memory::Dict<std::string, std::string>;
 using DictModel = std::unordered_map<std::string, std::string>;
 
 DictModel ReadWithIterator(const StringDict& dict) {

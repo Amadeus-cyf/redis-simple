@@ -15,15 +15,15 @@ namespace redis_simple::cli::resp_parser {
 namespace {
 constexpr std::string_view kNilReply = "(nil)";
 
-ParseResult ParseAt(std::string_view resp, size_t start,
+ParseResult ParseAt(std::string_view input, size_t start,
                     std::vector<std::string>* reply);
 
-ParseResult FindLineEnd(std::string_view resp, size_t start) {
-  const size_t end = resp.find('\r', start);
-  if (end == std::string_view::npos || end + 1 >= resp.size()) {
+ParseResult FindLineEnd(std::string_view input, size_t start) {
+  const size_t end = input.find('\r', start);
+  if (end == std::string_view::npos || end + 1 >= input.size()) {
     return {ParseStatus::kIncomplete, 0};
   }
-  if (resp[end + 1] != '\n') {
+  if (input[end + 1] != '\n') {
     return {ParseStatus::kInvalid, 0};
   }
   return {ParseStatus::kComplete, end};
@@ -48,24 +48,24 @@ bool ParseSize(std::string_view value, size_t* const result) {
   return true;
 }
 
-ParseResult ParseLine(std::string_view resp, size_t start,
+ParseResult ParseLine(std::string_view input, size_t start,
                       std::vector<std::string>* const reply) {
-  const ParseResult line = FindLineEnd(resp, start + 1);
+  const ParseResult line = FindLineEnd(input, start + 1);
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
-  reply->emplace_back(resp.substr(start + 1, line.consumed - start - 1));
+  reply->emplace_back(input.substr(start + 1, line.consumed - start - 1));
   return {ParseStatus::kComplete, line.consumed - start + 2};
 }
 
-ParseResult ParseBulkString(std::string_view resp, size_t start,
+ParseResult ParseBulkString(std::string_view input, size_t start,
                             std::vector<std::string>* const reply) {
-  const ParseResult header = FindLineEnd(resp, start + 1);
+  const ParseResult header = FindLineEnd(input, start + 1);
   if (header.status != ParseStatus::kComplete) {
     return header;
   }
   const std::string_view length_text =
-      resp.substr(start + 1, header.consumed - start - 1);
+      input.substr(start + 1, header.consumed - start - 1);
   if (length_text == "-1") {
     reply->emplace_back(kNilReply);
     return {ParseStatus::kComplete, header.consumed - start + 2};
@@ -79,24 +79,24 @@ ParseResult ParseBulkString(std::string_view resp, size_t start,
     return {ParseStatus::kInvalid, 0};
   }
   const size_t response_end = content_start + length + 2;
-  if (response_end > resp.size()) {
+  if (response_end > input.size()) {
     return {ParseStatus::kIncomplete, 0};
   }
-  if (resp[response_end - 2] != '\r' || resp[response_end - 1] != '\n') {
+  if (input[response_end - 2] != '\r' || input[response_end - 1] != '\n') {
     return {ParseStatus::kInvalid, 0};
   }
-  reply->emplace_back(resp.substr(content_start, length));
+  reply->emplace_back(input.substr(content_start, length));
   return {ParseStatus::kComplete, response_end - start};
 }
 
-ParseResult ParseInteger(std::string_view resp, size_t start,
+ParseResult ParseInteger(std::string_view input, size_t start,
                          std::vector<std::string>* const reply) {
-  const ParseResult line = FindLineEnd(resp, start + 1);
+  const ParseResult line = FindLineEnd(input, start + 1);
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
   // RESP allows a '+' sign, which ToInt64, like Redis' string2ll, does not.
-  std::string_view text = resp.substr(start + 1, line.consumed - start - 1);
+  std::string_view text = input.substr(start + 1, line.consumed - start - 1);
   if (text.starts_with('+') && !text.starts_with("+-")) {
     text.remove_prefix(1);
   }
@@ -108,16 +108,16 @@ ParseResult ParseInteger(std::string_view resp, size_t start,
   return {ParseStatus::kComplete, line.consumed - start + 2};
 }
 
-ParseResult ParseAggregate(std::string_view resp, size_t start,
+ParseResult ParseAggregate(std::string_view input, size_t start,
                            size_t element_multiplier,
                            std::vector<std::string>* const reply) {
-  const ParseResult header = FindLineEnd(resp, start + 1);
+  const ParseResult header = FindLineEnd(input, start + 1);
   if (header.status != ParseStatus::kComplete) {
     return header;
   }
   const std::string_view length_text =
-      resp.substr(start + 1, header.consumed - start - 1);
-  if (length_text == "-1" && element_multiplier == 1 && resp[start] == '*') {
+      input.substr(start + 1, header.consumed - start - 1);
+  if (length_text == "-1" && element_multiplier == 1 && input[start] == '*') {
     // RESP2 null array, as returned by an aborted EXEC.
     reply->emplace_back(kNilReply);
     return {ParseStatus::kComplete, header.consumed - start + 2};
@@ -130,7 +130,7 @@ ParseResult ParseAggregate(std::string_view resp, size_t start,
   size_t consumed = header.consumed - start + 2;
   const size_t element_count = length * element_multiplier;
   for (size_t index = 0; index < element_count; ++index) {
-    const ParseResult element = ParseAt(resp, start + consumed, reply);
+    const ParseResult element = ParseAt(input, start + consumed, reply);
     if (element.status != ParseStatus::kComplete) {
       return element;
     }
@@ -143,24 +143,24 @@ ParseResult ParseAggregate(std::string_view resp, size_t start,
   return {ParseStatus::kComplete, consumed};
 }
 
-ParseResult ParseArray(std::string_view resp, size_t start,
+ParseResult ParseArray(std::string_view input, size_t start,
                        std::vector<std::string>* const reply) {
-  return ParseAggregate(resp, start, 1, reply);
+  return ParseAggregate(input, start, 1, reply);
 }
 
-ParseResult ParseMap(std::string_view resp, size_t start,
+ParseResult ParseMap(std::string_view input, size_t start,
                      std::vector<std::string>* const reply) {
-  return ParseAggregate(resp, start, 2, reply);
+  return ParseAggregate(input, start, 2, reply);
 }
 
-ParseResult ParseSet(std::string_view resp, size_t start,
+ParseResult ParseSet(std::string_view input, size_t start,
                      std::vector<std::string>* const reply) {
-  return ParseAggregate(resp, start, 1, reply);
+  return ParseAggregate(input, start, 1, reply);
 }
 
-ParseResult ParseNull(std::string_view resp, size_t start,
+ParseResult ParseNull(std::string_view input, size_t start,
                       std::vector<std::string>* const reply) {
-  const ParseResult line = FindLineEnd(resp, start + 1);
+  const ParseResult line = FindLineEnd(input, start + 1);
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
@@ -252,14 +252,14 @@ bool ParseFloatText(std::string_view value, std::string* const rendered) {
   return true;
 }
 
-ParseResult ParseFloat(std::string_view resp, size_t start,
+ParseResult ParseFloat(std::string_view input, size_t start,
                        std::vector<std::string>* const reply) {
-  const ParseResult line = FindLineEnd(resp, start + 1);
+  const ParseResult line = FindLineEnd(input, start + 1);
   if (line.status != ParseStatus::kComplete) {
     return line;
   }
   std::string rendered;
-  if (!ParseFloatText(resp.substr(start + 1, line.consumed - start - 1),
+  if (!ParseFloatText(input.substr(start + 1, line.consumed - start - 1),
                       &rendered)) {
     return {ParseStatus::kInvalid, 0};
   }
@@ -267,38 +267,38 @@ ParseResult ParseFloat(std::string_view resp, size_t start,
   return {ParseStatus::kComplete, line.consumed - start + 2};
 }
 
-ParseResult ParseAt(std::string_view resp, size_t start,
+ParseResult ParseAt(std::string_view input, size_t start,
                     std::vector<std::string>* const reply) {
-  if (start >= resp.size()) {
+  if (start >= input.size()) {
     return {ParseStatus::kIncomplete, 0};
   }
-  switch (resp[start]) {
+  switch (input[start]) {
     case '+':
     case '-':
-      return ParseLine(resp, start, reply);
+      return ParseLine(input, start, reply);
     case '$':
-      return ParseBulkString(resp, start, reply);
+      return ParseBulkString(input, start, reply);
     case ':':
-      return ParseInteger(resp, start, reply);
+      return ParseInteger(input, start, reply);
     case '*':
-      return ParseArray(resp, start, reply);
+      return ParseArray(input, start, reply);
     case '%':
-      return ParseMap(resp, start, reply);
+      return ParseMap(input, start, reply);
     case '~':
-      return ParseSet(resp, start, reply);
+      return ParseSet(input, start, reply);
     case '_':
-      return ParseNull(resp, start, reply);
+      return ParseNull(input, start, reply);
     case ',':
-      return ParseFloat(resp, start, reply);
+      return ParseFloat(input, start, reply);
     default:
       return {ParseStatus::kInvalid, 0};
   }
 }
 }  // namespace
 
-ParseResult Parse(std::string_view resp, std::vector<std::string>& reply) {
+ParseResult Parse(std::string_view input, std::vector<std::string>& reply) {
   const size_t original_size = reply.size();
-  const ParseResult result = ParseAt(resp, 0, &reply);
+  const ParseResult result = ParseAt(input, 0, &reply);
   if (result.status != ParseStatus::kComplete) {
     reply.resize(original_size);
   }

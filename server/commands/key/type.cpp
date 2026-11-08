@@ -6,7 +6,7 @@
 #include "server/db/redis_object.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::key {
+namespace redis_simple::commands::keys {
 namespace {
 std::string_view ObjectTypeName(const db::RedisObject* const object) {
   if (object == nullptr) {
@@ -32,4 +32,4 @@ void HandleType(Client* const client) {
   client->AddReply(reply::FromString(
       ObjectTypeName(client->Db()->LookupKey(client->Args()[0]))));
 }
-}  // namespace redis_simple::command::key
+}  // namespace redis_simple::commands::keys

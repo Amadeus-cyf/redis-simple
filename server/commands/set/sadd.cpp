@@ -9,9 +9,9 @@
 #include "server/db/db.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::sets {
+namespace redis_simple::commands::sets {
 void HandleSAdd(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   auto [object, wrong_type] = MutableLookupTyped(
       client->Db(), args[0], db::RedisObject::ObjectType::kSet);
   if (wrong_type) {
@@ -35,4 +35,4 @@ void HandleSAdd(Client* const client) {
   }
   client->AddReply(reply::FromInt64(added));
 }
-}  // namespace redis_simple::command::sets
+}  // namespace redis_simple::commands::sets

@@ -10,7 +10,7 @@
 
 #include "memory/reply_chunk.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 class ReplyBuffer {
  public:
   // The size of each reply block, as Redis' PROTO_REPLY_CHUNK_BYTES.
@@ -60,6 +60,6 @@ class ReplyBuffer {
   size_t reply_bytes_{};
   size_t pending_bytes_{};
 };
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory
 
 #endif  // REDIS_SIMPLE_MEMORY_REPLY_BUFFER_H_

@@ -28,11 +28,11 @@ bool WriteToConnection(const connection::Connection* connection,
 }
 
 std::string ReplyListToString(const std::vector<std::string>& reply) {
-  std::string reply_str;
-  for (const std::string& r : reply) {
-    reply_str.append(r).push_back('\n');
+  std::string output;
+  for (const std::string& line : reply) {
+    output.append(line).push_back('\n');
   }
-  return reply_str;
+  return output;
 }
 
 std::string EncodeCommand(const std::vector<std::string_view>& args) {

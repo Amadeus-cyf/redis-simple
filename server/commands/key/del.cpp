@@ -6,7 +6,7 @@
 #include "server/db/db.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::key {
+namespace redis_simple::commands::keys {
 namespace {
 using DeleteOperation = db::DbStatus (db::RedisDb::*)(std::string_view);
 
@@ -32,4 +32,4 @@ void HandleDel(Client* const client) {
 void HandleUnlink(Client* const client) {
   AddDeleteReply(client, &db::RedisDb::UnlinkKey);
 }
-}  // namespace redis_simple::command::key
+}  // namespace redis_simple::commands::keys

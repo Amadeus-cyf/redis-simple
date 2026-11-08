@@ -41,8 +41,8 @@ constexpr size_t kMaxAnnotationBytes = 1024;
 // Commands of one MULTI/EXEC block read during replay, held until EXEC.
 class ReplayTransaction {
  public:
-  void Queue(const command::Command* command,
-             const command::CommandArgs& args) {
+  void Queue(const commands::Command* command,
+             const commands::CommandArgs& args) {
     commands_.push_back({command, args.size()});
     for (const std::string_view arg : args) {
       args_.emplace_back(arg);
@@ -53,7 +53,7 @@ class ReplayTransaction {
   // false when a command fails; Apply then stops and returns false.
   template <typename Execute>
   bool Apply(const Execute& execute) {
-    command::CommandArgs views;
+    commands::CommandArgs views;
     size_t next_arg = 0;
     bool applied = true;
     for (const auto& [command, arg_count] : commands_) {
@@ -73,7 +73,7 @@ class ReplayTransaction {
 
  private:
   struct QueuedCommand {
-    const command::Command* command;
+    const commands::Command* command;
     size_t arg_count;
   };
   std::vector<QueuedCommand> commands_;
@@ -190,170 +190,234 @@ bool Aof::Replay(db::RedisDb* const db) {
   return true;
 }
 
+// Replays one AOF file into a database through a client without a
+// connection, as Redis' loadSingleAppendOnlyFile does.
+class FileReplayer {
+ public:
+  FileReplayer(db::RedisDb* const db, const Limits& limits)
+      : server_{.db = db,
+                .aof = nullptr,
+                .required_password = {},
+                .io_threads = {}},
+        client_(&server_),
+        limits_(&limits) {}
+
+  enum class Outcome : uint8_t {
+    // Every record applied.
+    kComplete,
+    // The file ends in a torn record or a transaction without its EXEC.
+    kTruncated,
+    // A record is not in the command format; see CorruptFrom().
+    kCorrupt,
+    // A read failed, or a command could not be applied.
+    kFailed,
+  };
+
+  Outcome Replay(int fd);
+
+  // Where the valid prefix ends: after the last complete command, and
+  // before any transaction left open.
+  [[nodiscard]] size_t ValidBytes() const {
+    return transaction_start_.value_or(complete_bytes_);
+  }
+
+ private:
+  enum class Step : uint8_t { kApplied, kNeedMoreInput, kCorrupt, kFailed };
+
+  Step ApplyNext(bool reached_end);
+  Step SkipAnnotation(std::string_view remaining, bool reached_end);
+  bool ApplyCommand(std::string_view name);
+
+  const ServerContext server_;
+  Client client_;
+  const Limits* const limits_;
+  memory::DynamicBuffer input_;
+  commands::CommandArgs args_;
+  size_t complete_bytes_{};
+  // Records between MULTI and EXEC are copied out of `input_` and applied
+  // together at EXEC, so a transaction cut off by a crash is not applied.
+  std::optional<size_t> transaction_start_;
+  ReplayTransaction transaction_;
+};
+
+FileReplayer::Outcome FileReplayer::Replay(int fd) {
+  std::array<char, kReadChunkSize> chunk{};
+  bool reached_end = false;
+  while (!reached_end) {
+    ssize_t bytes_read = read(fd, chunk.data(), chunk.size());
+    while (bytes_read < 0 && errno == EINTR) {
+      bytes_read = read(fd, chunk.data(), chunk.size());
+    }
+    if (bytes_read < 0) {
+      return Outcome::kFailed;
+    }
+    reached_end = bytes_read == 0;
+    if (bytes_read > 0) {
+      input_.Append(chunk.data(), static_cast<size_t>(bytes_read));
+    }
+    Step step = Step::kApplied;
+    while (!input_.Empty() && step == Step::kApplied) {
+      step = ApplyNext(reached_end);
+    }
+    if (step == Step::kCorrupt) {
+      return Outcome::kCorrupt;
+    }
+    if (step == Step::kFailed ||
+        input_.View().size() > limits_->max_replay_command_bytes) {
+      return Outcome::kFailed;
+    }
+  }
+  return input_.Empty() && !transaction_start_.has_value()
+             ? Outcome::kComplete
+             : Outcome::kTruncated;
+}
+
+FileReplayer::Step FileReplayer::ApplyNext(bool reached_end) {
+  const std::string_view remaining = input_.View();
+  if (remaining.front() == '#') {
+    return SkipAnnotation(remaining, reached_end);
+  }
+  if (remaining.front() != '*') {
+    return Step::kCorrupt;
+  }
+  std::string_view name;
+  const request_parser::ParseResult parsed =
+      request_parser::Parse(remaining, &name, &args_);
+  if (parsed.status == request_parser::ParseStatus::kIncomplete) {
+    return Step::kNeedMoreInput;
+  }
+  if (parsed.status != request_parser::ParseStatus::kComplete) {
+    return Step::kCorrupt;
+  }
+  if (parsed.consumed > limits_->max_replay_command_bytes ||
+      !ApplyCommand(name) || !AddSize(parsed.consumed, &complete_bytes_)) {
+    return Step::kFailed;
+  }
+  input_.Consume(parsed.consumed);
+  return Step::kApplied;
+}
+
+// Skips an annotation line, such as "#TS:<unix time>", as Redis does.
+FileReplayer::Step FileReplayer::SkipAnnotation(std::string_view remaining,
+                                                bool reached_end) {
+  const size_t line_end = remaining.find('\n');
+  if (line_end == std::string_view::npos && !reached_end) {
+    return remaining.size() > kMaxAnnotationBytes ? Step::kCorrupt
+                                                  : Step::kNeedMoreInput;
+  }
+  const size_t line_size =
+      line_end == std::string_view::npos ? remaining.size() : line_end + 1;
+  if (!AddSize(line_size, &complete_bytes_)) {
+    return Step::kFailed;
+  }
+  input_.Consume(line_size);
+  return Step::kApplied;
+}
+
+bool FileReplayer::ApplyCommand(std::string_view name) {
+  if (name == "SELECT" && args_.size() == 1) {
+    // The only database there is; any other would lose data.
+    if (args_[0] != "0") {
+      RS_LOG_ERROR("AOF selects database %.*s, but only 0 exists\n",
+                   static_cast<int>(args_[0].size()), args_[0].data());
+      return false;
+    }
+    return true;
+  }
+  if (name == "MULTI" && args_.empty()) {
+    if (transaction_start_.has_value()) {
+      return false;
+    }
+    transaction_start_ = complete_bytes_;
+    return true;
+  }
+  if (name == "EXEC" && args_.empty()) {
+    if (!transaction_start_.has_value() ||
+        !transaction_.Apply([this](const commands::Command* command,
+                                   commands::CommandArgs* views) {
+          return client_.ExecuteForReplay(command, views);
+        })) {
+      return false;
+    }
+    transaction_start_.reset();
+    return true;
+  }
+  const commands::Command* const command = commands::Find(name);
+  if (command == nullptr ||
+      command->access != commands::CommandAccess::kWrite ||
+      !command->arity.Accepts(args_.size())) {
+    return false;
+  }
+  if (transaction_start_.has_value()) {
+    transaction_.Queue(command, args_);
+    return true;
+  }
+  return client_.ExecuteForReplay(command, &args_);
+}
+
 bool Aof::ReplayFile(db::RedisDb* const db, int fd, bool last) {
   db->SetLoading(true);
-  // Where a format error starts the corrupt tail: after the last complete
-  // command, and before a transaction it interrupts.
-  std::optional<size_t> corrupt_from;
-  bool replayed = [this, db, fd, last, &corrupt_from] {
-    const ServerContext server{
-        .db = db, .aof = nullptr, .required_password = {}, .io_threads = {}};
-    Client client(&server);
-    std::array<char, kReadChunkSize> chunk{};
-    in_memory::DynamicBuffer input;
-    command::CommandArgs args;
-    size_t complete_bytes = 0;
-    bool reached_end = false;
-    // Records between MULTI and EXEC are copied out of `input` and applied
-    // together at EXEC, so a transaction cut off by a crash is not applied.
-    std::optional<size_t> transaction_start;
-    ReplayTransaction transaction;
-
-    while (!reached_end) {
-      ssize_t bytes_read = -1;
-      while (true) {
-        bytes_read = read(fd, chunk.data(), chunk.size());
-        if (bytes_read >= 0 || errno != EINTR) {
-          break;
-        }
-      }
-      if (bytes_read < 0) {
-        return false;
-      }
-      reached_end = bytes_read == 0;
-      if (bytes_read > 0) {
-        input.Append(chunk.data(), static_cast<size_t>(bytes_read));
-      }
-
-      while (!input.Empty()) {
-        const std::string_view remaining = input.View();
-        if (remaining.front() == '#') {
-          // An annotation, such as "#TS:<unix time>"; Redis skips it.
-          const size_t line_end = remaining.find('\n');
-          if (line_end == std::string_view::npos && !reached_end) {
-            if (remaining.size() > kMaxAnnotationBytes) {
-              corrupt_from = transaction_start.value_or(complete_bytes);
-              return false;
-            }
-            break;
-          }
-          const size_t line_size = line_end == std::string_view::npos
-                                       ? remaining.size()
-                                       : line_end + 1;
-          if (!AddSize(line_size, &complete_bytes)) {
-            return false;
-          }
-          input.Consume(line_size);
-          continue;
-        }
-        if (remaining.front() != '*') {
-          corrupt_from = transaction_start.value_or(complete_bytes);
-          return false;
-        }
-        std::string_view name;
-        const request_parser::ParseResult parsed =
-            request_parser::Parse(remaining, &name, &args);
-        if (parsed.status == request_parser::ParseStatus::kIncomplete) {
-          break;
-        }
-        if (parsed.status != request_parser::ParseStatus::kComplete) {
-          corrupt_from = transaction_start.value_or(complete_bytes);
-          return false;
-        }
-        if (parsed.consumed > limits_.max_replay_command_bytes) {
-          return false;
-        }
-        if (name == "SELECT" && args.size() == 1) {
-          // The only database there is; any other would lose data.
-          if (args[0] != "0") {
-            RS_LOG_ERROR("AOF selects database %.*s, but only 0 exists\n",
-                         static_cast<int>(args[0].size()), args[0].data());
-            return false;
-          }
-        } else if (name == "MULTI" && args.empty()) {
-          if (transaction_start.has_value()) {
-            return false;
-          }
-          transaction_start = complete_bytes;
-        } else if (name == "EXEC" && args.empty()) {
-          const auto execute = [&client](const command::Command* command,
-                                         command::CommandArgs* views) {
-            return client.ExecuteForReplay(command, views);
-          };
-          if (!transaction_start.has_value() || !transaction.Apply(execute)) {
-            return false;
-          }
-          transaction_start.reset();
-        } else {
-          const command::Command* metadata = command::Find(name);
-          if (metadata == nullptr ||
-              metadata->access != command::CommandAccess::kWrite ||
-              !metadata->arity.Accepts(args.size())) {
-            return false;
-          }
-          if (transaction_start.has_value()) {
-            transaction.Queue(metadata, args);
-          } else if (!client.ExecuteForReplay(metadata, &args)) {
-            return false;
-          }
-        }
-        if (!AddSize(parsed.consumed, &complete_bytes)) {
-          return false;
-        }
-        input.Consume(parsed.consumed);
-      }
-      if (input.View().size() > limits_.max_replay_command_bytes) {
-        return false;
-      }
-    }
-
-    // Redis' unexpected end of file: a torn record, or a transaction without
-    // its EXEC.
-    const bool truncated = !input.Empty() || transaction_start.has_value();
-    if (!truncated) {
-      return true;
-    }
-    const size_t valid_bytes = transaction_start.value_or(complete_bytes);
-    if (!load_truncated_) {
-      RS_LOG_ERROR(
-          "Unexpected end of file reading the append only file. You can set "
-          "the 'aof-load-truncated' configuration option to yes and restart "
-          "the server.\n");
-      return false;
-    }
-    if (!last) {
-      RS_LOG_ERROR("Fatal error: the truncated file is not the last file\n");
-      return false;
-    }
-    RS_LOG_WARN("!!! Truncating the AOF at offset %zu !!!\n", valid_bytes);
-    return CutTail(fd, valid_bytes);
-  }();
-  if (!replayed && corrupt_from.has_value()) {
-    // Redis' aof-load-corrupt-tail-max-size: a format error with fewer than
-    // that many bytes after the last complete command, in the last file.
-    const size_t size = FileSize(fd).value_or(0);
-    const size_t remaining = size - std::min(size, *corrupt_from);
-    if (load_corrupt_tail_max_bytes_ > 0 &&
-        remaining < load_corrupt_tail_max_bytes_) {
-      if (!last) {
-        RS_LOG_ERROR("Fatal error: the truncated file is not the last file\n");
-      } else {
-        RS_LOG_WARN(
-            "!!! Warning: corrupt AOF file tail!!! Truncating the AOF at "
-            "offset %zu (remaining %zu) !!!\n",
-            *corrupt_from, remaining);
-        replayed = CutTail(fd, *corrupt_from);
-      }
-    } else {
-      RS_LOG_ERROR(
-          "Bad file format reading the append only file at offset %zu. You "
-          "can set the 'aof-load-corrupt-tail-max-size' configuration option "
-          "to %zu and restart the server.\n",
-          *corrupt_from, remaining);
-    }
+  FileReplayer replayer(db, limits_);
+  bool replayed = false;
+  switch (replayer.Replay(fd)) {
+    case FileReplayer::Outcome::kComplete:
+      replayed = true;
+      break;
+    case FileReplayer::Outcome::kTruncated:
+      replayed = HandleTruncatedFile(fd, last, replayer.ValidBytes());
+      break;
+    case FileReplayer::Outcome::kCorrupt:
+      replayed = HandleCorruptTail(fd, last, replayer.ValidBytes());
+      break;
+    case FileReplayer::Outcome::kFailed:
+      break;
   }
   db->SetLoading(false);
   return replayed;
+}
+
+// Redis' "unexpected end of file": a torn record, or a transaction without
+// its EXEC. With aof-load-truncated, the last file is cut back to its valid
+// prefix.
+bool Aof::HandleTruncatedFile(int fd, bool last, size_t valid_bytes) const {
+  if (!load_truncated_) {
+    RS_LOG_ERROR(
+        "Unexpected end of file reading the append only file. You can set "
+        "the 'aof-load-truncated' configuration option to yes and restart "
+        "the server.\n");
+    return false;
+  }
+  if (!last) {
+    RS_LOG_ERROR("Fatal error: the truncated file is not the last file\n");
+    return false;
+  }
+  RS_LOG_WARN("!!! Truncating the AOF at offset %zu !!!\n", valid_bytes);
+  return CutTail(fd, valid_bytes);
+}
+
+// Redis' aof-load-corrupt-tail-max-size: a format error with fewer than that
+// many bytes after the last complete command, in the last file, is cut off.
+bool Aof::HandleCorruptTail(int fd, bool last, size_t corrupt_from) const {
+  const size_t size = FileSize(fd).value_or(0);
+  const size_t remaining = size - std::min(size, corrupt_from);
+  if (load_corrupt_tail_max_bytes_ == 0 ||
+      remaining >= load_corrupt_tail_max_bytes_) {
+    RS_LOG_ERROR(
+        "Bad file format reading the append only file at offset %zu. You "
+        "can set the 'aof-load-corrupt-tail-max-size' configuration option "
+        "to %zu and restart the server.\n",
+        corrupt_from, remaining);
+    return false;
+  }
+  if (!last) {
+    RS_LOG_ERROR("Fatal error: the truncated file is not the last file\n");
+    return false;
+  }
+  RS_LOG_WARN(
+      "!!! Warning: corrupt AOF file tail!!! Truncating the AOF at offset %zu "
+      "(remaining %zu) !!!\n",
+      corrupt_from, remaining);
+  return CutTail(fd, corrupt_from);
 }
 
 bool Aof::CutTail(int fd, size_t valid_bytes) const {

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "utils/check.h"
+#include "utils/split_args.h"
 
 namespace redis_simple::aof {
 namespace {
@@ -35,19 +36,6 @@ bool IsSpace(char c) {
 }
 
 bool IsPrint(char c) { return c >= 0x20 && c < 0x7f; }
-
-std::optional<int> HexDigit(char c) {
-  if (c >= '0' && c <= '9') {
-    return c - '0';
-  }
-  if (c >= 'a' && c <= 'f') {
-    return c - 'a' + 10;
-  }
-  if (c >= 'A' && c <= 'F') {
-    return c - 'A' + 10;
-  }
-  return std::nullopt;
-}
 
 // Whether a manifest field must be quoted (Redis' sdsneedsrepr).
 bool NeedsQuoting(std::string_view value) {
@@ -96,100 +84,6 @@ void AppendQuoted(std::string_view value, std::string* const output) {
     }
   }
   output->push_back('"');
-}
-
-// Splits a line into fields separated by whitespace, where a field may be
-// "double quoted" with escapes or 'single quoted' (Redis' sdssplitargs).
-// Returns nullopt for unbalanced quotes or a closing quote followed by
-// anything but whitespace.
-std::optional<std::vector<std::string>> SplitFields(std::string_view line) {
-  std::vector<std::string> fields;
-  size_t position = 0;
-  const auto at = [&line](size_t index) {
-    return index < line.size() ? line[index] : '\0';
-  };
-  while (true) {
-    while (position < line.size() && IsSpace(line[position])) {
-      ++position;
-    }
-    if (position >= line.size()) {
-      return fields;
-    }
-    std::string field;
-    bool in_double_quotes = false;
-    bool in_single_quotes = false;
-    bool done = false;
-    while (!done) {
-      const char c = at(position);
-      if (in_double_quotes) {
-        if (c == '\\' && at(position + 1) == 'x' &&
-            HexDigit(at(position + 2)).has_value() &&
-            HexDigit(at(position + 3)).has_value()) {
-          field.push_back(
-              static_cast<char>((HexDigit(at(position + 2)).value_or(0) * 16) +
-                                HexDigit(at(position + 3)).value_or(0)));
-          position += 3;
-        } else if (c == '\\' && at(position + 1) != '\0') {
-          ++position;
-          switch (at(position)) {
-            case 'n':
-              field.push_back('\n');
-              break;
-            case 'r':
-              field.push_back('\r');
-              break;
-            case 't':
-              field.push_back('\t');
-              break;
-            case 'b':
-              field.push_back('\b');
-              break;
-            case 'a':
-              field.push_back('\a');
-              break;
-            default:
-              field.push_back(at(position));
-              break;
-          }
-        } else if (c == '"') {
-          if (at(position + 1) != '\0' && !IsSpace(at(position + 1))) {
-            return std::nullopt;
-          }
-          done = true;
-        } else if (c == '\0') {
-          return std::nullopt;
-        } else {
-          field.push_back(c);
-        }
-      } else if (in_single_quotes) {
-        if (c == '\\' && at(position + 1) == '\'') {
-          ++position;
-          field.push_back('\'');
-        } else if (c == '\'') {
-          if (at(position + 1) != '\0' && !IsSpace(at(position + 1))) {
-            return std::nullopt;
-          }
-          done = true;
-        } else if (c == '\0') {
-          return std::nullopt;
-        } else {
-          field.push_back(c);
-        }
-      } else if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\0') {
-        done = true;
-      } else if (c == '"') {
-        in_double_quotes = true;
-      } else if (c == '\'') {
-        in_single_quotes = true;
-      } else {
-        field.push_back(c);
-      }
-      if (position < line.size()) {
-        ++position;
-      }
-    }
-    fields.push_back(std::move(field));
-  }
 }
 
 // Reads a number as C's atoll does, as Redis reads manifest numbers: leading
@@ -329,16 +223,20 @@ std::optional<Manifest> Manifest::Parse(std::string_view text) {
     }
     // Key/value pairs in any order; at least the three Redis requires, and
     // unknown keys are ignored for forward compatibility.
-    const std::optional<std::vector<std::string>> fields = SplitFields(line);
-    if (!fields.has_value() || fields->size() < 6 || fields->size() % 2 != 0) {
+    std::vector<std::string> fields;
+    if (!utils::SplitArgs(line,
+                          [&fields](std::string_view field, bool /*quoted*/) {
+                            fields.emplace_back(field);
+                          }) ||
+        fields.size() < 6 || fields.size() % 2 != 0) {
       return std::nullopt;
     }
     ManifestFile file;
     bool has_name = false;
     char type_code = '\0';
-    for (size_t index = 0; index < fields->size(); index += 2) {
-      const std::string& key = (*fields)[index];
-      const std::string& value = (*fields)[index + 1];
+    for (size_t index = 0; index < fields.size(); index += 2) {
+      const std::string& key = fields[index];
+      const std::string& value = fields[index + 1];
       if (EqualsIgnoringCase(key, "file")) {
         if (value.find_first_of("/\\") != std::string::npos) {
           return std::nullopt;

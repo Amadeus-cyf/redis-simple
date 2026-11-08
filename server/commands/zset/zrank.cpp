@@ -11,11 +11,11 @@
 #include "server/reply.h"
 #include "utils/string_utils.h"
 
-namespace redis_simple::command::zsets {
+namespace redis_simple::commands::zsets {
 namespace {
 // Redis' zrankGenericCommand: an optional WITHSCORE adds the score.
 void AddRankReply(Client* const client, bool reverse) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const bool with_score = args.size() == 3;
   if (with_score && !utils::EqualsIgnoreCase(args[2], "WITHSCORE")) {
     client->AddReply(reply::kSyntaxError);
@@ -54,4 +54,4 @@ void AddRankReply(Client* const client, bool reverse) {
 void HandleZRank(Client* const client) { AddRankReply(client, false); }
 
 void HandleZRevRank(Client* const client) { AddRankReply(client, true); }
-}  // namespace redis_simple::command::zsets
+}  // namespace redis_simple::commands::zsets

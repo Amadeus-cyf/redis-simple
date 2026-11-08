@@ -3,7 +3,7 @@
 #include "server/commands/handlers.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::persistence {
+namespace redis_simple::commands::persistence {
 void HandleBgRewriteAof(Client* const client) {
   auto* const aof = client->Aof();
   if (aof == nullptr) {
@@ -34,4 +34,4 @@ void HandleBgRewriteAof(Client* const client) {
       "logs for more information."));
 }
 
-}  // namespace redis_simple::command::persistence
+}  // namespace redis_simple::commands::persistence

@@ -12,11 +12,11 @@
 #include <utility>
 #include <vector>
 
-namespace redis_simple::in_memory {
-TEST(DictStrTest, Init) {
-  auto dict_str = Dict<std::string, std::string>::Create();
-  ASSERT_TRUE(dict_str);
-  ASSERT_EQ(dict_str->Size(), 0);
+namespace redis_simple::memory {
+TEST(DictStringTest, Basics) {
+  auto string_dict = Dict<std::string, std::string>::Create();
+  ASSERT_TRUE(string_dict);
+  ASSERT_EQ(string_dict->Size(), 0);
 }
 
 namespace {
@@ -42,7 +42,7 @@ struct CaseInsensitiveEqual {
 };
 }  // namespace
 
-TEST(DictStrTest, UsesCustomHashAndEqualityPolicies) {
+TEST(DictStringTest, UsesCustomHashAndEqualityPolicies) {
   auto dict = Dict<std::string, int, CaseInsensitiveHash,
                    CaseInsensitiveEqual>::Create();
   ASSERT_TRUE(dict->Insert("Key", 1));
@@ -51,7 +51,7 @@ TEST(DictStrTest, UsesCustomHashAndEqualityPolicies) {
   EXPECT_EQ(*dict->FindValue(std::string_view("kEy")), 1);
 }
 
-TEST(DictStrTest, FindOrInsertHashesOnceAndKeepsExistingValues) {
+TEST(DictStringTest, FindOrInsertHashesOnceAndKeepsExistingValues) {
   auto dict = Dict<std::string, std::string>::Create();
   auto [value, inserted] = dict->FindOrInsert(std::string_view("key"));
   ASSERT_TRUE(inserted);
@@ -63,7 +63,7 @@ TEST(DictStrTest, FindOrInsertHashesOnceAndKeepsExistingValues) {
   EXPECT_EQ(dict->Size(), 1);
 }
 
-TEST(DictStrTest, HashedKeysMatchPlainLookupsAcrossDicts) {
+TEST(DictStringTest, HashedKeysMatchPlainLookupsAcrossDicts) {
   auto values = Dict<std::string, std::string>::Create();
   auto counts = Dict<std::string, int>::Create();
   // Enough keys to resize and rehash both tables while they are used.
@@ -97,7 +97,7 @@ TEST(DictStrTest, HashedKeysMatchPlainLookupsAcrossDicts) {
   EXPECT_EQ(counts->Size(), 199);
 }
 
-TEST(DictStrTest, IteratorExposesStoredHashes) {
+TEST(DictStringTest, IteratorExposesStoredHashes) {
   auto source = Dict<std::string, int>::Create();
   auto target = Dict<std::string, int>::Create();
   // Enough keys that the source rehashes while being filled.
@@ -122,7 +122,7 @@ TEST(DictStrTest, IteratorExposesStoredHashes) {
   EXPECT_EQ(found, 100);
 }
 
-TEST(DictStrTest, ShrinksAfterMassDeletes) {
+TEST(DictStringTest, ShrinksAfterMassDeletes) {
   auto dict = Dict<std::string, int>::Create();
   for (int i = 0; i < 4096; ++i) {
     dict->Insert(std::to_string(i), i);
@@ -148,7 +148,7 @@ TEST(DictStrTest, ShrinksAfterMassDeletes) {
   EXPECT_LE(visited_buckets, 64);
 }
 
-TEST(DictStrTest, ScanVisitsEveryKeyWhileTheTableResizes) {
+TEST(DictStringTest, ScanVisitsEveryKeyWhileTheTableResizes) {
   auto dict = Dict<std::string, int>::Create();
   for (int i = 0; i < 1000; ++i) {
     dict->Insert(std::to_string(i), i);
@@ -183,66 +183,66 @@ TEST(DictStrTest, ScanVisitsEveryKeyWhileTheTableResizes) {
   }
 }
 
-TEST(DictStrTest, Insert) {
-  auto dict_str = Dict<std::string, std::string>::Create();
-  bool status = dict_str->Insert("key", "val");
+TEST(DictStringTest, Insert) {
+  auto string_dict = Dict<std::string, std::string>::Create();
+  bool status = string_dict->Insert("key", "val");
   ASSERT_TRUE(status);
-  ASSERT_EQ(dict_str->Size(), 1);
+  ASSERT_EQ(string_dict->Size(), 1);
 
   // Insert a new key.
-  const auto opt1 = dict_str->Get("key");
+  const auto opt1 = string_dict->Get("key");
   ASSERT_TRUE(opt1.has_value());
   ASSERT_EQ(opt1.value_or(""), "val");
-  ASSERT_EQ(dict_str->Size(), 1);
+  ASSERT_EQ(string_dict->Size(), 1);
 
   // Update the key.
-  dict_str->Set("key", "val_update");
-  ASSERT_EQ(dict_str->Size(), 1);
+  string_dict->Set("key", "val_update");
+  ASSERT_EQ(string_dict->Size(), 1);
 
-  const auto opt2 = dict_str->Get("key");
+  const auto opt2 = string_dict->Get("key");
   ASSERT_TRUE(opt2.has_value());
   ASSERT_EQ(opt2.value_or(""), "val_update");
-  ASSERT_EQ(dict_str->Size(), 1);
+  ASSERT_EQ(string_dict->Size(), 1);
 }
 
-TEST(DictStrTest, InsertDuplicate) {
-  auto dict_str = Dict<std::string, std::string>::Create();
-  ASSERT_TRUE(dict_str->Insert("key", "val"));
-  ASSERT_FALSE(dict_str->Insert("key", "new_val"));
-  ASSERT_EQ(dict_str->Size(), 1);
+TEST(DictStringTest, InsertDuplicate) {
+  auto string_dict = Dict<std::string, std::string>::Create();
+  ASSERT_TRUE(string_dict->Insert("key", "val"));
+  ASSERT_FALSE(string_dict->Insert("key", "new_val"));
+  ASSERT_EQ(string_dict->Size(), 1);
 
-  const auto result = dict_str->Get("key");
+  const auto result = string_dict->Get("key");
   ASSERT_TRUE(result.has_value());
   ASSERT_EQ(result.value_or(""), "val");
 }
 
-TEST(DictStrTest, FindValueSupportsNonOwningLookup) {
-  auto dict_str = Dict<std::string, std::string>::Create();
-  ASSERT_TRUE(dict_str->Insert("prefix_key_suffix", "val"));
+TEST(DictStringTest, FindValueSupportsNonOwningLookup) {
+  auto string_dict = Dict<std::string, std::string>::Create();
+  ASSERT_TRUE(string_dict->Insert("prefix_key_suffix", "val"));
 
   const std::string lookup = "xxprefix_key_suffixyy";
-  auto* value = dict_str->FindValue(std::string_view(lookup).substr(2, 17));
+  auto* value = string_dict->FindValue(std::string_view(lookup).substr(2, 17));
 
   ASSERT_NE(value, nullptr);
   ASSERT_EQ(*value, "val");
-  ASSERT_EQ(dict_str->FindValue(std::string_view("missing")), nullptr);
+  ASSERT_EQ(string_dict->FindValue(std::string_view("missing")), nullptr);
 }
 
-TEST(DictStrTest, Delete) {
-  auto dict_str = Dict<std::string, std::string>::Create();
-  ASSERT_TRUE(dict_str->Insert("key", "val"));
+TEST(DictStringTest, Delete) {
+  auto string_dict = Dict<std::string, std::string>::Create();
+  ASSERT_TRUE(string_dict->Insert("key", "val"));
 
-  bool status = dict_str->Delete("key");
+  bool status = string_dict->Delete("key");
   ASSERT_TRUE(status);
-  ASSERT_EQ(dict_str->Size(), 0);
+  ASSERT_EQ(string_dict->Size(), 0);
 
-  const auto result = dict_str->Get("key");
+  const auto result = string_dict->Get("key");
   ASSERT_FALSE(result.has_value());
   ASSERT_EQ(result, std::nullopt);
-  ASSERT_EQ(dict_str->Size(), 0);
+  ASSERT_EQ(string_dict->Size(), 0);
 }
 
-TEST(DictStrTest, ExtractTransfersMoveOnlyValue) {
+TEST(DictStringTest, ExtractTransfersMoveOnlyValue) {
   auto dict = Dict<std::string, std::unique_ptr<int>>::Create();
   dict->Set(std::string("key"), std::make_unique<int>(42));
 
@@ -257,31 +257,31 @@ TEST(DictStrTest, ExtractTransfersMoveOnlyValue) {
 
 namespace {
 std::unique_ptr<Dict<int, int>> MakeIntDictWithEntries() {
-  auto dict_int = Dict<int, int>::Create();
+  auto int_dict = Dict<int, int>::Create();
   for (int i = 0; i < 129; ++i) {
-    dict_int->Insert(i, i);
+    int_dict->Insert(i, i);
   }
-  return dict_int;
+  return int_dict;
 }
 }  // namespace
 
-TEST(DictIntTest, Init) {
-  auto dict_int = Dict<int, int>::Create();
-  ASSERT_TRUE(dict_int);
-  ASSERT_EQ(dict_int->Size(), 0);
+TEST(DictIntTest, Basics) {
+  auto int_dict = Dict<int, int>::Create();
+  ASSERT_TRUE(int_dict);
+  ASSERT_EQ(int_dict->Size(), 0);
 }
 
 TEST(DictIntTest, BatchInsert) {
-  auto dict_int = MakeIntDictWithEntries();
-  ASSERT_EQ(dict_int->Size(), 129);
-  const std::optional<int> result = dict_int->Get(96);
+  auto int_dict = MakeIntDictWithEntries();
+  ASSERT_EQ(int_dict->Size(), 129);
+  const std::optional<int> result = int_dict->Get(96);
   ASSERT_TRUE(result.has_value());
   ASSERT_EQ(result.value_or(0), 96);
 }
 
 TEST(DictIntTest, Iterator) {
-  auto dict_int = MakeIntDictWithEntries();
-  auto it = in_memory::Dict<int, int>::Iterator(dict_int.get());
+  auto int_dict = MakeIntDictWithEntries();
+  auto it = memory::Dict<int, int>::Iterator(int_dict.get());
   // Bucket order depends on the table size, so check coverage instead.
   std::vector<int> seen(129, 0);
   for (it.SeekToFirst(); it.Valid(); it.Next()) {
@@ -299,16 +299,16 @@ TEST(DictIntTest, Iterator) {
 }
 
 TEST(DictIntTest, Clear) {
-  auto dict_int = MakeIntDictWithEntries();
-  dict_int->Clear();
-  ASSERT_EQ(dict_int->Size(), 0);
+  auto int_dict = MakeIntDictWithEntries();
+  int_dict->Clear();
+  ASSERT_EQ(int_dict->Size(), 0);
 
-  const std::optional<int> result = dict_int->Get(96);
+  const std::optional<int> result = int_dict->Get(96);
   ASSERT_FALSE(result.has_value());
   ASSERT_EQ(result, std::nullopt);
 
-  ASSERT_TRUE(dict_int->Insert(1, 10));
-  ASSERT_EQ(dict_int->Size(), 1);
-  ASSERT_EQ(dict_int->Get(1), 10);
+  ASSERT_TRUE(int_dict->Insert(1, 10));
+  ASSERT_EQ(int_dict->Size(), 1);
+  ASSERT_EQ(int_dict->Get(1), 10);
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

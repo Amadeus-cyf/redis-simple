@@ -12,9 +12,8 @@
 #include "server/reply.h"
 #include "utils/check.h"
 #include "utils/string_utils.h"
-#include "utils/time_utils.h"
 
-namespace redis_simple::command::strings {
+namespace redis_simple::commands::strings {
 namespace {
 constexpr int64_t kMillisecondsPerSecond = 1000;
 
@@ -129,7 +128,7 @@ bool ParseSetOption(const CommandArgs& args, size_t* const index,
 
 // Converts the expiration option's value to an absolute time in milliseconds.
 ParseStatus ResolveExpire(ExpireUnit unit, std::string_view expire_arg,
-                          int64_t* const expire) {
+                          int64_t now, int64_t* const expire) {
   int64_t expiration = 0;
   if (!utils::ToInt64(expire_arg, &expiration)) {
     return ParseStatus::kNotAnInteger;
@@ -144,7 +143,7 @@ ParseStatus ResolveExpire(ExpireUnit unit, std::string_view expire_arg,
       valid = ExpireAtFromTtl(
           expiration,
           unit == ExpireUnit::kRelativeSeconds ? kMillisecondsPerSecond : 1,
-          utils::NowInMilliseconds(), expire);
+          now, expire);
       break;
     case ExpireUnit::kAbsoluteSeconds:
       valid = MillisecondsFromSeconds(expiration, expire);
@@ -159,7 +158,9 @@ ParseStatus ResolveExpire(ExpireUnit unit, std::string_view expire_arg,
   return valid && *expire > 0 ? ParseStatus::kOk : ParseStatus::kInvalidExpire;
 }
 
-ParseStatus ParseArgs(const CommandArgs& args, SetArgs* const set_args) {
+// `db` supplies the time for relative expirations.
+ParseStatus ParseArgs(const CommandArgs& args, const db::RedisDb& db,
+                      SetArgs* const set_args) {
   set_args->key = args[0];
   set_args->value = args[1];
   ExpireUnit unit = ExpireUnit::kNone;
@@ -172,13 +173,13 @@ ParseStatus ParseArgs(const CommandArgs& args, SetArgs* const set_args) {
   if (unit == ExpireUnit::kNone) {
     return ParseStatus::kOk;
   }
-  return ResolveExpire(unit, expire_arg, &set_args->expire);
+  return ResolveExpire(unit, expire_arg, db.Now(), &set_args->expire);
 }
 }  // namespace
 
 void HandleSet(Client* const client) {
   SetArgs parsed;
-  switch (ParseArgs(client->Args(), &parsed)) {
+  switch (ParseArgs(client->Args(), *client->Db(), &parsed)) {
     case ParseStatus::kOk:
       break;
     case ParseStatus::kSyntaxError:
@@ -221,4 +222,4 @@ void HandleSet(Client* const client) {
     client->AddReply(reply::NullView(client->Protocol()));
   }
 }
-}  // namespace redis_simple::command::strings
+}  // namespace redis_simple::commands::strings

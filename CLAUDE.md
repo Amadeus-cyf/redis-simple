@@ -52,11 +52,12 @@ Guidance for AI coding agents working in this repository.
 - Keep request decoding incremental and zero-copy. Standard RESP arrays are the
   primary wire format; inline commands remain a compatibility path. Frame both
   as Redis' `processMultibulkBuffer` and `processInlineBuffer` do, with its
-  limits and `Protocol error` messages; only quoted inline arguments are
-  copied, into the client's `ParseState`, which releases them once the
-  requests have run. Keep the parser's hot path inlined: inner helpers return
-  a `ParseStatus` and report errors through an out-parameter, and rare cases
-  stay in cold functions.
+  limits and `Protocol error` messages. Inline requests and AOF manifest
+  lines split with `utils::SplitArgs` (Redis' `sdssplitargs`); only quoted
+  inline arguments are copied, into the client's `ParseState`, which
+  releases them once the requests have run. Keep the parser's hot path
+  inlined: inner helpers return a `ParseStatus` and report errors through an
+  out-parameter, and rare cases stay in cold functions.
 - Parse numbers as Redis does: integer arguments with `utils::ToInt64`
   (`string2ll`), floats with `utils::ToDouble` (`string2d`), and score range
   bounds with `utils::ToRangeDouble` (`zslParseRange`). Format doubles with
@@ -122,7 +123,7 @@ Guidance for AI coding agents working in this repository.
   object type and null database in each command.
 - Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
   only when it is new.
-- `RedisDb` operations hash their key once as an `in_memory::HashedKey` and
+- `RedisDb` operations hash their key once as a `memory::HashedKey` and
   pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
   hash. Keep operations that touch more than one of those dicts on that path
   instead of looking the key up by `std::string_view` in each.
@@ -170,6 +171,10 @@ Guidance for AI coding agents working in this repository.
   Queued arguments are copied once into the client's `MultiState`, the
   ownership boundary for arguments that outlive a read. `EXEC` runs the queue
   under the `EXEC` command's pinned clock.
+- Read the time in commands through `RedisDb::Now()`, never the system clock
+  directly: it is pinned per command (and per `EXEC`), as Redis'
+  `commandTimeSnapshot` is, and read lazily, so commands that touch no TTL
+  never read the clock.
 - `WATCH` invalidation lives in `RedisDb`: its key-level mutations (set,
   delete, unlink, expire, persist, rename, flush, and expiration) touch watched
   keys. Commands that edit a value in place are covered by `Client`, which
@@ -216,12 +221,17 @@ ctest --preset debug -L integration --output-on-failure
 
 When changing behavior shared with Redis and a reference server is available,
 run the following, as the `redis-differential-check` skill describes (the
-second checks that each server loads the other's AOF):
+last checks that each server loads the other's AOF):
 
 ```sh
 scripts/run_redis_compatibility_check.sh build/debug/redis_simple
+scripts/compare_with_redis.py build/debug/redis_simple
 scripts/check_aof_interop.sh build/debug/redis_simple
 ```
+
+`compare_with_redis.py` compares every supported command's replies, edge
+cases and random operations included; add cases when adding commands or
+options.
 
 Run release and sanitizer checks after changes to ownership, memory layout,
 assertions, or low-level data structures:
@@ -320,23 +330,22 @@ Before committing, run the relevant build and tests.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
-  replaces global `operator new`/`delete` through `mimalloc-new-delete.h`.
-  Its only include sites are `server/main.cpp` and
-  `benchmarks/mimalloc_new_delete.cpp`, which `memory_benchmark` builds only
-  with `REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC`. Each executable includes it at
-  most once. Keep libc `malloc` unoverridden, keep sanitizer builds on the
-  default allocator, and keep `REDIS_SIMPLE_USE_MIMALLOC=OFF` building.
-  Allocate with `new` (containers, `std::make_unique`), never `malloc`, so
-  allocations go through mimalloc.
-- Measure performance changes to the server with
-  `scripts/profile_server.sh` (callgrind instruction counts per workload)
-  and memory changes with `scripts/measure_server_memory.sh` (RSS per key),
-  passing the previous build as the baseline, as the
-  `benchmark-against-baseline` skill describes; `scripts/compare_callgrind.py`
-  shows which functions a regression comes from. Use `memory_benchmark` for
-  changes to one component. Report instruction counts, not
-  `redis-benchmark` throughput from a small or shared machine, which varies
-  more than the effects being measured.
+  replaces global `operator new`/`delete` through `mimalloc-new-delete.h`. Its
+  only include sites are `server/main.cpp` and
+  `benchmarks/mimalloc_new_delete.cpp`, which `redis_simple_benchmarks` builds
+  only with `REDIS_SIMPLE_BENCHMARK_WITH_MIMALLOC`. Each executable includes it
+  at most once. Keep libc `malloc` unoverridden, keep sanitizer builds on the
+  default allocator, and keep `REDIS_SIMPLE_USE_MIMALLOC=OFF` building. Allocate
+  with `new` (containers, `std::make_unique`), never `malloc`, so allocations go
+  through mimalloc.
+- Measure performance changes to the server with `scripts/profile_server.sh`
+  (callgrind instruction counts per workload) and memory changes with
+  `scripts/measure_server_memory.sh` (RSS per key), passing the previous build
+  as the baseline, as the `benchmark-against-baseline` skill describes;
+  `scripts/compare_callgrind.py` shows which functions a regression comes from.
+  Use `redis_simple_benchmarks` for changes to one component. Report instruction
+  counts, not `redis-benchmark` throughput from a small or shared machine, which
+  varies more than the effects being measured.
 - Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
   `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project
   conventions.

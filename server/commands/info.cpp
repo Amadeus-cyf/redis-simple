@@ -13,7 +13,7 @@
 
 // INFO, with the sections this server reports, in Redis' field names and
 // order: persistence (the AOF), stats (threaded I/O totals), and threads.
-namespace redis_simple::command::server_info {
+namespace redis_simple::commands::server_info {
 namespace {
 void AppendField(std::string_view name, std::string_view value,
                  std::string* const output) {
@@ -104,7 +104,7 @@ void AppendThreadsSection(IoThreadList threads, std::string* const info) {
 }  // namespace
 
 void HandleInfo(Client* const client) {
-  const command::CommandArgs& args = client->Args();
+  const commands::CommandArgs& args = client->Args();
   const bool all = args.empty() || utils::EqualsIgnoreCase(args[0], "all") ||
                    utils::EqualsIgnoreCase(args[0], "default");
   const bool persistence =
@@ -129,4 +129,4 @@ void HandleInfo(Client* const client) {
   }
   client->AddBulkReply(info);
 }
-}  // namespace redis_simple::command::server_info
+}  // namespace redis_simple::commands::server_info

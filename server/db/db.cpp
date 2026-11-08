@@ -14,17 +14,17 @@
 #include "utils/time_utils.h"
 
 namespace redis_simple::db {
-using in_memory::HashedKey;
+using memory::HashedKey;
 
 std::unique_ptr<RedisDb> RedisDb::Create() {
   return std::unique_ptr<RedisDb>(new RedisDb());
 }
 
 RedisDb::RedisDb()
-    : dict_(in_memory::Dict<std::string, RedisObjectPtr>::Create()),
-      expires_(in_memory::Dict<std::string, int64_t>::Create()),
+    : dict_(memory::Dict<std::string, RedisObjectPtr>::Create()),
+      expires_(memory::Dict<std::string, int64_t>::Create()),
       watched_keys_(
-          in_memory::Dict<std::string, std::vector<KeyWatcher*>>::Create()) {}
+          memory::Dict<std::string, std::vector<KeyWatcher*>>::Create()) {}
 
 const RedisObject* RedisDb::LookupKey(std::string_view key) {
   return MutableLookupKey(key);
@@ -334,9 +334,12 @@ void RedisDb::TouchWatchedKey(const HashedKey& key) {
   }
 }
 
-int64_t RedisDb::Now() const {
-  return command_time_.has_value() ? *command_time_
-                                   : utils::NowInMilliseconds();
+int64_t RedisDb::ReadClock() const {
+  const int64_t now = utils::NowInMilliseconds();
+  if (time_pinned_) {
+    command_time_ = now;
+  }
+  return now;
 }
 
 bool RedisDb::IsKeyExpired(std::string_view key) const {

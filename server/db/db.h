@@ -87,10 +87,24 @@ class RedisDb {
   size_t ScanKeys(size_t cursor, size_t bucket_count, Visitor&& visitor);
   void Flush();
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
-  // Pins the clock used for expiration while one command runs, so the
-  // command sees a single consistent time and reads the clock only once.
-  void SetCommandTime(int64_t now_ms) { command_time_ = now_ms; }
-  void ClearCommandTime() { command_time_.reset(); }
+  // Pins the clock while one command (or one EXEC) runs, so expiration
+  // checks and relative TTLs all see a single time, as Redis'
+  // commandTimeSnapshot does. The clock is read on first use, so a command
+  // that needs no time does not read it.
+  void PinCommandTime() { time_pinned_ = true; }
+  void UnpinCommandTime() {
+    time_pinned_ = false;
+    command_time_.reset();
+  }
+  // Pins a given time, for tests.
+  void SetCommandTime(int64_t now_ms) {
+    time_pinned_ = true;
+    command_time_ = now_ms;
+  }
+  // The time in milliseconds: the pinned time while a command runs.
+  int64_t Now() const {
+    return command_time_.has_value() ? *command_time_ : ReadClock();
+  }
   // WATCH support. Key-level mutations made through this class (set, delete,
   // expire, persist, rename, flush, and expiration itself) mark every watcher
   // of the key dirty. Commands that edit a value in place call
@@ -109,23 +123,26 @@ class RedisDb {
   void SetLoading(bool loading) { loading_ = loading; }
   // Each public operation hashes its key once and passes the HashedKey to
   // the keyspace, TTL, and WATCH tables, which share one hash seed.
-  RedisObject* Lookup(const in_memory::HashedKey& key);
+  RedisObject* Lookup(const memory::HashedKey& key);
   // TTL and WATCH bookkeeping shared by SetKey and SetStringKey once the
   // value is stored.
-  void FinishSet(const in_memory::HashedKey& key, int64_t expire,
+  void FinishSet(const memory::HashedKey& key, int64_t expire,
                  ExistingTtl existing_ttl);
-  DbStatus Delete(const in_memory::HashedKey& key);
-  void TouchWatchedKey(const in_memory::HashedKey& key);
+  DbStatus Delete(const memory::HashedKey& key);
+  void TouchWatchedKey(const memory::HashedKey& key);
   bool IsKeyExpired(std::string_view key) const;
-  bool IsKeyExpired(const in_memory::HashedKey& key) const;
-  int64_t Now() const;
-  std::unique_ptr<in_memory::Dict<std::string, RedisObjectPtr>> dict_;
-  std::unique_ptr<in_memory::Dict<std::string, int64_t>> expires_;
-  std::unique_ptr<in_memory::Dict<std::string, std::vector<KeyWatcher*>>>
+  bool IsKeyExpired(const memory::HashedKey& key) const;
+  // Reads the clock, and keeps the time if it is pinned.
+  int64_t ReadClock() const;
+  std::unique_ptr<memory::Dict<std::string, RedisObjectPtr>> dict_;
+  std::unique_ptr<memory::Dict<std::string, int64_t>> expires_;
+  std::unique_ptr<memory::Dict<std::string, std::vector<KeyWatcher*>>>
       watched_keys_;
   AsyncReclaimer reclaimer_;
   size_t expire_cursor_{};
-  std::optional<int64_t> command_time_;
+  // Set on first use while the time is pinned.
+  mutable std::optional<int64_t> command_time_;
+  bool time_pinned_{};
   // Replay defers expiration checks until all historical writes are applied.
   bool loading_{};
 };

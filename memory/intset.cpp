@@ -10,7 +10,7 @@
 
 #include "utils/check.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 IntSet::IntSet()
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
     : contents_(std::make_unique<unsigned char[]>(
@@ -45,7 +45,7 @@ bool IntSet::Find(int64_t value) const {
   return encoding <= encoding_ && Search(value, nullptr);
 }
 
-bool IntSet::Remove(int64_t value) {
+bool IntSet::Delete(int64_t value) {
   uint32_t index = 0;
   bool exist = Search(value, &index);
   if (!exist) {
@@ -192,4 +192,4 @@ void IntSet::MoveTail(uint32_t from, uint32_t to) {
   unsigned char* dst = contents_.get() + (static_cast<size_t>(to * encoding_));
   std::memmove(dst, src, bytes);
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

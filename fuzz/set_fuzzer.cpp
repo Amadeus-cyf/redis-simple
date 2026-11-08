@@ -44,7 +44,7 @@ void RunOperations(FuzzInput* input) {
         Require(set->Add(value) == model.emplace(value).second);
         break;
       case 1:
-        Require(set->Remove(value) == (model.erase(value) != 0));
+        Require(set->Delete(value) == (model.erase(value) != 0));
         break;
       case 2:
         Require(set->HasMember(value) == model.contains(value));

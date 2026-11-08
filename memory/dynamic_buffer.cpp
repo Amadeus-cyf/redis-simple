@@ -11,7 +11,7 @@
 
 #include "utils/check.h"
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 constexpr size_t kInitialCapacity = 4096;
 }  // namespace
@@ -109,4 +109,4 @@ void DynamicBuffer::Clear() {
   size_ = 0;
   processed_ = 0;
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

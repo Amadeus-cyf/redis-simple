@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-namespace redis_simple::in_memory {
+namespace redis_simple::memory {
 namespace {
 std::array<char, 4096> MakeLineBuffer() {
   std::array<char, 4096> dynamic_buffer{};
@@ -157,4 +157,4 @@ TEST(DynamicBufferDeathTest, RejectsCommitBeyondCapacity) {
   buffer.Append("ab", 2);
   EXPECT_DEATH(buffer.Commit(buffer.Capacity()), "Check failed");
 }
-}  // namespace redis_simple::in_memory
+}  // namespace redis_simple::memory

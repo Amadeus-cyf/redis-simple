@@ -24,7 +24,7 @@ class List {
   };
 
   static constexpr size_t kDefaultListMaxListpackBytes =
-      in_memory::QuickList::kDefaultNodeMaxBytes;
+      memory::QuickList::kDefaultNodeMaxBytes;
 
   static std::unique_ptr<List> Create(
       size_t list_max_listpack_bytes = kDefaultListMaxListpackBytes) {
@@ -61,8 +61,8 @@ class List {
   bool ConvertListPackToQuickList();
   void TryConvertQuickListToListPack();
 
-  std::unique_ptr<in_memory::ListPack> listpack_;
-  std::unique_ptr<in_memory::QuickList> quicklist_;
+  std::unique_ptr<memory::ListPack> listpack_;
+  std::unique_ptr<memory::QuickList> quicklist_;
   size_t list_max_listpack_bytes_;
 };
 

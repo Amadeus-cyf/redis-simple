@@ -11,11 +11,11 @@
 #include "event_loop/file_event.h"
 #include "event_loop/time_event.h"
 #include "logging/logger.h"
+#include "server/active_expire.h"
 #include "server/client_connection/client_connection.h"
 #include "server/client_connection/read_query.h"
 #include "server/client_connection/write_reply.h"
 #include "server/db/db.h"
-#include "server/expire.h"
 #include "server/shutdown.h"
 
 namespace redis_simple {

@@ -11,7 +11,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
-using in_memory::QuickList;
+using memory::QuickList;
 
 void Verify(const QuickList& quicklist, const std::vector<std::string>& model) {
   Require(quicklist.Size() == model.size());

@@ -7,7 +7,7 @@
 #include "server/commands/lookup.h"
 #include "server/reply.h"
 
-namespace redis_simple::command::sets {
+namespace redis_simple::commands::sets {
 void HandleSCard(Client* const client) {
   const auto [object, wrong_type] = LookupTyped(
       client->Db(), client->Args()[0], db::RedisObject::ObjectType::kSet);
@@ -18,4 +18,4 @@ void HandleSCard(Client* const client) {
   const size_t size = object == nullptr ? 0 : object->Set()->Size();
   client->AddReply(reply::FromInt64(static_cast<int64_t>(size)));
 }
-}  // namespace redis_simple::command::sets
+}  // namespace redis_simple::commands::sets
