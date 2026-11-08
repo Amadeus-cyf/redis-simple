@@ -30,6 +30,11 @@ bool MatchesGlob(std::string_view value, std::string_view pattern);
 // Only canonical text parses, so compact encodings that store a value as an
 // integer reproduce the original bytes.
 bool ToInt64(std::string_view s, int64_t* v);
+// Parses `s` as Redis' string2ull does, for SCAN cursors: canonical int64
+// text that is not negative, or else anything C's strtoull reads in full
+// without overflow (leading spaces, a sign, and leading zeros included). The
+// text ends at a NUL byte, as Redis reads it as a C string.
+bool ToUint64(std::string_view s, uint64_t* v);
 // Convert an int64 to string and store it in dst.
 int Int64ToString(std::span<char> dst, int64_t svalue);
 // Convert a uint64 to string and store it in dst. Ref to

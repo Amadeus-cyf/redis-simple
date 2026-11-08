@@ -188,4 +188,16 @@ TEST(RedisObjectDeathTest, StringAccessorsRequireAStringObject) {
   EXPECT_DEATH(object->SetInt(1), "Check failed");
   EXPECT_DEATH(object->AssignString("value"), "Check failed");
 }
+
+TEST(RedisObjectTest, TypeNamesRoundTrip) {
+  for (const RedisObject::ObjectType type :
+       {RedisObject::ObjectType::kString, RedisObject::ObjectType::kSet,
+        RedisObject::ObjectType::kList, RedisObject::ObjectType::kZSet,
+        RedisObject::ObjectType::kHash}) {
+    EXPECT_EQ(TypeFromName(TypeName(type)), type);
+  }
+  EXPECT_EQ(TypeFromName("ZSET"), RedisObject::ObjectType::kZSet);
+  EXPECT_EQ(TypeFromName("none"), std::nullopt);
+  EXPECT_EQ(TypeFromName("stream"), std::nullopt);
+}
 }  // namespace redis_simple::db

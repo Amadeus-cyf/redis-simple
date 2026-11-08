@@ -61,13 +61,21 @@ std::vector<std::string> NonEmptyLines(const std::string& reply) {
   return lines;
 }
 
+// Scans to the end with COUNT 1, adding TYPE `type` when it is not empty.
 bool ExpectScanKeys(cli::RedisCli* cli, std::string_view pattern,
-                    std::vector<std::string> expected_keys) {
+                    std::vector<std::string> expected_keys,
+                    std::string_view type = {}) {
   std::vector<std::string> actual_keys;
   std::string cursor = "0";
   size_t calls = 0;
   while (true) {
-    cli->AddCommand({"SCAN", cursor, "MATCH", pattern, "COUNT", "1"});
+    std::vector<std::string_view> command = {"SCAN",  cursor,  "MATCH",
+                                             pattern, "COUNT", "1"};
+    if (!type.empty()) {
+      command.emplace_back("TYPE");
+      command.push_back(type);
+    }
+    cli->AddCommand(command);
     std::vector<std::string> lines = NonEmptyLines(cli->ReadReply());
     if (lines.empty()) {
       RS_LOG_DEBUG("SCAN returned no cursor\n");
@@ -100,8 +108,10 @@ int Run() {
   }
 
   const std::vector<Case> setup_cases = {
-      {"NOTACOMMAND\r\n",
-       "ERR unknown command 'NOTACOMMAND', with args beginning with: \n"},
+      {"NOTACOMMAND\r\n", "ERR unknown command 'NOTACOMMAND'\n"},
+      {"NOTACOMMAND a b\r\n",
+       "ERR unknown command 'NOTACOMMAND', with args beginning with: 'a' 'b' "
+       "\n"},
       {"TYPE missing_key\r\n", "none\n"},
       {"EXISTS missing_key\r\n", "0\n"},
       {"SET key_string value\r\n", "OK\n"},
@@ -132,6 +142,22 @@ int Run() {
   if (!ExpectScanKeys(&cli, "missing:*", {})) {
     return EXIT_FAILURE;
   }
+  if (!ExpectScanKeys(&cli, "*", {"key_zset"}, "zset") ||
+      !ExpectScanKeys(&cli, "key_*", {"key_list"}, "LIST") ||
+      // Redis 8 matches no key for an unknown type instead of failing.
+      !ExpectScanKeys(&cli, "*", {}, "nosuch")) {
+    return EXIT_FAILURE;
+  }
+  // Cursors are unsigned 64-bit integers, parsed as Redis' string2ull,
+  // which also accepts a sign and leading zeros.
+  for (const std::string_view cursor : {"+0", "000"}) {
+    cli.AddCommand({"SCAN", cursor, "MATCH", "missing:*", "COUNT", "1000"});
+    if (NonEmptyLines(cli.ReadReply()) != std::vector<std::string>{"0"}) {
+      RS_LOG_DEBUG("SCAN %.*s was not a complete scan\n",
+                   static_cast<int>(cursor.size()), cursor.data());
+      return EXIT_FAILURE;
+    }
+  }
 
   const std::vector<Case> cases = {
       {"SCAN invalid\r\n", "ERR invalid cursor\n"},
@@ -139,6 +165,13 @@ int Run() {
       {"SCAN 0 COUNT invalid\r\n",
        "ERR value is not an integer or out of range\n"},
       {"SCAN 0 UNKNOWN value\r\n", "ERR syntax error\n"},
+      // Each option needs its value; a trailing one is a syntax error.
+      {"SCAN 0 COUNT\r\n", "ERR syntax error\n"},
+      {"SCAN 0 TYPE\r\n", "ERR syntax error\n"},
+      {"SCAN 0 NOVALUES\r\n",
+       "ERR NOVALUES option can only be used in HSCAN\n"},
+      {"SCAN -1\r\n", "ERR invalid cursor\n"},
+      {"SCAN 18446744073709551616\r\n", "ERR invalid cursor\n"},
       {"DEL key_string missing_key\r\n", "1\n"},
       {"TYPE key_string\r\n", "none\n"},
       {"EXISTS key_string key_set\r\n", "1\n"},

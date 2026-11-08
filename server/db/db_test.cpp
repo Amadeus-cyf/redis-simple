@@ -225,7 +225,8 @@ TEST(RedisDbTest, RenameDropsTargetTtlAndAllowsSelfRename) {
 
 TEST(RedisDbTest, ScansKeysIncrementallyWithoutExpiredKeys) {
   auto redis_db = RedisDb::Create();
-  ASSERT_EQ(redis_db->ScanKeys(0, 1, [](std::string_view) {}), 0);
+  ASSERT_EQ(
+      redis_db->ScanKeys(0, 1, [](std::string_view, const RedisObject&) {}), 0);
   ASSERT_EQ(redis_db->SetKey("alpha", RedisObject::CreateWithString("1"), 0),
             DbStatus::kOk);
   ASSERT_EQ(redis_db->SetKey("beta", RedisObject::CreateWithString("2"), 0),
@@ -240,7 +241,9 @@ TEST(RedisDbTest, ScansKeysIncrementallyWithoutExpiredKeys) {
   size_t cursor = 0;
   while (true) {
     cursor = redis_db->ScanKeys(
-        cursor, 1, [&keys](std::string_view key) { keys.emplace_back(key); });
+        cursor, 1, [&keys](std::string_view key, const RedisObject&) {
+          keys.emplace_back(key);
+        });
     if (cursor == 0) {
       break;
     }

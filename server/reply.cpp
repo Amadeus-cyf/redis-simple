@@ -163,22 +163,25 @@ std::string WrongNumberOfArguments(std::string_view command) {
 
 std::string UnknownCommand(std::string_view command,
                            std::span<const std::string_view> args) {
-  // Matches Redis' "'%.128s'" name and its argument list, which stops once
-  // 128 bytes are used and cuts the argument that crosses that limit.
+  // Matches Redis 8's commandCheckExistence: the name up to 128 bytes, then,
+  // only when there are arguments, a list of them that stops once 128 bytes
+  // are used and cuts the argument that crosses that limit.
   constexpr size_t kLimit = 128;
-  std::string quoted_args;
-  for (const std::string_view arg : args) {
-    if (quoted_args.size() >= kLimit) {
-      break;
-    }
-    quoted_args.push_back('\'');
-    quoted_args.append(arg.substr(0, kLimit - (quoted_args.size() - 1)));
-    quoted_args.append("' ");
-  }
   std::string message = "ERR unknown command '";
-  message.append(command.substr(0, kLimit))
-      .append("', with args beginning with: ")
-      .append(quoted_args);
+  message.append(command.substr(0, kLimit)).push_back('\'');
+  if (!args.empty()) {
+    message.append(", with args beginning with: ");
+    const size_t list_start = message.size();
+    for (const std::string_view arg : args) {
+      const size_t used = message.size() - list_start;
+      if (used >= kLimit) {
+        break;
+      }
+      message.push_back('\'');
+      message.append(arg.substr(0, kLimit - used));
+      message.append("' ");
+    }
+  }
   // Like Redis, keep client-supplied newlines from breaking the protocol.
   std::ranges::replace(message, '\r', ' ');
   std::ranges::replace(message, '\n', ' ');

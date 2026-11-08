@@ -14,6 +14,17 @@ redis-server --version
 cmake --preset debug && cmake --build --preset debug --target redis_simple
 ```
 
+When the installed server is older than the latest release, build that
+release from source and pass it to the scripts; it needs no install:
+
+```sh
+git clone --depth 1 --branch 8.10.3 https://github.com/redis/redis.git
+make -C redis -j"$(nproc)" BUILD_TLS=no MALLOC=libc redis-server redis-cli
+scripts/compare_with_redis.py build/debug/redis_simple \
+  --redis-server redis/src/redis-server
+scripts/check_aof_interop.sh build/debug/redis_simple redis/src/redis-server
+```
+
 ## 1. Command compatibility script
 
 `scripts/run_redis_compatibility_check.sh` compares replies with a reference
@@ -77,6 +88,9 @@ Not bugs; leave them unless the task is about them.
 - Versions before 8: scores and other doubles print with `%.17g`, where
   Redis 8 (and this server) uses `d2string`'s shortest form; `SCAN` accepts
   invalid cursors; `ZRANK`/`ZREVRANK` have no `WITHSCORE` before 7.2.
+  Redis 7 also ends every unknown-command error with
+  `, with args beginning with: `, even without arguments, and reports
+  `SCAN`'s `NOVALUES` after another option as a syntax error.
 - `HELLO` reports this server's name, version, and client id.
 - `SELECT` accepts only database 0, the only one.
 - `COMMAND`, `CONFIG`, `KEYS`, `FLUSHALL`, and most `CLIENT` subcommands are

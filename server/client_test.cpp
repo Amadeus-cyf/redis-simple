@@ -434,13 +434,12 @@ TEST(ClientTest, RejectedCommandsAbortTransaction) {
   EXPECT_FALSE(client->InTransaction());
   EXPECT_EQ(client->Db()->LookupKey("tx-aborted"), nullptr);
 
-  EXPECT_EQ(
-      Roundtrip(client.get(), peer.Get(),
-                EncodeRequest({"MULTI"}) + EncodeRequest({"NOSUCH"}) +
-                    EncodeRequest({"EXEC"})),
-      "+OK\r\n-ERR unknown command 'NOSUCH', with args beginning with: \r\n"
-      "-EXECABORT Transaction discarded because of previous "
-      "errors.\r\n");
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(),
+                      EncodeRequest({"MULTI"}) + EncodeRequest({"NOSUCH"}) +
+                          EncodeRequest({"EXEC"})),
+            "+OK\r\n-ERR unknown command 'NOSUCH'\r\n"
+            "-EXECABORT Transaction discarded because of previous "
+            "errors.\r\n");
 }
 
 TEST(ClientTest, TransactionCommandsValidateState) {

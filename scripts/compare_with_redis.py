@@ -199,6 +199,31 @@ def edge_cases():
     )
     add("SET d1 1", "SET d2 2", "DEL d1 d2 missing", "UNLINK missing", "DEL")
     add("DBSIZE", "DBSIZE x", "TYPE", "TYPE a b")
+    # SCAN with a single matching key or a complete pass, so the order of
+    # keys, which depends on the hash seed, does not matter.
+    add(
+        "SCAN 0 MATCH s COUNT 1000",
+        "SCAN 0 MATCH s TYPE string COUNT 1000",
+        "SCAN 0 MATCH s TYPE STRING COUNT 1000",
+        "SCAN 0 MATCH l TYPE list COUNT 1000",
+        "SCAN 0 MATCH s TYPE list COUNT 1000",
+        "SCAN 0 TYPE nosuch COUNT 1000",
+        "SCAN +0 MATCH s COUNT 1000",
+        "SCAN 000 MATCH s COUNT 1000",
+        "SCAN -1",
+        "SCAN abc",
+        "SCAN 18446744073709551616",
+        "SCAN 0 COUNT",
+        "SCAN 0 MATCH",
+        "SCAN 0 TYPE",
+        "SCAN 0 COUNT 0",
+        "SCAN 0 COUNT -1",
+        "SCAN 0 COUNT x",
+        "SCAN 0 NOVALUES",
+        "SCAN 0 COUNT 10 NOVALUES",
+        "SCAN 0 FOO bar",
+    )
+    add("NOTACOMMAND", "NOTACOMMAND a b", "notacommand " + "x" * 200)
     add("ECHO hi", "ECHO", "ECHO a b", "PING", "PING x", "PING x y")
 
     # Lists

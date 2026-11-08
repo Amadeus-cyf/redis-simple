@@ -205,6 +205,10 @@ class RedisObject {
 };
 
 using RedisObjectPtr = std::unique_ptr<RedisObject>;
+// The type's name, as TYPE replies with it and SCAN's TYPE option matches it.
+std::string_view TypeName(RedisObject::ObjectType type);
+// The type with that name, ignoring case; nullopt for any other name.
+std::optional<RedisObject::ObjectType> TypeFromName(std::string_view name);
 }  // namespace redis_simple::db
 
 #endif  // REDIS_SIMPLE_SERVER_DB_REDIS_OBJECT_H_

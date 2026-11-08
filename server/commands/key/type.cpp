@@ -7,29 +7,10 @@
 #include "server/reply.h"
 
 namespace redis_simple::commands::keys {
-namespace {
-std::string_view ObjectTypeName(const db::RedisObject* const object) {
-  if (object == nullptr) {
-    return "none";
-  }
-  switch (object->Type()) {
-    case db::RedisObject::ObjectType::kString:
-      return "string";
-    case db::RedisObject::ObjectType::kSet:
-      return "set";
-    case db::RedisObject::ObjectType::kList:
-      return "list";
-    case db::RedisObject::ObjectType::kZSet:
-      return "zset";
-    case db::RedisObject::ObjectType::kHash:
-      return "hash";
-  }
-  return "none";
-}
-}  // namespace
-
 void HandleType(Client* const client) {
+  const db::RedisObject* const object =
+      client->Db()->LookupKey(client->Args()[0]);
   client->AddReply(reply::FromString(
-      ObjectTypeName(client->Db()->LookupKey(client->Args()[0]))));
+      object == nullptr ? "none" : db::TypeName(object->Type())));
 }
 }  // namespace redis_simple::commands::keys
