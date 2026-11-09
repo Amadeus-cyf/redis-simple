@@ -92,6 +92,40 @@ TEST(RequestParserTest, ValidatesLengthFieldsLikeRedis) {
             ParseStatus::kIncomplete);
 }
 
+// One- and two-digit lengths take a shortcut that must accept exactly what
+// the general rules do, whatever follows the digits and however much of the
+// line has arrived.
+TEST(RequestParserTest, ShortLengthsFollowTheGeneralRules) {
+  std::string_view command;
+  commands::CommandArgs args;
+  const auto status = [&](std::string_view request) {
+    return Parse(request, &command, &args).status;
+  };
+
+  EXPECT_EQ(status("*1\r\n$0\r\n\r\n"), ParseStatus::kComplete);
+  EXPECT_EQ(command, "");
+  EXPECT_EQ(status("*1\r\n$10\r\n0123456789\r\n"), ParseStatus::kComplete);
+  EXPECT_EQ(command, "0123456789");
+  const std::string three_digits =
+      "*1\r\n$100\r\n" + std::string(100, 'x') + "\r\n";
+  EXPECT_EQ(status(three_digits), ParseStatus::kComplete);
+  EXPECT_EQ(command, std::string(100, 'x'));
+
+  // A leading zero makes a length invalid, as string2ll rejects it.
+  EXPECT_EQ(status("*1\r\n$01\r\nx\r\n"), ParseStatus::kInvalid);
+  EXPECT_EQ(status("*01\r\n$1\r\nx\r\n"), ParseStatus::kInvalid);
+  EXPECT_EQ(status("*1\r\n$1x\r\nx\r\n"), ParseStatus::kInvalid);
+  // The byte after the CR is not checked, as in Redis.
+  EXPECT_EQ(status("*1\rx$1\rxa\r\n"), ParseStatus::kComplete);
+  EXPECT_EQ(command, "a");
+
+  // A line is incomplete until the byte after its CR arrives.
+  EXPECT_EQ(status("*1"), ParseStatus::kIncomplete);
+  EXPECT_EQ(status("*1\r"), ParseStatus::kIncomplete);
+  EXPECT_EQ(status("*12\r"), ParseStatus::kIncomplete);
+  EXPECT_EQ(status("*1\r\n$12\r"), ParseStatus::kIncomplete);
+}
+
 TEST(RequestParserTest, LimitsUnauthenticatedRequestsLikeRedis) {
   std::string_view command;
   commands::CommandArgs args;
