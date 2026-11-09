@@ -207,7 +207,7 @@ prints them: integers up to 2^62 in full, otherwise the shortest digits in
 - Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `EXPIRE`, `EXPIREAT`, `PEXPIRE`,
   `PEXPIREAT` with `NX`, `XX`, `GT`, and `LT` (and `XX` combined with `GT` or
   `LT`), `TTL`, `PTTL`, `PERSIST`, `RENAME`, `DBSIZE`, `FLUSHDB [ASYNC|SYNC]`
-  (always synchronous), `SCAN` with `MATCH` and `COUNT`
+  (always synchronous), `SCAN` with `MATCH`, `COUNT`, and `TYPE`
 - Strings: `GET`, `SET` with `NX`, `XX`, `GET`, `EX`, `PX`, `EXAT`, `PXAT`,
   and `KEEPTTL`, `INCR`, `INCRBY`, `DECR`, `DECRBY`, `APPEND`, `STRLEN`,
   `MGET`, `MSET`

@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -251,6 +253,31 @@ bool ToInt64(std::string_view s, int64_t* const v) {
       *v = negative ? -value : value;
     }
   }
+  return true;
+}
+
+bool ToUint64(std::string_view s, uint64_t* const v) {
+  s = s.substr(0, s.find('\0'));
+  int64_t signed_value = 0;
+  if (ToInt64(s, &signed_value)) {
+    if (signed_value < 0) {
+      return false;
+    }
+    *v = static_cast<uint64_t>(signed_value);
+    return true;
+  }
+  if (s.empty()) {
+    return false;
+  }
+  // strtoull needs a terminated string; cursors are short.
+  const std::string text(s);
+  char* end = nullptr;
+  errno = 0;
+  const uint64_t value = std::strtoull(text.c_str(), &end, 10);
+  if (errno == EINVAL || errno == ERANGE || end != text.c_str() + text.size()) {
+    return false;
+  }
+  *v = value;
   return true;
 }
 

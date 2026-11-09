@@ -137,9 +137,9 @@ TEST(ReplyTest, FromError) {
   ASSERT_EQ(FromError("ERR syntax error"), "-ERR syntax error\r\n");
   ASSERT_EQ(WrongNumberOfArguments("GET"),
             "-ERR wrong number of arguments for 'get' command\r\n");
+  // Redis 8 lists arguments only when there are some.
   ASSERT_EQ(UnknownCommand("NOTACOMMAND", {}),
-            "-ERR unknown command 'NOTACOMMAND', with args beginning with: "
-            "\r\n");
+            "-ERR unknown command 'NOTACOMMAND'\r\n");
   const std::vector<std::string_view> args = {"a", "b c"};
   ASSERT_EQ(UnknownCommand("foo", args),
             "-ERR unknown command 'foo', with args beginning with: 'a' 'b c' "

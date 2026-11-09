@@ -5,7 +5,9 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace redis_simple::utils {
@@ -130,6 +132,29 @@ TEST(StringUtilsTest, MatchesRedisStyleGlobs) {
   EXPECT_FALSE(MatchesGlob("filex", "file[0-9]"));
   EXPECT_FALSE(MatchesGlob("file5", "file[^0-9]"));
   EXPECT_FALSE(MatchesGlob("", "?"));
+}
+
+TEST(StringUtilsTest, ToUint64MatchesRedisString2ull) {
+  uint64_t value = 1;
+  EXPECT_TRUE(ToUint64("0", &value));
+  EXPECT_EQ(value, 0);
+  EXPECT_TRUE(ToUint64("18446744073709551615", &value));
+  EXPECT_EQ(value, std::numeric_limits<uint64_t>::max());
+  // Text string2ll rejects falls back to strtoull.
+  EXPECT_TRUE(ToUint64("+5", &value));
+  EXPECT_EQ(value, 5);
+  EXPECT_TRUE(ToUint64("007", &value));
+  EXPECT_EQ(value, 7);
+  EXPECT_TRUE(ToUint64(" 1", &value));
+  EXPECT_EQ(value, 1);
+  EXPECT_TRUE(ToUint64(std::string_view("12\0junk", 7), &value));
+  EXPECT_EQ(value, 12);
+
+  EXPECT_FALSE(ToUint64("", &value));
+  EXPECT_FALSE(ToUint64("-1", &value));
+  EXPECT_FALSE(ToUint64("18446744073709551616", &value));
+  EXPECT_FALSE(ToUint64("1 ", &value));
+  EXPECT_FALSE(ToUint64("abc", &value));
 }
 
 TEST(StringUtilsTest, ToInt64) {

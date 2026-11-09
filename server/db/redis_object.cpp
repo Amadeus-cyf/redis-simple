@@ -145,4 +145,32 @@ RedisObject::Encoding RedisObject::StringEncoding() const {
   return std::holds_alternative<std::string>(value_) ? Encoding::kRaw
                                                      : Encoding::kOther;
 }
+std::string_view TypeName(RedisObject::ObjectType type) {
+  switch (type) {
+    case RedisObject::ObjectType::kString:
+      return "string";
+    case RedisObject::ObjectType::kSet:
+      return "set";
+    case RedisObject::ObjectType::kList:
+      return "list";
+    case RedisObject::ObjectType::kZSet:
+      return "zset";
+    case RedisObject::ObjectType::kHash:
+      return "hash";
+  }
+  utils::Unreachable();
+}
+
+std::optional<RedisObject::ObjectType> TypeFromName(std::string_view name) {
+  for (const RedisObject::ObjectType type :
+       {RedisObject::ObjectType::kString, RedisObject::ObjectType::kSet,
+        RedisObject::ObjectType::kList, RedisObject::ObjectType::kZSet,
+        RedisObject::ObjectType::kHash}) {
+    if (utils::EqualsIgnoreCase(name, TypeName(type))) {
+      return type;
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace redis_simple::db

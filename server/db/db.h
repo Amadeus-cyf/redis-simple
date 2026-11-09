@@ -82,7 +82,9 @@ class RedisDb {
   // mutated. Returning false from the visitor stops further callbacks.
   template <typename Visitor>
   bool ForEachObject(Visitor&& visitor);
-  // Key views remain valid until the database is mutated.
+  // Calls `visitor(key, object)` for each live key in up to `bucket_count`
+  // buckets from `cursor`, and returns the next cursor (0 when done). Key
+  // views remain valid until the database is mutated.
   template <typename Visitor>
   size_t ScanKeys(size_t cursor, size_t bucket_count, Visitor&& visitor);
   void Flush();
@@ -182,9 +184,9 @@ size_t RedisDb::ScanKeys(size_t cursor, size_t bucket_count,
        ++scanned) {
     next_cursor = dict_->Scan(
         *next_cursor,
-        [this, &visitor](const std::string& key, const RedisObjectPtr&) {
+        [this, &visitor](const std::string& key, const RedisObjectPtr& object) {
           if (!IsKeyExpired(key)) {
-            visitor(std::string_view(key));
+            visitor(std::string_view(key), *object);
           }
         });
   }
