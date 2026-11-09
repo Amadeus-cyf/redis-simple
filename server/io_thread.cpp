@@ -68,8 +68,12 @@ Wakeup::~Wakeup() {
 
 void Wakeup::Signal() const {
   const char byte = 1;
-  // A full pipe is already readable, so a failed write loses nothing.
-  while (write(write_fd_, &byte, 1) < 0 && errno == EINTR) {
+  while (true) {
+    // Retry only when a signal interrupts the write. Any other failure is
+    // EAGAIN from a full pipe, which is already readable, so it loses nothing.
+    if (write(write_fd_, &byte, 1) >= 0 || errno != EINTR) {
+      return;
+    }
   }
 }
 
@@ -77,10 +81,11 @@ void Wakeup::Drain() const {
   std::array<char, 64> bytes{};
   while (true) {
     const ssize_t result = read(read_fd_, bytes.data(), bytes.size());
-    if (result > 0 || (result < 0 && errno == EINTR)) {
-      continue;
+    // Stop once the pipe is empty (EAGAIN); keep reading after data or a
+    // signal interruption.
+    if (result == 0 || (result < 0 && errno != EINTR)) {
+      return;
     }
-    return;
   }
 }
 
