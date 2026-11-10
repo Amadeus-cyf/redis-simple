@@ -2,9 +2,12 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -83,5 +86,26 @@ TEST(ZSetTest, VisitsEntriesAcrossEncodings) {
     return true;
   }));
   EXPECT_EQ(visited, zset->Size());
+}
+
+TEST(ZSetEncodingTest, ScanSkiplistVisitsEveryMemberOnce) {
+  auto zset = ZSet::Create();
+  for (int i = 0; i < 300; ++i) {
+    zset->InsertOrUpdate("member" + std::to_string(i), i / 2.0);
+  }
+  ASSERT_EQ(zset->Encoding(), ZSet::Encoding::kSkiplist);
+  std::map<std::string, double> seen;
+  size_t cursor = 0;
+  while (true) {
+    cursor =
+        zset->Scan(cursor, 5, [&seen](std::string_view member, double score) {
+          EXPECT_TRUE(seen.emplace(member, score).second) << member;
+        });
+    if (cursor == 0) {
+      break;
+    }
+  }
+  ASSERT_EQ(seen.size(), 300);
+  EXPECT_EQ(seen["member7"], 3.5);
 }
 }  // namespace redis_simple::zset

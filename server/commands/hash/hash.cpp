@@ -11,6 +11,7 @@
 #include "server/client.h"
 #include "server/commands/handlers.h"
 #include "server/commands/lookup.h"
+#include "server/commands/scan_options.h"
 #include "server/db/db.h"
 #include "server/reply.h"
 #include "utils/string_utils.h"
@@ -194,6 +195,41 @@ void HandleHGetAll(Client* const client) {
         });
   }
   client->AddReply(std::move(encoded));
+}
+
+void HandleHScan(Client* const client) {
+  size_t cursor = 0;
+  ScanOptions options;
+  db::RedisObject* const object =
+      StartCollectionScan(client, ScanTarget::kHash, &cursor, &options);
+  if (object == nullptr) {
+    return;
+  }
+  Hash* const hash = object->Hash();
+  const bool dict = hash->Encoding() == Hash::Encoding::kDict;
+  ScanReply reply(2 * (dict ? options.count : hash->Size()));
+  const auto add = [&options, &reply](std::string_view field,
+                                      std::string_view value) {
+    if (!options.Matches(field)) {
+      return;
+    }
+    reply.Add(field);
+    if (!options.no_values) {
+      reply.Add(value);
+    }
+  };
+  size_t next_cursor = 0;
+  if (dict) {
+    next_cursor = hash->ScanDict(cursor, options.count, add);
+  } else {
+    // A listpack is small, so Redis returns all of it at once, whatever the
+    // cursor and COUNT.
+    hash->ForEachEntry([&add](std::string_view field, std::string_view value) {
+      add(field, value);
+      return true;
+    });
+  }
+  std::move(reply).Send(client, next_cursor);
 }
 
 void HandleHMGet(Client* const client) {

@@ -83,6 +83,7 @@ void HandleSIsMember(Client* client);
 void HandleSInter(Client* client);
 void HandleSMembers(Client* client);
 void HandleSRem(Client* client);
+void HandleSScan(Client* client);
 void HandleSUnion(Client* client);
 }  // namespace redis_simple::commands::sets
 
@@ -100,6 +101,7 @@ void HandleZRank(Client* client);
 void HandleZRevRank(Client* client);
 void HandleZRevRange(Client* client);
 void HandleZRem(Client* client);
+void HandleZScan(Client* client);
 void HandleZScore(Client* client);
 }  // namespace redis_simple::commands::zsets
 
@@ -114,6 +116,7 @@ void HandleHLen(Client* client);
 void HandleHMGet(Client* client);
 void HandleHSet(Client* client);
 void HandleHMSet(Client* client);
+void HandleHScan(Client* client);
 void HandleHVals(Client* client);
 }  // namespace redis_simple::commands::hashes
 

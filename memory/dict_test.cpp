@@ -311,4 +311,32 @@ TEST(DictIntTest, Clear) {
   ASSERT_EQ(int_dict->Size(), 1);
   ASSERT_EQ(int_dict->Get(1), 10);
 }
+
+TEST(DictStringTest, ScanStepVisitsCountElementsPerStep) {
+  auto dict = Dict<std::string, int>::Create();
+  EXPECT_EQ(dict->ScanStep(0, 10, [](const std::string&, const int&) {}), 0);
+  for (int i = 0; i < 1000; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  std::vector<int> seen(1000, 0);
+  size_t cursor = 0;
+  while (true) {
+    size_t visited = 0;
+    cursor = dict->ScanStep(
+        cursor, 10, [&seen, &visited](const std::string&, const int& v) {
+          ++seen[static_cast<size_t>(v)];
+          ++visited;
+        });
+    if (cursor == 0) {
+      break;
+    }
+    // Like Redis, a step ends at a bucket boundary once it has visited
+    // COUNT elements, unless the scan completes first.
+    EXPECT_GE(visited, 10);
+  }
+  // Without changes during the scan, each key is visited exactly once.
+  for (int i = 0; i < 1000; ++i) {
+    EXPECT_EQ(seen[static_cast<size_t>(i)], 1) << i;
+  }
+}
 }  // namespace redis_simple::memory

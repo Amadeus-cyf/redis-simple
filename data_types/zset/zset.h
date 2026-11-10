@@ -39,6 +39,14 @@ class ZSet {
     return storage_->LexCount(spec);
   }
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const;
+  // One ZSCAN step, as Redis runs it: calls `visitor(member, score)` for
+  // each member it visits and returns the next cursor, 0 when done. A
+  // skiplist-encoded set steps through its member dict
+  // (memory::Dict::ScanStep); a listpack is small, so it is visited whole,
+  // whatever the cursor and `count`, and returns 0.
+  size_t Scan(size_t cursor, size_t count, const ZSetScanVisitor& visitor) {
+    return storage_->Scan(cursor, count, visitor);
+  }
   size_t Size() const { return storage_->Size(); }
   Encoding Encoding() const;
 

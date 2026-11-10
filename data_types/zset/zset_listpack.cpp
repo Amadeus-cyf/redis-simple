@@ -263,6 +263,15 @@ size_t ZSetListPack::LexCount(const RangeByLexSpec* spec) const {
   return count;
 }
 
+size_t ZSetListPack::Scan(size_t /*cursor*/, size_t /*count*/,
+                          const ZSetScanVisitor& visitor) {
+  ForEachEntry([&visitor](std::string_view member, double score) {
+    visitor(member, score);
+    return true;
+  });
+  return 0;
+}
+
 bool ZSetListPack::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   std::optional<size_t> member_offset = listpack_->First();
   while (member_offset.has_value()) {

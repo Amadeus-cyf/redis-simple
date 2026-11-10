@@ -224,6 +224,31 @@ def edge_cases():
         "SCAN 0 FOO bar",
     )
     add("NOTACOMMAND", "NOTACOMMAND a b", "notacommand " + "x" * 200)
+    # HSCAN, SSCAN, and ZSCAN on small encodings, which Redis returns whole
+    # and in a fixed order, and their errors. A missing key replies before
+    # the options are checked, and a wrong type before them too.
+    for command, key in (("HSCAN", "h"), ("SSCAN", "st"), ("SSCAN", "ist"),
+                         ("ZSCAN", "z"), ("ZSCAN", "zl")):
+        add(
+            f"{command} {key} 0",
+            f"{command} {key} 5 COUNT 1",
+            f"{command} {key} 0 MATCH *a*",
+            f"{command} {key} 0 MATCH [x-z] COUNT 100",
+            f"{command} {key} 0 NOVALUES",
+            f"{command} {key} 0 novalues MATCH f*",
+            f"{command} {key} 0 TYPE string",
+            f"{command} {key} 0 COUNT 0",
+            f"{command} {key} 0 COUNT x",
+            f"{command} {key} 0 MATCH",
+            f"{command} {key} +0",
+            f"{command} {key} -1",
+            f"{command} {key} abc",
+            f"{command} {key}",
+            f"{command} missing 0 BAD",
+            f"{command} missing abc",
+            f"{command} s 0",
+            f"{command} s 0 BAD",
+        )
     add("ECHO hi", "ECHO", "ECHO a b", "PING", "PING x", "PING x y")
 
     # Lists

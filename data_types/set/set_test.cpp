@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -175,5 +177,24 @@ TEST(SetTest, MembershipWithStoredHashesMatchesPlainMembership) {
         return false;
       }));
   EXPECT_EQ(calls, 1);
+}
+
+TEST(SetTest, ScanDictVisitsEveryMemberOnce) {
+  auto set = Set::Create();
+  for (int i = 0; i < 300; ++i) {
+    set->Add("member" + std::to_string(i));
+  }
+  ASSERT_EQ(set->Encoding(), Set::Encoding::kDict);
+  std::set<std::string> seen;
+  size_t cursor = 0;
+  while (true) {
+    cursor = set->ScanDict(cursor, 5, [&seen](std::string_view member) {
+      EXPECT_TRUE(seen.emplace(member).second) << member;
+    });
+    if (cursor == 0) {
+      break;
+    }
+  }
+  EXPECT_EQ(seen.size(), 300);
 }
 }  // namespace redis_simple::set

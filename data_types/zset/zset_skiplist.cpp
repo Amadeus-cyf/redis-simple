@@ -169,6 +169,14 @@ bool ZSetSkiplist::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   return true;
 }
 
+size_t ZSetSkiplist::Scan(size_t cursor, size_t count,
+                          const ZSetScanVisitor& visitor) {
+  return dict_->ScanStep(cursor, count,
+                         [&visitor](const std::string& member, double score) {
+                           visitor(member, score);
+                         });
+}
+
 std::optional<ZSetSkiplist::SkiplistType::Limit> ZSetSkiplist::ToLimit(
     const std::optional<LimitSpec>& limit) {
   if (!limit.has_value()) {

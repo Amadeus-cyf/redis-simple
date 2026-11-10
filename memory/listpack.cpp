@@ -77,22 +77,65 @@ std::optional<size_t> ListPack::Find(std::string_view value) const {
 
 std::optional<size_t> ListPack::FindAndSkip(std::string_view value,
                                             size_t skip) const {
-  std::optional<size_t> offset = First();
+  // As Redis' lpFind does: decode each compared element once, reading its
+  // size along with its value, and step over skipped elements by size alone.
+  // An element is stored as an integer exactly when its text parses as one,
+  // so parse `value` once and compare integers as numbers, without
+  // formatting them, and strings only when `value` is not an integer.
+  int64_t value_integer = 0;
+  const bool value_is_integer = utils::ToInt64(value, &value_integer);
+  size_t offset = kListPackHeaderSize;
   size_t skip_count = 0;
-  while (offset.has_value()) {
-    if (skip_count == 0) {
+  while (listpack_[offset] != kListPackEof) {
+    const unsigned char* const buffer = listpack_.get() + offset;
+    if (skip_count > 0) {
+      --skip_count;
+      // Short strings and small integers, the common values, have one-byte
+      // encodings and backlens.
+      if ((buffer[0] & EncodingTypeMask::kType6BitStrMask) ==
+          EncodingType::k6BitString) {
+        offset += 1 + (buffer[0] & 0x3f) + 1;
+      } else if ((buffer[0] & EncodingTypeMask::kType7BitUintMask) ==
+                 EncodingType::k7BitUnsignedInteger) {
+        offset += 2;
+      } else {
+        offset = Skip(offset);
+      }
+      continue;
+    }
+    skip_count = skip;
+    // Short strings, the common case, need no encoding lookup.
+    if ((buffer[0] & EncodingTypeMask::kType6BitStrMask) ==
+        EncodingType::k6BitString) {
+      const size_t length = buffer[0] & 0x3f;
+      if (!value_is_integer &&
+          std::string_view(reinterpret_cast<const char*>(buffer + 1), length) ==
+              value) {
+        return offset;
+      }
+      offset += 1 + length + 1;
+      continue;
+    }
+    const EncodingType encoding_type = EncodingAt(offset);
+    if (IsString(encoding_type)) {
       size_t length = 0;
-      const unsigned char* data = Get(*offset, &length);
-      if (data != nullptr &&
+      const unsigned char* const data =
+          StringAt(offset, &length, encoding_type);
+      if (!value_is_integer &&
           std::string_view(reinterpret_cast<const char*>(data), length) ==
               value) {
         return offset;
       }
-      skip_count = skip;
-    } else {
-      --skip_count;
+    } else if (value_is_integer) {
+      size_t length = 0;
+      int64_t integer = 0;
+      IntegerAt(offset, nullptr, &length, &integer, encoding_type);
+      if (integer == value_integer) {
+        return offset;
+      }
     }
-    offset = Next(*offset);
+    const size_t encoded_bytes = EncodedBytes(offset, encoding_type);
+    offset += encoded_bytes + BacklenBytes(encoded_bytes);
   }
   return std::nullopt;
 }

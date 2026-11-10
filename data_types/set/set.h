@@ -43,6 +43,12 @@ class Set {
   template <typename Visitor>
   bool ForEachMemberWithHash(Visitor&& visitor) const;
   bool Delete(std::string_view value);
+  // One SSCAN step over a dict-encoded set (memory::Dict::ScanStep): calls
+  // `visitor(member)` for each member it visits and returns the next cursor,
+  // 0 when done. Smaller encodings are scanned whole through ForEachMember,
+  // as Redis does.
+  template <typename Visitor>
+  size_t ScanDict(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const;
   Encoding Encoding() const { return encoding_; }
 
@@ -103,6 +109,15 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     return true;
   }
   utils::Unreachable();
+}
+
+template <typename Visitor>
+size_t Set::ScanDict(size_t cursor, size_t count, Visitor&& visitor) {
+  RS_CHECK(encoding_ == Encoding::kDict);
+  return dict_->ScanStep(cursor, count,
+                         [&visitor](const std::string& member, std::nullptr_t) {
+                           visitor(std::string_view(member));
+                         });
 }
 
 template <typename Visitor>

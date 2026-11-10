@@ -12,7 +12,8 @@
 
 namespace redis_simple::hash {
 namespace {
-constexpr size_t kListPackMaxEntries = 128;
+// Redis 8's hash-max-listpack-entries and hash-max-listpack-value.
+constexpr size_t kListPackMaxEntries = 512;
 constexpr size_t kListPackMaxElementLength = 64;
 
 bool CanStoreInListPack(std::string_view field, std::string_view value) {

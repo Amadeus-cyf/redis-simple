@@ -110,6 +110,7 @@ constexpr std::array kCommandTable = {
     ReadCommand("HLEN", hashes::HandleHLen, FixedArity(1), OneKey()),
     ReadCommand("HMGET", hashes::HandleHMGet, VariableArity(2), OneKey()),
     WriteCommand("HMSET", hashes::HandleHMSet, VariableArity(3), OneKey()),
+    ReadCommand("HSCAN", hashes::HandleHScan, VariableArity(2), OneKey()),
     WriteCommand("HSET", hashes::HandleHSet, VariableArity(3), OneKey()),
     ReadCommand("HVALS", hashes::HandleHVals, FixedArity(1), OneKey()),
     WriteCommand("INCR", strings::HandleIncr, FixedArity(1), OneKey()),
@@ -148,6 +149,7 @@ constexpr std::array kCommandTable = {
     ReadCommand("SISMEMBER", sets::HandleSIsMember, FixedArity(2), OneKey()),
     ReadCommand("SMEMBERS", sets::HandleSMembers, FixedArity(1), OneKey()),
     WriteCommand("SREM", sets::HandleSRem, VariableArity(2), OneKey()),
+    ReadCommand("SSCAN", sets::HandleSScan, VariableArity(2), OneKey()),
     ReadCommand("STRLEN", strings::HandleStrLen, FixedArity(1), OneKey()),
     ReadCommand("SUNION", sets::HandleSUnion, VariableArity(1), AllKeys()),
     ReadCommand("TTL", keys::HandleTtl, FixedArity(1), OneKey()),
@@ -174,6 +176,7 @@ constexpr std::array kCommandTable = {
     ReadCommand("ZREVRANGEBYSCORE", zsets::HandleZRevRangeByScore,
                 VariableArity(3), OneKey()),
     ReadCommand("ZREVRANK", zsets::HandleZRevRank, {2, 3}, OneKey()),
+    ReadCommand("ZSCAN", zsets::HandleZScan, VariableArity(2), OneKey()),
     ReadCommand("ZSCORE", zsets::HandleZScore, FixedArity(2), OneKey()),
 };
 

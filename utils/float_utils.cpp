@@ -173,6 +173,31 @@ std::string_view FormatFloat(double value, FloatBuffer* const buffer) {
   return {begin, static_cast<size_t>(out - begin)};
 }
 
+std::string_view FormatFloatWith17Digits(double value,
+                                         FloatBuffer* const buffer) {
+  char* const begin = buffer->data();
+  const auto literal = [begin](std::string_view text) {
+    std::ranges::copy(text, begin);
+    return std::string_view(begin, text.size());
+  };
+  if (std::isnan(value)) {
+    return literal("nan");
+  }
+  if (std::isinf(value)) {
+    return literal(value < 0 ? "-inf" : "inf");
+  }
+  // A double widened to long double has the same value, so printing either
+  // to 17 significant digits gives the same text; std::to_chars with a
+  // precision prints exactly what printf's "%.17g" would.
+  constexpr int kDigits = 17;
+  const auto [end, error] = std::to_chars(begin, begin + buffer->size(), value,
+                                          std::chars_format::general, kDigits);
+  if (error != std::errc()) {
+    return {};
+  }
+  return {begin, end};
+}
+
 std::string FloatToString(double value) {
   FloatBuffer buffer;
   return std::string(FormatFloat(value, &buffer));

@@ -214,19 +214,30 @@ prints them: integers up to 2^62 in full, otherwise the shortest digits in
 - Lists: `LPUSH`, `RPUSH`, `LPOP` and `RPOP` with a count, `LLEN`, `LRANGE`,
   `LINDEX`, `LSET`, `LREM`, `LTRIM`
 - Sets: `SADD`, `SCARD`, `SREM`, `SMEMBERS`, `SISMEMBER`, `SINTER`, `SUNION`,
-  `SDIFF`
+  `SDIFF`, `SSCAN` with `MATCH` and `COUNT`
 - Sorted sets: `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, and `INCR`, `ZCARD`,
   `ZREM`, `ZRANK` and `ZREVRANK` with `WITHSCORE`, `ZRANGE` with `BYSCORE`,
   `BYLEX`, `REV`, `LIMIT`, and `WITHSCORES`, `ZREVRANGE`, `ZRANGEBYSCORE`,
   `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZLEXCOUNT`, `ZCOUNT`,
-  `ZSCORE`
+  `ZSCORE`, `ZSCAN` with `MATCH` and `COUNT`
 - Hashes: `HSET`, `HMSET`, `HGET`, `HDEL`, `HLEN`, `HEXISTS`, `HGETALL`,
-  `HMGET`, `HKEYS`, `HVALS`, `HINCRBY`
+  `HMGET`, `HKEYS`, `HVALS`, `HINCRBY`, `HSCAN` with `MATCH`, `COUNT`, and
+  `NOVALUES`
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
 - Persistence and stats: `BGREWRITEAOF`, `INFO [persistence|stats]`
 - Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `AUTH`, and
   `SETNAME`, `CLIENT ID|GETNAME|SETNAME|SETINFO`, `SELECT 0` (the only
   database), `PING`, `ECHO`, `QUIT`
+
+The `SCAN` family iterates as Redis 8 does. Each step of a hash-table scan
+visits buckets until it has seen `COUNT` elements, or ten times `COUNT`
+buckets, before filtering by `MATCH` or `TYPE`. A collection still in a
+compact encoding (a listpack or intset) comes back whole in one step with
+cursor 0. Collections use Redis 8's default encoding limits: hashes stay
+listpacks up to 512 entries, sets and sorted sets up to 128 (sets of integers
+stay intsets up to 512), and each element up to 64 bytes. So `HGETALL`, the
+other whole-collection replies, and `*SCAN` return elements in the same
+order as Redis while the collection is compact.
 
 Not implemented: `COMMAND`, `CONFIG`, the other `CLIENT` subcommands, and
 `BGREWRITEAOF` while AOF is off (Redis rewrites even then; this server
@@ -285,6 +296,18 @@ cmake --preset sanitizer
 cmake --build --preset sanitizer
 ctest --preset sanitizer --output-on-failure
 ```
+
+The `thread-sanitizer` preset runs the whole suite under ThreadSanitizer, to
+find data races between the event loop, the I/O threads, and background work:
+
+```sh
+cmake --preset thread-sanitizer
+cmake --build --preset thread-sanitizer
+ctest --preset thread-sanitizer --output-on-failure
+```
+
+Integration tests stop the server gracefully and fail if it exits with an
+error, so a race or leak reported by the server process fails its test.
 
 Run the platform-specific memory leak check after building the corresponding
 preset:
@@ -604,8 +627,8 @@ avoiding duplicate branch-push runs and work on superseded commits.
 
 GitHub Actions runs debug, release, and ASan/UBSan matrices on macOS and Ubuntu
 26.04, so both event-loop pollers are built and tested. macOS also runs Apple
-`leaks`; Ubuntu runs LeakSanitizer, clang-format 22, clang-tidy 22, and bounded
-libFuzzer smoke tests. A separate Ubuntu job compares supported behavior with a
+`leaks`; Ubuntu runs LeakSanitizer, ThreadSanitizer, clang-format 22,
+clang-tidy 22, and bounded libFuzzer smoke tests. A separate Ubuntu job compares supported behavior with a
 real Redis instance through `redis-cli`:
 
 ```sh

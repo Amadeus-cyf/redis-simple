@@ -82,11 +82,12 @@ class RedisDb {
   // mutated. Returning false from the visitor stops further callbacks.
   template <typename Visitor>
   bool ForEachObject(Visitor&& visitor);
-  // Calls `visitor(key, object)` for each live key in up to `bucket_count`
-  // buckets from `cursor`, and returns the next cursor (0 when done). Key
-  // views remain valid until the database is mutated.
+  // One SCAN step (memory::Dict::ScanStep): calls `visitor(key, object)`
+  // for each live key it visits from `cursor`, and returns the next cursor,
+  // 0 when done. Expired keys count toward `count` but are not visited, as
+  // in Redis. Key views remain valid until the database is mutated.
   template <typename Visitor>
-  size_t ScanKeys(size_t cursor, size_t bucket_count, Visitor&& visitor);
+  size_t ScanKeys(size_t cursor, size_t count, Visitor&& visitor);
   void Flush();
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
   // Pins the clock while one command (or one EXEC) runs, so expiration
@@ -173,24 +174,17 @@ bool RedisDb::ForEachObject(Visitor&& visitor) {
 }
 
 template <typename Visitor>
-size_t RedisDb::ScanKeys(size_t cursor, size_t bucket_count,
-                         Visitor&& visitor) {
-  if (bucket_count == 0 || dict_->Size() == 0) {
+size_t RedisDb::ScanKeys(size_t cursor, size_t count, Visitor&& visitor) {
+  if (count == 0) {
     return 0;
   }
-
-  std::optional<size_t> next_cursor = cursor;
-  for (size_t scanned = 0; scanned < bucket_count && next_cursor.has_value();
-       ++scanned) {
-    next_cursor = dict_->Scan(
-        *next_cursor,
-        [this, &visitor](const std::string& key, const RedisObjectPtr& object) {
-          if (!IsKeyExpired(key)) {
-            visitor(std::string_view(key), *object);
-          }
-        });
-  }
-  return next_cursor.value_or(0);
+  return dict_->ScanStep(
+      cursor, count,
+      [this, &visitor](const std::string& key, const RedisObjectPtr& object) {
+        if (!IsKeyExpired(key)) {
+          visitor(std::string_view(key), *object);
+        }
+      });
 }
 }  // namespace redis_simple::db
 

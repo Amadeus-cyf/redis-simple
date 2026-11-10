@@ -38,6 +38,17 @@
       }
     },
     {
+      "name": "thread-sanitizer",
+      "displayName": "ThreadSanitizer",
+      "inherits": "debug",
+      "binaryDir": "${sourceDir}/build/thread-sanitizer",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "REDIS_SIMPLE_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
       "name": "fuzz",
       "displayName": "Clang libFuzzer",
       "inherits": "debug",
@@ -64,6 +75,10 @@
       "configurePreset": "sanitizer"
     },
     {
+      "name": "thread-sanitizer",
+      "configurePreset": "thread-sanitizer"
+    },
+    {
       "name": "fuzz",
       "configurePreset": "fuzz"
     }
@@ -86,6 +101,13 @@
     {
       "name": "sanitizer",
       "configurePreset": "sanitizer",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "thread-sanitizer",
+      "configurePreset": "thread-sanitizer",
       "output": {
         "outputOnFailure": true
       }

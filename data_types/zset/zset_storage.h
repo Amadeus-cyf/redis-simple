@@ -16,6 +16,8 @@ namespace redis_simple::zset {
 using ZSetEntryList = std::vector<const ZSetEntry*>;
 using ZSetEntryVisitor =
     std::function<bool(std::string_view member, double score)>;
+using ZSetScanVisitor =
+    std::function<void(std::string_view member, double score)>;
 
 class ZSetStorage {
  public:
@@ -42,6 +44,11 @@ class ZSetStorage {
   virtual size_t LexCount(const RangeByLexSpec* spec) const = 0;
   // Visit entries without allocating a result container.
   virtual bool ForEachEntry(const ZSetEntryVisitor& visitor) const = 0;
+  // One ZSCAN step from `cursor`: calls `visitor(member, score)` for each
+  // member it visits and returns the next cursor, 0 when done. See
+  // ZSet::Scan.
+  virtual size_t Scan(size_t cursor, size_t count,
+                      const ZSetScanVisitor& visitor) = 0;
   // Return the total number of members.
   virtual size_t Size() const = 0;
   virtual ~ZSetStorage() = default;
