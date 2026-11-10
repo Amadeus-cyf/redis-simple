@@ -337,4 +337,22 @@ TEST(FloatUtilsTest, ParsesRangeBoundsLikeZslParseRange) {
   EXPECT_FALSE(ToRangeDouble("1 ", &value));
   EXPECT_FALSE(ToRangeDouble("abc", &value));
 }
+
+TEST(FloatUtilsTest, FormatsWith17DigitsLikeRedisLd2string) {
+  const auto format = [](double value) {
+    FloatBuffer buffer;
+    return std::string(FormatFloatWith17Digits(value, &buffer));
+  };
+  EXPECT_EQ(format(1.1), "1.1000000000000001");
+  EXPECT_EQ(format(0.1 + 0.2), "0.30000000000000004");
+  EXPECT_EQ(format(2), "2");
+  EXPECT_EQ(format(-0.5), "-0.5");
+  EXPECT_EQ(format(0), "0");
+  EXPECT_EQ(format(-0.0), "-0");
+  EXPECT_EQ(format(1e20), "1e+20");
+  EXPECT_EQ(format(1e-7), "9.9999999999999995e-08");
+  EXPECT_EQ(format(std::numeric_limits<double>::infinity()), "inf");
+  EXPECT_EQ(format(-std::numeric_limits<double>::infinity()), "-inf");
+  EXPECT_EQ(format(std::numeric_limits<double>::quiet_NaN()), "nan");
+}
 }  // namespace redis_simple::utils

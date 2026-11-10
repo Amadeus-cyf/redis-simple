@@ -30,6 +30,8 @@ class ZSetSkiplist : public ZSetStorage {
   ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const override;
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
+  size_t Scan(size_t cursor, size_t count,
+              const ZSetScanVisitor& visitor) override;
   size_t Size() const override { return skiplist_->Size(); }
 
  private:

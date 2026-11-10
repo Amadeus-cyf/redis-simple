@@ -1,6 +1,10 @@
+#include <algorithm>
+#include <cstddef>
 #include <cstdlib>
+#include <iterator>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -45,6 +49,111 @@ bool ExpectMembersInOrder(cli::RedisCli* cli, const std::string& command,
       NonEmptyLines(cli->ReadReply());
   if (actual_members != expected_members) {
     RS_LOG_DEBUG("member command failed: %s\n", command.c_str());
+    return false;
+  }
+  return true;
+}
+// Sends `command` and returns the non-empty lines of its reply.
+std::vector<std::string> ReplyLines(
+    cli::RedisCli* cli, const std::vector<std::string_view>& command) {
+  cli->AddCommand(command);
+  return NonEmptyLines(cli->ReadReply());
+}
+
+// Runs `command key cursor options...` from cursor 0 until the cursor
+// returns to 0, and returns every element the steps returned.
+std::vector<std::string> ScanAll(cli::RedisCli* cli, std::string_view command,
+                                 std::string_view key,
+                                 const std::vector<std::string_view>& options) {
+  std::vector<std::string> elements;
+  std::string cursor = "0";
+  while (true) {
+    std::vector<std::string_view> request = {command, key, cursor};
+    request.insert(request.end(), options.begin(), options.end());
+    std::vector<std::string> lines = ReplyLines(cli, request);
+    if (lines.empty()) {
+      return {};
+    }
+    cursor = lines[0];
+    elements.insert(elements.end(), std::make_move_iterator(lines.begin() + 1),
+                    std::make_move_iterator(lines.end()));
+    if (cursor == "0") {
+      return elements;
+    }
+  }
+}
+
+// Runs `requests` and compares each reply's lines, in order, to `expected`.
+bool ExpectLines(cli::RedisCli* cli,
+                 const std::vector<std::vector<std::string_view>>& requests,
+                 const std::vector<std::vector<std::string>>& expected) {
+  for (size_t i = 0; i < requests.size(); ++i) {
+    if (ReplyLines(cli, requests[i]) != expected[i]) {
+      RS_LOG_DEBUG("request %zu failed\n", i);
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ExpectZScan() {
+  cli::RedisCli cli;
+  if (cli.Connect("localhost", 8080) == cli::CliStatus::kError) {
+    return false;
+  }
+  const std::string wrong_type =
+      "WRONGTYPE Operation against a key holding the wrong kind of value\n";
+  const std::vector<Case> cases = {
+      {"ZADD scan_zset 1.1 a 2 b -0.5 c inf d\r\n", "4\n"},
+      {"SET scan_string value\r\n", "OK\n"},
+      {"ZSCAN scan_string 0\r\n", wrong_type},
+      {"ZSCAN scan_zset 18446744073709551616\r\n", "ERR invalid cursor\n"},
+      {"ZSCAN scan_zset 0 NOVALUES\r\n",
+       "ERR NOVALUES option can only be used in HSCAN\n"},
+      {"ZSCAN scan_zset 0 COUNT -1\r\n", "ERR syntax error\n"},
+  };
+  for (const Case& test_case : cases) {
+    if (!ExpectReply(&cli, test_case)) {
+      return false;
+    }
+  }
+  // A listpack is returned whole with cursor 0, in score order, with scores
+  // printed as ZSCORE prints them.
+  if (!ExpectLines(&cli,
+                   {{"ZSCAN", "missing_zset", "0"},
+                    {"ZSCAN", "scan_zset", "0"},
+                    {"ZSCAN", "scan_zset", "0", "MATCH", "[ab]"}},
+                   {{"0"},
+                    {"0", "c", "-0.5", "a", "1.1", "b", "2", "d", "inf"},
+                    {"0", "a", "1.1", "b", "2"}})) {
+    return false;
+  }
+
+  // Past 128 members the sorted set is a skiplist, scanned in steps, and
+  // Redis prints its scores with 17 significant digits.
+  std::vector<std::pair<std::string, std::string>> entries;
+  for (int i = 0; i < 200; ++i) {
+    const std::string member = "member:" + std::to_string(i);
+    const std::string score = std::to_string(i);
+    cli.AddCommand(
+        std::vector<std::string_view>{"ZADD", "scan_big_zset", score, member});
+    cli.ReadReply();
+    entries.emplace_back(member, score);
+  }
+  cli.AddCommand(std::vector<std::string_view>{"ZADD", "scan_big_zset", "1.1",
+                                               "member:1"});
+  cli.ReadReply();
+  entries[1].second = "1.1000000000000001";
+  std::ranges::sort(entries);
+  const std::vector<std::string> scanned =
+      ScanAll(&cli, "ZSCAN", "scan_big_zset", {"COUNT", "5"});
+  std::vector<std::pair<std::string, std::string>> pairs;
+  for (size_t i = 0; i + 1 < scanned.size(); i += 2) {
+    pairs.emplace_back(scanned[i], scanned[i + 1]);
+  }
+  std::ranges::sort(pairs);
+  if (pairs != entries) {
+    RS_LOG_DEBUG("ZSCAN did not return every member exactly once\n");
     return false;
   }
   return true;
@@ -214,7 +323,7 @@ int Run() {
       return EXIT_FAILURE;
     }
   }
-  return EXIT_SUCCESS;
+  return ExpectZScan() ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 }  // namespace redis_simple
 

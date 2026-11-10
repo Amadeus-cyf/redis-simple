@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstddef>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -107,22 +109,25 @@ TEST(HashEncodingTest, ConvertsToDictWhenFieldOrValueIsLong) {
 TEST(HashEncodingTest, ConvertsToDictWhenEntryCountExceedsLimit) {
   auto hash = Hash::Create();
 
-  for (int i = 0; i < 129; ++i) {
+  // Like Redis, a hash stays a listpack up to 512 entries.
+  for (int i = 0; i < 512; ++i) {
     EXPECT_TRUE(
         hash->Set("field" + std::to_string(i), "value" + std::to_string(i)));
   }
+  EXPECT_EQ(hash->Encoding(), Hash::Encoding::kListPack);
+  EXPECT_TRUE(hash->Set("field512", "value512"));
 
   EXPECT_EQ(hash->Encoding(), Hash::Encoding::kDict);
-  EXPECT_EQ(hash->Size(), 129);
+  EXPECT_EQ(hash->Size(), 513);
   EXPECT_EQ(hash->Get("field0"), "value0");
-  EXPECT_EQ(hash->Get("field128"), "value128");
+  EXPECT_EQ(hash->Get("field512"), "value512");
 }
 
 TEST(HashEncodingTest, VisitValueReturnsDictValueWithoutCopying) {
   auto hash = Hash::Create();
   std::string value;
 
-  for (int i = 0; i < 129; ++i) {
+  for (int i = 0; i < 513; ++i) {
     EXPECT_TRUE(
         hash->Set("field" + std::to_string(i), "value" + std::to_string(i)));
   }
@@ -132,5 +137,26 @@ TEST(HashEncodingTest, VisitValueReturnsDictValueWithoutCopying) {
     value.assign(visited);
   }));
   EXPECT_EQ(value, "value128");
+}
+
+TEST(HashEncodingTest, ScanDictVisitsEveryEntryOnce) {
+  auto hash = Hash::Create();
+  for (int i = 0; i < 600; ++i) {
+    hash->Set("field" + std::to_string(i), "value" + std::to_string(i));
+  }
+  ASSERT_EQ(hash->Encoding(), Hash::Encoding::kDict);
+  std::map<std::string, std::string> seen;
+  size_t cursor = 0;
+  while (true) {
+    cursor = hash->ScanDict(
+        cursor, 7, [&seen](std::string_view field, std::string_view value) {
+          EXPECT_TRUE(seen.emplace(field, value).second) << field;
+        });
+    if (cursor == 0) {
+      break;
+    }
+  }
+  ASSERT_EQ(seen.size(), 600);
+  EXPECT_EQ(seen["field42"], "value42");
 }
 }  // namespace redis_simple::hash

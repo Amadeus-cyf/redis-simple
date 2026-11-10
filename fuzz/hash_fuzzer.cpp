@@ -13,20 +13,38 @@ namespace redis_simple::fuzz {
 namespace {
 using HashModel = std::unordered_map<std::string, std::string>;
 
-void Verify(const hash::Hash& hash, const HashModel& model) {
-  Require(hash.Size() == model.size());
+void Verify(hash::Hash* const hash, const HashModel& model) {
+  Require(hash->Size() == model.size());
   for (const auto& [field, value] : model) {
-    Require(hash.Exists(field));
-    Require(hash.Get(field) == value);
+    Require(hash->Exists(field));
+    Require(hash->Get(field) == value);
   }
 
   HashModel visited;
-  Require(hash.ForEachEntry(
+  Require(hash->ForEachEntry(
       [&visited](std::string_view field, std::string_view value) {
         visited.emplace(field, value);
         return true;
       }));
   Require(visited == model);
+
+  // A full HSCAN pass over a dict, with no changes during it, visits each
+  // entry exactly once.
+  if (hash->Encoding() == hash::Hash::Encoding::kDict) {
+    HashModel scanned;
+    size_t cursor = 0;
+    while (true) {
+      cursor = hash->ScanDict(
+          cursor, 3,
+          [&scanned](std::string_view field, std::string_view value) {
+            Require(scanned.emplace(field, value).second);
+          });
+      if (cursor == 0) {
+        break;
+      }
+    }
+    Require(scanned == model);
+  }
 }
 
 void RunOperations(FuzzInput* input) {
@@ -75,7 +93,7 @@ void RunOperations(FuzzInput* input) {
       default:
         break;
     }
-    Verify(*hash, model);
+    Verify(hash.get(), model);
   }
 }
 }  // namespace

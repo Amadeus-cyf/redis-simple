@@ -102,6 +102,27 @@ jobs:
         if: runner.os == 'Linux'
         run: scripts/run_leak_check.sh
 
+  thread-sanitizer:
+    name: ThreadSanitizer / Ubuntu
+    runs-on: ubuntu-26.04
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      # Older ThreadSanitizer runtimes cannot map their shadow memory with the
+      # kernel's default address randomization.
+      - name: Limit address randomization for ThreadSanitizer
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure ThreadSanitizer build
+        run: cmake --preset thread-sanitizer
+      - name: Build ThreadSanitizer targets
+        run: cmake --build --preset thread-sanitizer
+      # Integration runners stop the server and fail on its exit status, so a
+      # race in the server fails its test, not only one in a test binary.
+      - name: Run ThreadSanitizer tests
+        run: ctest --preset thread-sanitizer --output-on-failure
+
   redis-compatibility:
     name: Redis Compatibility / Ubuntu
     runs-on: ubuntu-26.04

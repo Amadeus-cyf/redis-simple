@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <cstddef>
 #include <cstdlib>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -47,6 +49,107 @@ bool ExpectMembers(cli::RedisCli* cli, const std::string& command,
   std::ranges::sort(expected_members);
   if (actual_members != expected_members) {
     RS_LOG_DEBUG("member command failed: %s\n", command.c_str());
+    return false;
+  }
+  return true;
+}
+// Sends `command` and returns the non-empty lines of its reply.
+std::vector<std::string> ReplyLines(
+    cli::RedisCli* cli, const std::vector<std::string_view>& command) {
+  cli->AddCommand(command);
+  return NonEmptyLines(cli->ReadReply());
+}
+
+// Runs `command key cursor options...` from cursor 0 until the cursor
+// returns to 0, and returns every element the steps returned.
+std::vector<std::string> ScanAll(cli::RedisCli* cli, std::string_view command,
+                                 std::string_view key,
+                                 const std::vector<std::string_view>& options) {
+  std::vector<std::string> elements;
+  std::string cursor = "0";
+  while (true) {
+    std::vector<std::string_view> request = {command, key, cursor};
+    request.insert(request.end(), options.begin(), options.end());
+    std::vector<std::string> lines = ReplyLines(cli, request);
+    if (lines.empty()) {
+      return {};
+    }
+    cursor = lines[0];
+    elements.insert(elements.end(), std::make_move_iterator(lines.begin() + 1),
+                    std::make_move_iterator(lines.end()));
+    if (cursor == "0") {
+      return elements;
+    }
+  }
+}
+
+// Runs `requests` and compares each reply's lines, in order, to `expected`.
+bool ExpectLines(cli::RedisCli* cli,
+                 const std::vector<std::vector<std::string_view>>& requests,
+                 const std::vector<std::vector<std::string>>& expected) {
+  for (size_t i = 0; i < requests.size(); ++i) {
+    if (ReplyLines(cli, requests[i]) != expected[i]) {
+      RS_LOG_DEBUG("request %zu failed\n", i);
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ExpectSScan() {
+  cli::RedisCli cli;
+  if (cli.Connect("localhost", 8080) == cli::CliStatus::kError) {
+    return false;
+  }
+  const std::string wrong_type =
+      "WRONGTYPE Operation against a key holding the wrong kind of value\n";
+  const std::vector<Case> cases = {
+      {"SADD scan_ints 5 3 -1 100\r\n", "4\n"},
+      {"SADD scan_strings b a c 10\r\n", "4\n"},
+      {"SET scan_string value\r\n", "OK\n"},
+      {"SSCAN scan_string 0\r\n", wrong_type},
+      {"SSCAN scan_ints abc\r\n", "ERR invalid cursor\n"},
+      {"SSCAN scan_ints 0 NOVALUES\r\n",
+       "ERR NOVALUES option can only be used in HSCAN\n"},
+      {"SSCAN scan_ints 0 TYPE set\r\n", "ERR syntax error\n"},
+      {"SSCAN scan_ints 0 COUNT x\r\n",
+       "ERR value is not an integer or out of range\n"},
+  };
+  for (const Case& test_case : cases) {
+    if (!ExpectReply(&cli, test_case)) {
+      return false;
+    }
+  }
+  // Intsets and listpacks are returned whole with cursor 0, in their own
+  // order (sorted integers, insertion order), whatever the cursor and COUNT.
+  if (!ExpectLines(&cli,
+                   {{"SSCAN", "missing_set", "0", "NOVALUES"},
+                    {"SSCAN", "scan_ints", "0"},
+                    {"SSCAN", "scan_ints", "3", "COUNT", "1"},
+                    {"SSCAN", "scan_ints", "0", "MATCH", "*0*"},
+                    {"SSCAN", "scan_strings", "0"}},
+                   {{"0"},
+                    {"0", "-1", "3", "5", "100"},
+                    {"0", "-1", "3", "5", "100"},
+                    {"0", "100"},
+                    {"0", "b", "a", "c", "10"}})) {
+    return false;
+  }
+
+  // Past 128 members the set is a dict, scanned in steps.
+  std::vector<std::string> members;
+  for (int i = 0; i < 300; ++i) {
+    members.push_back("member:" + std::to_string(i));
+    cli.AddCommand(
+        std::vector<std::string_view>{"SADD", "scan_big_set", members.back()});
+    cli.ReadReply();
+  }
+  std::ranges::sort(members);
+  std::vector<std::string> scanned =
+      ScanAll(&cli, "SSCAN", "scan_big_set", {"COUNT", "5"});
+  std::ranges::sort(scanned);
+  if (scanned != members) {
+    RS_LOG_DEBUG("SSCAN did not return every member exactly once\n");
     return false;
   }
   return true;
@@ -176,6 +279,10 @@ int Run() {
   }
   if (!ExpectMembers(&cli, "SMEMBERS integration_set\r\n",
                      {"ele2", "ele3", "ele4"})) {
+    return EXIT_FAILURE;
+  }
+
+  if (!ExpectSScan()) {
     return EXIT_FAILURE;
   }
 

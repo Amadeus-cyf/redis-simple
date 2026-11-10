@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <cstddef>
 #include <cstdlib>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -73,6 +75,127 @@ bool ExpectMembers(cli::RedisCli* cli, const std::string& command,
   std::ranges::sort(expected_members);
   if (actual_members != expected_members) {
     RS_LOG_DEBUG("hash member command failed: %s\n", command.c_str());
+    return false;
+  }
+  return true;
+}
+// Sends `command` and returns the non-empty lines of its reply.
+std::vector<std::string> ReplyLines(
+    cli::RedisCli* cli, const std::vector<std::string_view>& command) {
+  cli->AddCommand(command);
+  return NonEmptyLines(cli->ReadReply());
+}
+
+// Runs `command key cursor options...` from cursor 0 until the cursor
+// returns to 0, and returns every element the steps returned.
+std::vector<std::string> ScanAll(cli::RedisCli* cli, std::string_view command,
+                                 std::string_view key,
+                                 const std::vector<std::string_view>& options) {
+  std::vector<std::string> elements;
+  std::string cursor = "0";
+  while (true) {
+    std::vector<std::string_view> request = {command, key, cursor};
+    request.insert(request.end(), options.begin(), options.end());
+    std::vector<std::string> lines = ReplyLines(cli, request);
+    if (lines.empty()) {
+      return {};
+    }
+    cursor = lines[0];
+    elements.insert(elements.end(), std::make_move_iterator(lines.begin() + 1),
+                    std::make_move_iterator(lines.end()));
+    if (cursor == "0") {
+      return elements;
+    }
+  }
+}
+
+std::vector<std::pair<std::string, std::string>> SortedPairs(
+    const std::vector<std::string>& elements) {
+  std::vector<std::pair<std::string, std::string>> pairs;
+  for (size_t i = 0; i + 1 < elements.size(); i += 2) {
+    pairs.emplace_back(elements[i], elements[i + 1]);
+  }
+  std::ranges::sort(pairs);
+  return pairs;
+}
+
+bool ExpectHScan() {
+  cli::RedisCli cli;
+  if (cli.Connect("localhost", 8080) == cli::CliStatus::kError) {
+    return false;
+  }
+  const std::string wrong_type =
+      "WRONGTYPE Operation against a key holding the wrong kind of value\n";
+  const std::vector<Case> cases = {
+      {"HSET scan_hash f1 v1 f2 2 g1 x\r\n", "3\n"},
+      {"SET scan_string value\r\n", "OK\n"},
+      {"HSCAN scan_string 0\r\n", wrong_type},
+      // The cursor is checked first, then the key, then the options.
+      {"HSCAN scan_string abc\r\n", "ERR invalid cursor\n"},
+      {"HSCAN scan_string 0 BAD\r\n", wrong_type},
+      {"HSCAN scan_hash -1\r\n", "ERR invalid cursor\n"},
+      {"HSCAN scan_hash 0 BAD\r\n", "ERR syntax error\n"},
+      {"HSCAN scan_hash 0 TYPE hash\r\n", "ERR syntax error\n"},
+      {"HSCAN scan_hash 0 COUNT 0\r\n", "ERR syntax error\n"},
+      {"HSCAN scan_hash 0 MATCH\r\n", "ERR syntax error\n"},
+  };
+  for (const Case& test_case : cases) {
+    if (!ExpectReply(&cli, test_case)) {
+      return false;
+    }
+  }
+  // A missing key is an empty, complete scan, whatever the options.
+  const std::vector<std::string> empty_scan = {"0"};
+  // A listpack hash is returned whole, in insertion order, with cursor 0,
+  // whatever the cursor and COUNT, as Redis does.
+  const std::vector<std::vector<std::string_view>> requests = {
+      {"HSCAN", "missing_hash", "0", "BAD"},
+      {"HSCAN", "scan_hash", "0"},
+      {"HSCAN", "scan_hash", "7", "COUNT", "1"},
+      {"HSCAN", "scan_hash", "0", "MATCH", "f*"},
+      {"HSCAN", "scan_hash", "0", "novalues"},
+      {"HSCAN", "scan_hash", "0", "NOVALUES", "MATCH", "g*"},
+  };
+  const std::vector<std::vector<std::string>> expected = {
+      empty_scan,
+      {"0", "f1", "v1", "f2", "2", "g1", "x"},
+      {"0", "f1", "v1", "f2", "2", "g1", "x"},
+      {"0", "f1", "v1", "f2", "2"},
+      {"0", "f1", "f2", "g1"},
+      {"0", "g1"},
+  };
+  for (size_t i = 0; i < requests.size(); ++i) {
+    if (ReplyLines(&cli, requests[i]) != expected[i]) {
+      RS_LOG_DEBUG("HSCAN request %zu failed\n", i);
+      return false;
+    }
+  }
+
+  // Past 512 entries the hash is a dict, scanned in steps.
+  std::vector<std::pair<std::string, std::string>> entries;
+  for (int i = 0; i < 600; ++i) {
+    entries.emplace_back("field:" + std::to_string(i),
+                         "value:" + std::to_string(i));
+    cli.AddCommand(std::vector<std::string_view>{
+        "HSET", "scan_big_hash", entries.back().first, entries.back().second});
+    cli.ReadReply();
+  }
+  std::ranges::sort(entries);
+  if (SortedPairs(ScanAll(&cli, "HSCAN", "scan_big_hash", {"COUNT", "7"})) !=
+      entries) {
+    RS_LOG_DEBUG("HSCAN did not return every entry exactly once\n");
+    return false;
+  }
+  std::vector<std::string> fields =
+      ScanAll(&cli, "HSCAN", "scan_big_hash", {"NOVALUES", "MATCH", "*:5?"});
+  std::ranges::sort(fields);
+  std::vector<std::string> expected_fields;
+  for (int i = 50; i < 60; ++i) {
+    expected_fields.push_back("field:" + std::to_string(i));
+  }
+  std::ranges::sort(expected_fields);
+  if (fields != expected_fields) {
+    RS_LOG_DEBUG("HSCAN NOVALUES MATCH failed\n");
     return false;
   }
   return true;
@@ -188,6 +311,10 @@ int Run() {
     if (!ExpectReply(&cli, test_case)) {
       return EXIT_FAILURE;
     }
+  }
+
+  if (!ExpectHScan()) {
+    return EXIT_FAILURE;
   }
 
   cli.AddCommand(std::vector<std::string_view>{"HELLO", "3"});

@@ -116,8 +116,8 @@ Guidance for AI coding agents working in this repository.
   thread only frees them. Stop the I/O threads before freeing clients at
   shutdown, and pause them (`Server::PauseIoThreads`) around anything that
   must not race their allocations, such as `fork`. Run the threaded
-  integration variants (`*_io_threads`) and a ThreadSanitizer build of the
-  concurrent-clients test after changing this path.
+  integration variants (`*_io_threads`) and the `thread-sanitizer` preset's
+  suite after changing this path; CI runs that suite too.
 - Commands reach server-wide state (the database, the AOF, the password, the
   I/O threads) through `Client::Server()`, the `ServerContext` the server
   owns. Add server-wide state there, not to `Client`.
@@ -133,6 +133,14 @@ Guidance for AI coding agents working in this repository.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-2
   (`utils/siphash.h`), as Redis does, to resist hash flooding. Do not depend
   on iteration or `SCAN` order in tests; it changes between runs.
+- `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` share `server/commands/scan_options.h`
+  (cursor and option parsing in Redis' order, and the reply) and step through
+  hash tables with `Dict::ScanStep`, which follows Redis' scanGenericCommand:
+  each step visits buckets until it has seen `COUNT` elements or ten times
+  `COUNT` buckets. Collections in a compact encoding are returned whole with
+  cursor 0, as Redis does. Keep collection encoding limits at Redis 8's
+  defaults (hashes 512 entries; sets and sorted sets 128; integer sets 512;
+  elements 64 bytes), since they decide reply order.
 - `Skiplist` stores keys by value, orders them with a three-way comparison,
   and searches by any probe type its comparator can compare a key against. A
   lookup probe must identify at most one key; a range-bound probe may match
@@ -248,6 +256,21 @@ cmake --build --preset sanitizer
 ctest --preset sanitizer --output-on-failure
 scripts/run_leak_check.sh
 ```
+
+Run the whole suite under ThreadSanitizer after changes to threads, the
+AOF's background work or `fork`, or anything they share with the main
+thread. Run it serially, as the preset does: integration tests share a port.
+
+```sh
+cmake --preset thread-sanitizer
+cmake --build --preset thread-sanitizer
+ctest --preset thread-sanitizer --output-on-failure
+```
+
+The integration runners stop the server with `SIGTERM` and fail when it exits
+nonzero, so sanitizer reports from the server (ThreadSanitizer races and
+LeakSanitizer leaks, reported at exit) fail the test. Keep graceful shutdown
+exiting 0.
 
 Build and run the bounded Clang libFuzzer smoke tests after changes to request
 parsing, Redis data types, core containers, buffers, expiration, persistence,

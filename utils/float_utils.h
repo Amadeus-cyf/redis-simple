@@ -15,6 +15,11 @@ using FloatBuffer = std::array<char, 64>;
 // "0.00001", "1e-7", or "6.948674738744653e+5". Returns a view of the text,
 // empty if formatting fails.
 std::string_view FormatFloat(double value, FloatBuffer* buffer);
+// Writes `value` as Redis' ld2string(LD_STR_AUTO) does, which ZSCAN uses
+// for the scores of a skiplist-encoded sorted set: printf's "%.17Lg", so
+// 17 significant digits ("1.1000000000000001"), with "inf", "-inf", and
+// "nan" spelled out. Returns a view of the text, empty if formatting fails.
+std::string_view FormatFloatWith17Digits(double value, FloatBuffer* buffer);
 // Convert floating number to string.
 std::string FloatToString(double value);
 // Parses `value` as Redis' string2d does, for scores and other number

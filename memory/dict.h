@@ -131,6 +131,13 @@ class Dict {
   // shrinks between calls.
   template <typename Visitor>
   std::optional<size_t> Scan(size_t cursor, Visitor&& visitor);
+  // One step of a SCAN-family command, as Redis' scanGenericCommand runs it:
+  // scans buckets from `cursor` until `count` elements have been visited,
+  // the scan completes, or 10 * `count` + 1 buckets have been scanned, which
+  // bounds the work in a sparse table. Returns the next cursor, 0 once the
+  // scan is complete.
+  template <typename Visitor>
+  size_t ScanStep(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const { return table_used_[0] + table_used_[1]; }
   void Clear();
   ~Dict();
@@ -472,6 +479,25 @@ std::optional<size_t> Dict<K, V, Hash, KeyEqual>::Scan(size_t cursor,
     return std::nullopt;
   }
   return cursor;
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+template <typename Visitor>
+size_t Dict<K, V, Hash, KeyEqual>::ScanStep(size_t cursor, size_t count,
+                                            Visitor&& visitor) {
+  constexpr size_t kMaxSize = std::numeric_limits<size_t>::max();
+  size_t iterations_left = count > kMaxSize / 10 ? kMaxSize : count * 10;
+  size_t visited = 0;
+  const auto visit = [&visited, &visitor](const K& key, const V& value) {
+    ++visited;
+    visitor(key, value);
+  };
+  std::optional<size_t> next_cursor = Scan(cursor, visit);
+  while (next_cursor.has_value() && iterations_left > 0 && visited < count) {
+    --iterations_left;
+    next_cursor = Scan(*next_cursor, visit);
+  }
+  return next_cursor.value_or(0);
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>

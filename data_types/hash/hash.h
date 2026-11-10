@@ -44,6 +44,12 @@ class Hash {
   bool ForEachField(Visitor&& visitor) const;
   template <typename Visitor>
   bool ForEachValue(Visitor&& visitor) const;
+  // One HSCAN step over a dict-encoded hash (memory::Dict::ScanStep): calls
+  // `visitor(field, value)` for each entry it visits and returns the next
+  // cursor, 0 when done. A listpack is scanned whole through ForEachEntry,
+  // as Redis does.
+  template <typename Visitor>
+  size_t ScanDict(size_t cursor, size_t count, Visitor&& visitor);
   Encoding Encoding() const { return encoding_; }
 
  private:
@@ -110,6 +116,16 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
     return true;
   }
   utils::Unreachable();
+}
+
+template <typename Visitor>
+size_t Hash::ScanDict(size_t cursor, size_t count, Visitor&& visitor) {
+  RS_CHECK(encoding_ == Encoding::kDict);
+  return dict_->ScanStep(
+      cursor, count,
+      [&visitor](const std::string& field, const std::string& value) {
+        visitor(std::string_view(field), std::string_view(value));
+      });
 }
 
 template <typename Visitor>
