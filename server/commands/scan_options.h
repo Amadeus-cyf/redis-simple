@@ -8,6 +8,8 @@
 #include <string_view>
 
 #include "server/db/redis_object.h"
+#include "server/reply.h"
+#include "utils/string_utils.h"
 
 namespace redis_simple {
 class Client;
@@ -37,7 +39,9 @@ struct ScanOptions {
   bool no_values{};
 
   // Whether a key, member, or field matches MATCH.
-  bool Matches(std::string_view element) const;
+  bool Matches(std::string_view element) const {
+    return !pattern.has_value() || utils::MatchesGlob(element, *pattern);
+  }
 };
 
 // What Redis replies for a missing key: cursor 0 and no elements.
@@ -62,13 +66,17 @@ db::RedisObject* StartCollectionScan(Client* client, ScanTarget target,
                                      size_t* cursor, ScanOptions* options);
 
 // Builds a SCAN-family reply, the next cursor and then the elements, which
-// are encoded as they are added.
+// are encoded as they are added. Send queues the header and the elements as
+// separate buffers, so the elements are not copied.
 class ScanReply {
  public:
   // `expected` sizes the first allocation.
   explicit ScanReply(size_t expected);
-  void Add(std::string_view element);
-  std::string Finish(size_t cursor) &&;
+  void Add(std::string_view element) {
+    reply::AppendBulkString(element, &elements_);
+    ++count_;
+  }
+  void Send(Client* client, size_t cursor) &&;
 
  private:
   std::string elements_;

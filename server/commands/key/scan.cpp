@@ -30,6 +30,6 @@ void HandleScan(Client* const client) {
     reply.Add(key);
   };
   const size_t next_cursor = redis_db->ScanKeys(cursor, options.count, add_key);
-  client->AddReply(std::move(reply).Finish(next_cursor));
+  std::move(reply).Send(client, next_cursor);
 }
 }  // namespace redis_simple::commands::keys

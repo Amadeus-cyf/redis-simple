@@ -492,12 +492,15 @@ size_t Dict<K, V, Hash, KeyEqual>::ScanStep(size_t cursor, size_t count,
     ++visited;
     visitor(key, value);
   };
-  std::optional<size_t> next_cursor = Scan(cursor, visit);
-  while (next_cursor.has_value() && iterations_left > 0 && visited < count) {
-    --iterations_left;
+  // One call site, so the scan inlines with the caller's visitor.
+  std::optional<size_t> next_cursor = cursor;
+  while (true) {
     next_cursor = Scan(*next_cursor, visit);
+    if (!next_cursor.has_value() || iterations_left == 0 || visited >= count) {
+      return next_cursor.value_or(0);
+    }
+    --iterations_left;
   }
-  return next_cursor.value_or(0);
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>

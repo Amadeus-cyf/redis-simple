@@ -229,7 +229,7 @@ void HandleHScan(Client* const client) {
       return true;
     });
   }
-  client->AddReply(std::move(reply).Finish(next_cursor));
+  std::move(reply).Send(client, next_cursor);
 }
 
 void HandleHMGet(Client* const client) {

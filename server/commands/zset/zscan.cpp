@@ -35,6 +35,6 @@ void HandleZScan(Client* const client) {
                       ? utils::FormatFloatWith17Digits(score, &score_buffer)
                       : utils::FormatFloat(score, &score_buffer));
       });
-  client->AddReply(std::move(reply).Finish(next_cursor));
+  std::move(reply).Send(client, next_cursor);
 }
 }  // namespace redis_simple::commands::zsets

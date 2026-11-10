@@ -24,10 +24,6 @@ constexpr size_t kReservedElementBytes = 24;
 constexpr size_t kMaxReservedElements = 1024;
 }  // namespace
 
-bool ScanOptions::Matches(std::string_view element) const {
-  return !pattern.has_value() || utils::MatchesGlob(element, *pattern);
-}
-
 bool ParseScanCursor(Client* const client, std::string_view text,
                      size_t* const cursor) {
   uint64_t value = 0;
@@ -127,24 +123,18 @@ ScanReply::ScanReply(size_t expected) {
                     kReservedElementBytes);
 }
 
-void ScanReply::Add(std::string_view element) {
-  reply::AppendBulkString(element, &elements_);
-  ++count_;
-}
-
-std::string ScanReply::Finish(size_t cursor) && {
+void ScanReply::Send(Client* const client, size_t cursor) && {
   constexpr size_t kHeaderBytes = 64;
-  std::string encoded;
-  encoded.reserve(kHeaderBytes + elements_.size());
-  reply::AppendArrayHeader(2, &encoded);
+  std::string header;
+  header.reserve(kHeaderBytes);
+  reply::AppendArrayHeader(2, &header);
   std::array<char, 21> cursor_buffer{};
   const int cursor_length =
       utils::Uint64ToString(cursor_buffer, static_cast<uint64_t>(cursor));
   reply::AppendBulkString(std::string_view(cursor_buffer.data(),
                                            static_cast<size_t>(cursor_length)),
-                          &encoded);
-  reply::AppendArrayHeader(count_, &encoded);
-  encoded.append(elements_);
-  return encoded;
+                          &header);
+  reply::AppendArrayHeader(count_, &header);
+  client->AddReply(std::move(header), std::move(elements_));
 }
 }  // namespace redis_simple::commands

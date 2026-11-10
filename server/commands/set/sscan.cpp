@@ -35,6 +35,6 @@ void HandleSScan(Client* const client) {
       return true;
     });
   }
-  client->AddReply(std::move(reply).Finish(next_cursor));
+  std::move(reply).Send(client, next_cursor);
 }
 }  // namespace redis_simple::commands::sets
