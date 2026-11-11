@@ -26,6 +26,8 @@ std::string RoundTrip(const std::string& input) {
 }
 
 TEST(LzfTest, RoundTripsRepetitiveAndRandomData) {
+  // A fixed seed keeps failures reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 rng(7);
   for (size_t size :
        {1, 2, 3, 4, 31, 32, 33, 100, 264, 265, 1000, 9000, 70000}) {
@@ -50,6 +52,8 @@ TEST(LzfTest, RoundTripsRepetitiveAndRandomData) {
 TEST(LzfTest, CompressReportsWhenOutputIsTooSmall) {
   // Redis gives the compressor four bytes less than the input; random data
   // does not fit, so it is stored uncompressed.
+  // A fixed seed keeps failures reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 rng(3);
   std::string random(100, '\0');
   for (char& c : random) {

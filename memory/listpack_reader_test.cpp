@@ -107,6 +107,8 @@ TEST(ListPackReaderTest, NeverReadsOutsideCorruptedBytes) {
     listpack.Append(element);
   }
   const std::string blob(listpack.Bytes());
+  // A fixed seed keeps failures reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 rng(11);
   for (int round = 0; round < 20000; ++round) {
     std::string corrupted = blob;

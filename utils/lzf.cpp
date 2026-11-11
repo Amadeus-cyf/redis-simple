@@ -106,8 +106,8 @@ size_t LzfCompressor::Compress(std::string_view input, std::span<char> output) {
       size > std::numeric_limits<uint32_t>::max() - 1) {
     return 0;
   }
-  const int hash_bits = std::clamp(static_cast<int>(std::bit_width(size)),
-                                   kMinHashBits, kMaxHashBits);
+  const int hash_bits =
+      std::clamp<int>(std::bit_width(size), kMinHashBits, kMaxHashBits);
   const size_t slots = size_t{1} << hash_bits;
   if (table_.size() < slots) {
     table_.resize(slots);
