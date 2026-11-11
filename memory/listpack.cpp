@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -10,6 +11,7 @@
 #include <ranges>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -17,6 +19,52 @@
 #include "utils/string_utils.h"
 
 namespace redis_simple::memory {
+namespace {
+// Multi-byte fields are little-endian, as in Redis' listpack: the header's
+// total size and element count, 32-bit string lengths, and integers wider
+// than 13 bits.
+template <size_t Width>
+uint64_t LoadLittleEndian(const unsigned char* bytes) {
+  // Whole words with memcpy, which compiles to one load; the 3-byte width
+  // goes byte by byte.
+  if constexpr (Width == 2 || Width == 4 || Width == 8) {
+    using Word =
+        std::conditional_t<Width == 2, uint16_t,
+                           std::conditional_t<Width == 4, uint32_t, uint64_t>>;
+    Word word = 0;
+    std::memcpy(&word, bytes, Width);
+    if constexpr (std::endian::native == std::endian::big) {
+      word = std::byteswap(word);
+    }
+    return word;
+  } else {
+    uint64_t value = 0;
+    for (size_t i = 0; i < Width; ++i) {
+      value |= static_cast<uint64_t>(bytes[i]) << (8 * i);
+    }
+    return value;
+  }
+}
+
+template <size_t Width>
+void StoreLittleEndian(uint64_t value, unsigned char* bytes) {
+  if constexpr (Width == 2 || Width == 4 || Width == 8) {
+    using Word =
+        std::conditional_t<Width == 2, uint16_t,
+                           std::conditional_t<Width == 4, uint32_t, uint64_t>>;
+    auto word = static_cast<Word>(value);
+    if constexpr (std::endian::native == std::endian::big) {
+      word = std::byteswap(word);
+    }
+    std::memcpy(bytes, &word, Width);
+  } else {
+    for (size_t i = 0; i < Width; ++i) {
+      bytes[i] = static_cast<unsigned char>((value >> (8 * i)) & 0xff);
+    }
+  }
+}
+}  // namespace
+
 ListPack::ListPack()
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
     : listpack_(std::make_unique<unsigned char[]>(kListPackHeaderSize + 1)),
@@ -386,33 +434,22 @@ unsigned char* ListPack::IntegerAt(size_t offset, unsigned char* dst,
       negative_max = std::numeric_limits<uint16_t>::max() >> 3;
       break;
     case EncodingType::k16BitInteger:
-      unsigned_value = (listpack_[offset + 1] << 8) | (listpack_[offset + 2]);
+      unsigned_value = LoadLittleEndian<2>(&listpack_[offset + 1]);
       negative_start = 1 << 15;
       negative_max = std::numeric_limits<uint16_t>::max();
       break;
     case EncodingType::k24BitInteger:
-      unsigned_value = (listpack_[offset + 1] << 16) |
-                       ((listpack_[offset + 2]) << 8) | listpack_[offset + 3];
+      unsigned_value = LoadLittleEndian<3>(&listpack_[offset + 1]);
       negative_start = 1L << 23;
       negative_max = std::numeric_limits<uint32_t>::max() >> 8;
       break;
     case EncodingType::k32BitInteger:
-      unsigned_value = (static_cast<uint64_t>(listpack_[offset + 1]) << 24) |
-                       (static_cast<uint64_t>(listpack_[offset + 2]) << 16) |
-                       (static_cast<uint64_t>(listpack_[offset + 3]) << 8) |
-                       static_cast<uint64_t>(listpack_[offset + 4]);
+      unsigned_value = LoadLittleEndian<4>(&listpack_[offset + 1]);
       negative_start = 1UL << 31;
       negative_max = std::numeric_limits<uint32_t>::max();
       break;
     case EncodingType::k64BitInteger:
-      unsigned_value = (static_cast<uint64_t>(listpack_[offset + 1]) << 56) |
-                       (static_cast<uint64_t>(listpack_[offset + 2]) << 48) |
-                       (static_cast<uint64_t>(listpack_[offset + 3]) << 40) |
-                       (static_cast<uint64_t>(listpack_[offset + 4]) << 32) |
-                       (static_cast<uint64_t>(listpack_[offset + 5]) << 24) |
-                       (static_cast<uint64_t>(listpack_[offset + 6]) << 16) |
-                       (static_cast<uint64_t>(listpack_[offset + 7]) << 8) |
-                       static_cast<uint64_t>(listpack_[offset + 8]);
+      unsigned_value = LoadLittleEndian<8>(&listpack_[offset + 1]);
       negative_start = 1UL << 63;
       negative_max = std::numeric_limits<uint64_t>::max();
       break;
@@ -604,17 +641,11 @@ bool ListPack::BatchInsert(size_t offset, ListPack::Position where,
 }
 
 uint32_t ListPack::TotalBytes() const {
-  return (static_cast<uint32_t>(listpack_[0]) << 24) |
-         (static_cast<uint32_t>(listpack_[1]) << 16) |
-         (static_cast<uint32_t>(listpack_[2]) << 8) |
-         static_cast<uint32_t>(listpack_[3]);
+  return static_cast<uint32_t>(LoadLittleEndian<4>(listpack_.get()));
 }
 
 void ListPack::SetTotalBytes(uint32_t listpack_bytes) {
-  listpack_[0] = (listpack_bytes >> 24) & 0xff;
-  listpack_[1] = (listpack_bytes >> 16) & 0xff;
-  listpack_[2] = (listpack_bytes >> 8) & 0xff;
-  listpack_[3] = listpack_bytes & 0xff;
+  StoreLittleEndian<4>(listpack_bytes, listpack_.get());
 }
 
 size_t ListPack::Size() const {
@@ -637,12 +668,11 @@ size_t ListPack::Size() const {
 }
 
 uint16_t ListPack::ElementCount() const {
-  return (listpack_[4] << 8) | listpack_[5];
+  return static_cast<uint16_t>(LoadLittleEndian<2>(listpack_.get() + 4));
 }
 
 void ListPack::SetNumOfElements(uint16_t element_count) const {
-  listpack_[4] = (element_count >> 8) & 0xff;
-  listpack_[5] = element_count & 0xff;
+  StoreLittleEndian<2>(element_count, listpack_.get() + 4);
 }
 
 /*
@@ -866,10 +896,7 @@ size_t ListPack::EncodeString(unsigned char* const buffer,
     backlen = 5 + length;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k32BitString;
-      buffer[1] = length >> 24;
-      buffer[2] = (length >> 16) & 0xff;
-      buffer[3] = (length >> 8) & 0xff;
-      buffer[4] = length & 0xff;
+      StoreLittleEndian<4>(length, buffer + 1);
       std::memcpy(buffer + 5, element_string, length);
     }
   }
@@ -911,8 +938,7 @@ size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t v) {
     backlen = 3;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k16BitInteger;
-      buffer[1] = (v >> 8);
-      buffer[2] = v & 0xff;
+      StoreLittleEndian<2>(static_cast<uint64_t>(v), buffer + 1);
     }
   } else if (v >= kInt24BitIntMin && v <= kInt24BitIntMax) {
     // 24 bit integer
@@ -922,9 +948,7 @@ size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t v) {
     backlen = 4;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k24BitInteger;
-      buffer[1] = (v >> 16);
-      buffer[2] = (v >> 8) & 0xff;
-      buffer[3] = v & 0xff;
+      StoreLittleEndian<3>(static_cast<uint64_t>(v), buffer + 1);
     }
   } else if (v >= std::numeric_limits<int32_t>::min() &&
              v <= std::numeric_limits<int32_t>::max()) {
@@ -935,10 +959,7 @@ size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t v) {
     backlen = 5;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k32BitInteger;
-      buffer[1] = (v >> 24);
-      buffer[2] = (v >> 16) & 0xff;
-      buffer[3] = (v >> 8) & 0xff;
-      buffer[4] = v & 0xff;
+      StoreLittleEndian<4>(static_cast<uint64_t>(v), buffer + 1);
     }
   } else {
     // 64 bit integer
@@ -946,14 +967,7 @@ size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t v) {
     backlen = 9;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k64BitInteger;
-      buffer[1] = (uv >> 56);
-      buffer[2] = (uv >> 48) & 0xff;
-      buffer[3] = (uv >> 40) & 0xff;
-      buffer[4] = (uv >> 32) & 0xff;
-      buffer[5] = (uv >> 24) & 0xff;
-      buffer[6] = (uv >> 16) & 0xff;
-      buffer[7] = (uv >> 8) & 0xff;
-      buffer[8] = uv & 0xff;
+      StoreLittleEndian<8>(uv, buffer + 1);
     }
   }
   if (buffer != nullptr) {
@@ -966,15 +980,16 @@ size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t v) {
  * Encode the back length to the given pointer of the listpack.
  */
 void ListPack::EncodeBacklen(unsigned char* const buffer, size_t backlen) {
-  uint8_t backlen_bytes = BacklenBytes(backlen);
+  // Redis' lpEncodeBacklen: the most significant 7 bits come first, and
+  // every later byte has its high bit set, so a backward read from the
+  // entry's end takes the low bits first and stops at the first byte.
+  const uint8_t backlen_bytes = BacklenBytes(backlen);
   for (uint8_t i = 0; i < backlen_bytes; ++i) {
-    buffer[i] = backlen & 127;
+    const unsigned shift = 7U * (backlen_bytes - 1U - i);
+    buffer[i] = static_cast<unsigned char>((backlen >> shift) & 127);
     if (i > 0) {
-      // Set the most significant bit to 1 if this is not the first byte of the
-      // backlen.
       buffer[i] |= 128;
     }
-    backlen >>= 7;
   }
 }
 
@@ -985,13 +1000,17 @@ void ListPack::EncodeBacklen(unsigned char* const buffer, size_t backlen) {
  * element.
  */
 size_t ListPack::DecodeBacklen(size_t offset) const {
+  // Redis' lpDecodeBacklen: read backward from the entry's last byte, low
+  // bits first, until a byte without the high bit.
   size_t backlen = 0;
+  unsigned shift = 0;
   while (true) {
     const unsigned char byte = listpack_[offset];
-    backlen = (backlen << 7) | (byte & 127);
+    backlen |= static_cast<size_t>(byte & 127) << shift;
     if ((byte & 128) == 0) {
       break;
     }
+    shift += 7;
     --offset;
   }
   return backlen;
@@ -1010,8 +1029,7 @@ size_t ListPack::DecodeStringLength(size_t offset) const {
     case EncodingType::k12BitString:
       return ((buffer[0] & 0xf) << 8) | buffer[1];
     default:
-      return (buffer[1] << 24) | (buffer[2] << 16) | (buffer[3] << 8) |
-             buffer[4];
+      return LoadLittleEndian<4>(buffer + 1);
   }
 }
 

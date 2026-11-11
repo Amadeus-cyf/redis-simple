@@ -51,6 +51,9 @@ class Hash {
   template <typename Visitor>
   size_t ScanDict(size_t cursor, size_t count, Visitor&& visitor);
   Encoding Encoding() const { return encoding_; }
+  // A listpack-encoded hash's listpack, in Redis' byte format, as RDB files
+  // store it.
+  std::string_view ListPackBytes() const;
 
  private:
   Hash();

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace redis_simple::memory {
 // An in memory set storing integers in ascending order.
@@ -20,6 +21,10 @@ class IntSet {
   int64_t Max() const;
   int64_t Min() const;
   uint32_t Size() const { return length_; }
+  // Appends the set in Redis' intset layout, as RDB files store it: the
+  // encoding's width and the length as 32-bit integers, then the values in
+  // ascending order at that width, all little-endian.
+  void AppendRedisBlob(std::string* out) const;
   ~IntSet() = default;
 
  private:

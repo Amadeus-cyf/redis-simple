@@ -87,8 +87,8 @@ file appendonly.aof.2.incr.aof seq 2 type i
 
 `--appendfilename` (default `appendonly.aof`) is the files' name prefix, a
 name without a directory as in Redis; the manifest quotes names that need it.
-`--appenddirname` accepts a path, since this server has no Redis `dir`
-setting to put it under. An AOF with no files starts with a base file of the
+`--appenddirname` is relative to `--dir`, and unlike Redis also accepts a
+path. An AOF with no files starts with a base file of the
 current dataset. An existing single-file AOF of that name in the working
 directory is upgraded as Redis does: listed as the base file in a new
 manifest, then moved into the directory. The manifest is replaced atomically:
@@ -147,8 +147,37 @@ deletes the new files the live manifest lists; this server keeps them, rejects
 writes, and keeps the replaced files until a later manifest persists safely.
 And a rewrite does not start while a failed write is still pending, since
 Redis would then replay those commands twice. Base files are always in the
-command format: Redis' default RDB-format base (`aof-use-rdb-preamble yes`)
-needs an RDB encoder and loader, which this server does not have yet.
+command format; Redis' default RDB-format base (`aof-use-rdb-preamble yes`)
+is not supported yet.
+
+RDB snapshots follow Redis 8.10's `src/rdb.c`. `SAVE` writes the database to
+`dump.rdb` (`--dbfilename`) in the working directory (`--dir`, which also holds
+the AOF): first as `temp-<pid>.rdb`, synced, then renamed over the file with
+the directory synced, so a crash never leaves a partial file in its place.
+`LASTSAVE` reports when the last save finished. At startup, when the AOF is
+off, the server loads the file if there is one, and refuses to start if it is
+damaged.
+
+```sh
+./build/debug/redis_simple --dir /var/lib/redis_simple --dbfilename dump.rdb
+```
+
+The file is in Redis' format, and each server loads the other's. Values are
+stored in the encodings Redis stores them in, listpacks and intsets byte for
+byte as they are in memory; strings over 20 bytes are LZF-compressed when
+that saves space (`--rdbcompression`), and the file ends with a CRC64
+(`--rdbchecksum`). It is written as RDB version 11, the oldest that covers
+its contents, so Redis 7.2 and later load it; Redis 8.10 writes version 15.
+This server loads files from Redis 7.0 and later, 8.10's included, and the
+plain encodings of older versions. It refuses what it does not have: streams,
+modules, hash field expiration, hash templates, keys outside database 0, and
+the ziplist encodings of Redis 6.2 and earlier; it skips function libraries
+with a warning. Keys whose time has passed are dropped while loading. Every
+length, encoded listpack and intset, and duplicate is checked, so a corrupt
+file is refused, never trusted.
+
+`BGSAVE` and automatic save points (Redis' `save`) are not implemented yet, so
+the server saves only on `SAVE`, not on shutdown as Redis' default does.
 
 Clients can send standard RESP arrays of bulk strings or the legacy inline
 syntax, both framed as Redis frames them: inline arguments may be quoted and
@@ -224,7 +253,8 @@ prints them: integers up to 2^62 in full, otherwise the shortest digits in
   `HMGET`, `HKEYS`, `HVALS`, `HINCRBY`, `HSCAN` with `MATCH`, `COUNT`, and
   `NOVALUES`
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
-- Persistence and stats: `BGREWRITEAOF`, `INFO [persistence|stats]`
+- Persistence and stats: `BGREWRITEAOF`, `SAVE`, `LASTSAVE`,
+  `INFO [persistence|stats]`
 - Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `AUTH`, and
   `SETNAME`, `CLIENT ID|GETNAME|SETNAME|SETINFO`, `SELECT 0` (the only
   database), `PING`, `ECHO`, `QUIT`
@@ -419,6 +449,18 @@ It runs every write command this server supports, with a rewrite in
 between, loads the directory in the other server, and compares the
 keyspaces. Set `INTEROP_KEEP=1` to keep the directories for inspection.
 
+With `redis-server` 7.2 or later, check that each server loads the other's
+RDB file:
+
+```sh
+scripts/check_rdb_interop.py build/debug/redis_simple
+```
+
+It fills one server with every type in each of its encodings, with edge
+cases such as entries at listpack size limits, saves, loads the file in the
+other server, and compares every key, in both directions and without Redis'
+compression and checksum.
+
 ## Benchmarks
 
 Benchmarks use Google Benchmark and build into one `redis_simple_benchmarks`
@@ -507,6 +549,7 @@ event_loop/           Event loop with kqueue and epoll pollers
 fuzz/                 Stateful libFuzzer harnesses and reference models
 integration/commands/ Server/client command integration tests
 integration/aof_client_test.cpp  AOF restart integration client
+integration/rdb_client_test.cpp  RDB SAVE and restart integration client
 integration/io_threads_client_test.cpp  Concurrent-clients integration client
 integration/tcp/      TCP client/server integration tests
 logging/              Project logging wrapper
@@ -514,6 +557,7 @@ memory/               Core in-memory data structures
 scripts/              Project automation and CTest runner scripts
 server/               Server, client connection glue, commands, replies, DB
 server/aof/           Append-only file: writing, loading, rewriting
+server/rdb/           RDB snapshots: the file format, SAVE, loading
 data_types/           Redis hash, list, set, and sorted-set implementations
 tcp/                  TCP helpers
 utils/                Small shared utilities
@@ -525,11 +569,12 @@ individual command `.cpp` files keep implementation details local. Handlers
 rely on the command table for arity and use `server/commands/lookup.h` for
 typed key lookups that report `WRONGTYPE`.
 Reply encoding helpers live directly under `server/`, while database state and
-Redis object wrappers stay under `server/db/`, and the append-only file under
-`server/aof/`. Commands reach server-wide state (the database, the AOF, the
+Redis object wrappers stay under `server/db/`, the append-only file under
+`server/aof/`, and RDB snapshots under `server/rdb/`. Commands reach server-wide state (the database, the AOF, the
 password, the I/O threads) through the client's `ServerContext`.
 `docs/design.md` explains how a request flows through these parts, how
-threaded I/O hands clients between threads, and how the AOF is organized.
+threaded I/O hands clients between threads, and how the AOF and RDB files
+are organized.
 
 ## Tooling
 

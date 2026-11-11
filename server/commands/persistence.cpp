@@ -1,6 +1,7 @@
 #include "server/aof/aof.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
+#include "server/rdb/rdb.h"
 #include "server/reply.h"
 
 namespace redis_simple::commands::persistence {
@@ -34,4 +35,18 @@ void HandleBgRewriteAof(Client* const client) {
       "logs for more information."));
 }
 
+void HandleSave(Client* const client) {
+  rdb::Rdb* const rdb = client->Server().rdb;
+  // Redis replies with a bare "-ERR" when the save fails; the log says why.
+  if (rdb == nullptr || !rdb->Save(client->Db())) {
+    client->AddReply(reply::FromError("ERR"));
+    return;
+  }
+  client->AddReply(reply::kOk);
+}
+
+void HandleLastSave(Client* const client) {
+  const rdb::Rdb* const rdb = client->Server().rdb;
+  client->AddReply(reply::FromInt64(rdb == nullptr ? 0 : rdb->LastSaveTime()));
+}
 }  // namespace redis_simple::commands::persistence

@@ -25,6 +25,9 @@ class ZSetListPack : public ZSetStorage {
   ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const override;
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
+  std::optional<std::string_view> ListPackBytes() const override {
+    return listpack_->Bytes();
+  }
   size_t Scan(size_t cursor, size_t count,
               const ZSetScanVisitor& visitor) override;
   size_t Size() const override {

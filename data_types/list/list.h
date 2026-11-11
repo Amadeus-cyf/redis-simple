@@ -48,6 +48,18 @@ class List {
   template <typename Visitor>
   bool ForEachReverse(size_t start, size_t stop, Visitor&& visitor) const;
   Encoding Encoding() const;
+  // Calls `visitor(std::string_view bytes)` with each node's listpack in
+  // Redis' byte format, as RDB files store a list: one for a listpack
+  // encoding, one per quicklist node otherwise. Stops when it returns false.
+  template <typename Visitor>
+  bool ForEachListPack(Visitor&& visitor) const {
+    if (listpack_ != nullptr) {
+      return visitor(listpack_->Bytes());
+    }
+    return quicklist_->ForEachNode([&visitor](const memory::ListPack& node) {
+      return visitor(node.Bytes());
+    });
+  }
 
  private:
   explicit List(size_t list_max_listpack_bytes);

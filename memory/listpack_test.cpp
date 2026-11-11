@@ -5,12 +5,15 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "utils/crc64.h"
 
 namespace redis_simple::memory {
 namespace {
@@ -863,5 +866,83 @@ TEST(ListPackDeathTest, RejectsOutOfBoundsIndexes) {
   EXPECT_DEATH(listpack->Delete(ListPack::kListPackHeaderSize - 1),
                "Check failed");
   EXPECT_DEATH(listpack->Delete(end), "Check failed");
+}
+
+// Bytes Redis 8.10 produces for the same elements (from DUMP with
+// rdbcompression off), so RDB files can store listpacks as they are.
+std::string Hex(std::string_view bytes) {
+  std::string hex;
+  for (const char c : bytes) {
+    constexpr std::string_view kDigits = "0123456789abcdef";
+    const auto byte = static_cast<unsigned char>(c);
+    hex.push_back(kDigits[byte >> 4]);
+    hex.push_back(kDigits[byte & 0xf]);
+  }
+  return hex;
+}
+
+TEST(ListPackTest, EncodesIntegersLikeRedis) {
+  ListPack listpack;
+  for (const std::string_view value : {"0",
+                                       "1",
+                                       "127",
+                                       "128",
+                                       "-1",
+                                       "4095",
+                                       "-4096",
+                                       "4096",
+                                       "-4097",
+                                       "32767",
+                                       "-32768",
+                                       "32768",
+                                       "8388607",
+                                       "-8388608",
+                                       "8388608",
+                                       "2147483647",
+                                       "-2147483648",
+                                       "2147483648",
+                                       "-2147483649",
+                                       "1099511627776",
+                                       "-1099511627776",
+                                       "9223372036854775807",
+                                       "-9223372036854775808"}) {
+    listpack.Append(value);
+  }
+  EXPECT_EQ(
+      Hex(listpack.Bytes()),
+      "860000001700000101017f01c08002dfff02cfff02d00002f1001003f1ffef03f1ff7f"
+      "03f1008003f200800004f2ffff7f04f200008004f30000800005f3ffffff7f05f30000"
+      "008005f4000000800000000009f4ffffff7fffffffff09f4000000000001000009f400"
+      "00000000ffffff09f4ffffffffffffff7f09f4000000000000008009ff");
+}
+
+TEST(ListPackTest, EncodesStringsAndBacklensLikeRedis) {
+  ListPack small;
+  for (const std::string_view value : {"f1", "v1", "n", "12345", "neg", "-7"}) {
+    small.Append(value);
+  }
+  EXPECT_EQ(Hex(small.Bytes()),
+            "1e00000006008266310382763103816e02f1393003836e656704dff902ff");
+
+  // Lengths at each string encoding's limits, and backlens of one and two
+  // bytes; the 5000-byte string uses the 32-bit length encoding.
+  ListPack strings;
+  for (const auto& [length, fill] :
+       std::initializer_list<std::pair<size_t, char>>{{0, ' '},
+                                                      {1, 'a'},
+                                                      {63, 'x'},
+                                                      {64, 'y'},
+                                                      {126, 'z'},
+                                                      {127, 'w'},
+                                                      {200, 'v'},
+                                                      {4095, 'u'}}) {
+    strings.Append(std::string(length, fill));
+  }
+  EXPECT_EQ(strings.Bytes().size(), 4708);
+  EXPECT_EQ(utils::Crc64(0, strings.Bytes()), 0xdf2002b80ea90a83ULL);
+  ListPack large;
+  large.Append(std::string(5000, 'q'));
+  EXPECT_EQ(large.Bytes().size(), 5014);
+  EXPECT_EQ(utils::Crc64(0, large.Bytes()), 0xa1e049c1b7ab3714ULL);
 }
 }  // namespace redis_simple::memory

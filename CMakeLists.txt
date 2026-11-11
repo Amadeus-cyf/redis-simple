@@ -172,6 +172,9 @@ target_link_libraries(
 )
 
 redis_simple_add_gtest_suite(StringUtilsTest)
+redis_simple_add_gtest_suite(Crc64Test)
+redis_simple_add_gtest_suite(LzfTest)
+redis_simple_add_gtest_suite(RdbTest)
 redis_simple_add_gtest_suite(DictStringTest)
 redis_simple_add_gtest_suite(DictIntTest)
 redis_simple_add_gtest_suite(DynamicBufferTest)
@@ -180,6 +183,7 @@ redis_simple_add_gtest_suite(LoopTest)
 redis_simple_add_gtest_suite(IntSetTest)
 redis_simple_add_gtest_suite(IntSetDeathTest)
 redis_simple_add_gtest_suite(ListPackTest)
+redis_simple_add_gtest_suite(ListPackReaderTest)
 redis_simple_add_gtest_suite(ListPackDeathTest)
 redis_simple_add_gtest_suite(QuickListTest)
 redis_simple_add_gtest_suite(ReplyBufferTest)
@@ -280,6 +284,12 @@ redis_simple_add_executable(
 target_link_libraries(redis_simple_integration_aof_client PRIVATE redis_simple_cli)
 
 redis_simple_add_executable(
+  redis_simple_integration_rdb_client
+  "integration/rdb_client_test.cpp"
+)
+target_link_libraries(redis_simple_integration_rdb_client PRIVATE redis_simple_cli)
+
+redis_simple_add_executable(
   redis_simple_integration_io_threads_client
   "integration/io_threads_client_test.cpp"
 )
@@ -312,6 +322,20 @@ foreach(variant IN ITEMS "" _io_threads)
       $<TARGET_FILE:redis_simple_integration_aof_client>
   )
 endforeach()
+foreach(variant IN ITEMS "" _io_threads)
+  add_test(
+    NAME redis_simple_integration_rdb${variant}
+    COMMAND
+      /bin/sh
+      "${CMAKE_SOURCE_DIR}/scripts/run_rdb_integration_test.sh"
+      $<TARGET_FILE:redis_simple>
+      $<TARGET_FILE:redis_simple_integration_rdb_client>
+  )
+endforeach()
+set_tests_properties(
+  redis_simple_integration_rdb_io_threads
+  PROPERTIES ENVIRONMENT "REDIS_SIMPLE_SERVER_ARGS=--io-threads 4"
+)
 # Rewrites fork while the I/O threads run, which the fork hooks pause.
 set_tests_properties(
   redis_simple_integration_aof_io_threads
@@ -438,6 +462,8 @@ set_tests_properties(
   redis_simple_integration_server_lifecycle
   redis_simple_integration_aof
   redis_simple_integration_aof_io_threads
+  redis_simple_integration_rdb
+  redis_simple_integration_rdb_io_threads
   redis_simple_integration_command_connection
   redis_simple_integration_command_key
   redis_simple_integration_command_string
@@ -549,6 +575,7 @@ if(REDIS_SIMPLE_BUILD_FUZZERS)
     reply_buffer_fuzzer
     db_expiration_fuzzer
     aof_fuzzer
+    rdb_fuzzer
     event_loop_fuzzer
   )
   foreach(fuzz_target IN LISTS REDIS_SIMPLE_FUZZ_TARGETS)

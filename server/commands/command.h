@@ -52,6 +52,9 @@ struct Command {
   // Inside MULTI, commands are queued for EXEC unless this is false, in which
   // case they run immediately (EXEC, DISCARD, MULTI, WATCH, and QUIT).
   bool queued_in_multi{true};
+  // Redis' NO_MULTI flag: inside MULTI the command is rejected, which aborts
+  // the transaction (SAVE).
+  bool allowed_in_multi{true};
 };
 
 const Command* Find(std::string_view name);

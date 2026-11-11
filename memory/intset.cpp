@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "utils/check.h"
@@ -150,6 +151,21 @@ bool IntSet::Search(int64_t value, uint32_t* const index) const {
     *index = min_index;
   }
   return false;
+}
+
+void IntSet::AppendRedisBlob(std::string* const out) const {
+  const auto append = [out](uint64_t value, size_t width) {
+    for (size_t i = 0; i < width; ++i) {
+      out->push_back(static_cast<char>((value >> (8 * i)) & 0xff));
+    }
+  };
+  const auto width = static_cast<size_t>(encoding_);
+  out->reserve(out->size() + 8 + (width * length_));
+  append(width, 4);
+  append(length_, 4);
+  for (uint32_t index = 0; index < length_; ++index) {
+    append(static_cast<uint64_t>(EncodedValue(index, encoding_)), width);
+  }
 }
 
 int64_t IntSet::EncodedValue(uint32_t index, EncodingType encoding) const {

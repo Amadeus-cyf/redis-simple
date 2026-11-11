@@ -48,6 +48,11 @@ class ZSet {
     return storage_->Scan(cursor, count, visitor);
   }
   size_t Size() const { return storage_->Size(); }
+  // A listpack-encoded set's listpack, in Redis' byte format, as RDB files
+  // store it; nullopt for a skiplist.
+  std::optional<std::string_view> ListPackBytes() const {
+    return storage_->ListPackBytes();
+  }
   Encoding Encoding() const;
 
  private:

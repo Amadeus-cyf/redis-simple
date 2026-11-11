@@ -376,9 +376,20 @@ ClientStatus Client::ProcessCommand() {
   if (command_ == nullptr) {
     return ClientStatus::kError;
   }
-  if (multi_.Active() && command_->queued_in_multi) {
-    QueueCommand();
-    return ClientStatus::kOk;
+  if (multi_.Active()) {
+    // Redis' NO_MULTI flag (SAVE): rejected, which aborts the transaction.
+    // Checked here rather than with the other checks before running, so
+    // commands outside transactions pay for it with no extra branch.
+    if (!command_->allowed_in_multi) {
+      AddReply(
+          reply::FromError("ERR Command not allowed inside a transaction"));
+      multi_.MarkRejected();
+      return ClientStatus::kOk;
+    }
+    if (command_->queued_in_multi) {
+      QueueCommand();
+      return ClientStatus::kOk;
+    }
   }
   modified_ = false;
   {

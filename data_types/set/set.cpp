@@ -97,6 +97,16 @@ bool Set::Delete(std::string_view value) {
   utils::Unreachable();
 }
 
+std::string_view Set::ListPackBytes() const {
+  RS_CHECK(encoding_ == Encoding::kListPack);
+  return listpack_->Bytes();
+}
+
+void Set::AppendIntSetBlob(std::string* const out) const {
+  RS_CHECK(encoding_ == Encoding::kIntSet);
+  intset_->AppendRedisBlob(out);
+}
+
 size_t Set::Size() const {
   switch (encoding_) {
     case Encoding::kIntSet:

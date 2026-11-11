@@ -17,6 +17,15 @@
 namespace redis_simple::aof {
 class Aof;
 }
+namespace redis_simple::db {
+class RedisDb;
+}
+namespace redis_simple::rdb {
+struct LoadOptions;
+struct LoadStats;
+bool LoadRdb(int fd, db::RedisDb* db, const LoadOptions& options,
+             LoadStats* stats);
+}  // namespace redis_simple::rdb
 
 namespace redis_simple::db {
 enum class DbStatus {
@@ -78,6 +87,7 @@ class RedisDb {
   KeyWithExpiration LookupKeyWithExpiration(std::string_view key);
   int64_t TimeToLive(std::string_view key, TtlResolution resolution);
   size_t KeyCount() const { return dict_->Size(); }
+  size_t KeysWithExpirationCount() const { return expires_->Size(); }
   // Key views and object references remain valid only until the database is
   // mutated. Returning false from the visitor stops further callbacks.
   template <typename Visitor>
@@ -122,6 +132,8 @@ class RedisDb {
 
  private:
   friend class aof::Aof;
+  friend bool rdb::LoadRdb(int fd, RedisDb* db, const rdb::LoadOptions& options,
+                           rdb::LoadStats* stats);
   RedisDb();
   void SetLoading(bool loading) { loading_ = loading; }
   // Each public operation hashes its key once and passes the HashedKey to

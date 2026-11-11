@@ -83,11 +83,13 @@ Guidance for AI coding agents working in this repository.
 - When adding or changing supported commands, update the README command
   coverage list and the relevant command-family integration test.
 - Keep reply encoding helpers directly under `server/`, database state and
-  Redis object wrappers under `server/db/`, and the AOF under `server/aof/`.
+  Redis object wrappers under `server/db/`, the AOF under `server/aof/`, and
+  RDB snapshots under `server/rdb/`.
 - Keep production and command integration servers on the shared `Server::Run`
   lifecycle. Signal handlers may only update signal-safe state; cleanup belongs
   on the event-loop thread.
-- `docs/design.md` explains how requests flow, threaded I/O, and the AOF.
+- `docs/design.md` explains how requests flow, threaded I/O, the AOF, and RDB
+  snapshots.
   Read the relevant part before changing them, and update it with them.
 - The AOF lives in `server/aof/` (see its file table in `docs/design.md`).
   Keep its logic aligned with the latest Redis release's `src/aof.c` (8.10 at
@@ -97,6 +99,22 @@ Guidance for AI coding agents working in this repository.
   difference in the README and `docs/design.md`; two exist, where Redis can
   lose data. Check interoperability with a `redis-server` when one is
   available: each must load the other's AOF directory in the command format.
+- RDB snapshots live in `server/rdb/` (see `docs/design.md`). Keep the file
+  format and `SAVE` aligned with the latest Redis release's `src/rdb.c`:
+  values in the RDB types Redis writes for each in-memory encoding, strings
+  through `rdbSaveRawString`'s integer and LZF rules, the CRC64, and the
+  temporary-file, rename, and directory-sync order. Write RDB version 11, the
+  oldest that covers what is written, unless a new type needs more. Check
+  interoperability with `scripts/check_rdb_interop.py`.
+- `ListPack` and `IntSet` keep Redis' byte format in memory (little-endian
+  headers, lengths, and integers, and Redis' backlen layout), since RDB files
+  store them as they are; their tests compare bytes with vectors Redis
+  produced. Keep any change to their encoding byte-identical to Redis'.
+- The RDB loader never trusts the file: it checks every length against the
+  bytes left before allocating, validates encoded listpacks and intsets with
+  `memory::ListPackReader` and the intset checks, rejects duplicates and NaN
+  scores, and rebuilds values through the data types instead of adopting
+  stored structures. Keep new types on that path.
 - Keep AOF propagation at the successful command-mutation boundary. Preserve
   command order, encode relative TTLs as absolute `PEXPIREAT` records, and do
   not copy argument payloads beyond the owned persistence record.
@@ -232,17 +250,20 @@ ctest --preset debug -L integration --output-on-failure
 
 When changing behavior shared with Redis and a reference server is available,
 run the following, as the `redis-differential-check` skill describes (the
-last checks that each server loads the other's AOF):
+last two check that each server loads the other's AOF directory and RDB
+file):
 
 ```sh
 scripts/run_redis_compatibility_check.sh build/debug/redis_simple
 scripts/compare_with_redis.py build/debug/redis_simple
 scripts/check_aof_interop.sh build/debug/redis_simple
+scripts/check_rdb_interop.py build/debug/redis_simple
 ```
 
 `compare_with_redis.py` compares every supported command's replies, edge
 cases and random operations included; add cases when adding commands or
-options.
+options. `check_rdb_interop.py` checks that each server loads the other's RDB
+file.
 
 Run release and sanitizer checks after changes to ownership, memory layout,
 assertions, or low-level data structures:
@@ -316,10 +337,13 @@ Before committing, run the relevant build and tests.
 - Current integration coverage should stay focused:
   - `integration/commands/`
   - `integration/aof_client_test.cpp`
+  - `integration/rdb_client_test.cpp`
   - `integration/io_threads_client_test.cpp`
   - `integration/tcp/`
 - Keep server option and graceful shutdown coverage in the lifecycle integration
   test rather than introducing a separate command-test server implementation.
+- Keep `SAVE`, `LASTSAVE`, loading at restart, the RDB options, and refusing
+  a damaged file in the dedicated RDB integration test.
 - Keep AOF restart, manual and automatic rewrite compaction, shutdown flush,
   expiration, and cross-data-type recovery in the dedicated AOF integration
   test. Use injected file operations for deterministic write, sync, rename, and

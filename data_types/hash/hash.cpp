@@ -71,6 +71,11 @@ bool Hash::Exists(std::string_view field) const {
   utils::Unreachable();
 }
 
+std::string_view Hash::ListPackBytes() const {
+  RS_CHECK(encoding_ == Encoding::kListPack);
+  return listpack_->Bytes();
+}
+
 size_t Hash::Size() const {
   if (encoding_ == Encoding::kListPack) {
     return listpack_ == nullptr ? 0 : listpack_->Size() / 2;

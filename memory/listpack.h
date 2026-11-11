@@ -62,6 +62,10 @@ class ListPack {
   std::optional<size_t> Next(size_t offset) const;
   std::optional<size_t> Prev(size_t offset) const;
   uint32_t TotalBytes() const;
+  // The encoded listpack, in Redis' byte format, as RDB files store it.
+  std::string_view Bytes() const {
+    return {reinterpret_cast<const char*>(listpack_.get()), TotalBytes()};
+  }
   size_t Size() const;
   static size_t EstimateEntryBytes(std::string_view value);
   static size_t EstimateBytes(int64_t value, size_t repeat);

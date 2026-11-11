@@ -5,13 +5,18 @@
 #include <string_view>
 
 #include "server/aof/aof.h"
+#include "server/rdb/rdb.h"
 
 namespace redis_simple {
 struct ServerOptions {
   std::string bind_address{"127.0.0.1"};
   int port{8080};
+  // Redis' dir: the working directory, where the RDB file and the AOF live.
+  // Empty keeps the directory the server started in.
+  std::string dir;
   bool append_only{};
   aof::Options aof_options;
+  rdb::Options rdb_options;
   // Clients must AUTH with this password when it is non-empty.
   std::string require_pass;
   // Without a password, refuse clients that do not connect over loopback.

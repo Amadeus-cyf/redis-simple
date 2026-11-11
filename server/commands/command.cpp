@@ -58,6 +58,11 @@ constexpr Command RunsImmediatelyInMulti(Command command) {
   return command;
 }
 
+constexpr Command NotAllowedInMulti(Command command) {
+  command.allowed_in_multi = false;
+  return command;
+}
+
 constexpr char FoldAsciiCase(char value) {
   return value >= 'a' && value <= 'z' ? static_cast<char>(value - ('a' - 'A'))
                                       : value;
@@ -116,6 +121,7 @@ constexpr std::array kCommandTable = {
     WriteCommand("INCR", strings::HandleIncr, FixedArity(1), OneKey()),
     WriteCommand("INCRBY", strings::HandleIncrBy, FixedArity(2), OneKey()),
     AdminCommand("INFO", server_info::HandleInfo, {0, 1}),
+    AdminCommand("LASTSAVE", persistence::HandleLastSave, FixedArity(0)),
     ReadCommand("LINDEX", lists::HandleLIndex, FixedArity(2), OneKey()),
     ReadCommand("LLEN", lists::HandleLLen, FixedArity(1), OneKey()),
     WriteCommand("LPOP", lists::HandleLPop, {1, 2}, OneKey()),
@@ -140,6 +146,8 @@ constexpr std::array kCommandTable = {
     WriteCommand("RPOP", lists::HandleRPop, {1, 2}, OneKey()),
     WriteCommand("RPUSH", lists::HandleRPush, VariableArity(2), OneKey()),
     WriteCommand("SADD", sets::HandleSAdd, VariableArity(2), OneKey()),
+    NotAllowedInMulti(
+        AdminCommand("SAVE", persistence::HandleSave, FixedArity(0))),
     ReadCommand("SCAN", keys::HandleScan, VariableArity(1)),
     ReadCommand("SCARD", sets::HandleSCard, FixedArity(1), OneKey()),
     ReadCommand("SDIFF", sets::HandleSDiff, VariableArity(1), AllKeys()),

@@ -15,7 +15,8 @@ data_types/    set, list, sorted set, hash: Redis types built on those, each
 server/db/     the keyspace (RedisDb), TTLs, WATCH, and RedisObject, which
                holds one value of any type
 server/        clients, request parsing, replies, threaded I/O, the server
-               lifecycle, and the AOF (server/aof/)
+               lifecycle, the AOF (server/aof/), and RDB snapshots
+               (server/rdb/)
 server/commands/  one handler per command, and the command table
 ```
 
@@ -157,3 +158,52 @@ Two, both where Redis can lose data:
 - A rewrite does not start while a failed write is pending, since Redis would
   carry the unwritten bytes into the new incremental file, where replay
   applies them twice.
+
+## RDB snapshots
+
+`server/rdb/` follows Redis 8.10's `src/rdb.c`. Its files:
+
+| File | What it holds |
+| --- | --- |
+| `rdb.h`, `rdb.cpp` | `Rdb`: `SAVE` (temporary file, rename, directory sync), loading at startup, `LASTSAVE` |
+| `rdb_writer.h`, `.cpp` | Writing a database in the RDB format (Redis' `rdbSaveRio`) |
+| `rdb_loader.h`, `.cpp` | Reading one into a database (Redis' `rdbLoadRio` and `rdbLoadObject`) |
+| `rdb_format.h` | The format's opcodes, value types, and encodings (Redis' `rdb.h`) |
+
+`utils/crc64` (Redis' CRC-64/Jones) checksums the file, and `utils/lzf`
+compresses strings.
+
+### Writing
+
+The file is Redis': the `REDIS` magic and version, aux fields, then, for
+database 0, `SELECTDB` and `RESIZEDB` and each key with its expiration time,
+then `EOF` and the CRC64 of everything before it. Each value is written in
+the encoding Redis writes for the same in-memory encoding: an intset or a
+listpack as one blob, a quicklist as its nodes' listpacks, and hash tables
+and skiplists as counted elements. Blobs are copied as they are, which works
+because `ListPack` and `IntSet` keep Redis' byte format in memory: little-endian
+headers, lengths, and integers, and Redis' backlen layout (unit tests check
+the bytes against vectors Redis produced). Strings are encoded as Redis'
+`rdbSaveRawString` does: short decimal text as an integer, longer text
+LZF-compressed when that saves at least four bytes.
+
+The writer buffers records and writes them in 1 MiB blocks, but writes a
+large value straight from the object, so it is never copied. It syncs every
+4 MiB, and it takes no locks and does not log, so a forked child can run it.
+The file declares RDB version 11, the oldest that covers every type written,
+so Redis 7.2 and later load it.
+
+### Loading
+
+The loader reads the file through a buffer that tracks the CRC64 and the bytes
+left. Every length the file claims is checked against those bytes before
+anything is allocated, an LZF string's expanded size against the 512 MiB
+string limit, and listpacks and intsets are validated as they are read
+(`memory::ListPackReader` checks each entry's encoding, size, and backlen, as
+Redis' deep validation does). Values are not adopted as stored: they are
+rebuilt through the data types, so they take this server's encodings and no
+corrupt structure enters memory. Duplicate members, fields, or keys, NaN
+scores, and types this server does not have stop the load with a message
+naming the offset; empty collections are skipped, and keys whose expiration
+time has passed are dropped, as Redis does.
+

@@ -51,6 +51,11 @@ class Set {
   size_t ScanDict(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const;
   Encoding Encoding() const { return encoding_; }
+  // The encoded forms RDB files store. A listpack-encoded set's listpack,
+  // in Redis' byte format.
+  std::string_view ListPackBytes() const;
+  // An intset-encoded set in Redis' intset layout, appended to `out`.
+  void AppendIntSetBlob(std::string* out) const;
 
  private:
   static constexpr size_t kIntSetMaxEntries = 512;
