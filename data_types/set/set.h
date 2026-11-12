@@ -26,9 +26,24 @@ class Set {
     kDict,
   };
 
+  // Redis 8's set-max-intset-entries, set-max-listpack-entries, and
+  // set-max-listpack-value.
+  static constexpr size_t kIntSetMaxEntries = 512;
+  static constexpr size_t kListPackMaxEntries = 128;
+  static constexpr size_t kListPackMaxElementLength = 64;
+
   static std::unique_ptr<Set> Create() {
     return std::unique_ptr<Set>(new Set());
   }
+  // An empty set in the encoding `count` members need, as Redis' rdbLoad
+  // creates one: a dict sized for them when `count` is over
+  // kIntSetMaxEntries, more than an intset or a listpack holds.
+  static std::unique_ptr<Set> CreateForSize(size_t count);
+  // A listpack-encoded set holding `listpack`'s elements, which must be
+  // distinct, at most kListPackMaxEntries, and no longer than
+  // kListPackMaxElementLength, as the RDB loader checks.
+  static std::unique_ptr<Set> CreateFromListPack(
+      std::unique_ptr<memory::ListPack> listpack);
   bool Add(std::string_view value);
   bool HasMember(std::string_view value) const;
   // As HasMember, but a dict-encoded set probes with `hashed`, when given, so
@@ -51,11 +66,13 @@ class Set {
   size_t ScanDict(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const;
   Encoding Encoding() const { return encoding_; }
+  // The encoded forms RDB files store. A listpack-encoded set's listpack,
+  // in Redis' byte format.
+  std::string_view ListPackBytes() const;
+  // An intset-encoded set in Redis' intset layout, appended to `out`.
+  void AppendIntSetBlob(std::string* out) const;
 
  private:
-  static constexpr size_t kIntSetMaxEntries = 512;
-  static constexpr size_t kListPackMaxEntries = 128;
-  static constexpr size_t kListPackElementMaxLength = 64;
   Set();
   bool IntSetAddAndMaybeConvert(std::string_view value);
   bool ListPackAddAndMaybeConvert(std::string_view value);

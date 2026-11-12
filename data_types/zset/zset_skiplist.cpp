@@ -9,8 +9,8 @@
 #include <string_view>
 
 namespace redis_simple::zset {
-ZSetSkiplist::ZSetSkiplist()
-    : dict_(memory::Dict<std::string, double>::Create()),
+ZSetSkiplist::ZSetSkiplist(size_t capacity)
+    : dict_(memory::Dict<std::string, double>::Create(capacity)),
       skiplist_(std::make_unique<SkiplistType>()) {}
 
 bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,

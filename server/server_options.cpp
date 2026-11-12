@@ -101,6 +101,34 @@ constexpr auto kOptionSpecs = std::to_array<OptionSpec>({
            return ParsePort(value, &options->port);
          },
      .error = "port must be between 1 and 65535"},
+    {.name = "--dir",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           options->dir.assign(value.data(), value.size());
+           return !value.empty();
+         },
+     .error = "dir cannot be empty"},
+    {.name = "--dbfilename",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           options->rdb_options.file_name.assign(value.data(), value.size());
+           // A name only, as in Redis; --dir picks the directory.
+           return !value.empty() &&
+                  value.find_first_of("/\\") == std::string_view::npos;
+         },
+     .error = "dbfilename can't be a path, just a filename"},
+    {.name = "--rdbcompression",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->rdb_options.compression);
+         },
+     .error = "rdbcompression must be yes or no"},
+    {.name = "--rdbchecksum",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->rdb_options.checksum);
+         },
+     .error = "rdbchecksum must be yes or no"},
     {.name = "--appendonly",
      .apply =
          [](std::string_view value, ServerOptions* options) {
@@ -234,6 +262,8 @@ OptionsResult ParseServerOptions(int argc, const char* const* argv) {
 
 std::string_view ServerUsage() {
   return "Usage: redis_simple [--bind <address>] [--port <port>] "
+         "[--dir <directory>] [--dbfilename <name>] "
+         "[--rdbcompression <yes|no>] [--rdbchecksum <yes|no>] "
          "[--appendonly <yes|no>] [--appendfilename <name>] "
          "[--appenddirname <dir>] "
          "[--aof-load-truncated <yes|no>] "

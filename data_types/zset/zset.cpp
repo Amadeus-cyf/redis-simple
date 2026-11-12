@@ -15,6 +15,25 @@ ZSet::ZSet()
     : encoding_(Encoding::kListPack),
       storage_(std::make_unique<ZSetListPack>()) {}
 
+std::unique_ptr<ZSet> ZSet::CreateForSize(size_t count) {
+  std::unique_ptr<ZSet> zset(new ZSet());
+  if (count > kListPackMaxEntries) {
+    zset->encoding_ = Encoding::kSkiplist;
+    zset->storage_ = std::make_unique<ZSetSkiplist>(count);
+  }
+  return zset;
+}
+
+std::unique_ptr<ZSet> ZSet::CreateFromListPack(
+    std::unique_ptr<memory::ListPack> listpack) {
+  RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
+           listpack->Size() % 2 == 0 &&
+           listpack->Size() / 2 <= kListPackMaxEntries);
+  std::unique_ptr<ZSet> zset(new ZSet());
+  zset->storage_ = std::make_unique<ZSetListPack>(std::move(listpack));
+  return zset;
+}
+
 /*
  * Insert a new element with score or update the score of an existing
  * element. Return true if the element is newly inserted.

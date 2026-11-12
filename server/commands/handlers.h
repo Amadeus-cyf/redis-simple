@@ -43,6 +43,8 @@ void HandleWatch(Client* client);
 
 namespace redis_simple::commands::persistence {
 void HandleBgRewriteAof(Client* client);
+void HandleLastSave(Client* client);
+void HandleSave(Client* client);
 }  // namespace redis_simple::commands::persistence
 
 namespace redis_simple::commands::server_info {

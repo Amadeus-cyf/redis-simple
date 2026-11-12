@@ -25,9 +25,23 @@ class Hash {
     std::string value;
   };
 
+  // Redis 8's hash-max-listpack-entries and hash-max-listpack-value.
+  static constexpr size_t kListPackMaxEntries = 512;
+  static constexpr size_t kListPackMaxElementLength = 64;
+
   static std::unique_ptr<Hash> Create() {
     return std::unique_ptr<Hash>(new Hash());
   }
+  // An empty hash in the encoding `count` fields need, as Redis' rdbLoad
+  // creates one: a dict sized for them when `count` is over
+  // kListPackMaxEntries.
+  static std::unique_ptr<Hash> CreateForSize(size_t count);
+  // A listpack-encoded hash holding `listpack`'s field and value pairs. The
+  // fields must be distinct, the pairs at most kListPackMaxEntries, and
+  // every element no longer than kListPackMaxElementLength, as the RDB
+  // loader checks.
+  static std::unique_ptr<Hash> CreateFromListPack(
+      std::unique_ptr<memory::ListPack> listpack);
 
   bool Set(std::string_view field, std::string_view value);
   std::optional<std::string> Get(std::string_view field) const;
@@ -51,6 +65,9 @@ class Hash {
   template <typename Visitor>
   size_t ScanDict(size_t cursor, size_t count, Visitor&& visitor);
   Encoding Encoding() const { return encoding_; }
+  // A listpack-encoded hash's listpack, in Redis' byte format, as RDB files
+  // store it.
+  std::string_view ListPackBytes() const;
 
  private:
   Hash();

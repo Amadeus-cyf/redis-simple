@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "data_types/zset/zset_storage.h"
@@ -14,6 +15,8 @@ namespace redis_simple::zset {
 class ZSetListPack : public ZSetStorage {
  public:
   ZSetListPack();
+  explicit ZSetListPack(std::unique_ptr<memory::ListPack> listpack)
+      : listpack_(std::move(listpack)) {}
   bool InsertOrUpdate(std::string_view member, double score,
                       bool* changed) override;
   bool Delete(std::string_view member) override;
@@ -25,6 +28,9 @@ class ZSetListPack : public ZSetStorage {
   ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const override;
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
+  std::optional<std::string_view> ListPackBytes() const override {
+    return listpack_->Bytes();
+  }
   size_t Scan(size_t cursor, size_t count,
               const ZSetScanVisitor& visitor) override;
   size_t Size() const override {

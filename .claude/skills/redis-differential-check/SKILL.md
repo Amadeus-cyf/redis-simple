@@ -23,6 +23,8 @@ make -C redis -j"$(nproc)" BUILD_TLS=no MALLOC=libc redis-server redis-cli
 scripts/compare_with_redis.py build/debug/redis_simple \
   --redis-server redis/src/redis-server
 scripts/check_aof_interop.sh build/debug/redis_simple redis/src/redis-server
+scripts/check_rdb_interop.py build/debug/redis_simple \
+  --redis-server redis/src/redis-server
 ```
 
 ## 1. Command compatibility script
@@ -80,6 +82,26 @@ comparison: extract it and send it to both servers in RESP2 and RESP3. Set
 usually means the other server wrote a command this one does not implement:
 Redis' rewrite writes `SET`, `RPUSH`, `SADD`, `ZADD`, `HMSET`, and
 `PEXPIREAT`.
+
+## 4. RDB interoperability
+
+After any change to `server/rdb/`, or to the byte format of `ListPack` or
+`IntSet` (which RDB files store as they are), check that each server loads
+the other's RDB file:
+
+```sh
+scripts/check_rdb_interop.py build/debug/redis_simple
+```
+
+It fills one server with every type in each encoding, with edge cases such
+as entries whose encoded sizes sit at listpack backlen boundaries, saves,
+starts the other server on the file, and compares every key: from this
+server to Redis, from Redis with and without compression and checksum, and
+back to itself. It needs Redis 7.2 or later, which reads the RDB version 11
+this server writes. Add cases to `fill` when adding a type or encoding.
+Sorted-set scores are compared by value: the file stores the double, and how
+replies print it is `compare_with_redis.py`'s concern.
+`--keep` keeps the files when it fails.
 
 ## Known differences
 

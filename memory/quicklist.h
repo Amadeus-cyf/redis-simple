@@ -42,6 +42,18 @@ class QuickList {
   bool Empty() const { return size_ == 0; }
   size_t Size() const { return size_; }
   size_t NodeCount() const { return node_count_; }
+  // Calls `visitor(const ListPack&)` for each node, head to tail, until it
+  // returns false.
+  template <typename Visitor>
+  bool ForEachNode(Visitor&& visitor) const {
+    for (const Node* node = head_.get(); node != nullptr;
+         node = node->next.get()) {
+      if (!visitor(*node->listpack)) {
+        return false;
+      }
+    }
+    return true;
+  }
   std::optional<size_t> ListPackBytes() const;
   std::unique_ptr<ListPack> ReleaseListPack();
   // Takes `listpack` as the only node of this empty list without re-encoding

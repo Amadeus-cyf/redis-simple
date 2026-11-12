@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace redis_simple::memory {
 namespace {
@@ -119,5 +120,20 @@ TEST(IntSetDeathTest, RejectsOutOfRangeIndex) {
   auto intset = MakeFullIntSet();
   EXPECT_DEATH(intset->Get(-1), "Check failed");
   EXPECT_DEATH(intset->Get(intset->Size()), "Check failed");
+}
+
+TEST(IntSetTest, AppendsRedisBlob) {
+  IntSet intset;
+  for (const int64_t value : {1, 2, 300, -70000}) {
+    intset.Add(value);
+  }
+  std::string blob;
+  intset.AppendRedisBlob(&blob);
+  // The bytes Redis 8.10's DUMP holds for SADD s 1 2 300 -70000: 32-bit
+  // encoding, four values, ascending, little-endian.
+  const std::string expected(
+      "\x04\0\0\0\x04\0\0\0\x90\xee\xfe\xff\x01\0\0\0\x02\0\0\0\x2c\x01\0\0",
+      24);
+  EXPECT_EQ(blob, expected);
 }
 }  // namespace redis_simple::memory

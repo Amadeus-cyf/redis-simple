@@ -21,6 +21,24 @@ Set::Set()
       listpack_(nullptr),
       dict_(nullptr) {}
 
+std::unique_ptr<Set> Set::CreateForSize(size_t count) {
+  std::unique_ptr<Set> set(new Set());
+  if (count > kIntSetMaxEntries) {
+    set->ConvertIntSetToDict(count);
+  }
+  return set;
+}
+
+std::unique_ptr<Set> Set::CreateFromListPack(
+    std::unique_ptr<memory::ListPack> listpack) {
+  RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
+           listpack->Size() <= kListPackMaxEntries);
+  std::unique_ptr<Set> set(new Set());
+  set->encoding_ = Encoding::kListPack;
+  set->listpack_ = std::move(listpack);
+  return set;
+}
+
 bool Set::Add(std::string_view value) {
   if (encoding_ == Encoding::kIntSet) {
     return IntSetAddAndMaybeConvert(value);
@@ -97,6 +115,16 @@ bool Set::Delete(std::string_view value) {
   utils::Unreachable();
 }
 
+std::string_view Set::ListPackBytes() const {
+  RS_CHECK(encoding_ == Encoding::kListPack);
+  return listpack_->Bytes();
+}
+
+void Set::AppendIntSetBlob(std::string* const out) const {
+  RS_CHECK(encoding_ == Encoding::kIntSet);
+  intset_->AppendRedisBlob(out);
+}
+
 size_t Set::Size() const {
   switch (encoding_) {
     case Encoding::kIntSet:
@@ -135,7 +163,7 @@ bool Set::ListPackAddAndMaybeConvert(std::string_view value) {
     return false;
   }
   if (listpack_->Size() < kListPackMaxEntries &&
-      length <= kListPackElementMaxLength &&
+      length <= kListPackMaxElementLength &&
       memory::ListPack::SafeToAdd(
           listpack_.get(), memory::ListPack::EstimateEntryBytes(value))) {
     return listpack_->Append(value);
@@ -194,8 +222,8 @@ bool Set::MaybeConvertIntSetToListPack(std::string_view value) {
   }
   const size_t current_size = intset_ ? intset_->Size() : 0;
   if (current_size < kListPackMaxEntries &&
-      length <= kListPackElementMaxLength &&
-      max_integer_length <= kListPackElementMaxLength &&
+      length <= kListPackMaxElementLength &&
+      max_integer_length <= kListPackMaxElementLength &&
       estimated_bytes <= std::numeric_limits<size_t>::max() - entry_bytes &&
       memory::ListPack::SafeToAdd(nullptr, estimated_bytes + entry_bytes)) {
     ConvertIntSetToListPack(value);

@@ -17,6 +17,7 @@ Usage: scripts/compare_with_redis.py REDIS_SIMPLE_BINARY [options]
 
 import argparse
 import itertools
+import os
 import random
 import shlex
 import socket
@@ -224,6 +225,11 @@ def edge_cases():
         "SCAN 0 FOO bar",
     )
     add("NOTACOMMAND", "NOTACOMMAND a b", "notacommand " + "x" * 200)
+    # SAVE replies OK, rejects arguments, and is not allowed inside MULTI,
+    # which then aborts. LASTSAVE's time differs between the servers, so only
+    # its arity is compared.
+    add("SAVE", "SAVE now", "LASTSAVE now")
+    add("MULTI", "SET in-multi v", "SAVE", "EXEC", "EXISTS in-multi")
     # HSCAN, SSCAN, and ZSCAN on small encodings, which Redis returns whole
     # and in a fixed order, and their errors. A missing key replies before
     # the options are checked, and a wrong type before them too.
@@ -837,6 +843,11 @@ def main():
     major = int(version.split("v=")[1].split(".")[0]) if "v=" in version else 8
     reference_port, test_port = args.port, args.port + 1
     with tempfile.TemporaryDirectory() as directory:
+        # Separate directories, so SAVE in each writes its own dump.rdb.
+        reference_directory = os.path.join(directory, "redis")
+        test_directory = os.path.join(directory, "simple")
+        os.mkdir(reference_directory)
+        os.mkdir(test_directory)
         reference = start(
             [
                 args.redis_server,
@@ -847,7 +858,7 @@ def main():
                 "--appendonly",
                 "no",
                 "--dir",
-                directory,
+                reference_directory,
             ],
             reference_port,
         )
@@ -858,6 +869,8 @@ def main():
                 str(test_port),
                 "--io-threads",
                 str(args.io_threads),
+                "--dir",
+                test_directory,
             ],
             test_port,
         )

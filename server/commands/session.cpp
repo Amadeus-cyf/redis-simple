@@ -9,6 +9,7 @@
 #include "server/client.h"
 #include "server/commands/handlers.h"
 #include "server/reply.h"
+#include "server/version.h"
 #include "utils/string_utils.h"
 
 namespace redis_simple::commands::session {
@@ -23,7 +24,7 @@ std::string EncodeHello(const Client& client) {
   reply::AppendBulkString("server", &encoded);
   reply::AppendBulkString("redis_simple", &encoded);
   reply::AppendBulkString("version", &encoded);
-  reply::AppendBulkString("0.1.0", &encoded);
+  reply::AppendBulkString(kServerVersion, &encoded);
   reply::AppendBulkString("proto", &encoded);
   encoded.append(reply::FromInt64(static_cast<int64_t>(protocol)));
   reply::AppendBulkString("id", &encoded);

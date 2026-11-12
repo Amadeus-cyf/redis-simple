@@ -12,13 +12,9 @@
 
 namespace redis_simple::hash {
 namespace {
-// Redis 8's hash-max-listpack-entries and hash-max-listpack-value.
-constexpr size_t kListPackMaxEntries = 512;
-constexpr size_t kListPackMaxElementLength = 64;
-
 bool CanStoreInListPack(std::string_view field, std::string_view value) {
-  return field.size() <= kListPackMaxElementLength &&
-         value.size() <= kListPackMaxElementLength;
+  return field.size() <= Hash::kListPackMaxElementLength &&
+         value.size() <= Hash::kListPackMaxElementLength;
 }
 
 }  // namespace
@@ -27,6 +23,24 @@ Hash::Hash()
     : encoding_(Encoding::kListPack),
       listpack_(std::make_unique<memory::ListPack>()),
       dict_(nullptr) {}
+
+std::unique_ptr<Hash> Hash::CreateForSize(size_t count) {
+  std::unique_ptr<Hash> hash(new Hash());
+  if (count > kListPackMaxEntries) {
+    hash->ConvertListPackToDict(count);
+  }
+  return hash;
+}
+
+std::unique_ptr<Hash> Hash::CreateFromListPack(
+    std::unique_ptr<memory::ListPack> listpack) {
+  RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
+           listpack->Size() % 2 == 0 &&
+           listpack->Size() / 2 <= kListPackMaxEntries);
+  std::unique_ptr<Hash> hash(new Hash());
+  hash->listpack_ = std::move(listpack);
+  return hash;
+}
 
 bool Hash::Set(std::string_view field, std::string_view value) {
   if (encoding_ == Encoding::kListPack) {
@@ -69,6 +83,11 @@ bool Hash::Exists(std::string_view field) const {
     return dict_->FindValue(std::string_view(field)) != nullptr;
   }
   utils::Unreachable();
+}
+
+std::string_view Hash::ListPackBytes() const {
+  RS_CHECK(encoding_ == Encoding::kListPack);
+  return listpack_->Bytes();
 }
 
 size_t Hash::Size() const {

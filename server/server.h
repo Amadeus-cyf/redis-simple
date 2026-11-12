@@ -16,6 +16,7 @@
 #include "server/aof/aof.h"
 #include "server/client.h"
 #include "server/io_thread.h"
+#include "server/rdb/rdb.h"
 #include "server/server_context.h"
 #include "server/server_options.h"
 
@@ -70,6 +71,7 @@ class Server {
   std::unordered_map<Client*, std::unique_ptr<Client>> clients_;
   std::unique_ptr<db::RedisDb> db_;
   std::unique_ptr<aof::Aof> aof_;
+  std::unique_ptr<rdb::Rdb> rdb_;
   std::string require_pass_;
   bool protected_mode_{true};
   std::vector<std::unique_ptr<IoThread>> io_threads_;

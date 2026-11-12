@@ -2,9 +2,12 @@
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -34,8 +37,19 @@ bool Server::Run(const ServerOptions& options) {
   aof_.reset();
   require_pass_ = options.require_pass;
   protected_mode_ = options.protected_mode;
+  // Redis' dir: the RDB file and the AOF are relative to it.
+  if (!options.dir.empty() && chdir(options.dir.c_str()) != 0) {
+    RS_LOG_ERROR("Can't chdir to '%s': %s\n", options.dir.c_str(),
+                 std::strerror(errno));
+    return false;
+  }
   db_ = db::RedisDb::Create();
+  rdb_ = rdb::Rdb::Create(options.rdb_options);
   if (db_ == nullptr) {
+    return false;
+  }
+  // Redis' loadDataFromDisk: the AOF when it is on, otherwise the RDB file.
+  if (!options.append_only && !rdb_->Load(db_.get())) {
     return false;
   }
   if (options.append_only) {
@@ -83,6 +97,7 @@ bool Server::Run(const ServerOptions& options) {
   }
   context_ = {.db = db_.get(),
               .aof = aof_.get(),
+              .rdb = rdb_.get(),
               .required_password = require_pass_,
               .io_threads = io_threads_};
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(

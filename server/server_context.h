@@ -12,6 +12,9 @@ class Aof;
 namespace db {
 class RedisDb;
 }
+namespace rdb {
+class Rdb;
+}
 class IoThread;
 
 // The server-wide state commands reach through their client. The server owns
@@ -22,6 +25,9 @@ struct ServerContext {
   db::RedisDb* db{nullptr};
   // Null when persistence is off.
   aof::Aof* aof{nullptr};
+  // The RDB file's snapshots. Null only for contexts tests and AOF replay
+  // build.
+  rdb::Rdb* rdb{nullptr};
   // The password clients must AUTH with; empty when AUTH is off.
   std::string_view required_password;
   // Empty when I/O is single-threaded.
