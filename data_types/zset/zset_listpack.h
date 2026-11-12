@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "data_types/zset/zset_storage.h"
@@ -14,6 +15,8 @@ namespace redis_simple::zset {
 class ZSetListPack : public ZSetStorage {
  public:
   ZSetListPack();
+  explicit ZSetListPack(std::unique_ptr<memory::ListPack> listpack)
+      : listpack_(std::move(listpack)) {}
   bool InsertOrUpdate(std::string_view member, double score,
                       bool* changed) override;
   bool Delete(std::string_view member) override;

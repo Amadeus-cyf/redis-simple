@@ -15,7 +15,8 @@
 namespace redis_simple::zset {
 class ZSetSkiplist : public ZSetStorage {
  public:
-  ZSetSkiplist();
+  // `capacity` sizes the member dict for that many members.
+  explicit ZSetSkiplist(size_t capacity = 0);
   bool InsertOrUpdate(std::string_view member, double score,
                       bool* changed) override;
   bool Delete(std::string_view member) override;

@@ -21,6 +21,7 @@
 #include "data_types/list/list.h"
 #include "data_types/set/set.h"
 #include "data_types/zset/zset.h"
+#include "memory/listpack.h"
 #include "server/aof/file_ops.h"
 #include "server/db/db.h"
 #include "server/db/redis_object.h"
@@ -356,6 +357,149 @@ TEST_F(RdbTest, RejectsUnsupportedTypesAndDatabases) {
   EXPECT_EQ(db->KeyCount(), 1);
   // Loading it again finds the key twice.
   EXPECT_FALSE(Load(db.get()));
+}
+
+// A listpack element as Redis encodes it, for listpacks that differ from
+// what ListPack writes: a 7-bit unsigned integer, or a string of up to 63
+// bytes even when its text is an integer.
+struct RawElement {
+  std::string_view string;
+  int integer;
+  bool is_integer;
+};
+
+std::string RawListPack(const std::vector<RawElement>& elements) {
+  std::string body;
+  for (const RawElement& element : elements) {
+    if (element.is_integer) {
+      body.push_back(static_cast<char>(element.integer));
+      body.push_back('\x01');
+    } else {
+      body.push_back(static_cast<char>(0x80 | element.string.size()));
+      body.append(element.string);
+      body.push_back(static_cast<char>(1 + element.string.size()));
+    }
+  }
+  const size_t total = 6 + body.size() + 1;
+  std::string listpack;
+  for (int i = 0; i < 4; ++i) {
+    listpack.push_back(static_cast<char>((total >> (8 * i)) & 0xff));
+  }
+  listpack.push_back(static_cast<char>(elements.size() & 0xff));
+  listpack.push_back(static_cast<char>(elements.size() >> 8));
+  return listpack + body + '\xff';
+}
+
+RawElement S(std::string_view string) { return {string, 0, false}; }
+RawElement I(int integer) { return {{}, integer, true}; }
+
+// An RDB file with one key in database 0 holding `blob` as `type`, without
+// a checksum.
+std::string FileWithValue(uint8_t type, const std::string& blob) {
+  std::string file = "REDIS0011";
+  file.append("\xfe\x00", 2);
+  file.push_back(static_cast<char>(type));
+  file.append("\x01k");
+  // A 14-bit RDB length.
+  file.push_back(static_cast<char>(0x40 | (blob.size() >> 8)));
+  file.push_back(static_cast<char>(blob.size() & 0xff));
+  file += blob;
+  file.push_back('\xff');
+  return file + std::string(8, '\0');
+}
+
+constexpr uint8_t kHashListPackType = 16;
+constexpr uint8_t kZSetListPackType = 17;
+constexpr uint8_t kSetListPackType = 20;
+
+// Listpacks that fit this server's limits are kept as they are, as Redis
+// keeps them, and work as values afterwards.
+TEST_F(RdbTest, KeepsTheBytesOfCompactValues) {
+  auto db = db::RedisDb::Create();
+  Populate(db.get());
+  ASSERT_EQ(Write(db.get()), WriteStatus::kWritten);
+  auto loaded = db::RedisDb::Create();
+  ASSERT_TRUE(Load(loaded.get()));
+  const auto object = [&loaded](std::string_view key) {
+    return loaded->MutableLookupKey(key);
+  };
+  EXPECT_EQ(object("set:strings")->Set()->ListPackBytes(),
+            db->MutableLookupKey("set:strings")->Set()->ListPackBytes());
+  EXPECT_EQ(object("hash:small")->Hash()->ListPackBytes(),
+            db->MutableLookupKey("hash:small")->Hash()->ListPackBytes());
+  EXPECT_EQ(object("zset:small")->ZSet()->ListPackBytes(),
+            db->MutableLookupKey("zset:small")->ZSet()->ListPackBytes());
+
+  set::Set* set = object("set:strings")->Set();
+  EXPECT_FALSE(set->Add("10"));
+  EXPECT_TRUE(set->Add("d"));
+  EXPECT_TRUE(set->HasMember("a"));
+  hash::Hash* hash = object("hash:small")->Hash();
+  EXPECT_FALSE(hash->Set("n", "6"));
+  EXPECT_EQ(hash->Get("n"), "6");
+  zset::ZSet* zset = object("zset:small")->ZSet();
+  EXPECT_TRUE(zset->InsertOrUpdate("z", 1.75));
+  EXPECT_EQ(zset->Rank("z"), 3);  // After c=-3, e=0.1, and a=1.5.
+  EXPECT_EQ(zset->Score("e"), 0.1);
+}
+
+// Valid listpacks this server would encode differently are rebuilt: an
+// integer stored as a string, sorted set pairs out of order, and more
+// entries than its listpacks hold.
+TEST_F(RdbTest, RebuildsListPacksEncodedDifferently) {
+  auto db = db::RedisDb::Create();
+  WriteFile(FileWithValue(kSetListPackType, RawListPack({S("7"), S("a")})));
+  ASSERT_TRUE(Load(db.get()));
+  EXPECT_TRUE(db->MutableLookupKey("k")->Set()->HasMember("7"));
+  EXPECT_EQ(Describe(db.get(), "k", *db->MutableLookupKey("k")), "set(1):7,a,");
+
+  db = db::RedisDb::Create();
+  WriteFile(FileWithValue(
+      kZSetListPackType,
+      RawListPack({S("b"), I(2), S("a"), I(1), S("c"), S("1.5")})));
+  ASSERT_TRUE(Load(db.get()));
+  EXPECT_EQ(Describe(db.get(), "k", *db->MutableLookupKey("k")),
+            "zset(listpack):a=1,c=1.5,b=2,");
+
+  // Equal scores order members as bytes.
+  db = db::RedisDb::Create();
+  WriteFile(FileWithValue(kZSetListPackType,
+                          RawListPack({S("b"), I(1), S("a"), I(1)})));
+  ASSERT_TRUE(Load(db.get()));
+  EXPECT_EQ(Describe(db.get(), "k", *db->MutableLookupKey("k")),
+            "zset(listpack):a=1,b=1,");
+
+  memory::ListPack big;
+  for (size_t i = 0; i <= hash::Hash::kListPackMaxEntries; ++i) {
+    big.Append("f" + std::to_string(i));
+    big.Append("v");
+  }
+  db = db::RedisDb::Create();
+  WriteFile(FileWithValue(kHashListPackType, std::string(big.Bytes())));
+  ASSERT_TRUE(Load(db.get()));
+  EXPECT_EQ(db->MutableLookupKey("k")->Hash()->Encoding(),
+            hash::Hash::Encoding::kDict);
+  EXPECT_EQ(db->MutableLookupKey("k")->Hash()->Size(),
+            hash::Hash::kListPackMaxEntries + 1);
+}
+
+TEST_F(RdbTest, RejectsInvalidCompactValues) {
+  const std::vector<std::pair<uint8_t, std::string>> cases = {
+      {kSetListPackType, RawListPack({S("a"), S("a")})},
+      {kSetListPackType, RawListPack({I(1), S("b"), I(1)})},
+      // The same member, once as an integer and once as text.
+      {kSetListPackType, RawListPack({I(7), S("7")})},
+      {kHashListPackType, RawListPack({S("f"), S("1"), S("f"), S("2")})},
+      {kHashListPackType, RawListPack({S("f"), S("1"), S("g")})},
+      {kZSetListPackType, RawListPack({S("a"), I(1), S("a"), I(2)})},
+      {kZSetListPackType, RawListPack({S("a"), S("x")})},
+      {kZSetListPackType, RawListPack({S("a"), S("nan")})},
+  };
+  for (const auto& [type, blob] : cases) {
+    WriteFile(FileWithValue(type, blob));
+    auto db = db::RedisDb::Create();
+    EXPECT_FALSE(Load(db.get())) << static_cast<int>(type);
+  }
 }
 
 // A file Redis 8.10 wrote with SAVE, holding every type in each of its

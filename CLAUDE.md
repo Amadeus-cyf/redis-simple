@@ -112,9 +112,14 @@ Guidance for AI coding agents working in this repository.
   produced. Keep any change to their encoding byte-identical to Redis'.
 - The RDB loader never trusts the file: it checks every length against the
   bytes left before allocating, validates encoded listpacks and intsets with
-  `memory::ListPackReader` and the intset checks, rejects duplicates and NaN
-  scores, and rebuilds values through the data types instead of adopting
-  stored structures. Keep new types on that path.
+  `memory::ListPackReader` and the intset checks, and rejects duplicates and
+  NaN scores. Like Redis, it keeps a set, hash, or sorted set listpack's bytes
+  (`CreateFromListPack`), but only after one pass proves it is valid, fits
+  this server's limits, holds sorted set pairs in order, and encodes each
+  element as `ListPack` would; anything else is rebuilt through the data
+  types. Values over the listpack limits start in their large encoding,
+  sized for their count (`CreateForSize`), as Redis' rdbLoad does. Keep new
+  types on that path.
 - Keep AOF propagation at the successful command-mutation boundary. Preserve
   command order, encode relative TTLs as absolute `PEXPIREAT` records, and do
   not copy argument payloads beyond the owned persistence record.

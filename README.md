@@ -174,7 +174,9 @@ modules, hash field expiration, hash templates, keys outside database 0, and
 the ziplist encodings of Redis 6.2 and earlier; it skips function libraries
 with a warning. Keys whose time has passed are dropped while loading. Every
 length, encoded listpack and intset, and duplicate is checked, so a corrupt
-file is refused, never trusted.
+file is refused, never trusted. As in Redis, a set, hash, or sorted set
+listpack that passes those checks and fits this server's limits is kept as
+stored, so loading it is a copy rather than one insert per element.
 
 `BGSAVE` and automatic save points (Redis' `save`) are not implemented yet, so
 the server saves only on `SAVE`, not on shutdown as Redis' default does.

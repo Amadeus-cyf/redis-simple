@@ -200,9 +200,17 @@ left. Every length the file claims is checked against those bytes before
 anything is allocated, an LZF string's expanded size against the 512 MiB
 string limit, and listpacks and intsets are validated as they are read
 (`memory::ListPackReader` checks each entry's encoding, size, and backlen, as
-Redis' deep validation does). Values are not adopted as stored: they are
-rebuilt through the data types, so they take this server's encodings and no
-corrupt structure enters memory. Duplicate members, fields, or keys, NaN
+Redis' deep validation does). As Redis does, a set, hash, or sorted set
+listpack is then kept as stored, so loading it is one copy: one pass over it
+checks every element, that keys are distinct (by sorting their views), and
+that scores are numbers, and it is kept only if it also fits this server's
+listpack limits, holds sorted set pairs in (score, member) order, and stores
+each element as `ListPack` would, an integer exactly when its text parses as
+one, which lookups rely on. Any other value, including lists and intsets, is
+rebuilt through the data types, so no corrupt structure enters memory. A
+hash, set, or sorted set stored as a hash table and counting more entries
+than a listpack holds starts in that encoding, sized for the count, instead of
+filling a listpack and converting it. Duplicate members, fields, or keys, NaN
 scores, and types this server does not have stop the load with a message
 naming the offset; empty collections are skipped, and keys whose expiration
 time has passed are dropped, as Redis does.

@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace redis_simple::memory {
@@ -25,6 +26,11 @@ class ListPack {
   // Header: 32-bit total bytes followed by 16-bit element count.
   static constexpr int kListPackHeaderSize = 6;
   ListPack();
+  // A listpack holding a copy of `bytes`, which must be a whole listpack in
+  // Redis' byte format whose elements encode as this class encodes them:
+  // validate untrusted bytes first, as the RDB loader does with
+  // ListPackReader. Checks only the header and terminator.
+  static std::unique_ptr<ListPack> CreateFromBytes(std::string_view bytes);
   ListPack(const ListPack&) = delete;
   ListPack& operator=(const ListPack&) = delete;
   unsigned char* Get(size_t offset, size_t* length) const;
@@ -175,6 +181,9 @@ class ListPack {
   size_t DecodeBacklen(size_t offset) const;
   size_t DecodeStringLength(size_t offset) const;
   static bool IsString(EncodingType encoding_type);
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
+  ListPack(std::unique_ptr<unsigned char[]> listpack, size_t capacity)
+      : listpack_(std::move(listpack)), capacity_(capacity) {}
   void Realloc(size_t bytes);
   std::unique_ptr<unsigned char[]> listpack_;
   // Allocated bytes of listpack_; at least TotalBytes().

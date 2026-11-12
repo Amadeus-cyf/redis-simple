@@ -21,6 +21,24 @@ Set::Set()
       listpack_(nullptr),
       dict_(nullptr) {}
 
+std::unique_ptr<Set> Set::CreateForSize(size_t count) {
+  std::unique_ptr<Set> set(new Set());
+  if (count > kIntSetMaxEntries) {
+    set->ConvertIntSetToDict(count);
+  }
+  return set;
+}
+
+std::unique_ptr<Set> Set::CreateFromListPack(
+    std::unique_ptr<memory::ListPack> listpack) {
+  RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
+           listpack->Size() <= kListPackMaxEntries);
+  std::unique_ptr<Set> set(new Set());
+  set->encoding_ = Encoding::kListPack;
+  set->listpack_ = std::move(listpack);
+  return set;
+}
+
 bool Set::Add(std::string_view value) {
   if (encoding_ == Encoding::kIntSet) {
     return IntSetAddAndMaybeConvert(value);

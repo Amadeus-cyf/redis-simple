@@ -10,6 +10,7 @@
 #include "data_types/zset/zset_entry.h"
 #include "data_types/zset/zset_range_spec.h"
 #include "data_types/zset/zset_storage.h"
+#include "memory/listpack.h"
 
 namespace redis_simple::zset {
 class ZSet {
@@ -19,9 +20,24 @@ class ZSet {
     kSkiplist,
   };
 
+  // Redis 8's zset-max-listpack-entries and zset-max-listpack-value.
+  static constexpr size_t kListPackMaxEntries = 128;
+  static constexpr size_t kListPackMaxElementLength = 64;
+
   static std::unique_ptr<ZSet> Create() {
     return std::unique_ptr<ZSet>(new ZSet());
   }
+  // An empty sorted set in the encoding `count` members need, as Redis'
+  // rdbLoad creates one: a skiplist with its dict sized for them when
+  // `count` is over kListPackMaxEntries, so loading does not fill a
+  // listpack first.
+  static std::unique_ptr<ZSet> CreateForSize(size_t count);
+  // A listpack-encoded sorted set holding `listpack`'s member and score
+  // pairs, as the RDB loader checks them: distinct members no longer than
+  // kListPackMaxElementLength, at most kListPackMaxEntries pairs, and scores
+  // that are not NaN, in ascending (score, member) order.
+  static std::unique_ptr<ZSet> CreateFromListPack(
+      std::unique_ptr<memory::ListPack> listpack);
   // Returns true if `member` is new. `*changed`, when given, reports whether it
   // was inserted or its score changed.
   bool InsertOrUpdate(std::string_view member, double score,
@@ -56,8 +72,6 @@ class ZSet {
   Encoding Encoding() const;
 
  private:
-  static constexpr size_t kListPackMaxEntries = 128;
-  static constexpr size_t kListPackMaxElementLength = 64;
   ZSet();
   bool ShouldConvertToSkiplist(std::string_view member, bool inserted) const;
   void ConvertAndExpand();

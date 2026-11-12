@@ -74,6 +74,19 @@ ListPack::ListPack()
   listpack_[kListPackHeaderSize] = kListPackEof;
 }
 
+std::unique_ptr<ListPack> ListPack::CreateFromBytes(std::string_view bytes) {
+  RS_CHECK(bytes.size() > kListPackHeaderSize &&
+           bytes.size() <= kListPackMaxSafetySize &&
+           static_cast<unsigned char>(bytes.back()) == kListPackEof);
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
+  std::unique_ptr<unsigned char[]> storage(new unsigned char[bytes.size()]);
+  std::memcpy(storage.get(), bytes.data(), bytes.size());
+  std::unique_ptr<ListPack> listpack(
+      new ListPack(std::move(storage), bytes.size()));
+  RS_CHECK(listpack->TotalBytes() == bytes.size());
+  return listpack;
+}
+
 unsigned char* ListPack::Get(size_t offset, size_t* const length) const {
   size_t listpack_bytes = TotalBytes();
   RS_CHECK(offset >= kListPackHeaderSize && offset < listpack_bytes);
