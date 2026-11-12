@@ -135,7 +135,7 @@ void HandlePush(Client* const client, Side side) {
       return;
     }
   }
-  client->MarkModified();
+  client->MarkModified(static_cast<int64_t>(args.size() - 1));
   client->AddReply(reply::FromInt64(static_cast<int64_t>(list->Size())));
 }
 
@@ -180,7 +180,7 @@ void HandlePopCount(Client* const client, Side side) {
   } else {
     list->Trim(0, size - popped - 1);
   }
-  client->MarkModified();
+  client->MarkModified(static_cast<int64_t>(popped));
   client->AddReply(std::move(encoded));
 }
 
@@ -322,7 +322,7 @@ void HandleLRem(Client* const client) {
     DeleteIfEmpty(client, args[0], list);
   }
   if (removed > 0) {
-    client->MarkModified();
+    client->MarkModified(static_cast<int64_t>(removed));
   }
   client->AddReply(reply::FromInt64(static_cast<int64_t>(removed)));
 }
@@ -339,9 +339,11 @@ void HandleLTrim(Client* const client) {
   if (!LookupMutableList(client, args[0], &list)) {
     return;
   }
+  size_t removed = 0;
   if (list != nullptr) {
+    const size_t size = list->Size();
     const std::optional<std::pair<size_t, size_t>> range =
-        NormalizeRange(start, stop, list->Size());
+        NormalizeRange(start, stop, size);
     // An empty range trims every element.
     const bool trimmed = range.has_value()
                              ? list->Trim(range->first, range->second)
@@ -350,9 +352,10 @@ void HandleLTrim(Client* const client) {
       client->AddReply(reply::FromError("ERR list trim failed"));
       return;
     }
+    removed = size - list->Size();
     DeleteIfEmpty(client, args[0], list);
   }
-  client->MarkModified();
+  client->MarkModified(static_cast<int64_t>(removed));
   client->AddReply(reply::kOk);
 }
 }  // namespace redis_simple::commands::lists

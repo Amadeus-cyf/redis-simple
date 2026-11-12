@@ -13,6 +13,9 @@ reference_host="${REDIS_REFERENCE_HOST:-127.0.0.1}"
 reference_port="${REDIS_REFERENCE_PORT:-6379}"
 server_port="${REDIS_SIMPLE_PORT:-8080}"
 server_log="$(mktemp "${TMPDIR:-/tmp}/redis_simple_compat.XXXXXX")"
+# The server saves an RDB file at shutdown and loads it at startup, so it
+# runs in a directory of its own.
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/redis_simple_compat_dir.XXXXXX")"
 
 cleanup() {
   if [[ -n "${server_pid:-}" ]] && kill -0 "${server_pid}" 2>/dev/null; then
@@ -20,10 +23,11 @@ cleanup() {
     wait "${server_pid}" 2>/dev/null || true
   fi
   rm -f "${server_log}"
+  rm -rf "${work_dir}"
 }
 trap cleanup EXIT INT TERM
 
-"${server_binary}" >"${server_log}" 2>&1 &
+"${server_binary}" --dir "${work_dir}" >"${server_log}" 2>&1 &
 server_pid=$!
 
 for _ in {1..50}; do

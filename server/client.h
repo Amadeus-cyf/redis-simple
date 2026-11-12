@@ -98,7 +98,14 @@ class Client {
   // CLIENT SETNAME and HELLO SETNAME; empty means unnamed.
   std::string_view Name() const { return name_; }
   void SetName(std::string_view name) { name_.assign(name); }
-  void MarkModified() { modified_ = true; }
+  // Records that the command changed the database, so it reaches WATCHers
+  // and the AOF. `changes` counts toward the changes since the last RDB save
+  // as Redis counts them in server.dirty: one per key, field, member, or
+  // element added, removed, or set.
+  void MarkModified(int64_t changes = 1) {
+    modified_ = true;
+    *change_counter_ += changes;
+  }
   // MULTI/EXEC. Commands read while a transaction is open are copied into a
   // queue and run back to back by EXEC.
   bool InTransaction() const { return multi_.Active(); }
@@ -134,10 +141,11 @@ class Client {
   // Command lookup, arity, AUTH, and MISCONF checks; sets `command_`.
   RequestStatus ValidateRequest(std::string_view name);
   void FailProtocol();
-  // False while the AOF cannot store writes; write commands are then
-  // rejected with AofWriteError(), as Redis replies with MISCONF.
-  bool AofAcceptsWrites() const;
-  std::string AofWriteError() const;
+  // Redis' writeCommandsDeniedByDiskError: true after a failed background
+  // save (see rdb::Rdb::DeniesWrites) or while the AOF cannot store writes.
+  // Write commands and PING are then refused with DiskErrorMessage().
+  bool WritesRefused() const;
+  std::string DiskErrorMessage() const;
   ClientStatus ProcessCommand();
   void QueueCommand();
   // Propagates a successful mutation: touches WATCHed keys and appends the
@@ -172,6 +180,11 @@ class Client {
   bool freed_{};
   bool close_after_reply_{};
   bool modified_{};
+  // MarkModified's changes when the server has no RDB counter, as in AOF
+  // replay, which reads them from here.
+  int64_t changes_{};
+  // The server's change counter (ServerContext::changes), or `changes_`.
+  int64_t* change_counter_;
   bool propagation_failed_{};
   MultiState multi_;
   db::KeyWatcher watcher_;

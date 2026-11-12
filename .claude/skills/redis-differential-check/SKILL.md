@@ -103,6 +103,14 @@ Sorted-set scores are compared by value: the file stores the double, and how
 replies print it is `compare_with_redis.py`'s concern.
 `--keep` keeps the files when it fails.
 
+The comparison scripts start both servers with `--save ""`, so no background
+save runs during a comparison. `BGSAVE`'s in-progress replies, save points,
+and `MISCONF` depend on timing, so `redis_simple_integration_rdb` covers
+them. To compare them by hand, start both servers with `--save "1 1"` in
+directories of their own, delete the directories, write a key, and after two
+seconds compare `SET`, `PING`, `INFO persistence`, and what `SIGTERM` does
+(both keep running when the final save fails).
+
 ## Known differences
 
 Not bugs; leave them unless the task is about them.

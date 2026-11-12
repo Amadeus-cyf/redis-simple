@@ -120,7 +120,9 @@ since on Linux the write would block behind it. With `always` it syncs on the
 event-loop thread.
 
 A failed write cuts any partial write back off the file and keeps the buffer
-to retry, and write commands get `-MISCONF` until a write succeeds. A failed
+to retry, and write commands and `PING` get `-MISCONF` until a write succeeds
+(`Client::WritesRefused`, which checks a failed background save first, as
+Redis' `writeCommandsDeniedByDiskError` does). A failed
 background fsync rejects writes until the next one succeeds. Only with
 `always` does a failure stop the server, since replies already promised the
 data was on disk.
@@ -128,7 +130,8 @@ data was on disk.
 ### Rewriting
 
 A rewrite first switches appends to a new incremental file, so writes made
-during the rewrite need no buffering. It then forks. The child writes a
+during the rewrite need no buffering. It then forks, unless a background
+save's child is running (see Background saves). The child writes a
 snapshot of its copy-on-write view of the database (`WriteSnapshotFile`) and
 exits; its exit code reports how it went. The server cron notices the exit
 (`Aof::Cron`), renames the snapshot to the next base file, and persists a
@@ -165,7 +168,7 @@ Two, both where Redis can lose data:
 
 | File | What it holds |
 | --- | --- |
-| `rdb.h`, `rdb.cpp` | `Rdb`: `SAVE` (temporary file, rename, directory sync), loading at startup, `LASTSAVE` |
+| `rdb.h`, `rdb.cpp` | `Rdb`: `SAVE` (temporary file, rename, directory sync), `BGSAVE`'s child, save points, the save at shutdown, loading at startup, `LASTSAVE` and the `INFO` fields |
 | `rdb_writer.h`, `.cpp` | Writing a database in the RDB format (Redis' `rdbSaveRio`) |
 | `rdb_loader.h`, `.cpp` | Reading one into a database (Redis' `rdbLoadRio` and `rdbLoadObject`) |
 | `rdb_format.h` | The format's opcodes, value types, and encodings (Redis' `rdb.h`) |
@@ -214,4 +217,43 @@ filling a listpack and converting it. Duplicate members, fields, or keys, NaN
 scores, and types this server does not have stop the load with a message
 naming the offset; empty collections are skipped, and keys whose expiration
 time has passed are dropped, as Redis does.
+
+### Background saves
+
+`BGSAVE` forks a child that writes `temp-<child pid>.rdb`, renames it over the
+file, and syncs the directory, as `SAVE` does, then exits with a code that
+says which step failed; like the AOF rewrite's child it takes no locks and
+does not log, and the same fork hooks pause the threads that allocate. The
+server cron (`Rdb::Cron`) reaps it. On success the changes it covered are
+subtracted from the change counter (Redis' `server.dirty`), since writes made
+while it ran are not in the file, and `LASTSAVE` moves to when it ended. A
+child killed by a signal leaves its temporary file, which the parent deletes;
+`SIGUSR1`, which shutdown uses to stop it, is not counted as a failure.
+
+As in Redis, only one child runs at a time. The cron passes each side whether
+the other has a child (`Aof::Cron` and `Rdb::Cron` take `may_fork`), so a
+scheduled or automatic rewrite waits for a save and a scheduled save or save
+point waits for a rewrite. `BGSAVE` during a rewrite fails unless it is
+`BGSAVE SCHEDULE`, `BGREWRITEAOF` during a save is scheduled, and inside
+`EXEC` both are scheduled for the cron.
+
+Commands count their changes through `Client::MarkModified(changes)` as
+Redis' commands add to `server.dirty`: one per key set or deleted, member or
+field pair given, or element pushed, popped, or trimmed. Each client holds a
+pointer to the RDB's counter (`ServerContext::changes`), so counting is one
+addition; AOF replay counts into its own client, and the total is added at
+startup. A save point is reached when there are at least its changes and
+more than its seconds have passed since the last save; after a failure the
+cron waits five seconds between tries (Redis' `CONFIG_BGSAVE_RETRY_DELAY`).
+
+A failed background save sets `Rdb::DeniesWrites` when there are save points
+and `--stop-writes-on-bgsave-error` is on. `Client::ValidateRequest` then
+refuses commands the table marks `refused_on_disk_error` (write commands and
+`PING`) with Redis' `MISCONF` text, and `EXEC` with queued writes discards the
+transaction with `-EXECABORT`, as Redis does. Any successful save clears it.
+
+On `SIGTERM` or `SIGINT`, the cron calls `Rdb::SaveBeforeShutdown` before
+stopping the loop: it kills a running child and waits for it, so the child
+cannot replace the file, then saves when there are save points. If that save
+fails the server logs Redis' message and keeps running.
 

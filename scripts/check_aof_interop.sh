@@ -91,7 +91,7 @@ wait_for_rewrite() {
 # Starts a server on `port` with its AOF in directory `dir`.
 start_simple() {
   local dir="$1"
-  (cd "${dir}" && exec "${simple_binary}" --port "${simple_port}" \
+  (cd "${dir}" && exec "${simple_binary}" --port "${simple_port}" --save '' \
       --appendonly yes --appenddirname appendonlydir) \
       >"${work_dir}/server.log" 2>&1 &
   server_pid=$!

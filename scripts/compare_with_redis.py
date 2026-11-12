@@ -230,6 +230,10 @@ def edge_cases():
     # its arity is compared.
     add("SAVE", "SAVE now", "LASTSAVE now")
     add("MULTI", "SET in-multi v", "SAVE", "EXEC", "EXISTS in-multi")
+    # BGSAVE takes only SCHEDULE. With no save running it starts one; cases
+    # that depend on whether that child has exited yet are left to the RDB
+    # integration test.
+    add("BGSAVE now", "BGSAVE schedule x", "BGSAVE")
     # HSCAN, SSCAN, and ZSCAN on small encodings, which Redis returns whole
     # and in a fixed order, and their errors. A missing key replies before
     # the options are checked, and a wrong type before them too.
@@ -867,6 +871,8 @@ def main():
                 args.binary,
                 "--port",
                 str(test_port),
+                "--save",
+                "",
                 "--io-threads",
                 str(args.io_threads),
                 "--dir",

@@ -19,4 +19,6 @@ bool InstallSignalHandlers() {
 }
 
 bool StopRequested() { return stop_requested != 0; }
+
+void ClearStopRequest() { stop_requested = 0; }
 }  // namespace redis_simple::shutdown

@@ -28,7 +28,7 @@ void HandleZRem(Client* const client) {
     }
   }
   if (removed > 0) {
-    client->MarkModified();
+    client->MarkModified(removed);
   }
   client->AddReply(reply::FromInt64(removed));
 }

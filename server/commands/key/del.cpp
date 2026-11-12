@@ -19,7 +19,7 @@ void AddDeleteReply(Client* const client, DeleteOperation operation) {
     }
   }
   if (deleted > 0) {
-    client->MarkModified();
+    client->MarkModified(deleted);
   }
   client->AddReply(reply::FromInt64(deleted));
 }

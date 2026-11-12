@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <vector>
 
 namespace redis_simple {
 TEST(ServerOptionsTest, UsesDefaults) {
@@ -23,6 +24,37 @@ TEST(ServerOptionsTest, UsesDefaults) {
   EXPECT_TRUE(result.options.require_pass.empty());
   EXPECT_TRUE(result.options.protected_mode);
   EXPECT_EQ(result.options.io_threads, 1);
+  // Redis 8's save points when started without a config file.
+  EXPECT_EQ(result.options.rdb_options.save_points,
+            (std::vector<rdb::SavePoint>{{3600, 1}, {300, 100}, {60, 10000}}));
+  EXPECT_TRUE(result.options.rdb_options.stop_writes_on_error);
+}
+
+TEST(ServerOptionsTest, ParsesSavePoints) {
+  // The first --save replaces the defaults and later ones add to them, as
+  // save lines in a Redis config file do.
+  constexpr std::array kArgv = {"redis_simple", "--save", "900 1 300 10",
+                                "--save", "60 0"};
+  OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
+  ASSERT_EQ(result.status, OptionsStatus::kOk);
+  EXPECT_EQ(result.options.rdb_options.save_points,
+            (std::vector<rdb::SavePoint>{{900, 1}, {300, 10}, {60, 0}}));
+
+  // An empty --save turns them off.
+  constexpr std::array kOff = {"redis_simple", "--save", "",
+                               "--stop-writes-on-bgsave-error", "no"};
+  result = ParseServerOptions(kOff.size(), kOff.data());
+  ASSERT_EQ(result.status, OptionsStatus::kOk);
+  EXPECT_TRUE(result.options.rdb_options.save_points.empty());
+  EXPECT_FALSE(result.options.rdb_options.stop_writes_on_error);
+
+  // Pairs only, seconds at least 1, and changes at least 0.
+  for (const char* const save : {"60", "0 1", "60 -1", "60 x", "60  1"}) {
+    const std::array argv = {"redis_simple", "--save", save};
+    result = ParseServerOptions(argv.size(), argv.data());
+    EXPECT_EQ(result.status, OptionsStatus::kError) << save;
+    EXPECT_EQ(result.error, "Invalid save parameters");
+  }
 }
 
 TEST(ServerOptionsTest, ParsesIoThreads) {

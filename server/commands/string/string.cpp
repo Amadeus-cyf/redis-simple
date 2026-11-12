@@ -168,7 +168,7 @@ void HandleMSet(Client* const client) {
   for (size_t i = 0; i < args.size(); i += 2) {
     client->Db()->SetStringKey(args[i], args[i + 1], 0);
   }
-  client->MarkModified();
+  client->MarkModified(static_cast<int64_t>(args.size() / 2));
   client->AddReply(reply::kOk);
 }
 }  // namespace redis_simple::commands::strings

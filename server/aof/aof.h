@@ -176,9 +176,10 @@ class Aof {
   }
   // The AOF part of Redis' serverCron: flushes a postponed or failed write,
   // starts a scheduled rewrite, finishes one whose child exited, and starts
-  // an automatic rewrite when the AOF has grown enough. Returns false when
-  // the server must stop.
-  bool Cron(db::RedisDb* db);
+  // an automatic rewrite when the AOF has grown enough. It starts none while
+  // `may_fork` is false, when another child (a background save) runs, as
+  // Redis runs one child at a time. Returns false when the server must stop.
+  bool Cron(db::RedisDb* db, bool may_fork = true);
   // Finishes the rewrite if its child has exited.
   void CheckRewrite();
   // Whether an automatic rewrite is due: the AOF is larger than the minimum
@@ -186,6 +187,9 @@ class Aof {
   // limited rewrites (Redis' aofRewriteLimited, which this updates).
   bool ShouldAutoRewrite();
   AofState State() const;
+  // Changes the loaded files made, which Redis counts toward the changes
+  // since the last RDB save.
+  int64_t ReplayedChanges() const { return replayed_changes_; }
 
   // For tests and shutdown: writes everything pending, then syncs the file.
   bool SyncNow();
@@ -271,6 +275,7 @@ class Aof {
   bool database_selected_{false};
   // Redis' aof_cur_timestamp, for timestamp annotations.
   int64_t current_timestamp_{};
+  int64_t replayed_changes_{};
   // Redis' aof_current_size, aof_rewrite_base_size, aof_last_incr_size, and
   // aof_last_incr_fsync_offset.
   size_t current_size_{};

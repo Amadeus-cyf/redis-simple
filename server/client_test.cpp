@@ -588,9 +588,10 @@ TEST(ClientTest, RejectsWritesWithMisconfWhileTheAofCannotWrite) {
       "-MISCONF Errors writing to the AOF file: No space left on device\r\n";
   EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"SET", "key", "w"})),
             misconf);
-  // Reads keep working.
+  // Reads keep working, but PING is refused too, as in Redis.
   EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"GET", "key"})),
             "$1\r\nv\r\n");
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"PING"})), misconf);
   // A transaction with a write aborts, whether the write was rejected while
   // queueing or the AOF failed after it was queued.
   EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"MULTI"})), "+OK\r\n");
@@ -640,9 +641,10 @@ TEST(ClientTest, ExecRejectsQueuedWritesWhenTheAofFailsAfterQueueing) {
   file_ops->fail_writes.store(true);
   ASSERT_TRUE(aof->Append("SET", {"key", "v"}, db.get()));
   ASSERT_TRUE(aof->Flush());
-  EXPECT_EQ(
-      Roundtrip(client.get(), peer, EncodeRequest({"EXEC"})),
-      "-MISCONF Errors writing to the AOF file: No space left on device\r\n");
+  // Redis refuses EXEC as a write, which discards the transaction.
+  EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"EXEC"})),
+            "-EXECABORT Transaction discarded because of: MISCONF Errors "
+            "writing to the AOF file: No space left on device\r\n");
   EXPECT_EQ(Roundtrip(client.get(), peer, EncodeRequest({"GET", "key"})),
             "$-1\r\n");
   file_ops->fail_writes.store(false);

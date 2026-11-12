@@ -4,8 +4,13 @@
 #include <array>
 #include <charconv>
 #include <cstddef>
+#include <cstdint>
+#include <ranges>
 #include <string_view>
 #include <system_error>
+#include <vector>
+
+#include "utils/string_utils.h"
 
 namespace redis_simple {
 namespace {
@@ -70,6 +75,40 @@ bool ParseFsyncPolicy(std::string_view value, aof::FsyncPolicy* const policy) {
   return false;
 }
 
+// Redis' save: "<seconds> <changes>" pairs separated by spaces, with
+// seconds at least 1, or "" for no save points.
+bool ParseSavePoints(std::string_view value, ServerOptions* const options) {
+  if (!options->save_points_given) {
+    options->save_points_given = true;
+    options->rdb_options.save_points.clear();
+  }
+  if (value.empty()) {
+    options->rdb_options.save_points.clear();
+    return true;
+  }
+  std::vector<int64_t> numbers;
+  for (const auto part : std::views::split(value, ' ')) {
+    int64_t number = 0;
+    if (!utils::ToInt64(std::string_view(part.begin(), part.end()), &number)) {
+      return false;
+    }
+    numbers.push_back(number);
+  }
+  if (numbers.size() % 2 != 0) {
+    return false;
+  }
+  for (size_t i = 0; i < numbers.size(); i += 2) {
+    if (numbers[i] < 1 || numbers[i + 1] < 0) {
+      return false;
+    }
+  }
+  for (size_t i = 0; i < numbers.size(); i += 2) {
+    options->rdb_options.save_points.push_back(
+        {.seconds = numbers[i], .changes = numbers[i + 1]});
+  }
+  return true;
+}
+
 bool ParseSize(std::string_view value, size_t* const result) {
   if (value.empty()) {
     return false;
@@ -129,6 +168,15 @@ constexpr auto kOptionSpecs = std::to_array<OptionSpec>({
            return ParseYesNo(value, &options->rdb_options.checksum);
          },
      .error = "rdbchecksum must be yes or no"},
+    {.name = "--save",
+     .apply = ParseSavePoints,
+     .error = "Invalid save parameters"},
+    {.name = "--stop-writes-on-bgsave-error",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->rdb_options.stop_writes_on_error);
+         },
+     .error = "stop-writes-on-bgsave-error must be yes or no"},
     {.name = "--appendonly",
      .apply =
          [](std::string_view value, ServerOptions* options) {
@@ -264,6 +312,8 @@ std::string_view ServerUsage() {
   return "Usage: redis_simple [--bind <address>] [--port <port>] "
          "[--dir <directory>] [--dbfilename <name>] "
          "[--rdbcompression <yes|no>] [--rdbchecksum <yes|no>] "
+         "[--save <\"seconds changes ...\">] "
+         "[--stop-writes-on-bgsave-error <yes|no>] "
          "[--appendonly <yes|no>] [--appendfilename <name>] "
          "[--appenddirname <dir>] "
          "[--aof-load-truncated <yes|no>] "

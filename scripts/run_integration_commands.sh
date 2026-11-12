@@ -4,10 +4,14 @@ set -u
 server="$1"
 shift
 
+# The server saves an RDB file at shutdown and loads it at startup, so each
+# run gets a directory of its own.
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/redis_simple_commands.XXXXXX")"
+
 # REDIS_SIMPLE_SERVER_ARGS adds server flags, such as "--io-threads 4"; it is
 # split on spaces on purpose.
 # shellcheck disable=SC2086
-"$server" ${REDIS_SIMPLE_SERVER_ARGS:-} &
+"$server" --dir "$work_dir" ${REDIS_SIMPLE_SERVER_ARGS:-} &
 server_pid=$!
 
 cleanup() {
@@ -15,6 +19,7 @@ cleanup() {
     kill -TERM "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
+  rm -rf "$work_dir"
 }
 trap cleanup EXIT INT TERM
 

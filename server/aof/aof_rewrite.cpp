@@ -322,16 +322,17 @@ bool Aof::ShouldAutoRewrite() {
   return !RewriteLimited();
 }
 
-bool Aof::Cron(db::RedisDb* const db) {
+bool Aof::Cron(db::RedisDb* const db, bool may_fork) {
   // A write postponed behind a sync, or a failed one, is retried here too.
   if (!Flush()) {
     return false;
   }
-  if (rewrite_child_ <= 0 && rewrite_scheduled_ && !RewriteLimited()) {
+  if (may_fork && rewrite_child_ <= 0 && rewrite_scheduled_ &&
+      !RewriteLimited()) {
     StartRewrite(db);
   }
   CheckRewrite();
-  if (ShouldAutoRewrite()) {
+  if (may_fork && ShouldAutoRewrite()) {
     RS_LOG_INFO("Starting automatic rewriting of AOF on growth\n");
     StartRewrite(db);
   }

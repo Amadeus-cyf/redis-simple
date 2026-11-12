@@ -23,7 +23,7 @@ trap cleanup EXIT INT TERM
 # split on spaces on purpose.
 start_server() {
   # shellcheck disable=SC2086
-  "$server" --bind 127.0.0.1 --port 18081 --appendonly yes \
+  "$server" --bind 127.0.0.1 --port 18081 --dir "$aof_dir" --appendonly yes \
     --appenddirname "$aof_dirname" --appendfilename "$aof_name" \
     --appendfsync everysec \
     ${REDIS_SIMPLE_SERVER_ARGS:-} "$@" &

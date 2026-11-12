@@ -211,7 +211,7 @@ void HandleZAdd(Client* const client) {
   }
   // Like Redis, only a change touches watchers and reaches the AOF.
   if (totals.added > 0 || totals.updated > 0) {
-    client->MarkModified();
+    client->MarkModified(totals.added + totals.updated);
   }
   if (options.incr) {
     if (totals.processed) {

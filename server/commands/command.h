@@ -55,6 +55,9 @@ struct Command {
   // Redis' NO_MULTI flag: inside MULTI the command is rejected, which aborts
   // the transaction (SAVE).
   bool allowed_in_multi{true};
+  // Refused with MISCONF while a failed save or AOF write stops writes:
+  // write commands, and PING, as in Redis' processCommand.
+  bool refused_on_disk_error{false};
 };
 
 const Command* Find(std::string_view name);
