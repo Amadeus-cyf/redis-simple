@@ -194,48 +194,47 @@ bool ExpectEmpty(cli::RedisCli* const cli) {
   return ExpectReply(cli, {"DBSIZE\r\n", "0\n"});
 }
 
+using InfoFields = std::vector<std::pair<std::string_view, std::string>>;
+
 // BGSAVE, its scheduled form, and the INFO fields, in a server started
 // without a file, with the default save points.
 bool BackgroundSave(cli::RedisCli* const cli) {
   // Changes count as Redis counts them: one per key set, per member added,
   // and per field pair given, even when the field already existed.
-  if (!ExpectReplies(cli,
-                     {
-                         {"SET bg_key v\r\n", "OK\n"},
-                         {"SADD bg_set a b c\r\n", "3\n"},
-                         {"HSET bg_hash f 1 f 2\r\n", "1\n"},
-                     }) ||
-      !ExpectInfo(cli, {{"rdb_changes_since_last_save", "6"},
-                        {"rdb_bgsave_in_progress", "0"},
-                        {"rdb_last_bgsave_status", "ok"},
-                        {"rdb_last_bgsave_time_sec", "-1"},
-                        {"rdb_current_bgsave_time_sec", "-1"},
-                        {"rdb_saves", "0"},
-                        {"rdb_last_load_keys_loaded", "0"}})) {
+  const std::vector<Case> writes = {
+      {"SET bg_key v\r\n", "OK\n"},
+      {"SADD bg_set a b c\r\n", "3\n"},
+      {"HSET bg_hash f 1 f 2\r\n", "1\n"},
+  };
+  const InfoFields before_save = {
+      {"rdb_changes_since_last_save", "6"},  {"rdb_bgsave_in_progress", "0"},
+      {"rdb_last_bgsave_status", "ok"},      {"rdb_last_bgsave_time_sec", "-1"},
+      {"rdb_current_bgsave_time_sec", "-1"}, {"rdb_saves", "0"},
+      {"rdb_last_load_keys_loaded", "0"}};
+  if (!ExpectReplies(cli, writes) || !ExpectInfo(cli, before_save)) {
     return false;
   }
   const int64_t before = LastSave(cli);
-  if (!ExpectReplies(cli,
-                     {
-                         {"BGSAVE now\r\n", "ERR syntax error\n"},
-                         {"BGSAVE\r\n", "Background saving started\n"},
-                     }) ||
+  const std::vector<Case> background_save = {
+      {"BGSAVE now\r\n", "ERR syntax error\n"},
+      {"BGSAVE\r\n", "Background saving started\n"},
+  };
+  const InfoFields after_save = {{"rdb_changes_since_last_save", "0"},
+                                 {"rdb_last_bgsave_status", "ok"},
+                                 {"rdb_saves", "1"},
+                                 {"rdb_saves_consecutive_failures", "0"}};
+  if (!ExpectReplies(cli, background_save) ||
       !WaitForInfo(cli, "rdb_bgsave_in_progress", "0") ||
-      !ExpectInfo(cli, {{"rdb_changes_since_last_save", "0"},
-                        {"rdb_last_bgsave_status", "ok"},
-                        {"rdb_saves", "1"},
-                        {"rdb_saves_consecutive_failures", "0"}}) ||
-      LastSave(cli) < before) {
+      !ExpectInfo(cli, after_save) || LastSave(cli) < before) {
     return false;
   }
   // Inside EXEC the save is scheduled, and the cron starts it.
-  if (!ExpectReplies(cli,
-                     {
-                         {"MULTI\r\n", "OK\n"},
-                         {"BGSAVE\r\n", "QUEUED\n"},
-                         {"EXEC\r\n", "Background saving scheduled\n"},
-                     }) ||
-      !WaitForInfo(cli, "rdb_saves", "2") ||
+  const std::vector<Case> scheduled = {
+      {"MULTI\r\n", "OK\n"},
+      {"BGSAVE\r\n", "QUEUED\n"},
+      {"EXEC\r\n", "Background saving scheduled\n"},
+  };
+  if (!ExpectReplies(cli, scheduled) || !WaitForInfo(cli, "rdb_saves", "2") ||
       !WaitForInfo(cli, "rdb_bgsave_in_progress", "0")) {
     return false;
   }
@@ -245,24 +244,25 @@ bool BackgroundSave(cli::RedisCli* const cli) {
 
 // After a restart: the save at shutdown kept the last write.
 bool SavedAtShutdown(cli::RedisCli* const cli) {
-  return ExpectReplies(cli,
-                       {
-                           {"GET bg_after_save\r\n", "kept\n"},
-                           {"SCARD bg_set\r\n", "3\n"},
-                           {"HGET bg_hash f\r\n", "2\n"},
-                       }) &&
-         ExpectInfo(cli, {{"rdb_last_load_keys_loaded", "4"},
-                          {"rdb_last_load_keys_expired", "0"},
-                          {"rdb_changes_since_last_save", "0"}});
+  const std::vector<Case> reads = {
+      {"GET bg_after_save\r\n", "kept\n"},
+      {"SCARD bg_set\r\n", "3\n"},
+      {"HGET bg_hash f\r\n", "2\n"},
+  };
+  const InfoFields loaded = {{"rdb_last_load_keys_loaded", "4"},
+                             {"rdb_last_load_keys_expired", "0"},
+                             {"rdb_changes_since_last_save", "0"}};
+  return ExpectReplies(cli, reads) && ExpectInfo(cli, loaded);
 }
 
 // With --save "1 1", one change starts a background save a second later.
 bool SavePoint(cli::RedisCli* const cli) {
-  return ExpectReply(cli, {"SET sp_key v\r\n", "OK\n"}) &&
-         WaitForInfo(cli, "rdb_saves", "1") &&
+  const InfoFields saved = {{"rdb_changes_since_last_save", "0"},
+                            {"rdb_last_bgsave_status", "ok"}};
+  const Case write = {"SET sp_key v\r\n", "OK\n"};
+  return ExpectReply(cli, write) && WaitForInfo(cli, "rdb_saves", "1") &&
          WaitForInfo(cli, "rdb_bgsave_in_progress", "0") &&
-         ExpectInfo(cli, {{"rdb_changes_since_last_save", "0"},
-                          {"rdb_last_bgsave_status", "ok"}});
+         ExpectInfo(cli, saved);
 }
 
 // A server whose directory was deleted: the save point's save fails, and
@@ -274,33 +274,35 @@ bool RefusesWritesAfterFailedSave(cli::RedisCli* const cli) {
       "disabled, because this instance is configured to report errors during "
       "writes if RDB snapshotting fails (stop-writes-on-bgsave-error option). "
       "Please check the Redis logs for details about the RDB error.\n";
-  return ExpectReply(cli, {"SET mc_key v\r\n", "OK\n"}) &&
+  const InfoFields failed = {{"rdb_saves_consecutive_failures", "1"}};
+  const std::vector<Case> refused = {
+      {"SET mc_key w\r\n", misconf},
+      {"PING\r\n", misconf},
+      {"GET mc_key\r\n", "v\n"},
+      {"MULTI\r\n", "OK\n"},
+      {"GET mc_key\r\n", "QUEUED\n"},
+      {"EXEC\r\n", "v\n"},
+      {"MULTI\r\n", "OK\n"},
+      {"SET mc_key w\r\n", misconf},
+      {"EXEC\r\n",
+       "EXECABORT Transaction discarded because of previous errors.\n"},
+  };
+  const Case write = {"SET mc_key v\r\n", "OK\n"};
+  return ExpectReply(cli, write) &&
          WaitForInfo(cli, "rdb_last_bgsave_status", "err") &&
-         ExpectInfo(cli, {{"rdb_saves_consecutive_failures", "1"}}) &&
-         ExpectReplies(
-             cli, {
-                      {"SET mc_key w\r\n", misconf},
-                      {"PING\r\n", misconf},
-                      {"GET mc_key\r\n", "v\n"},
-                      {"MULTI\r\n", "OK\n"},
-                      {"GET mc_key\r\n", "QUEUED\n"},
-                      {"EXEC\r\n", "v\n"},
-                      {"MULTI\r\n", "OK\n"},
-                      {"SET mc_key w\r\n", misconf},
-                      {"EXEC\r\n",
-                       "EXECABORT Transaction discarded because of previous "
-                       "errors.\n"},
-                  });
+         ExpectInfo(cli, failed) && ExpectReplies(cli, refused);
 }
 
 // The same failure with --stop-writes-on-bgsave-error no: writes go on.
 bool KeepsWritingAfterFailedSave(cli::RedisCli* const cli) {
-  return ExpectReply(cli, {"SET mc_key v\r\n", "OK\n"}) &&
+  const std::vector<Case> allowed = {
+      {"SET mc_key w\r\n", "OK\n"},
+      {"PING\r\n", "PONG\n"},
+  };
+  const Case write = {"SET mc_key v\r\n", "OK\n"};
+  return ExpectReply(cli, write) &&
          WaitForInfo(cli, "rdb_last_bgsave_status", "err") &&
-         ExpectReplies(cli, {
-                                {"SET mc_key w\r\n", "OK\n"},
-                                {"PING\r\n", "PONG\n"},
-                            });
+         ExpectReplies(cli, allowed);
 }
 
 int Run(std::string_view mode) {
