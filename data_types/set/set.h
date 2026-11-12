@@ -30,7 +30,7 @@ class Set {
   // set-max-listpack-value.
   static constexpr size_t kIntSetMaxEntries = 512;
   static constexpr size_t kListPackMaxEntries = 128;
-  static constexpr size_t kListPackElementMaxLength = 64;
+  static constexpr size_t kListPackMaxElementLength = 64;
 
   static std::unique_ptr<Set> Create() {
     return std::unique_ptr<Set>(new Set());
@@ -41,7 +41,7 @@ class Set {
   static std::unique_ptr<Set> CreateForSize(size_t count);
   // A listpack-encoded set holding `listpack`'s elements, which must be
   // distinct, at most kListPackMaxEntries, and no longer than
-  // kListPackElementMaxLength, as the RDB loader checks.
+  // kListPackMaxElementLength, as the RDB loader checks.
   static std::unique_ptr<Set> CreateFromListPack(
       std::unique_ptr<memory::ListPack> listpack);
   bool Add(std::string_view value);

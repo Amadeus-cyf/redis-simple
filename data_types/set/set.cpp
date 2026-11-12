@@ -163,7 +163,7 @@ bool Set::ListPackAddAndMaybeConvert(std::string_view value) {
     return false;
   }
   if (listpack_->Size() < kListPackMaxEntries &&
-      length <= kListPackElementMaxLength &&
+      length <= kListPackMaxElementLength &&
       memory::ListPack::SafeToAdd(
           listpack_.get(), memory::ListPack::EstimateEntryBytes(value))) {
     return listpack_->Append(value);
@@ -222,8 +222,8 @@ bool Set::MaybeConvertIntSetToListPack(std::string_view value) {
   }
   const size_t current_size = intset_ ? intset_->Size() : 0;
   if (current_size < kListPackMaxEntries &&
-      length <= kListPackElementMaxLength &&
-      max_integer_length <= kListPackElementMaxLength &&
+      length <= kListPackMaxElementLength &&
+      max_integer_length <= kListPackMaxElementLength &&
       estimated_bytes <= std::numeric_limits<size_t>::max() - entry_bytes &&
       memory::ListPack::SafeToAdd(nullptr, estimated_bytes + entry_bytes)) {
     ConvertIntSetToListPack(value);

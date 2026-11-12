@@ -169,7 +169,7 @@ constexpr CompactKind kSetKind{
     .keys = "members",
     .elements_per_entry = 1,
     .max_entries = set::Set::kListPackMaxEntries,
-    .max_element_length = set::Set::kListPackElementMaxLength,
+    .max_element_length = set::Set::kListPackMaxElementLength,
     .sorted_set = false};
 constexpr CompactKind kHashKind{
     .name = "hash",
@@ -435,7 +435,7 @@ CompactCheck Loader::CheckCompactListPack(std::string_view blob,
   // A sorted set's previous and current members as text; integer members
   // are formatted into alternating buffers so the previous one survives.
   std::array<std::array<char, 21>, 2> buffers{};
-  size_t buffer = 0;
+  size_t buffer_index = 0;
   std::string_view member;
   std::string_view previous_member;
   double previous_score = 0;
@@ -457,7 +457,7 @@ CompactCheck Loader::CheckCompactListPack(std::string_view blob,
         strings_.push_back(element.string);
       }
       if (kind.sorted_set) {
-        member = ElementText(element, &buffers[buffer]);
+        member = ElementText(element, &buffers[buffer_index]);
       }
       continue;
     }
@@ -482,7 +482,7 @@ CompactCheck Loader::CheckCompactListPack(std::string_view blob,
     }
     previous_score = score;
     previous_member = member;
-    buffer ^= 1;
+    buffer_index ^= 1;
   }
   if (status == memory::ListPackReader::Status::kCorrupt ||
       count % kind.elements_per_entry != 0) {
