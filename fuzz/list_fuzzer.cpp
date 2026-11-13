@@ -28,8 +28,8 @@ void Verify(const List& list, const std::vector<std::string>& model) {
 }
 
 void RunOperations(FuzzInput* input) {
-  constexpr size_t kListPackMaxBytes = 64;
-  auto list = List::Create(kListPackMaxBytes);
+  constexpr size_t kListpackMaxBytes = 64;
+  auto list = List::Create(kListpackMaxBytes);
   std::vector<std::string> model;
 
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();

@@ -11,9 +11,9 @@
 
 namespace redis_simple::fuzz {
 namespace {
-using memory::QuickList;
+using memory::Quicklist;
 
-void Verify(const QuickList& quicklist, const std::vector<std::string>& model) {
+void Verify(const Quicklist& quicklist, const std::vector<std::string>& model) {
   Require(quicklist.Size() == model.size());
   Require(quicklist.Empty() == model.empty());
   Require(quicklist.NodeCount() <= model.size());
@@ -36,13 +36,13 @@ void Verify(const QuickList& quicklist, const std::vector<std::string>& model) {
   }));
   const std::vector<std::string> expected_reverse(model.rbegin(), model.rend());
   Require(reverse == expected_reverse);
-  Require(quicklist.ListPackBytes().has_value() ==
+  Require(quicklist.ListpackBytes().has_value() ==
           (quicklist.NodeCount() <= 1));
 }
 
 void RunOperations(FuzzInput* input) {
   const size_t node_max_bytes = input->ReadIndex(250) + 7;
-  QuickList quicklist(node_max_bytes);
+  Quicklist quicklist(node_max_bytes);
   std::vector<std::string> model;
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();
        ++operation_count) {
@@ -92,10 +92,10 @@ void RunOperations(FuzzInput* input) {
       case 5: {
         const size_t limit = input->ReadIndex(6);
         const auto direction = (input->ReadByte() & 1U) == 0
-                                   ? QuickList::RemoveDirection::kFromHead
-                                   : QuickList::RemoveDirection::kFromTail;
+                                   ? Quicklist::RemoveDirection::kFromHead
+                                   : Quicklist::RemoveDirection::kFromTail;
         const bool from_tail =
-            direction == QuickList::RemoveDirection::kFromTail;
+            direction == Quicklist::RemoveDirection::kFromTail;
         const size_t expected =
             RemoveMatchesFromModel(&model, value, limit, from_tail);
         const auto removed = quicklist.Remove(value, limit, direction);

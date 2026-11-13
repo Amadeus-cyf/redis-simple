@@ -1,6 +1,5 @@
 #include "data_types/zset/zset_skiplist.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <memory>
@@ -57,14 +56,15 @@ std::optional<size_t> ZSetSkiplist::Rank(std::string_view member) const {
   return skiplist_->FindRankOfKey(MemberRef{.score = *score, .member = member});
 }
 
-ZSetEntryList ZSetSkiplist::RangeByRank(const RangeByRankSpec* spec) const {
+void ZSetSkiplist::ForEachInRankRange(const RangeByRankSpec* spec,
+                                      const ZSetRangeVisitor& visitor) const {
   if (spec == nullptr) {
-    return {};
+    return;
   }
   const std::optional<RangeByRankSpec> normalized =
       NormalizeRankRange(*spec, Size());
   if (!normalized.has_value()) {
-    return {};
+    return;
   }
   const SkiplistType::RankRange range{
       .min = static_cast<size_t>(normalized->min),
@@ -74,23 +74,15 @@ ZSetEntryList ZSetSkiplist::RangeByRank(const RangeByRankSpec* spec) const {
       .limit = ToLimit(normalized->limit),
       .reverse = spec->reverse,
   };
-  // A rank range knows its size up front; reserve an upper bound so a
-  // large range does not regrow the result while it is filled.
-  size_t bound =
-      range.max >= range.min ? std::min(range.max - range.min + 1, Size()) : 0;
-  if (normalized->limit.has_value() && normalized->limit->count.has_value()) {
-    bound = std::min(bound, *normalized->limit->count);
-  }
-  ZSetEntryList entries;
-  entries.reserve(bound);
-  skiplist_->ForEachInRange(
-      range, [&entries](const ZSetEntry& entry) { entries.push_back(&entry); });
-  return entries;
+  skiplist_->ForEachInRange(range, [&visitor](const ZSetEntry& entry) {
+    visitor(entry.member, entry.score);
+  });
 }
 
-ZSetEntryList ZSetSkiplist::RangeByScore(const RangeByScoreSpec* spec) const {
+void ZSetSkiplist::ForEachInScoreRange(const RangeByScoreSpec* spec,
+                                       const ZSetRangeVisitor& visitor) const {
   if (spec == nullptr) {
-    return {};
+    return;
   }
   const SkiplistType::KeyRange<double> range{
       .min = spec->min,
@@ -100,10 +92,9 @@ ZSetEntryList ZSetSkiplist::RangeByScore(const RangeByScoreSpec* spec) const {
       .limit = ToLimit(spec->limit),
       .reverse = spec->reverse,
   };
-  ZSetEntryList entries;
-  skiplist_->ForEachInRange(
-      range, [&entries](const ZSetEntry& entry) { entries.push_back(&entry); });
-  return entries;
+  skiplist_->ForEachInRange(range, [&visitor](const ZSetEntry& entry) {
+    visitor(entry.member, entry.score);
+  });
 }
 
 size_t ZSetSkiplist::Count(const RangeByScoreSpec* spec) const {
@@ -128,11 +119,11 @@ bool ZSetSkiplist::OverlapsLexRange(const RangeByLexSpec* spec) const {
          spec->BelowMax((*skiplist_->Begin()).member);
 }
 
-ZSetEntryList ZSetSkiplist::RangeByLex(const RangeByLexSpec* spec) const {
+void ZSetSkiplist::ForEachInLexRange(const RangeByLexSpec* spec,
+                                     const ZSetRangeVisitor& visitor) const {
   if (!OverlapsLexRange(spec)) {
-    return {};
+    return;
   }
-  ZSetEntryList entries;
   skiplist_->ForEachInRange(
       SkiplistType::KeyRange<LexBound>{
           .min = spec->min,
@@ -142,8 +133,9 @@ ZSetEntryList ZSetSkiplist::RangeByLex(const RangeByLexSpec* spec) const {
           .limit = ToLimit(spec->limit),
           .reverse = spec->reverse,
       },
-      [&entries](const ZSetEntry& entry) { entries.push_back(&entry); });
-  return entries;
+      [&visitor](const ZSetEntry& entry) {
+        visitor(entry.member, entry.score);
+      });
 }
 
 size_t ZSetSkiplist::LexCount(const RangeByLexSpec* spec) const {

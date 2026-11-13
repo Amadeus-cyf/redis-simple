@@ -16,7 +16,7 @@ namespace redis_simple::hash {
 class Hash {
  public:
   enum class Encoding {
-    kListPack,
+    kListpack,
     kDict,
   };
 
@@ -26,22 +26,22 @@ class Hash {
   };
 
   // Redis 8's hash-max-listpack-entries and hash-max-listpack-value.
-  static constexpr size_t kListPackMaxEntries = 512;
-  static constexpr size_t kListPackMaxElementLength = 64;
+  static constexpr size_t kListpackMaxEntries = 512;
+  static constexpr size_t kListpackMaxElementLength = 64;
 
   static std::unique_ptr<Hash> Create() {
     return std::unique_ptr<Hash>(new Hash());
   }
   // An empty hash in the encoding `count` fields need, as Redis' rdbLoad
   // creates one: a dict sized for them when `count` is over
-  // kListPackMaxEntries.
+  // kListpackMaxEntries.
   static std::unique_ptr<Hash> CreateForSize(size_t count);
   // A listpack-encoded hash holding `listpack`'s field and value pairs. The
-  // fields must be distinct, the pairs at most kListPackMaxEntries, and
-  // every element no longer than kListPackMaxElementLength, as the RDB
+  // fields must be distinct, the pairs at most kListpackMaxEntries, and
+  // every element no longer than kListpackMaxElementLength, as the RDB
   // loader checks.
-  static std::unique_ptr<Hash> CreateFromListPack(
-      std::unique_ptr<memory::ListPack> listpack);
+  static std::unique_ptr<Hash> CreateFromListpack(
+      std::unique_ptr<memory::Listpack> listpack);
 
   bool Set(std::string_view field, std::string_view value);
   std::optional<std::string> Get(std::string_view field) const;
@@ -67,26 +67,26 @@ class Hash {
   Encoding Encoding() const { return encoding_; }
   // A listpack-encoded hash's listpack, in Redis' byte format, as RDB files
   // store it.
-  std::string_view ListPackBytes() const;
+  std::string_view ListpackBytes() const;
 
  private:
   Hash();
-  bool CanAppendToListPack(std::string_view field,
+  bool CanAppendToListpack(std::string_view field,
                            std::string_view value) const;
-  bool SetListPack(std::string_view field, std::string_view value);
+  bool SetListpack(std::string_view field, std::string_view value);
   bool SetDict(std::string_view field, std::string_view value);
-  void ConvertListPackToDict(size_t capacity);
-  std::optional<size_t> FindListPackField(std::string_view field) const;
+  void ConvertListpackToDict(size_t capacity);
+  std::optional<size_t> FindListpackField(std::string_view field) const;
 
   enum Encoding encoding_;
-  std::unique_ptr<memory::ListPack> listpack_;
+  std::unique_ptr<memory::Listpack> listpack_;
   std::unique_ptr<memory::Dict<std::string, std::string>> dict_;
 };
 
 template <typename Visitor>
 bool Hash::VisitValue(std::string_view field, Visitor&& visitor) const {
-  if (encoding_ == Encoding::kListPack) {
-    const std::optional<size_t> field_offset = FindListPackField(field);
+  if (encoding_ == Encoding::kListpack) {
+    const std::optional<size_t> field_offset = FindListpackField(field);
     if (!field_offset.has_value()) {
       return false;
     }
@@ -118,7 +118,7 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
   if (Size() == 0) {
     return true;
   }
-  if (encoding_ == Encoding::kListPack) {
+  if (encoding_ == Encoding::kListpack) {
     return listpack_->ForEachPair(visitor);
   }
   if (encoding_ == Encoding::kDict) {

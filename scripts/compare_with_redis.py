@@ -168,6 +168,7 @@ def edge_cases():
             "-1",
             "abc",
             "9223372036854775807",
+            "-9223372036854775808",
             "4102444800",
         ]:
             add(f"SET e v", f"{cmd} e {v}", "TTL e", "EXISTS e")
@@ -572,7 +573,14 @@ def edge_cases():
     )
 
     # SELECT 1 is left out: this server has one database.
-    add("SELECT 0", "SELECT x", "SELECT -1", "FLUSHDB", "DBSIZE")
+    add(
+        "SELECT 0",
+        "SELECT x",
+        "SELECT -1",
+        "SELECT 99999999999",
+        "FLUSHDB",
+        "DBSIZE",
+    )
 
     return out
 

@@ -26,7 +26,7 @@ char FoldAsciiCase(char value) {
                                       : value;
 }
 
-size_t SplitTokenCount(std::string_view s, std::string_view delimiter) {
+size_t SplitTokenCount(std::string_view text, std::string_view delimiter) {
   if (delimiter.empty()) {
     return 1;
   }
@@ -34,11 +34,11 @@ size_t SplitTokenCount(std::string_view s, std::string_view delimiter) {
   size_t count = 0;
   size_t start = 0;
   size_t end = std::string_view::npos;
-  while ((end = s.find(delimiter, start)) != std::string_view::npos) {
+  while ((end = text.find(delimiter, start)) != std::string_view::npos) {
     ++count;
     start = end + delimiter.size();
   }
-  if (start < s.length()) {
+  if (start < text.length()) {
     ++count;
   }
   return count;
@@ -95,40 +95,40 @@ GlobToken MatchGlobToken(std::string_view pattern, size_t offset, char value) {
 }
 }  // namespace
 
-std::vector<std::string> Split(const std::string& s,
+std::vector<std::string> Split(const std::string& text,
                                const std::string& delimiter) {
   if (delimiter.empty()) {
-    return {s};
+    return {text};
   }
   std::vector<std::string> result;
-  result.reserve(SplitTokenCount(s, delimiter));
+  result.reserve(SplitTokenCount(text, delimiter));
   size_t start = 0;
   size_t end = std::string::npos;
-  while ((end = s.find(delimiter, start)) != std::string::npos) {
-    result.emplace_back(s.substr(start, end - start));
+  while ((end = text.find(delimiter, start)) != std::string::npos) {
+    result.emplace_back(text.substr(start, end - start));
     start = end + delimiter.size();
   }
-  if (start < s.length()) {
-    result.emplace_back(s.substr(start));
+  if (start < text.length()) {
+    result.emplace_back(text.substr(start));
   }
   return result;
 }
 
-std::vector<std::string_view> SplitView(std::string_view s,
+std::vector<std::string_view> SplitView(std::string_view text,
                                         std::string_view delimiter) {
   if (delimiter.empty()) {
-    return {s};
+    return {text};
   }
   std::vector<std::string_view> result;
-  result.reserve(SplitTokenCount(s, delimiter));
+  result.reserve(SplitTokenCount(text, delimiter));
   size_t start = 0;
   size_t end = std::string_view::npos;
-  while ((end = s.find(delimiter, start)) != std::string_view::npos) {
-    result.emplace_back(s.substr(start, end - start));
+  while ((end = text.find(delimiter, start)) != std::string_view::npos) {
+    result.emplace_back(text.substr(start, end - start));
     start = end + delimiter.size();
   }
-  if (start < s.length()) {
-    result.emplace_back(s.substr(start));
+  if (start < text.length()) {
+    result.emplace_back(text.substr(start));
   }
   return result;
 }
@@ -144,8 +144,8 @@ void ShiftCString(char* s, size_t length, size_t offset) {
   std::memmove(s, s + offset, length - offset);
 }
 
-void ToUppercase(std::string& s) {
-  std::ranges::transform(s, s.begin(), [](unsigned char c) -> char {
+void ToUppercase(std::string& text) {
+  std::ranges::transform(text, text.begin(), [](unsigned char c) -> char {
     return static_cast<char>(std::toupper(c));
   });
 }
@@ -215,90 +215,91 @@ bool MatchesGlob(std::string_view value, std::string_view pattern) {
   return pattern_offset == pattern.size();
 }
 
-bool ToInt64(std::string_view s, int64_t* const v) {
+bool ToInt64(std::string_view text, int64_t* const value) {
   // Redis' string2ll: an optional '-', no "-0", no '+'.
-  if (s.empty() || s.size() > 20 || s.front() == '+' || s == "-0") {
+  if (text.empty() || text.size() > 20 || text.front() == '+' || text == "-0") {
     return false;
   }
-  const bool has_sign = s[0] == '-';
-  if (has_sign && s.size() == 1) {
+  const bool has_sign = text[0] == '-';
+  if (has_sign && text.size() == 1) {
     return false;
   }
-  const bool negative = s[0] == '-';
+  const bool negative = text[0] == '-';
   const uint64_t max_magnitude =
       negative ? static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1
                : static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
   uint64_t magnitude = 0;
-  for (size_t i = has_sign ? 1 : 0; i < s.size(); ++i) {
+  for (size_t i = has_sign ? 1 : 0; i < text.size(); ++i) {
     const bool has_redundant_leading_zero =
-        (s[i] == '0') &&
-        ((i == 0 && s.size() > 1) || (i == 1 && has_sign && s.size() > 2));
+        (text[i] == '0') && ((i == 0 && text.size() > 1) ||
+                             (i == 1 && has_sign && text.size() > 2));
     if (has_redundant_leading_zero) {
       return false;
     }
-    if (s[i] < '0' || s[i] > '9') {
+    if (text[i] < '0' || text[i] > '9') {
       return false;
     }
-    const auto digit = static_cast<uint64_t>(s[i] - '0');
+    const auto digit = static_cast<uint64_t>(text[i] - '0');
     if (magnitude > (max_magnitude - digit) / 10) {
       return false;
     }
     magnitude = (magnitude * 10) + digit;
   }
-  if (v != nullptr) {
+  if (value != nullptr) {
     if (negative && magnitude == max_magnitude) {
-      *v = std::numeric_limits<int64_t>::min();
+      *value = std::numeric_limits<int64_t>::min();
     } else {
-      const auto value = static_cast<int64_t>(magnitude);
-      *v = negative ? -value : value;
+      const auto positive = static_cast<int64_t>(magnitude);
+      *value = negative ? -positive : positive;
     }
   }
   return true;
 }
 
-bool ToUint64(std::string_view s, uint64_t* const v) {
-  s = s.substr(0, s.find('\0'));
+bool ToUint64(std::string_view text, uint64_t* const value) {
+  text = text.substr(0, text.find('\0'));
   int64_t signed_value = 0;
-  if (ToInt64(s, &signed_value)) {
+  if (ToInt64(text, &signed_value)) {
     if (signed_value < 0) {
       return false;
     }
-    *v = static_cast<uint64_t>(signed_value);
+    *value = static_cast<uint64_t>(signed_value);
     return true;
   }
-  if (s.empty()) {
+  if (text.empty()) {
     return false;
   }
   // strtoull needs a terminated string; cursors are short.
-  const std::string text(s);
+  const std::string terminated(text);
   char* end = nullptr;
   errno = 0;
-  const uint64_t value = std::strtoull(text.c_str(), &end, 10);
-  if (errno == EINVAL || errno == ERANGE || end != text.c_str() + text.size()) {
+  const uint64_t parsed = std::strtoull(terminated.c_str(), &end, 10);
+  if (errno == EINVAL || errno == ERANGE ||
+      end != terminated.c_str() + terminated.size()) {
     return false;
   }
-  *v = value;
+  *value = parsed;
   return true;
 }
 
-int Int64ToString(std::span<char> dst, int64_t svalue) {
-  if (svalue >= 0) {
-    return Uint64ToString(dst, static_cast<uint64_t>(svalue));
+int Int64ToString(std::span<char> destination, int64_t value) {
+  if (value >= 0) {
+    return Uint64ToString(destination, static_cast<uint64_t>(value));
   }
   // Negate in unsigned arithmetic so INT64_MIN does not overflow.
-  const uint64_t value = 0 - static_cast<uint64_t>(svalue);
-  if (dst.size() < 2) {
-    if (!dst.empty()) {
-      dst[0] = '\0';
+  const uint64_t magnitude = 0 - static_cast<uint64_t>(value);
+  if (destination.size() < 2) {
+    if (!destination.empty()) {
+      destination[0] = '\0';
     }
     return 0;
   }
-  dst[0] = '-';
-  const int length = Uint64ToString(dst.subspan(1), value);
+  destination[0] = '-';
+  const int length = Uint64ToString(destination.subspan(1), magnitude);
   return length == 0 ? 0 : length + 1;
 }
 
-int Uint64ToString(std::span<char> dst, uint64_t value) {
+int Uint64ToString(std::span<char> destination, uint64_t value) {
   static constexpr std::string_view kDigits =
       "0001020304050607080910111213141516171819"
       "2021222324252627282930313233343536373839"
@@ -307,29 +308,29 @@ int Uint64ToString(std::span<char> dst, uint64_t value) {
       "8081828384858687888990919293949596979899";
   // Check length.
   const uint32_t length = Digits10(value);
-  if (length >= dst.size()) {
-    if (!dst.empty()) {
-      dst[0] = '\0';
+  if (length >= destination.size()) {
+    if (!destination.empty()) {
+      destination[0] = '\0';
     }
     return 0;
   }
   // Null term.
   uint32_t next = length - 1;
-  dst[next + 1] = '\0';
+  destination[next + 1] = '\0';
   while (value >= 100) {
     const int i = static_cast<int>((value % 100) * 2);
     value /= 100;
-    dst[next] = kDigits[i + 1];
-    dst[next - 1] = kDigits[i];
+    destination[next] = kDigits[i + 1];
+    destination[next - 1] = kDigits[i];
     next -= 2;
   }
   // Handle the last 1-2 digits.
   if (value < 10) {
-    dst[next] = static_cast<char>('0' + static_cast<uint32_t>(value));
+    destination[next] = static_cast<char>('0' + static_cast<uint32_t>(value));
   } else {
     const int i = static_cast<int>(static_cast<uint32_t>(value) * 2);
-    dst[next] = kDigits[i + 1];
-    dst[next - 1] = kDigits[i];
+    destination[next] = kDigits[i + 1];
+    destination[next - 1] = kDigits[i];
   }
   return static_cast<int>(length);
 }

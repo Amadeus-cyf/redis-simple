@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "data_types/zset/zset.h"
 #include "server/client.h"
@@ -19,7 +20,7 @@ namespace {
 using LimitSpec = ::redis_simple::zset::LimitSpec;
 using RangeByRankSpec = ::redis_simple::zset::RangeByRankSpec;
 using RangeByScoreSpec = ::redis_simple::zset::RangeByScoreSpec;
-using ZSetEntryList = ::redis_simple::zset::ZSetEntryList;
+using ZSetRangeVisitor = ::redis_simple::zset::ZSetRangeVisitor;
 
 constexpr std::string_view kFlagByLex = "BYLEX";
 constexpr std::string_view kFlagByScore = "BYSCORE";
@@ -165,7 +166,7 @@ void ApplyRangeOptions(const RangeOptions& options, Spec* const spec) {
 
 RangeStatus RangeByRank(Client* const client, const CommandArgs& args,
                         const RangeOptions& options,
-                        ZSetEntryList* const result) {
+                        const ZSetRangeVisitor& visitor) {
   RangeByRankSpec spec;
   if (!ParseRankRange(args[1], args[2], &spec)) {
     return RangeStatus::kNotAnInteger;
@@ -180,13 +181,13 @@ RangeStatus RangeByRank(Client* const client, const CommandArgs& args,
   if (object == nullptr) {
     return RangeStatus::kOk;
   }
-  *result = object->ZSet()->RangeByRank(&spec);
+  object->ZSet()->ForEachInRankRange(&spec, visitor);
   return RangeStatus::kOk;
 }
 
 RangeStatus RangeByScore(Client* const client, const CommandArgs& args,
                          const RangeOptions& options,
-                         ZSetEntryList* const result) {
+                         const ZSetRangeVisitor& visitor) {
   RangeByScoreSpec spec;
   const std::string_view start = options.reverse ? args[2] : args[1];
   const std::string_view stop = options.reverse ? args[1] : args[2];
@@ -203,13 +204,13 @@ RangeStatus RangeByScore(Client* const client, const CommandArgs& args,
   if (object == nullptr) {
     return RangeStatus::kOk;
   }
-  *result = object->ZSet()->RangeByScore(&spec);
+  object->ZSet()->ForEachInScoreRange(&spec, visitor);
   return RangeStatus::kOk;
 }
 
 RangeStatus RangeByLex(Client* const client, const CommandArgs& args,
                        const RangeOptions& options,
-                       ZSetEntryList* const result) {
+                       const ZSetRangeVisitor& visitor) {
   zset::RangeByLexSpec spec;
   const std::string_view start = options.reverse ? args[2] : args[1];
   const std::string_view stop = options.reverse ? args[1] : args[2];
@@ -227,28 +228,46 @@ RangeStatus RangeByLex(Client* const client, const CommandArgs& args,
   if (object == nullptr) {
     return RangeStatus::kOk;
   }
-  *result = object->ZSet()->RangeByLex(&spec);
+  object->ZSet()->ForEachInLexRange(&spec, visitor);
   return RangeStatus::kOk;
 }
 
-std::string EncodeZRangeReply(const ZSetEntryList& result, bool with_scores,
-                              reply::ProtocolVersion protocol) {
-  const bool nested_scores =
-      with_scores && protocol == reply::ProtocolVersion::kResp3;
-  const size_t reply_size =
-      with_scores && !nested_scores ? result.size() * 2 : result.size();
-  std::string encoded = reply::FromArrayHeader(reply_size);
-  for (const auto* entry : result) {
-    if (nested_scores) {
-      encoded.append(reply::FromArrayHeader(2));
+// Encodes a range's members as they are visited, so a reply is built in one
+// pass without copying the members first. The array header needs the count,
+// so it is sent as a separate buffer in front of the elements.
+class RangeReply {
+ public:
+  RangeReply(bool with_scores, reply::ProtocolVersion protocol)
+      : with_scores_(with_scores), protocol_(protocol) {}
+
+  void Add(std::string_view member, double score) {
+    // RESP3 pairs each member with its score in a nested array; RESP2
+    // replies with one flat array.
+    if (NestedScores()) {
+      reply::AppendArrayHeader(2, &elements_);
     }
-    reply::AppendBulkString(entry->member, &encoded);
-    if (with_scores) {
-      reply::AppendFloat(entry->score, protocol, &encoded);
+    reply::AppendBulkString(member, &elements_);
+    if (with_scores_) {
+      reply::AppendFloat(score, protocol_, &elements_);
     }
+    ++count_;
   }
-  return encoded;
-}
+
+  void Send(Client* const client) && {
+    const size_t size = with_scores_ && !NestedScores() ? count_ * 2 : count_;
+    client->AddReply(reply::FromArrayHeader(size), std::move(elements_));
+  }
+
+ private:
+  [[nodiscard]] bool NestedScores() const {
+    return with_scores_ && protocol_ == reply::ProtocolVersion::kResp3;
+  }
+
+  bool with_scores_;
+  reply::ProtocolVersion protocol_;
+  size_t count_{};
+  std::string elements_;
+};
 
 void AddRangeError(Client* const client, RangeStatus status) {
   switch (status) {
@@ -293,29 +312,34 @@ void AddRangeReply(Client* const client, RangeType type, Direction direction) {
     return;
   }
 
-  ZSetEntryList entries;
+  RangeReply reply(options.with_scores, client->Protocol());
+  // A negative LIMIT offset selects nothing, but the bounds and the key's
+  // type are still checked. Capturing only `reply` keeps the visitor inside
+  // std::function's inline storage.
+  const ZSetRangeVisitor visitor =
+      options.empty
+          ? ZSetRangeVisitor([](std::string_view, double) {})
+          : ZSetRangeVisitor([&reply](std::string_view member, double score) {
+              reply.Add(member, score);
+            });
   RangeStatus status = RangeStatus::kOk;
   switch (options.type) {
     case RangeType::kAuto:
     case RangeType::kRank:
-      status = RangeByRank(client, args, options, &entries);
+      status = RangeByRank(client, args, options, visitor);
       break;
     case RangeType::kScore:
-      status = RangeByScore(client, args, options, &entries);
+      status = RangeByScore(client, args, options, visitor);
       break;
     case RangeType::kLex:
-      status = RangeByLex(client, args, options, &entries);
+      status = RangeByLex(client, args, options, visitor);
       break;
   }
   if (status != RangeStatus::kOk) {
     AddRangeError(client, status);
     return;
   }
-  if (options.empty) {
-    entries.clear();
-  }
-  client->AddReply(
-      EncodeZRangeReply(entries, options.with_scores, client->Protocol()));
+  std::move(reply).Send(client);
 }
 
 std::optional<int64_t> ToReplyInteger(size_t value) {

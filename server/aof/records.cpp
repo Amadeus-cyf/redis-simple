@@ -66,8 +66,8 @@ bool ReserveCommand(std::string_view command,
                     const std::vector<std::string_view>& args,
                     std::string* const output) {
   size_t payload_size = command.size();
-  for (const auto arg : args) {
-    if (!AddSize(arg.size(), &payload_size)) {
+  for (const auto argument : args) {
+    if (!AddSize(argument.size(), &payload_size)) {
       return false;
     }
   }
@@ -95,8 +95,8 @@ bool AppendCommand(std::string_view command,
   }
   reply::AppendArrayHeader(args.size() + 1, output);
   reply::AppendBulkString(command, output);
-  for (std::string_view arg : args) {
-    reply::AppendBulkString(arg, output);
+  for (std::string_view argument : args) {
+    reply::AppendBulkString(argument, output);
   }
   return true;
 }

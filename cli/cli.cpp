@@ -37,8 +37,8 @@ std::string ReplyListToString(const std::vector<std::string>& reply) {
 
 std::string EncodeCommand(const std::vector<std::string_view>& args) {
   std::string encoded = reply::FromArrayHeader(args.size());
-  for (const auto arg : args) {
-    reply::AppendBulkString(arg, &encoded);
+  for (const auto argument : args) {
+    reply::AppendBulkString(argument, &encoded);
   }
   return encoded;
 }
@@ -96,7 +96,7 @@ std::optional<std::string> RedisCli::MaybeReadReply() {
   }
   if (status == resp_parser::ParseStatus::kInvalid) {
     reply_buffer_.Clear();
-    return kErrResp;
+    return std::string(kErrorResponse);
   }
   return std::nullopt;
 }
@@ -105,7 +105,7 @@ std::string RedisCli::ReadReplyFromConnection() {
   std::vector<std::string> reply;
   if (!query_buffer_.Empty()) {
     if (!WriteToConnection(connection_.get(), query_buffer_.View())) {
-      return kErrResp;
+      return std::string(kErrorResponse);
     }
     query_buffer_.Clear();
   }
@@ -114,7 +114,7 @@ std::string RedisCli::ReadReplyFromConnection() {
   while (true) {
     const ssize_t read = connection_->SyncRead(buffer, 1000);
     if (read <= 0) {
-      return kNoReplyResp;
+      return std::string(kNoReplyResponse);
     }
     reply_buffer_.Append(buffer.data(), static_cast<size_t>(read));
     const resp_parser::ParseStatus status = ProcessReply(reply);
@@ -123,7 +123,7 @@ std::string RedisCli::ReadReplyFromConnection() {
     }
     if (status == resp_parser::ParseStatus::kInvalid) {
       reply_buffer_.Clear();
-      return kErrResp;
+      return std::string(kErrorResponse);
     }
   }
 }

@@ -16,18 +16,18 @@ namespace redis_simple::memory {
 namespace {
 // Reads every element as text, or nullopt if the reader reports corruption.
 std::optional<std::vector<std::string>> ReadAll(std::string_view blob) {
-  ListPackReader reader(blob);
+  ListpackReader reader(blob);
   std::vector<std::string> elements;
-  ListPackReader::Element element;
+  ListpackReader::Element element;
   while (true) {
     switch (reader.Next(&element)) {
-      case ListPackReader::Status::kElement:
+      case ListpackReader::Status::kElement:
         elements.push_back(element.is_integer ? std::to_string(element.integer)
                                               : std::string(element.string));
         break;
-      case ListPackReader::Status::kEnd:
+      case ListpackReader::Status::kEnd:
         return elements;
-      case ListPackReader::Status::kCorrupt:
+      case ListpackReader::Status::kCorrupt:
         return std::nullopt;
     }
   }
@@ -58,19 +58,19 @@ std::vector<std::string> SampleElements() {
   return elements;
 }
 
-TEST(ListPackReaderTest, ReadsWhatListPackWrites) {
-  ListPack listpack;
+TEST(ListpackReaderTest, ReadsWhatListpackWrites) {
+  Listpack listpack;
   const std::vector<std::string> elements = SampleElements();
   for (const std::string& element : elements) {
     listpack.Append(element);
   }
   EXPECT_EQ(ReadAll(listpack.Bytes()), elements);
-  EXPECT_EQ(ListPackReader(listpack.Bytes()).HeaderCount(), 0);
-  ListPack empty;
+  EXPECT_EQ(ListpackReader(listpack.Bytes()).HeaderCount(), 0);
+  Listpack empty;
   EXPECT_EQ(ReadAll(empty.Bytes()), std::vector<std::string>{});
 }
 
-TEST(ListPackReaderTest, ReadsRedisBytes) {
+TEST(ListpackReaderTest, ReadsRedisBytes) {
   // RPUSH l 0 -4097 5000-byte-string, as Redis 8.10 encodes it.
   std::string blob = {'\0', '\0', '\0', '\0', '\x03', '\0'};
   blob += std::string("\x00\x01", 2);              // 0
@@ -86,8 +86,8 @@ TEST(ListPackReaderTest, ReadsRedisBytes) {
             (std::vector<std::string>{"0", "-4097", std::string(5000, 'q')}));
 }
 
-TEST(ListPackReaderTest, RejectsEveryTruncationAndBadHeader) {
-  ListPack listpack;
+TEST(ListpackReaderTest, RejectsEveryTruncationAndBadHeader) {
+  Listpack listpack;
   for (const std::string& element : SampleElements()) {
     listpack.Append(element);
   }
@@ -101,8 +101,8 @@ TEST(ListPackReaderTest, RejectsEveryTruncationAndBadHeader) {
   EXPECT_EQ(ReadAll(wrong_count), std::nullopt);
 }
 
-TEST(ListPackReaderTest, NeverReadsOutsideCorruptedBytes) {
-  ListPack listpack;
+TEST(ListpackReaderTest, NeverReadsOutsideCorruptedBytes) {
+  Listpack listpack;
   for (const std::string& element : SampleElements()) {
     listpack.Append(element);
   }

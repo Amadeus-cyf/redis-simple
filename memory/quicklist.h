@@ -12,7 +12,7 @@
 #include "memory/listpack.h"
 
 namespace redis_simple::memory {
-class QuickList {
+class Quicklist {
  public:
   static constexpr size_t kDefaultNodeMaxBytes = 8192;
   enum class RemoveDirection {
@@ -20,10 +20,10 @@ class QuickList {
     kFromTail,
   };
 
-  QuickList();
-  explicit QuickList(size_t node_max_bytes);
-  QuickList(const QuickList&) = delete;
-  QuickList& operator=(const QuickList&) = delete;
+  Quicklist();
+  explicit Quicklist(size_t node_max_bytes);
+  Quicklist(const Quicklist&) = delete;
+  Quicklist& operator=(const Quicklist&) = delete;
 
   bool LPush(std::string_view value);
   bool RPush(std::string_view value);
@@ -42,7 +42,7 @@ class QuickList {
   bool Empty() const { return size_ == 0; }
   size_t Size() const { return size_; }
   size_t NodeCount() const { return node_count_; }
-  // Calls `visitor(const ListPack&)` for each node, head to tail, until it
+  // Calls `visitor(const Listpack&)` for each node, head to tail, until it
   // returns false.
   template <typename Visitor>
   bool ForEachNode(Visitor&& visitor) const {
@@ -54,18 +54,18 @@ class QuickList {
     }
     return true;
   }
-  std::optional<size_t> ListPackBytes() const;
-  std::unique_ptr<ListPack> ReleaseListPack();
+  std::optional<size_t> ListpackBytes() const;
+  std::unique_ptr<Listpack> ReleaseListpack();
   // Takes `listpack` as the only node of this empty list without re-encoding
   // its elements, splitting it if it exceeds the node size limit. This is the
-  // inverse of ReleaseListPack, like Redis' quicklistAppendListpack.
-  bool AdoptListPack(std::unique_ptr<ListPack> listpack);
+  // inverse of ReleaseListpack, like Redis' quicklistAppendListpack.
+  bool AdoptListpack(std::unique_ptr<Listpack> listpack);
 
  private:
   struct Node {
     Node();
 
-    std::unique_ptr<ListPack> listpack;
+    std::unique_ptr<Listpack> listpack;
     std::unique_ptr<Node> next;
     Node* prev;
   };
@@ -102,7 +102,7 @@ class QuickList {
 };
 
 template <typename Visitor>
-bool QuickList::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
+bool Quicklist::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   if (start > stop || start >= size_) {
     return true;
   }
@@ -131,7 +131,7 @@ bool QuickList::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
 }
 
 template <typename Visitor>
-bool QuickList::ForEachReverse(size_t start, size_t stop,
+bool Quicklist::ForEachReverse(size_t start, size_t stop,
                                Visitor&& visitor) const {
   if (start > stop || start >= size_) {
     return true;

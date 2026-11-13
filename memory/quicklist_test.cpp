@@ -10,8 +10,8 @@
 #include <vector>
 
 namespace redis_simple::memory {
-TEST(QuickListTest, PushAndPopPreserveDequeOrder) {
-  QuickList quicklist;
+TEST(QuicklistTest, PushAndPopPreserveDequeOrder) {
+  Quicklist quicklist;
 
   ASSERT_TRUE(quicklist.LPush("b"));
   ASSERT_TRUE(quicklist.LPush("a"));
@@ -29,8 +29,8 @@ TEST(QuickListTest, PushAndPopPreserveDequeOrder) {
   EXPECT_EQ(quicklist.NodeCount(), 0);
 }
 
-TEST(QuickListTest, SplitTailOnLimit) {
-  QuickList quicklist(48);
+TEST(QuicklistTest, SplitTailOnLimit) {
+  Quicklist quicklist(48);
   const std::string value(32, 'x');
 
   ASSERT_TRUE(quicklist.RPush(value + "1"));
@@ -45,8 +45,8 @@ TEST(QuickListTest, SplitTailOnLimit) {
   EXPECT_EQ(quicklist.NodeCount(), 0);
 }
 
-TEST(QuickListTest, SplitHeadOnLimit) {
-  QuickList quicklist(48);
+TEST(QuicklistTest, SplitHeadOnLimit) {
+  Quicklist quicklist(48);
   const std::string value(32, 'y');
 
   ASSERT_TRUE(quicklist.LPush(value + "1"));
@@ -61,8 +61,8 @@ TEST(QuickListTest, SplitHeadOnLimit) {
   EXPECT_EQ(quicklist.NodeCount(), 0);
 }
 
-TEST(QuickListTest, AllowLargeSingleEntry) {
-  QuickList quicklist(16);
+TEST(QuicklistTest, AllowLargeSingleEntry) {
+  Quicklist quicklist(16);
   const std::string value(128, 'z');
 
   ASSERT_TRUE(quicklist.RPush(value));
@@ -73,8 +73,8 @@ TEST(QuickListTest, AllowLargeSingleEntry) {
   EXPECT_TRUE(quicklist.Empty());
 }
 
-TEST(QuickListTest, MergeAfterLPop) {
-  QuickList quicklist(96);
+TEST(QuicklistTest, MergeAfterLPop) {
+  Quicklist quicklist(96);
   const std::string value(32, 'm');
 
   ASSERT_TRUE(quicklist.RPush(value + "1"));
@@ -89,8 +89,8 @@ TEST(QuickListTest, MergeAfterLPop) {
             (std::vector<std::string>{value + "2", value + "3"}));
 }
 
-TEST(QuickListTest, MergeAfterRPop) {
-  QuickList quicklist(96);
+TEST(QuicklistTest, MergeAfterRPop) {
+  Quicklist quicklist(96);
   const std::string value(32, 'n');
 
   ASSERT_TRUE(quicklist.LPush(value + "3"));
@@ -105,8 +105,8 @@ TEST(QuickListTest, MergeAfterRPop) {
             (std::vector<std::string>{value + "1", value + "2"}));
 }
 
-TEST(QuickListTest, RangeAcrossNodes) {
-  QuickList quicklist(48);
+TEST(QuicklistTest, RangeAcrossNodes) {
+  Quicklist quicklist(48);
   const std::string value(32, 'r');
 
   ASSERT_TRUE(quicklist.RPush(value + "1"));
@@ -124,8 +124,8 @@ TEST(QuickListTest, RangeAcrossNodes) {
             (std::vector<std::string>{value + "3", value + "4"}));
 }
 
-TEST(QuickListTest, RangeInvalidBounds) {
-  QuickList quicklist(48);
+TEST(QuicklistTest, RangeInvalidBounds) {
+  Quicklist quicklist(48);
 
   EXPECT_TRUE(quicklist.Range(0, 0).empty());
 
@@ -136,8 +136,8 @@ TEST(QuickListTest, RangeInvalidBounds) {
   EXPECT_TRUE(quicklist.Range(1, 0).empty());
 }
 
-TEST(QuickListTest, SetSplitsOversizedNode) {
-  QuickList quicklist(96);
+TEST(QuicklistTest, SetSplitsOversizedNode) {
+  Quicklist quicklist(96);
   const std::string value(32, 's');
   const std::string large_value(128, 'l');
 
@@ -153,8 +153,8 @@ TEST(QuickListTest, SetSplitsOversizedNode) {
   EXPECT_FALSE(quicklist.Set(2, "missing"));
 }
 
-TEST(QuickListTest, RemoveAcrossNodes) {
-  QuickList quicklist(48);
+TEST(QuicklistTest, RemoveAcrossNodes) {
+  Quicklist quicklist(48);
   const std::string value(32, 'd');
 
   ASSERT_TRUE(quicklist.RPush(value + "1"));
@@ -165,21 +165,21 @@ TEST(QuickListTest, RemoveAcrossNodes) {
   ASSERT_EQ(quicklist.NodeCount(), 5);
 
   ASSERT_EQ(
-      quicklist.Remove(value + "2", 1, QuickList::RemoveDirection::kFromTail),
+      quicklist.Remove(value + "2", 1, Quicklist::RemoveDirection::kFromTail),
       1);
   EXPECT_EQ(quicklist.Range(0, 3),
             (std::vector<std::string>{value + "1", value + "2", value + "3",
                                       value + "4"}));
 
   ASSERT_EQ(
-      quicklist.Remove(value + "2", 0, QuickList::RemoveDirection::kFromHead),
+      quicklist.Remove(value + "2", 0, Quicklist::RemoveDirection::kFromHead),
       1);
   EXPECT_EQ(quicklist.Range(0, 2),
             (std::vector<std::string>{value + "1", value + "3", value + "4"}));
 }
 
-TEST(QuickListTest, TrimAcrossNodes) {
-  QuickList quicklist(48);
+TEST(QuicklistTest, TrimAcrossNodes) {
+  Quicklist quicklist(48);
   const std::string value(32, 't');
 
   ASSERT_TRUE(quicklist.RPush(value + "1"));
@@ -198,25 +198,25 @@ TEST(QuickListTest, TrimAcrossNodes) {
   EXPECT_EQ(quicklist.NodeCount(), 0);
 }
 
-TEST(QuickListTest, RemoveFromTailWithinOneNode) {
-  QuickList quicklist(256);
+TEST(QuicklistTest, RemoveFromTailWithinOneNode) {
+  Quicklist quicklist(256);
   for (std::string_view value : {"x", "keep", "x", "x", "keep", "x"}) {
     ASSERT_TRUE(quicklist.RPush(value));
   }
   ASSERT_EQ(quicklist.NodeCount(), 1);
 
-  EXPECT_EQ(quicklist.Remove("x", 2, QuickList::RemoveDirection::kFromTail), 2);
+  EXPECT_EQ(quicklist.Remove("x", 2, Quicklist::RemoveDirection::kFromTail), 2);
   EXPECT_EQ(quicklist.Range(0, quicklist.Size() - 1),
             (std::vector<std::string>{"x", "keep", "x", "keep"}));
 }
 
-TEST(QuickListTest, ReleasesSingleListPackWithoutRebuilding) {
-  QuickList quicklist(256);
+TEST(QuicklistTest, ReleasesSingleListpackWithoutRebuilding) {
+  Quicklist quicklist(256);
   ASSERT_TRUE(quicklist.RPush("one"));
   ASSERT_TRUE(quicklist.RPush("two"));
   ASSERT_EQ(quicklist.NodeCount(), 1);
 
-  std::unique_ptr<ListPack> listpack = quicklist.ReleaseListPack();
+  std::unique_ptr<Listpack> listpack = quicklist.ReleaseListpack();
 
   ASSERT_NE(listpack, nullptr);
   EXPECT_TRUE(quicklist.Empty());
@@ -230,10 +230,10 @@ TEST(QuickListTest, ReleasesSingleListPackWithoutRebuilding) {
   EXPECT_EQ(listpack->Get(last.value_or(0)), "two");
 }
 
-TEST(QuickListTest, RangesFromEitherEndMatchAModel) {
+TEST(QuicklistTest, RangesFromEitherEndMatchAModel) {
   // Small nodes give a long chain, so ranges near the tail are reached by
   // walking from the tail and ranges near the head from the head.
-  QuickList quicklist(48);
+  Quicklist quicklist(48);
   std::vector<std::string> model;
   model.reserve(40);
   for (int index = 0; index < 40; ++index) {
@@ -278,8 +278,8 @@ TEST(QuickListTest, RangesFromEitherEndMatchAModel) {
   EXPECT_EQ(calls, 2);
 }
 
-TEST(QuickListTest, SetSplitsOnlyTheReplacedNode) {
-  QuickList quicklist(96);
+TEST(QuicklistTest, SetSplitsOnlyTheReplacedNode) {
+  Quicklist quicklist(96);
   const std::string value(30, 'v');
   for (int index = 0; index < 9; ++index) {
     ASSERT_TRUE(quicklist.RPush(value + std::to_string(index)));

@@ -94,6 +94,12 @@ int Run() {
       {a, {"MULTI"}, "OK\n"},
       {a, {"SET", "tx_counter", "0"}, "QUEUED\n"},
       {a, {"EXEC"}, "OK\n\n\n"},
+      // LTRIM of a missing key changes nothing, so a WATCH on it survives.
+      {a, {"WATCH", "tx_missing"}, "OK\n"},
+      {b, {"LTRIM", "tx_missing", "0", "-1"}, "OK\n"},
+      {a, {"MULTI"}, "OK\n"},
+      {a, {"SET", "tx_counter", "0"}, "QUEUED\n"},
+      {a, {"EXEC"}, "OK\n\n\n"},
       // UNWATCH forgets earlier modifications.
       {a, {"WATCH", "tx_counter"}, "OK\n"},
       {b, {"SET", "tx_counter", "5"}, "OK\n"},

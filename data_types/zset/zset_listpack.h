@@ -6,29 +6,31 @@
 #include <optional>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "data_types/zset/zset_storage.h"
 #include "memory/listpack.h"
 
 namespace redis_simple::zset {
-class ZSetListPack : public ZSetStorage {
+class ZSetListpack : public ZSetStorage {
  public:
-  ZSetListPack();
-  explicit ZSetListPack(std::unique_ptr<memory::ListPack> listpack)
+  ZSetListpack();
+  explicit ZSetListpack(std::unique_ptr<memory::Listpack> listpack)
       : listpack_(std::move(listpack)) {}
   bool InsertOrUpdate(std::string_view member, double score,
                       bool* changed) override;
   bool Delete(std::string_view member) override;
   std::optional<double> Score(std::string_view member) const override;
   std::optional<size_t> Rank(std::string_view member) const override;
-  ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const override;
-  ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const override;
+  void ForEachInRankRange(const RangeByRankSpec* spec,
+                          const ZSetRangeVisitor& visitor) const override;
+  void ForEachInScoreRange(const RangeByScoreSpec* spec,
+                           const ZSetRangeVisitor& visitor) const override;
   size_t Count(const RangeByScoreSpec* spec) const override;
-  ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const override;
+  void ForEachInLexRange(const RangeByLexSpec* spec,
+                         const ZSetRangeVisitor& visitor) const override;
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
-  std::optional<std::string_view> ListPackBytes() const override {
+  std::optional<std::string_view> ListpackBytes() const override {
     return listpack_->Bytes();
   }
   size_t Scan(size_t cursor, size_t count,
@@ -37,7 +39,7 @@ class ZSetListPack : public ZSetStorage {
     // Since listpack include both members and scores, the actual size should be
     // divided by 2.
     return listpack_->Size() / 2;
-  };
+  }
 
  private:
   struct EntryView {
@@ -51,11 +53,16 @@ class ZSetListPack : public ZSetStorage {
   std::optional<std::string_view> ValueAt(size_t offset) const;
   std::optional<EntryView> EntryAt(size_t member_offset) const;
   std::optional<double> ScoreAt(size_t offset) const;
-  ZSetEntryList RangeByRankUtil(const RangeByRankSpec* spec) const;
-  ZSetEntryList RevRangeByRankUtil(const RangeByRankSpec* spec) const;
-  ZSetEntryList RangeByScoreUtil(const RangeByScoreSpec* spec) const;
-  ZSetEntryList RevRangeByScoreUtil(const RangeByScoreSpec* spec) const;
-  const ZSetEntry* AddRangeResult(std::string_view member, double score) const;
+  // The forward and reverse walks behind the range visitors. A rank spec
+  // must be normalized and valid.
+  void VisitRankRange(const RangeByRankSpec* spec,
+                      const ZSetRangeVisitor& visitor) const;
+  void VisitRankRangeReversed(const RangeByRankSpec* spec,
+                              const ZSetRangeVisitor& visitor) const;
+  void VisitScoreRange(const RangeByScoreSpec* spec,
+                       const ZSetRangeVisitor& visitor) const;
+  void VisitScoreRangeReversed(const RangeByScoreSpec* spec,
+                               const ZSetRangeVisitor& visitor) const;
   std::optional<size_t> NextMemberAfterScore(size_t score_offset) const;
   std::optional<size_t> PrevScoreBeforeMember(size_t member_offset) const;
   std::optional<size_t> PrevMemberBeforeMember(size_t member_offset) const;
@@ -69,8 +76,7 @@ class ZSetListPack : public ZSetStorage {
   static bool GreaterOrEqual(double score, const RangeByScoreSpec* spec);
   static bool LessOrEqual(double score, const RangeByScoreSpec* spec);
   // Listpack storing member score pairs
-  std::unique_ptr<memory::ListPack> listpack_;
-  mutable std::vector<ZSetEntry> range_cache_;
+  std::unique_ptr<memory::Listpack> listpack_;
 };
 }  // namespace redis_simple::zset
 

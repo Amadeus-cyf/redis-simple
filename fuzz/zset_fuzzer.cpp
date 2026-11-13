@@ -31,9 +31,8 @@ void RequireEntries(const zset::ZSetEntryList& actual,
                     const std::vector<Entry>& expected) {
   Require(actual.size() == expected.size());
   for (size_t index = 0; index < expected.size(); ++index) {
-    Require(actual[index] != nullptr);
-    Require(actual[index]->member == expected[index].first);
-    Require(actual[index]->score == expected[index].second);
+    Require(actual[index].member == expected[index].first);
+    Require(actual[index].score == expected[index].second);
   }
 }
 

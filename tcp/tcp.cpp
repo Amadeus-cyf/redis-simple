@@ -51,11 +51,11 @@ int TcpGenericCreateSocket(int domain, int type, int protocol, bool non_block) {
 }
 
 int TcpGenericAccept(int socket_fd, sockaddr* address, socklen_t* length) {
-  int s = accept(socket_fd, address, length);
-  if (s == -1) {
+  int accepted_fd = accept(socket_fd, address, length);
+  if (accepted_fd == -1) {
     return ToInt(TcpStatusCode::kError);
   }
-  return s;
+  return accepted_fd;
 }
 
 int SetBlock(int fd, bool block) {
@@ -101,9 +101,11 @@ int TcpBindAndConnect(const TcpAddress& remote,
     return ToInt(TcpStatusCode::kError);
   }
   int socket_fd = -1;
-  for (const addrinfo* p = info; p != nullptr; p = p->ai_next) {
-    socket_fd = TcpGenericCreateSocket(p->ai_family, p->ai_socktype,
-                                       p->ai_protocol, non_block);
+  for (const addrinfo* candidate = info; candidate != nullptr;
+       candidate = candidate->ai_next) {
+    socket_fd =
+        TcpGenericCreateSocket(candidate->ai_family, candidate->ai_socktype,
+                               candidate->ai_protocol, non_block);
     if (socket_fd < 0) {
       continue;
     }
@@ -115,7 +117,7 @@ int TcpBindAndConnect(const TcpAddress& remote,
       continue;
     }
 
-    if (connect(socket_fd, p->ai_addr, p->ai_addrlen) < 0) {
+    if (connect(socket_fd, candidate->ai_addr, candidate->ai_addrlen) < 0) {
       // For nonblocking sockets, EINPROGRESS means the connection attempt is
       // still valid and completion will be reported by the writable event.
       if (!non_block || errno != EINPROGRESS) {
@@ -177,17 +179,18 @@ int TcpBind(int socket_fd, const TcpAddress& address) {
     RS_LOG_DEBUG("getaddrinfo failed: %s\n", gai_strerror(address_status));
     return ToInt(TcpStatusCode::kError);
   }
-  int r = ToInt(TcpStatusCode::kError);
-  for (const addrinfo* p = info; p != nullptr; p = p->ai_next) {
-    if (bind(socket_fd, p->ai_addr, p->ai_addrlen) < 0) {
+  int status = ToInt(TcpStatusCode::kError);
+  for (const addrinfo* candidate = info; candidate != nullptr;
+       candidate = candidate->ai_next) {
+    if (bind(socket_fd, candidate->ai_addr, candidate->ai_addrlen) < 0) {
       continue;
     }
     RS_LOG_DEBUG("bind success\n");
-    r = ToInt(TcpStatusCode::kOk);
+    status = ToInt(TcpStatusCode::kOk);
     break;
   }
   freeaddrinfo(info);
-  return r;
+  return status;
 }
 
 int TcpListen(int socket_fd) {

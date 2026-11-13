@@ -22,20 +22,20 @@ size_t RequireIndex(std::optional<size_t> index) {
   return index.value_or(0);
 }
 
-ListPack::ListPackEntry StringEntry(std::string_view value) {
+Listpack::ListpackEntry StringEntry(std::string_view value) {
   return {value, 0, false};
 }
 
-ListPack::ListPackEntry IntEntry(int64_t value) { return {"", value, true}; }
+Listpack::ListpackEntry IntEntry(int64_t value) { return {"", value, true}; }
 
-std::string StringAt(const ListPack& listpack, size_t offset) {
+std::string StringAt(const Listpack& listpack, size_t offset) {
   size_t length = 0;
   const unsigned char* data = listpack.Get(offset, &length);
   return {reinterpret_cast<const char*>(data), length};
 }
 
-void ExpectEntryAt(const ListPack& listpack, size_t offset,
-                   const ListPack::ListPackEntry& entry) {
+void ExpectEntryAt(const Listpack& listpack, size_t offset,
+                   const Listpack::ListpackEntry& entry) {
   if (!entry.is_integer) {
     EXPECT_EQ(StringAt(listpack, offset), entry.string_value);
     return;
@@ -47,8 +47,8 @@ void ExpectEntryAt(const ListPack& listpack, size_t offset,
 }
 
 std::optional<size_t> ExpectEntriesFrom(
-    const ListPack& listpack, size_t start_offset,
-    const std::vector<ListPack::ListPackEntry>& entries) {
+    const Listpack& listpack, size_t start_offset,
+    const std::vector<Listpack::ListpackEntry>& entries) {
   std::optional<size_t> offset = start_offset;
   for (const auto& entry : entries) {
     if (!offset.has_value()) {
@@ -61,7 +61,7 @@ std::optional<size_t> ExpectEntriesFrom(
   return offset;
 }
 
-size_t Advance(const ListPack& listpack, size_t offset, size_t steps) {
+size_t Advance(const Listpack& listpack, size_t offset, size_t steps) {
   for (size_t step = 0; step < steps; ++step) {
     const std::optional<size_t> next = listpack.Next(offset);
     if (!next.has_value()) {
@@ -73,7 +73,7 @@ size_t Advance(const ListPack& listpack, size_t offset, size_t steps) {
   return offset;
 }
 
-std::vector<ListPack::ListPackEntry> MakeBatchAppendEntries(
+std::vector<Listpack::ListpackEntry> MakeBatchAppendEntries(
     std::string_view s0, std::string_view s1, std::string_view s2) {
   return {
       StringEntry(s0),     IntEntry(INT64_MIN), IntEntry(INT64_MAX),
@@ -82,7 +82,7 @@ std::vector<ListPack::ListPackEntry> MakeBatchAppendEntries(
   };
 }
 
-std::vector<ListPack::ListPackEntry> MakeBatchPrependEntries(
+std::vector<Listpack::ListpackEntry> MakeBatchPrependEntries(
     std::string_view s0, std::string_view s1, std::string_view s2) {
   return {
       StringEntry(s0),         IntEntry(INT64_MIN + 7),
@@ -93,7 +93,7 @@ std::vector<ListPack::ListPackEntry> MakeBatchPrependEntries(
   };
 }
 
-std::vector<ListPack::ListPackEntry> MakeBatchInsertEntries(
+std::vector<Listpack::ListpackEntry> MakeBatchInsertEntries(
     std::string_view s0, std::string_view s1, std::string_view s2) {
   return {
       StringEntry(s0),          IntEntry(INT64_MIN + 21),
@@ -104,8 +104,8 @@ std::vector<ListPack::ListPackEntry> MakeBatchInsertEntries(
   };
 }
 
-std::unique_ptr<ListPack> MakeAppendedListPack() {
-  auto listpack = std::make_unique<ListPack>();
+std::unique_ptr<Listpack> MakeAppendedListpack() {
+  auto listpack = std::make_unique<Listpack>();
   listpack->Append(-1234);
   std::string s0("test string 0");
   listpack->Append(s0);
@@ -120,8 +120,8 @@ std::unique_ptr<ListPack> MakeAppendedListPack() {
   return listpack;
 }
 
-std::unique_ptr<ListPack> MakePrependedListPack() {
-  auto listpack = MakeAppendedListPack();
+std::unique_ptr<Listpack> MakePrependedListpack() {
+  auto listpack = MakeAppendedListpack();
   listpack->Prepend(std::string(4094, 'c'));
   listpack->Prepend(INT64_MAX - 4);
   listpack->Prepend(std::string(4096, 'e'));
@@ -131,8 +131,8 @@ std::unique_ptr<ListPack> MakePrependedListPack() {
   return listpack;
 }
 
-std::unique_ptr<ListPack> MakeInsertedListPack() {
-  auto listpack = MakePrependedListPack();
+std::unique_ptr<Listpack> MakeInsertedListpack() {
+  auto listpack = MakePrependedListpack();
   std::string s0("test string 2");
   std::string s1(4094, 'f');
   std::string s2(4097, 'g');
@@ -149,8 +149,8 @@ std::unique_ptr<ListPack> MakeInsertedListPack() {
   return listpack;
 }
 
-std::unique_ptr<ListPack> MakeReplacedListPack() {
-  auto listpack = MakeInsertedListPack();
+std::unique_ptr<Listpack> MakeReplacedListpack() {
+  auto listpack = MakeInsertedListpack();
   size_t offset = RequireIndex(listpack->First());
   for (int i = 0; i < 10; ++i) {
     offset = RequireIndex(listpack->Next(offset));
@@ -166,8 +166,8 @@ std::unique_ptr<ListPack> MakeReplacedListPack() {
   return listpack;
 }
 
-std::unique_ptr<ListPack> MakeBatchAppendedListPack() {
-  auto listpack = MakeReplacedListPack();
+std::unique_ptr<Listpack> MakeBatchAppendedListpack() {
+  auto listpack = MakeReplacedListpack();
   std::string s0("test string 1");
   std::string s1("hello world");
   std::string s2("-1234567");
@@ -176,8 +176,8 @@ std::unique_ptr<ListPack> MakeBatchAppendedListPack() {
   return listpack;
 }
 
-std::unique_ptr<ListPack> MakeBatchPrependedListPack() {
-  auto listpack = MakeBatchAppendedListPack();
+std::unique_ptr<Listpack> MakeBatchPrependedListpack() {
+  auto listpack = MakeBatchAppendedListpack();
   std::string s0("test string 3");
   std::string s1(4094, 'h');
   std::string s2(4098, 'i');
@@ -186,8 +186,8 @@ std::unique_ptr<ListPack> MakeBatchPrependedListPack() {
   return listpack;
 }
 
-std::unique_ptr<ListPack> MakeBatchInsertedListPack() {
-  auto listpack = MakeBatchPrependedListPack();
+std::unique_ptr<Listpack> MakeBatchInsertedListpack() {
+  auto listpack = MakeBatchPrependedListpack();
   std::string s0("test string 4");
   std::string s1(4093, 'j');
   std::string s2(4099, 'k');
@@ -198,8 +198,8 @@ std::unique_ptr<ListPack> MakeBatchInsertedListPack() {
 }
 }  // namespace
 
-TEST(ListPackTest, Append) {
-  auto listpack = std::make_unique<ListPack>();
+TEST(ListpackTest, Append) {
+  auto listpack = std::make_unique<Listpack>();
   ASSERT_FALSE(listpack->First().has_value());
   ASSERT_FALSE(listpack->Last().has_value());
 
@@ -209,7 +209,7 @@ TEST(ListPackTest, Append) {
   ASSERT_EQ(listpack->Size(), 2);
 
   size_t offset = RequireIndex(listpack->First());
-  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  ASSERT_EQ(offset, Listpack::kListpackHeaderSize);
   ASSERT_EQ(listpack->IntegerAt(offset), -1234);
   size_t l0 = 0;
   unsigned char* c0 = listpack->Get(offset, &l0);
@@ -271,8 +271,8 @@ TEST(ListPackTest, Append) {
   ASSERT_FALSE(listpack->Next(offset).has_value());
 }
 
-TEST(ListPackTest, PreservesNonCanonicalIntegerStrings) {
-  ListPack listpack;
+TEST(ListpackTest, PreservesNonCanonicalIntegerStrings) {
+  Listpack listpack;
   ASSERT_TRUE(listpack.Append("+44"));
   ASSERT_TRUE(listpack.Prepend("-0"));
   ASSERT_TRUE(listpack.BatchAppend({StringEntry("+0"), StringEntry("-42")}));
@@ -286,8 +286,8 @@ TEST(ListPackTest, PreservesNonCanonicalIntegerStrings) {
   EXPECT_EQ(values, std::vector<std::string>({"-0", "+44", "+0", "-42"}));
 }
 
-TEST(ListPackTest, Prepend) {
-  auto listpack = MakeAppendedListPack();
+TEST(ListpackTest, Prepend) {
+  auto listpack = MakeAppendedListpack();
   std::string s0(4094, 'c');
   std::string s1(4096, 'e');
   std::string s2("test string 2");
@@ -301,7 +301,7 @@ TEST(ListPackTest, Prepend) {
   ASSERT_EQ(listpack->Size(), 16);
 
   size_t offset = RequireIndex(listpack->First());
-  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  ASSERT_EQ(offset, Listpack::kListpackHeaderSize);
   size_t l0 = 0;
   unsigned char* c0 = listpack->Get(offset, &l0);
   ASSERT_EQ(l0, s3.size());
@@ -341,14 +341,14 @@ TEST(ListPackTest, Prepend) {
   ASSERT_TRUE(std::equal(c5, c5 + l5, s0.c_str()));
 }
 
-TEST(ListPackTest, Insert) {
-  auto listpack = MakePrependedListPack();
+TEST(ListpackTest, Insert) {
+  auto listpack = MakePrependedListpack();
   std::string s0("test string 2");
   std::string s1(4094, 'f');
   std::string s2(4097, 'g');
 
   size_t offset = RequireIndex(listpack->First());
-  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  ASSERT_EQ(offset, Listpack::kListpackHeaderSize);
   offset = Advance(*listpack, offset, 3);
   size_t i0 = offset;
   ASSERT_TRUE(listpack->Insert(i0, s0));
@@ -399,12 +399,12 @@ TEST(ListPackTest, Insert) {
   ASSERT_TRUE(std::equal(c4, c4 + l4, s2.c_str()));
 }
 
-TEST(ListPackTest, Replace) {
-  auto listpack = MakeInsertedListPack();
+TEST(ListpackTest, Replace) {
+  auto listpack = MakeInsertedListpack();
   // Replace string.
   std::string s0("test string update");
   size_t offset = RequireIndex(listpack->First());
-  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  ASSERT_EQ(offset, Listpack::kListpackHeaderSize);
   for (int i = 0; i < 10; ++i) {
     offset = RequireIndex(listpack->Next(offset));
   }
@@ -490,8 +490,8 @@ TEST(ListPackTest, Replace) {
   ASSERT_FALSE(listpack->Next(offset).has_value());
 }
 
-TEST(ListPackTest, BatchAppend) {
-  auto listpack = MakeReplacedListPack();
+TEST(ListpackTest, BatchAppend) {
+  auto listpack = MakeReplacedListpack();
   std::string s0("test string 1");
   std::string s1("hello world");
   std::string s2("-1234567");
@@ -507,8 +507,8 @@ TEST(ListPackTest, BatchAppend) {
   ASSERT_FALSE(listpack->BatchAppend({}));
 }
 
-TEST(ListPackTest, BatchPrepend) {
-  auto listpack = MakeBatchAppendedListPack();
+TEST(ListpackTest, BatchPrepend) {
+  auto listpack = MakeBatchAppendedListpack();
   std::string s0("test string 3");
   std::string s1(4094, 'h');
   std::string s2(4098, 'i');
@@ -516,21 +516,21 @@ TEST(ListPackTest, BatchPrepend) {
   ASSERT_TRUE(listpack->BatchPrepend(entries));
   ASSERT_EQ(listpack->Size(), 39);
   size_t offset = RequireIndex(listpack->First());
-  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  ASSERT_EQ(offset, Listpack::kListpackHeaderSize);
   ExpectEntriesFrom(*listpack, offset, entries);
 
   // Prepend an empty list.
   ASSERT_FALSE(listpack->BatchPrepend({}));
 }
 
-TEST(ListPackTest, BatchInsert) {
-  auto listpack = MakeBatchPrependedListPack();
+TEST(ListpackTest, BatchInsert) {
+  auto listpack = MakeBatchPrependedListpack();
   std::string s0("test string 4");
   std::string s1(4093, 'j');
   std::string s2(4099, 'k');
   const auto entries = MakeBatchInsertEntries(s0, s1, s2);
   size_t offset = RequireIndex(listpack->First());
-  ASSERT_EQ(offset, ListPack::kListPackHeaderSize);
+  ASSERT_EQ(offset, Listpack::kListpackHeaderSize);
   offset = Advance(*listpack, offset, 3);
   ASSERT_TRUE(listpack->BatchInsert(offset, entries));
   ASSERT_EQ(listpack->Size(), 49);
@@ -540,8 +540,8 @@ TEST(ListPackTest, BatchInsert) {
   ASSERT_FALSE(listpack->BatchInsert(0, {}));
 }
 
-TEST(ListPackDeathTest, InvalidGetOnEmptyListPack) {
-  auto listpack = std::make_unique<ListPack>();
+TEST(ListpackDeathTest, InvalidGetOnEmptyListpack) {
+  auto listpack = std::make_unique<Listpack>();
   // Out of bound
   EXPECT_DEATH(listpack->Get(0, nullptr), "Check failed");
   EXPECT_DEATH(listpack->Get(listpack->TotalBytes(), nullptr), "Check failed");
@@ -549,18 +549,18 @@ TEST(ListPackDeathTest, InvalidGetOnEmptyListPack) {
   EXPECT_DEATH(listpack->IntegerAt(listpack->TotalBytes()), "Check failed");
 }
 
-TEST(ListPackTest, Find) {
-  auto listpack = MakeBatchInsertedListPack();
+TEST(ListpackTest, Find) {
+  auto listpack = MakeBatchInsertedListpack();
   EXPECT_TRUE(listpack->Find("test string 0").has_value());
   EXPECT_TRUE(listpack->Find("-1234567").has_value());
   EXPECT_FALSE(listpack->Find("string not exist").has_value());
   EXPECT_FALSE(listpack->Find("-12345465657").has_value());
 }
 
-TEST(ListPackTest, Iterate) {
-  auto listpack = MakeBatchInsertedListPack();
+TEST(ListpackTest, Iterate) {
+  auto listpack = MakeBatchInsertedListpack();
   std::optional<size_t> index = listpack->First();
-  ASSERT_EQ(index, ListPack::kListPackHeaderSize);
+  ASSERT_EQ(index, Listpack::kListpackHeaderSize);
 
   std::optional<size_t> previous;
   size_t length = 0;
@@ -573,7 +573,7 @@ TEST(ListPackTest, Iterate) {
   ASSERT_EQ(length, listpack->Size());
 }
 
-TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
+TEST(ListpackTest, IteratorsDecodeEveryEncoding) {
   // One element per encoding: 7-, 13-, 16-, 24-, 32-, and 64-bit integers,
   // and 6-, 12-, and 32-bit strings, including backlens of more than one byte.
   const std::vector<std::string> expected = {
@@ -588,7 +588,7 @@ TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
       std::string(5000, 'l'),
       "",
   };
-  ListPack listpack;
+  Listpack listpack;
   for (const std::string& value : expected) {
     ASSERT_TRUE(listpack.Append(value));
   }
@@ -657,8 +657,8 @@ TEST(ListPackTest, IteratorsDecodeEveryEncoding) {
   EXPECT_EQ(calls, 3);
 }
 
-TEST(ListPackTest, OffsetAt) {
-  auto listpack = MakeBatchInsertedListPack();
+TEST(ListpackTest, OffsetAt) {
+  auto listpack = MakeBatchInsertedListpack();
   std::vector<size_t> indices;
 
   std::optional<size_t> index = listpack->First();
@@ -674,8 +674,8 @@ TEST(ListPackTest, OffsetAt) {
   ASSERT_EQ(listpack->OffsetAt(indices.size()), std::nullopt);
 }
 
-TEST(ListPackTest, Delete) {
-  auto listpack = MakeBatchInsertedListPack();
+TEST(ListpackTest, Delete) {
+  auto listpack = MakeBatchInsertedListpack();
   // Delete the head.
   size_t offset = RequireIndex(listpack->First());
   size_t next_offset = RequireIndex(listpack->Next(offset));
@@ -720,8 +720,8 @@ TEST(ListPackTest, Delete) {
   ASSERT_TRUE(std::equal(c5, c5 + l5, c4));
 }
 
-TEST(ListPackTest, DeleteRangeUsesOneContiguousMutation) {
-  ListPack listpack;
+TEST(ListpackTest, DeleteRangeUsesOneContiguousMutation) {
+  Listpack listpack;
   for (std::string_view value : {"zero", "one", "two", "three", "four"}) {
     ASSERT_TRUE(listpack.Append(value));
   }
@@ -744,8 +744,8 @@ TEST(ListPackTest, DeleteRangeUsesOneContiguousMutation) {
   EXPECT_EQ(listpack.Size(), 0);
 }
 
-TEST(ListPackTest, DeleteMatchingHonorsDirectionAndLimit) {
-  ListPack listpack;
+TEST(ListpackTest, DeleteMatchingHonorsDirectionAndLimit) {
+  Listpack listpack;
   for (std::string_view value : {"x", "keep", "x", "x", "keep", "x"}) {
     ASSERT_TRUE(listpack.Append(value));
   }
@@ -763,7 +763,7 @@ TEST(ListPackTest, DeleteMatchingHonorsDirectionAndLimit) {
   EXPECT_EQ(listpack.DeleteMatching("x", 0), 2);
   EXPECT_EQ(listpack.Size(), 2);
 }
-TEST(ListPackTest, DeleteMatchingMatchesModelForEveryEncoding) {
+TEST(ListpackTest, DeleteMatchingMatchesModelForEveryEncoding) {
   // Integers and strings of every length class, so matches and kept runs
   // cover each encoding and backlen width.
   const std::vector<std::string> values = {"x",
@@ -780,7 +780,7 @@ TEST(ListPackTest, DeleteMatchingMatchesModelForEveryEncoding) {
     return state >> 8;
   };
   for (int round = 0; round < 300; ++round) {
-    ListPack listpack;
+    Listpack listpack;
     std::vector<std::string> model;
     const size_t size = random() % 40;
     for (size_t i = 0; i < size; ++i) {
@@ -833,8 +833,8 @@ TEST(ListPackTest, DeleteMatchingMatchesModelForEveryEncoding) {
   }
 }
 
-TEST(ListPackTest, DeleteMatchingKeepsSaturatedCount) {
-  ListPack listpack;
+TEST(ListpackTest, DeleteMatchingKeepsSaturatedCount) {
+  Listpack listpack;
   constexpr size_t kSize = 70'000;
   for (size_t i = 0; i < kSize; ++i) {
     ASSERT_TRUE(listpack.Append(i % 10 == 0 ? "x" : "y"));
@@ -845,14 +845,14 @@ TEST(ListPackTest, DeleteMatchingKeepsSaturatedCount) {
   EXPECT_EQ(listpack.Size(), kSize - (kSize / 10) - 3);
 }
 
-TEST(ListPackDeathTest, RejectsOutOfBoundsIndexes) {
-  auto listpack = std::make_unique<ListPack>();
+TEST(ListpackDeathTest, RejectsOutOfBoundsIndexes) {
+  auto listpack = std::make_unique<Listpack>();
   ASSERT_TRUE(listpack->Append("value"));
   ASSERT_TRUE(listpack->Append(42));
   const size_t end = listpack->TotalBytes();
   const auto entries = MakeBatchInsertEntries("a", "b", "c");
 
-  EXPECT_DEATH(listpack->Get(ListPack::kListPackHeaderSize - 1, nullptr),
+  EXPECT_DEATH(listpack->Get(Listpack::kListpackHeaderSize - 1, nullptr),
                "Check failed");
   EXPECT_DEATH(listpack->Get(end, nullptr), "Check failed");
   EXPECT_DEATH(listpack->IntegerAt(3), "Check failed");
@@ -863,7 +863,7 @@ TEST(ListPackDeathTest, RejectsOutOfBoundsIndexes) {
   EXPECT_DEATH(listpack->Replace(end, 123456789), "Check failed");
   EXPECT_DEATH(listpack->BatchInsert(0, entries), "Check failed");
   EXPECT_DEATH(listpack->BatchInsert(end, entries), "Check failed");
-  EXPECT_DEATH(listpack->Delete(ListPack::kListPackHeaderSize - 1),
+  EXPECT_DEATH(listpack->Delete(Listpack::kListpackHeaderSize - 1),
                "Check failed");
   EXPECT_DEATH(listpack->Delete(end), "Check failed");
 }
@@ -881,8 +881,8 @@ std::string Hex(std::string_view bytes) {
   return hex;
 }
 
-TEST(ListPackTest, EncodesIntegersLikeRedis) {
-  ListPack listpack;
+TEST(ListpackTest, EncodesIntegersLikeRedis) {
+  Listpack listpack;
   for (const std::string_view value : {"0",
                                        "1",
                                        "127",
@@ -916,8 +916,8 @@ TEST(ListPackTest, EncodesIntegersLikeRedis) {
       "00000000ffffff09f4ffffffffffffff7f09f4000000000000008009ff");
 }
 
-TEST(ListPackTest, EncodesStringsAndBacklensLikeRedis) {
-  ListPack small;
+TEST(ListpackTest, EncodesStringsAndBacklensLikeRedis) {
+  Listpack small;
   for (const std::string_view value : {"f1", "v1", "n", "12345", "neg", "-7"}) {
     small.Append(value);
   }
@@ -926,7 +926,7 @@ TEST(ListPackTest, EncodesStringsAndBacklensLikeRedis) {
 
   // Lengths at each string encoding's limits, and backlens of one and two
   // bytes; the 5000-byte string uses the 32-bit length encoding.
-  ListPack strings;
+  Listpack strings;
   for (const auto& [length, fill] :
        std::initializer_list<std::pair<size_t, char>>{{0, ' '},
                                                       {1, 'a'},
@@ -940,7 +940,7 @@ TEST(ListPackTest, EncodesStringsAndBacklensLikeRedis) {
   }
   EXPECT_EQ(strings.Bytes().size(), 4708);
   EXPECT_EQ(utils::Crc64(0, strings.Bytes()), 0xdf2002b80ea90a83ULL);
-  ListPack large;
+  Listpack large;
   large.Append(std::string(5000, 'q'));
   EXPECT_EQ(large.Bytes().size(), 5014);
   EXPECT_EQ(utils::Crc64(0, large.Bytes()), 0xa1e049c1b7ab3714ULL);

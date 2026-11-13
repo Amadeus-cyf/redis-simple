@@ -20,8 +20,11 @@ namespace {
 // typical scores such as 1.5 or 99.95 without the general shortest-digit
 // search. Returns the length written, or 0 to fall back to it.
 constexpr int kMaxFastDecimals = 6;
-constexpr std::array<double, kMaxFastDecimals + 1> kPowersOfTen = {
-    1, 10, 100, 1000, 10000, 100000, 1000000};
+// Powers of ten that are exact doubles, shared by the fast formatting and
+// parsing paths.
+constexpr std::array<double, 16> kPowersOfTen = {
+    1e0, 1e1, 1e2,  1e3,  1e4,  1e5,  1e6,  1e7,
+    1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15};
 
 size_t FormatShortDecimal(double value, char* const out) {
   const double magnitude = std::abs(value);
@@ -30,7 +33,8 @@ size_t FormatShortDecimal(double value, char* const out) {
   // rounds to `value`, and it is the one the shortest form would print.
   // Values below 10^-4 print in scientific notation instead.
   constexpr double kTwoPow51 = 2251799813685248.0;
-  if (!(magnitude >= 1e-4) || magnitude >= kTwoPow51 / kPowersOfTen.back()) {
+  if (!(magnitude >= 1e-4) ||
+      magnitude >= kTwoPow51 / kPowersOfTen[kMaxFastDecimals]) {
     return 0;
   }
   for (int decimals = 1; decimals <= kMaxFastDecimals; ++decimals) {
@@ -212,9 +216,7 @@ namespace {
 // to the general parser, never for a valid number it cannot handle.
 bool ParsePlainDecimal(std::string_view value, double* const result) {
   constexpr size_t kMaxDigits = 15;
-  constexpr std::array<double, kMaxDigits + 1> kPowersOfTen = {
-      1e0, 1e1, 1e2,  1e3,  1e4,  1e5,  1e6,  1e7,
-      1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15};
+  static_assert(kMaxDigits < kPowersOfTen.size());
   size_t position = 0;
   const bool negative = value[0] == '-';
   if (negative || value[0] == '+') {

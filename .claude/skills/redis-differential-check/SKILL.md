@@ -14,18 +14,18 @@ redis-server --version
 cmake --preset debug && cmake --build --preset debug --target redis_simple
 ```
 
-When the installed server is older than the latest release, build that
-release from source and pass it to the scripts; it needs no install:
+Always compare with the latest stable Redis release, not whichever version
+is installed. `scripts/build_latest_redis.sh` finds the newest release tag,
+builds it from source, and prints the directory holding its binaries; it
+installs nothing, and CI's compatibility job uses it too:
 
 ```sh
-git clone --depth 1 --branch 8.10.3 https://github.com/redis/redis.git
-make -C redis -j"$(nproc)" BUILD_TLS=no MALLOC=libc redis-server redis-cli
-scripts/compare_with_redis.py build/debug/redis_simple \
-  --redis-server redis/src/redis-server
-scripts/check_aof_interop.sh build/debug/redis_simple redis/src/redis-server
-scripts/check_rdb_interop.py build/debug/redis_simple \
-  --redis-server redis/src/redis-server
+PATH="$(scripts/build_latest_redis.sh build/reference-redis):${PATH}"
+redis-server --version
 ```
+
+With that directory first on `PATH`, every script below uses that server.
+Set `REDIS_VERSION` to build a specific release instead.
 
 ## 1. Command compatibility script
 
@@ -85,10 +85,27 @@ usually means the other server wrote a command this one does not implement:
 Redis' rewrite writes `SET`, `RPUSH`, `SADD`, `ZADD`, `HMSET`, and
 `PEXPIREAT`.
 
-## 4. RDB interoperability
+## 4. Change counts and WATCH
 
-After any change to `server/rdb/`, or to the byte format of `ListPack` or
-`IntSet` (which RDB files store as they are), check that each server loads
+Replies do not show everything a command does. After changing a write
+command, compare its side effects too:
+
+```sh
+scripts/compare_side_effects.py build/debug/redis_simple
+```
+
+For each case it compares the replies, the change count (`INFO`'s
+`rdb_changes_since_last_save`, which is what `Client::MarkModified` adds),
+and whether a `WATCH` held by a second client is failed. The cases are
+mostly commands that change nothing, such as `LTRIM` of a missing key or
+`SADD` of an existing member, because that is where Redis' rules are easy to
+miss: some signal the key without counting a change, and some do neither.
+Add a case for every new write command and option.
+
+## 5. RDB interoperability
+
+After any change to `server/rdb/`, or to the byte format of `Listpack` or
+`Intset` (which RDB files store as they are), check that each server loads
 the other's RDB file:
 
 ```sh

@@ -10,7 +10,7 @@
 #include <vector>
 
 namespace redis_simple::set {
-TEST(SetTest, IntegerMembersUseIntSet) {
+TEST(SetTest, IntegerMembersUseIntset) {
   auto set = Set::Create();
 
   ASSERT_TRUE(set->Add("1"));
@@ -21,7 +21,7 @@ TEST(SetTest, IntegerMembersUseIntSet) {
   ASSERT_TRUE(set->Add("9223372036854775807"));
   ASSERT_TRUE(set->Add("-9223372036854775808"));
 
-  ASSERT_EQ(set->Encoding(), Set::Encoding::kIntSet);
+  ASSERT_EQ(set->Encoding(), Set::Encoding::kIntset);
   ASSERT_EQ(set->Size(), 7);
   ASSERT_TRUE(set->HasMember("-9223372036854775808"));
   ASSERT_TRUE(set->HasMember("4294967295"));
@@ -33,14 +33,14 @@ TEST(SetTest, IntegerMembersUseIntSet) {
                           "65535", "4294967295", "9223372036854775807"}));
 }
 
-TEST(SetTest, AddingFirstNonIntegerConvertsIntSetToListPack) {
+TEST(SetTest, AddingFirstNonIntegerConvertsIntsetToListpack) {
   auto set = Set::Create();
 
   ASSERT_TRUE(set->Add("1"));
   ASSERT_TRUE(set->Add("2"));
   ASSERT_TRUE(set->Add("member"));
 
-  ASSERT_EQ(set->Encoding(), Set::Encoding::kListPack);
+  ASSERT_EQ(set->Encoding(), Set::Encoding::kListpack);
   ASSERT_EQ(set->Size(), 3);
   ASSERT_TRUE(set->HasMember("1"));
   ASSERT_TRUE(set->HasMember("2"));
@@ -55,7 +55,7 @@ TEST(SetTest, KeepsNonCanonicalIntegerMembersDistinct) {
   EXPECT_TRUE(set->Add("+1"));
   EXPECT_TRUE(set->Add("0"));
   EXPECT_TRUE(set->Add("-0"));
-  EXPECT_EQ(set->Encoding(), Set::Encoding::kListPack);
+  EXPECT_EQ(set->Encoding(), Set::Encoding::kListpack);
   EXPECT_EQ(set->Size(), 4);
   EXPECT_TRUE(set->HasMember("1"));
   EXPECT_TRUE(set->HasMember("+1"));
@@ -63,16 +63,16 @@ TEST(SetTest, KeepsNonCanonicalIntegerMembersDistinct) {
   EXPECT_TRUE(set->HasMember("-0"));
 }
 
-TEST(SetTest, ListPackConversionToDictReportsNewMemberAdded) {
+TEST(SetTest, ListpackConversionToDictReportsNewMemberAdded) {
   auto set = Set::Create();
 
   ASSERT_TRUE(set->Add("member_0"));
-  ASSERT_EQ(set->Encoding(), Set::Encoding::kListPack);
+  ASSERT_EQ(set->Encoding(), Set::Encoding::kListpack);
   for (size_t i = 1; i < 128; ++i) {
     ASSERT_TRUE(set->Add("member_" + std::to_string(i)));
   }
   ASSERT_EQ(set->Size(), 128);
-  ASSERT_EQ(set->Encoding(), Set::Encoding::kListPack);
+  ASSERT_EQ(set->Encoding(), Set::Encoding::kListpack);
 
   ASSERT_TRUE(set->Add("member_128"));
 
@@ -83,11 +83,11 @@ TEST(SetTest, ListPackConversionToDictReportsNewMemberAdded) {
   ASSERT_FALSE(set->Add("member_128"));
 }
 
-TEST(SetTest, LongMemberConvertsListPackToDict) {
+TEST(SetTest, LongMemberConvertsListpackToDict) {
   auto set = Set::Create();
 
   ASSERT_TRUE(set->Add("member"));
-  ASSERT_EQ(set->Encoding(), Set::Encoding::kListPack);
+  ASSERT_EQ(set->Encoding(), Set::Encoding::kListpack);
 
   const std::string long_member(65, 'x');
   ASSERT_TRUE(set->Add(long_member));
@@ -144,8 +144,8 @@ TEST(SetTest, MembershipWithStoredHashesMatchesPlainMembership) {
       ASSERT_TRUE(small->Add("member:" + std::to_string(index * 2)));
     }
   }
-  ASSERT_EQ(ints->Encoding(), Set::Encoding::kIntSet);
-  ASSERT_EQ(small->Encoding(), Set::Encoding::kListPack);
+  ASSERT_EQ(ints->Encoding(), Set::Encoding::kIntset);
+  ASSERT_EQ(small->Encoding(), Set::Encoding::kListpack);
   ASSERT_EQ(large->Encoding(), Set::Encoding::kDict);
 
   const std::vector<const Set*> sets = {ints.get(), small.get(), large.get()};

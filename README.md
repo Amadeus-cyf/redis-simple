@@ -279,7 +279,7 @@ prints them: integers up to 2^62 in full, otherwise the shortest digits in
   `NOVALUES`
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
 - Persistence and stats: `BGREWRITEAOF`, `SAVE`, `BGSAVE`, `LASTSAVE`,
-  `INFO [persistence|stats]`
+  `INFO [section ...]` (`persistence`, `stats`, `threads`, or `all`)
 - Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `AUTH`, and
   `SETNAME`, `CLIENT ID|GETNAME|SETNAME|SETINFO`, `SELECT 0` (the only
   database), `PING`, `ECHO`, `QUIT`
@@ -387,7 +387,7 @@ ctest --preset fuzz -L fuzz --output-on-failure
 ```
 
 The fuzz targets exercise incremental RESP parsing; listpack, quicklist, Dict,
-Skiplist, and IntSet mutation; Redis list, set, hash, and sorted-set behavior;
+Skiplist, and Intset mutation; Redis list, set, hash, and sorted-set behavior;
 dynamic and reply buffers; database expiration; and deterministic event-loop
 callbacks. AOF replay also has a bounded malformed-input target. Every target
 runs under AddressSanitizer and
@@ -441,7 +441,7 @@ For debugging a single executable directly:
 For debugging one unit-test suite directly:
 
 ```sh
-./build/debug/redis_simple_tests --gtest_filter=ListPackTest.*
+./build/debug/redis_simple_tests --gtest_filter=ListpackTest.*
 ```
 
 The integration clients return nonzero on failed expectations, so they are safe
@@ -463,6 +463,13 @@ operations included, in RESP2 and RESP3 (the script starts both servers):
 
 ```sh
 scripts/compare_with_redis.py build/debug/redis_simple
+```
+
+To compare what replies do not show, each write command's change count and
+whether it fails another client's `WATCH`:
+
+```sh
+scripts/compare_side_effects.py build/debug/redis_simple
 ```
 
 With `redis-server` 7 or later installed, check that each server loads the
@@ -700,8 +707,10 @@ avoiding duplicate branch-push runs and work on superseded commits.
 GitHub Actions runs debug, release, and ASan/UBSan matrices on macOS and Ubuntu
 26.04, so both event-loop pollers are built and tested. macOS also runs Apple
 `leaks`; Ubuntu runs LeakSanitizer, ThreadSanitizer, clang-format 22,
-clang-tidy 22, and bounded libFuzzer smoke tests. A separate Ubuntu job compares supported behavior with a
-real Redis instance through `redis-cli`:
+clang-tidy 22, and bounded libFuzzer smoke tests. A separate Ubuntu job builds the latest
+stable Redis release (`scripts/build_latest_redis.sh`) and compares
+supported behavior with it: replies, change counts and `WATCH`, and AOF and
+RDB files in both directions. Locally, the first of those checks is:
 
 ```sh
 cmake --preset debug

@@ -62,7 +62,7 @@ uint64_t DecodeBacklen(const unsigned char* last, size_t available) {
 }
 }  // namespace
 
-bool ListPackReader::ReadHeader() {
+bool ListpackReader::ReadHeader() {
   header_read_ = true;
   if (blob_.size() < kHeaderBytes + 1) {
     return false;
@@ -77,7 +77,7 @@ bool ListPackReader::ReadHeader() {
   return true;
 }
 
-ListPackReader::Status ListPackReader::Next(Element* const element) {
+ListpackReader::Status ListpackReader::Next(Element* const element) {
   if (!header_read_ && !ReadHeader()) {
     return Status::kCorrupt;
   }

@@ -12,32 +12,28 @@
 
 namespace redis_simple::zset {
 ZSet::ZSet()
-    : encoding_(Encoding::kListPack),
-      storage_(std::make_unique<ZSetListPack>()) {}
+    : encoding_(Encoding::kListpack),
+      storage_(std::make_unique<ZSetListpack>()) {}
 
 std::unique_ptr<ZSet> ZSet::CreateForSize(size_t count) {
   std::unique_ptr<ZSet> zset(new ZSet());
-  if (count > kListPackMaxEntries) {
+  if (count > kListpackMaxEntries) {
     zset->encoding_ = Encoding::kSkiplist;
     zset->storage_ = std::make_unique<ZSetSkiplist>(count);
   }
   return zset;
 }
 
-std::unique_ptr<ZSet> ZSet::CreateFromListPack(
-    std::unique_ptr<memory::ListPack> listpack) {
+std::unique_ptr<ZSet> ZSet::CreateFromListpack(
+    std::unique_ptr<memory::Listpack> listpack) {
   RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
            listpack->Size() % 2 == 0 &&
-           listpack->Size() / 2 <= kListPackMaxEntries);
+           listpack->Size() / 2 <= kListpackMaxEntries);
   std::unique_ptr<ZSet> zset(new ZSet());
-  zset->storage_ = std::make_unique<ZSetListPack>(std::move(listpack));
+  zset->storage_ = std::make_unique<ZSetListpack>(std::move(listpack));
   return zset;
 }
 
-/*
- * Insert a new element with score or update the score of an existing
- * element. Return true if the element is newly inserted.
- */
 bool ZSet::InsertOrUpdate(std::string_view member, double score,
                           bool* const changed) {
   if (changed != nullptr) {
@@ -46,8 +42,8 @@ bool ZSet::InsertOrUpdate(std::string_view member, double score,
   if (std::isnan(score)) {
     return false;
   }
-  if (encoding_ == Encoding::kListPack &&
-      member.size() > kListPackMaxElementLength) {
+  if (encoding_ == Encoding::kListpack &&
+      member.size() > kListpackMaxElementLength) {
     ConvertAndExpand();
   }
   const bool inserted = storage_->InsertOrUpdate(member, score, changed);
@@ -67,17 +63,6 @@ std::optional<size_t> ZSet::Rank(std::string_view member) const {
   return storage_->Rank(member);
 }
 
-ZSetEntryList ZSet::RangeByRank(const RangeByRankSpec* spec) const {
-  return storage_->RangeByRank(spec);
-}
-
-ZSetEntryList ZSet::RangeByScore(const RangeByScoreSpec* spec) const {
-  return storage_->RangeByScore(spec);
-}
-
-/*
- * Count number of elements within the range of the score.
- */
 size_t ZSet::Count(const RangeByScoreSpec* spec) const {
   return storage_->Count(spec);
 }
@@ -90,13 +75,13 @@ enum ZSet::Encoding ZSet::Encoding() const { return encoding_; }
 
 bool ZSet::ShouldConvertToSkiplist(std::string_view member,
                                    bool inserted) const {
-  return encoding_ == Encoding::kListPack &&
-         ((inserted && storage_->Size() > kListPackMaxEntries) ||
-          member.size() > kListPackMaxElementLength);
+  return encoding_ == Encoding::kListpack &&
+         ((inserted && storage_->Size() > kListpackMaxEntries) ||
+          member.size() > kListpackMaxElementLength);
 }
 
 void ZSet::ConvertAndExpand() {
-  RS_CHECK(encoding_ == Encoding::kListPack);
+  RS_CHECK(encoding_ == Encoding::kListpack);
   auto zset_skiplist = std::make_unique<ZSetSkiplist>();
   if (!storage_->ForEachEntry(
           [&zset_skiplist](std::string_view member, double score) {

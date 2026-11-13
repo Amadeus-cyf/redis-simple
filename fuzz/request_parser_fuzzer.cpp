@@ -34,8 +34,8 @@ void ParseOne(std::string_view input) {
   Require(result.consumed > 0);
   Require(result.consumed <= input.size());
   Require(IsBorrowed(command_name, input));
-  for (const auto arg : args) {
-    Require(IsBorrowed(arg, input));
+  for (const auto argument : args) {
+    Require(IsBorrowed(argument, input));
   }
 }
 
@@ -71,8 +71,8 @@ void ParseWithState(std::string_view input) {
     Require(!result.empty_request || command_name.empty());
     Require(IsBorrowed(command_name, remaining) ||
             IsInState(command_name, state));
-    for (const auto arg : args) {
-      Require(IsBorrowed(arg, remaining) || IsInState(arg, state));
+    for (const auto argument : args) {
+      Require(IsBorrowed(argument, remaining) || IsInState(argument, state));
     }
     consumed += result.consumed;
   }

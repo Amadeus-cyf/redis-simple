@@ -9,7 +9,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
-void Verify(const memory::IntSet& intset, const std::set<int64_t>& model) {
+void Verify(const memory::Intset& intset, const std::set<int64_t>& model) {
   Require(intset.Size() == model.size());
   size_t index = 0;
   for (const int64_t value : model) {
@@ -23,7 +23,7 @@ void Verify(const memory::IntSet& intset, const std::set<int64_t>& model) {
   }
 
   std::vector<int64_t> visited;
-  auto it = memory::IntSet::Iterator(&intset);
+  auto it = memory::Intset::Iterator(&intset);
   it.SeekToFirst();
   while (it.Valid()) {
     visited.push_back(it.Value());
@@ -34,7 +34,7 @@ void Verify(const memory::IntSet& intset, const std::set<int64_t>& model) {
 }
 
 void RunOperations(FuzzInput* input) {
-  memory::IntSet intset;
+  memory::Intset intset;
   std::set<int64_t> model;
 
   for (size_t operation_count = 0; operation_count < 256 && input->HasData();

@@ -33,14 +33,14 @@ TEST(ZSetTest, InsertAndConvert) {
   spec.reverse = false;
   const ZSetEntryList entries = zset->RangeByRank(&spec);
   ASSERT_EQ(entries.size(), 256);
-  ASSERT_EQ(entries.front()->member, "key_0");
-  ASSERT_EQ(entries.back()->member, "key_255");
+  ASSERT_EQ(entries.front().member, "key_0");
+  ASSERT_EQ(entries.back().member, "key_255");
 }
 
 TEST(ZSetEncodingTest, ConvertsToSkiplistWhenMemberIsLong) {
   auto zset = ZSet::Create();
   ASSERT_TRUE(zset->InsertOrUpdate("short", 1.0));
-  ASSERT_EQ(zset->Encoding(), ZSet::Encoding::kListPack);
+  ASSERT_EQ(zset->Encoding(), ZSet::Encoding::kListpack);
 
   ASSERT_TRUE(zset->InsertOrUpdate(std::string(65, 'x'), 2.0));
 
@@ -54,7 +54,7 @@ TEST(ZSetEncodingTest, ConvertsToSkiplistWhenEntryCountExceedsLimit) {
   for (int i = 0; i < 128; ++i) {
     ASSERT_TRUE(zset->InsertOrUpdate("key_" + std::to_string(i), i));
   }
-  ASSERT_EQ(zset->Encoding(), ZSet::Encoding::kListPack);
+  ASSERT_EQ(zset->Encoding(), ZSet::Encoding::kListpack);
 
   ASSERT_TRUE(zset->InsertOrUpdate("key_128", 128.0));
 

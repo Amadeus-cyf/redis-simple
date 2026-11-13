@@ -8,12 +8,12 @@
 
 namespace redis_simple::memory {
 // An in memory set storing integers in ascending order.
-class IntSet {
+class Intset {
  public:
   class Iterator;
-  IntSet();
-  IntSet(const IntSet&) = delete;
-  IntSet& operator=(const IntSet&) = delete;
+  Intset();
+  Intset(const Intset&) = delete;
+  Intset& operator=(const Intset&) = delete;
   bool Add(int64_t value);
   int64_t Get(uint32_t index) const;
   bool Find(int64_t value) const;
@@ -25,7 +25,7 @@ class IntSet {
   // encoding's width and the length as 32-bit integers, then the values in
   // ascending order at that width, all little-endian.
   void AppendRedisBlob(std::string* out) const;
-  ~IntSet() = default;
+  ~Intset() = default;
 
  private:
   static constexpr uint32_t kInitSize = 1;
@@ -46,9 +46,9 @@ class IntSet {
   EncodingType encoding_;
 };
 
-class IntSet::Iterator {
+class Intset::Iterator {
  public:
-  explicit Iterator(const IntSet* intset) : intset_(intset), index_(0) {}
+  explicit Iterator(const Intset* intset) : intset_(intset), index_(0) {}
   bool operator==(const Iterator& it) const = default;
   // Return true if the iterator is positioned at a valid element.
   bool Valid() const { return index_ < intset_->Size(); }
@@ -63,7 +63,7 @@ class IntSet::Iterator {
   int64_t Value() { return intset_->Get(index_); }
 
  private:
-  const IntSet* intset_;
+  const Intset* intset_;
   size_t index_;
 };
 }  // namespace redis_simple::memory

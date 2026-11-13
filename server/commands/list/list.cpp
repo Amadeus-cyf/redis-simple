@@ -272,11 +272,17 @@ void HandleLIndex(Client* const client) {
     return;
   }
   const std::optional<size_t> position = NormalizeIndex(index, list->Size());
-  const std::optional<std::string> value =
-      position.has_value() ? list->At(*position) : std::nullopt;
-  if (value.has_value()) {
-    client->AddBulkReply(*value);
-  } else {
+  // Encode the element where it is stored instead of copying it out first.
+  bool found = false;
+  if (position.has_value()) {
+    list->ForEach(*position, *position,
+                  [client, &found](std::string_view value) {
+                    client->AddBulkReply(value);
+                    found = true;
+                    return true;
+                  });
+  }
+  if (!found) {
     client->AddReply(reply::NullView(client->Protocol()));
   }
 }
@@ -339,23 +345,33 @@ void HandleLTrim(Client* const client) {
   if (!LookupMutableList(client, args[0], &list)) {
     return;
   }
-  size_t removed = 0;
-  if (list != nullptr) {
-    const size_t size = list->Size();
-    const std::optional<std::pair<size_t, size_t>> range =
-        NormalizeRange(start, stop, size);
-    // An empty range trims every element.
-    const bool trimmed = range.has_value()
-                             ? list->Trim(range->first, range->second)
-                             : list->Trim(1, 0);
-    if (!trimmed) {
-      client->AddReply(reply::FromError("ERR list trim failed"));
-      return;
-    }
-    removed = size - list->Size();
-    DeleteIfEmpty(client, args[0], list);
+  if (list == nullptr) {
+    // A missing key is left alone: no WATCHer is touched and nothing
+    // reaches the AOF.
+    client->AddReply(reply::kOk);
+    return;
   }
-  client->MarkModified(static_cast<int64_t>(removed));
+  const size_t size = list->Size();
+  const std::optional<std::pair<size_t, size_t>> range =
+      NormalizeRange(start, stop, size);
+  // An empty range trims every element.
+  const bool trimmed = range.has_value()
+                           ? list->Trim(range->first, range->second)
+                           : list->Trim(1, 0);
+  if (!trimmed) {
+    client->AddReply(reply::FromError("ERR list trim failed"));
+    return;
+  }
+  const size_t removed = size - list->Size();
+  DeleteIfEmpty(client, args[0], list);
+  if (removed > 0) {
+    client->MarkModified(static_cast<int64_t>(removed));
+  } else {
+    // Redis' ltrimCommand signals the key even when nothing was trimmed,
+    // which fails a WATCH on it, but counts no change, so the command is
+    // not written to the AOF.
+    client->Db()->TouchWatchedKey(args[0]);
+  }
   client->AddReply(reply::kOk);
 }
 }  // namespace redis_simple::commands::lists

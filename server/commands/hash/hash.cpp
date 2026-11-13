@@ -1,5 +1,6 @@
 #include "data_types/hash/hash.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -291,7 +292,11 @@ void HandleHIncrBy(Client* const client) {
     client->AddReply(reply::kOverflowError);
     return;
   }
-  hash->Set(args[1], std::to_string(next));
+  // Enough for INT64_MIN and a terminator.
+  std::array<char, 21> buffer{};
+  const int length = utils::Int64ToString(buffer, next);
+  hash->Set(args[1],
+            std::string_view(buffer.data(), static_cast<size_t>(length)));
   client->MarkModified();
   client->AddReply(reply::FromInt64(next));
 }

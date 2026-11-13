@@ -21,29 +21,29 @@ namespace redis_simple::set {
 class Set {
  public:
   enum class Encoding {
-    kIntSet,
-    kListPack,
+    kIntset,
+    kListpack,
     kDict,
   };
 
   // Redis 8's set-max-intset-entries, set-max-listpack-entries, and
   // set-max-listpack-value.
-  static constexpr size_t kIntSetMaxEntries = 512;
-  static constexpr size_t kListPackMaxEntries = 128;
-  static constexpr size_t kListPackMaxElementLength = 64;
+  static constexpr size_t kIntsetMaxEntries = 512;
+  static constexpr size_t kListpackMaxEntries = 128;
+  static constexpr size_t kListpackMaxElementLength = 64;
 
   static std::unique_ptr<Set> Create() {
     return std::unique_ptr<Set>(new Set());
   }
   // An empty set in the encoding `count` members need, as Redis' rdbLoad
   // creates one: a dict sized for them when `count` is over
-  // kIntSetMaxEntries, more than an intset or a listpack holds.
+  // kIntsetMaxEntries, more than an intset or a listpack holds.
   static std::unique_ptr<Set> CreateForSize(size_t count);
   // A listpack-encoded set holding `listpack`'s elements, which must be
-  // distinct, at most kListPackMaxEntries, and no longer than
-  // kListPackMaxElementLength, as the RDB loader checks.
-  static std::unique_ptr<Set> CreateFromListPack(
-      std::unique_ptr<memory::ListPack> listpack);
+  // distinct, at most kListpackMaxEntries, and no longer than
+  // kListpackMaxElementLength, as the RDB loader checks.
+  static std::unique_ptr<Set> CreateFromListpack(
+      std::unique_ptr<memory::Listpack> listpack);
   bool Add(std::string_view value);
   bool HasMember(std::string_view value) const;
   // As HasMember, but a dict-encoded set probes with `hashed`, when given, so
@@ -68,23 +68,23 @@ class Set {
   Encoding Encoding() const { return encoding_; }
   // The encoded forms RDB files store. A listpack-encoded set's listpack,
   // in Redis' byte format.
-  std::string_view ListPackBytes() const;
+  std::string_view ListpackBytes() const;
   // An intset-encoded set in Redis' intset layout, appended to `out`.
-  void AppendIntSetBlob(std::string* out) const;
+  void AppendIntsetBlob(std::string* out) const;
 
  private:
   Set();
-  bool IntSetAddAndMaybeConvert(std::string_view value);
-  bool ListPackAddAndMaybeConvert(std::string_view value);
+  bool IntsetAddAndMaybeConvert(std::string_view value);
+  bool ListpackAddAndMaybeConvert(std::string_view value);
   bool DictAdd(std::string_view value);
   void MaybeConvertIntsetToDict();
-  void ConvertIntSetToDict(size_t capacity);
-  bool MaybeConvertIntSetToListPack(std::string_view value);
-  void ConvertIntSetToListPack(std::string_view value);
-  void ConvertListPackToDict(size_t capacity);
+  void ConvertIntsetToDict(size_t capacity);
+  bool MaybeConvertIntsetToListpack(std::string_view value);
+  void ConvertIntsetToListpack(std::string_view value);
+  void ConvertListpackToDict(size_t capacity);
   enum Encoding encoding_;
-  std::unique_ptr<memory::IntSet> intset_;
-  std::unique_ptr<memory::ListPack> listpack_;
+  std::unique_ptr<memory::Intset> intset_;
+  std::unique_ptr<memory::Listpack> listpack_;
   std::unique_ptr<memory::Dict<std::string, std::nullptr_t>> dict_;
 };
 
@@ -94,8 +94,8 @@ bool Set::ForEachMember(Visitor&& visitor) const {
   if (size == 0) {
     return true;
   }
-  if (encoding_ == Encoding::kIntSet) {
-    auto it = memory::IntSet::Iterator(intset_.get());
+  if (encoding_ == Encoding::kIntset) {
+    auto it = memory::Intset::Iterator(intset_.get());
     it.SeekToFirst();
     while (it.Valid()) {
       std::array<char, std::numeric_limits<int64_t>::digits10 + 3> buffer{};
@@ -111,7 +111,7 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     }
     return true;
   }
-  if (encoding_ == Encoding::kListPack) {
+  if (encoding_ == Encoding::kListpack) {
     return listpack_->ForEach(0, size - 1, visitor);
   }
   if (encoding_ == Encoding::kDict) {

@@ -56,7 +56,7 @@ std::string Describe(db::RedisDb* db, std::string_view key,
       break;
     case RedisObject::ObjectType::kList: {
       const list::List* list = object.List();
-      out = list->Encoding() == list::List::Encoding::kListPack
+      out = list->Encoding() == list::List::Encoding::kListpack
                 ? "list(listpack):"
                 : "list(quicklist):";
       list->ForEach(0, list->Size() - 1, [&out](std::string_view value) {
@@ -81,7 +81,7 @@ std::string Describe(db::RedisDb* db, std::string_view key,
     }
     case RedisObject::ObjectType::kZSet: {
       const zset::ZSet* zset = object.ZSet();
-      out = zset->ListPackBytes().has_value() ? "zset(listpack):"
+      out = zset->ListpackBytes().has_value() ? "zset(listpack):"
                                               : "zset(skiplist):";
       zset->ForEachEntry([&out](std::string_view member, double score) {
         out.append(member).push_back('=');
@@ -99,7 +99,7 @@ std::string Describe(db::RedisDb* db, std::string_view key,
             return true;
           });
       std::ranges::sort(entries);
-      out = hash->Encoding() == hash::Hash::Encoding::kListPack
+      out = hash->Encoding() == hash::Hash::Encoding::kListpack
                 ? "hash(listpack):"
                 : "hash(dict):";
       for (const std::string& entry : entries) {
@@ -367,7 +367,7 @@ TEST_F(RdbTest, RejectsUnsupportedTypesAndDatabases) {
 }
 
 // A listpack element as Redis encodes it, for listpacks that differ from
-// what ListPack writes: a 7-bit unsigned integer, or a string of up to 63
+// what Listpack writes: a 7-bit unsigned integer, or a string of up to 63
 // bytes even when its text is an integer.
 struct RawElement {
   std::string_view string;
@@ -375,7 +375,7 @@ struct RawElement {
   bool is_integer;
 };
 
-std::string RawListPack(const std::vector<RawElement>& elements) {
+std::string RawListpack(const std::vector<RawElement>& elements) {
   std::string body;
   for (const RawElement& element : elements) {
     if (element.is_integer) {
@@ -415,9 +415,9 @@ std::string FileWithValue(uint8_t type, const std::string& blob) {
   return file + std::string(8, '\0');
 }
 
-constexpr uint8_t kHashListPackType = 16;
-constexpr uint8_t kZSetListPackType = 17;
-constexpr uint8_t kSetListPackType = 20;
+constexpr uint8_t kHashListpackType = 16;
+constexpr uint8_t kZSetListpackType = 17;
+constexpr uint8_t kSetListpackType = 20;
 
 // Listpacks that fit this server's limits are kept as they are, as Redis
 // keeps them, and work as values afterwards.
@@ -430,12 +430,12 @@ TEST_F(RdbTest, KeepsTheBytesOfCompactValues) {
   const auto object = [&loaded](std::string_view key) {
     return loaded->MutableLookupKey(key);
   };
-  EXPECT_EQ(object("set:strings")->Set()->ListPackBytes(),
-            db->MutableLookupKey("set:strings")->Set()->ListPackBytes());
-  EXPECT_EQ(object("hash:small")->Hash()->ListPackBytes(),
-            db->MutableLookupKey("hash:small")->Hash()->ListPackBytes());
-  EXPECT_EQ(object("zset:small")->ZSet()->ListPackBytes(),
-            db->MutableLookupKey("zset:small")->ZSet()->ListPackBytes());
+  EXPECT_EQ(object("set:strings")->Set()->ListpackBytes(),
+            db->MutableLookupKey("set:strings")->Set()->ListpackBytes());
+  EXPECT_EQ(object("hash:small")->Hash()->ListpackBytes(),
+            db->MutableLookupKey("hash:small")->Hash()->ListpackBytes());
+  EXPECT_EQ(object("zset:small")->ZSet()->ListpackBytes(),
+            db->MutableLookupKey("zset:small")->ZSet()->ListpackBytes());
 
   set::Set* set = object("set:strings")->Set();
   EXPECT_FALSE(set->Add("10"));
@@ -453,54 +453,54 @@ TEST_F(RdbTest, KeepsTheBytesOfCompactValues) {
 // Valid listpacks this server would encode differently are rebuilt: an
 // integer stored as a string, sorted set pairs out of order, and more
 // entries than its listpacks hold.
-TEST_F(RdbTest, RebuildsListPacksEncodedDifferently) {
+TEST_F(RdbTest, RebuildsListpacksEncodedDifferently) {
   auto db = db::RedisDb::Create();
-  WriteFile(FileWithValue(kSetListPackType, RawListPack({S("7"), S("a")})));
+  WriteFile(FileWithValue(kSetListpackType, RawListpack({S("7"), S("a")})));
   ASSERT_TRUE(Load(db.get()));
   EXPECT_TRUE(db->MutableLookupKey("k")->Set()->HasMember("7"));
   EXPECT_EQ(Describe(db.get(), "k", *db->MutableLookupKey("k")), "set(1):7,a,");
 
   db = db::RedisDb::Create();
   WriteFile(FileWithValue(
-      kZSetListPackType,
-      RawListPack({S("b"), I(2), S("a"), I(1), S("c"), S("1.5")})));
+      kZSetListpackType,
+      RawListpack({S("b"), I(2), S("a"), I(1), S("c"), S("1.5")})));
   ASSERT_TRUE(Load(db.get()));
   EXPECT_EQ(Describe(db.get(), "k", *db->MutableLookupKey("k")),
             "zset(listpack):a=1,c=1.5,b=2,");
 
   // Equal scores order members as bytes.
   db = db::RedisDb::Create();
-  WriteFile(FileWithValue(kZSetListPackType,
-                          RawListPack({S("b"), I(1), S("a"), I(1)})));
+  WriteFile(FileWithValue(kZSetListpackType,
+                          RawListpack({S("b"), I(1), S("a"), I(1)})));
   ASSERT_TRUE(Load(db.get()));
   EXPECT_EQ(Describe(db.get(), "k", *db->MutableLookupKey("k")),
             "zset(listpack):a=1,b=1,");
 
-  memory::ListPack big;
-  for (size_t i = 0; i <= hash::Hash::kListPackMaxEntries; ++i) {
+  memory::Listpack big;
+  for (size_t i = 0; i <= hash::Hash::kListpackMaxEntries; ++i) {
     big.Append("f" + std::to_string(i));
     big.Append("v");
   }
   db = db::RedisDb::Create();
-  WriteFile(FileWithValue(kHashListPackType, std::string(big.Bytes())));
+  WriteFile(FileWithValue(kHashListpackType, std::string(big.Bytes())));
   ASSERT_TRUE(Load(db.get()));
   EXPECT_EQ(db->MutableLookupKey("k")->Hash()->Encoding(),
             hash::Hash::Encoding::kDict);
   EXPECT_EQ(db->MutableLookupKey("k")->Hash()->Size(),
-            hash::Hash::kListPackMaxEntries + 1);
+            hash::Hash::kListpackMaxEntries + 1);
 }
 
 TEST_F(RdbTest, RejectsInvalidCompactValues) {
   const std::vector<std::pair<uint8_t, std::string>> cases = {
-      {kSetListPackType, RawListPack({S("a"), S("a")})},
-      {kSetListPackType, RawListPack({I(1), S("b"), I(1)})},
+      {kSetListpackType, RawListpack({S("a"), S("a")})},
+      {kSetListpackType, RawListpack({I(1), S("b"), I(1)})},
       // The same member, once as an integer and once as text.
-      {kSetListPackType, RawListPack({I(7), S("7")})},
-      {kHashListPackType, RawListPack({S("f"), S("1"), S("f"), S("2")})},
-      {kHashListPackType, RawListPack({S("f"), S("1"), S("g")})},
-      {kZSetListPackType, RawListPack({S("a"), I(1), S("a"), I(2)})},
-      {kZSetListPackType, RawListPack({S("a"), S("x")})},
-      {kZSetListPackType, RawListPack({S("a"), S("nan")})},
+      {kSetListpackType, RawListpack({I(7), S("7")})},
+      {kHashListpackType, RawListpack({S("f"), S("1"), S("f"), S("2")})},
+      {kHashListpackType, RawListpack({S("f"), S("1"), S("g")})},
+      {kZSetListpackType, RawListpack({S("a"), I(1), S("a"), I(2)})},
+      {kZSetListpackType, RawListpack({S("a"), S("x")})},
+      {kZSetListpackType, RawListpack({S("a"), S("nan")})},
   };
   for (const auto& [type, blob] : cases) {
     WriteFile(FileWithValue(type, blob));

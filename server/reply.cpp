@@ -64,26 +64,26 @@ void AppendSizeLine(char prefix, size_t size, std::string* const reply) {
 }
 }  // namespace
 
-std::string FromString(std::string_view s) {
+std::string FromString(std::string_view text) {
   std::string reply;
-  reply.reserve(1 + s.size() + kCrlf.size());
+  reply.reserve(1 + text.size() + kCrlf.size());
   reply.push_back(kStringPrefix);
-  reply.append(s.data(), s.size()).append(kCrlf.data(), kCrlf.size());
+  reply.append(text.data(), text.size()).append(kCrlf.data(), kCrlf.size());
   return reply;
 }
 
-std::string FromBulkString(std::string_view s) {
+std::string FromBulkString(std::string_view value) {
   std::string reply;
-  AppendBulkString(s, &reply);
+  AppendBulkString(value, &reply);
   return reply;
 }
 
-std::string FromInt64(int64_t i64) {
+std::string FromInt64(int64_t value) {
   std::string reply;
   // Negate in unsigned arithmetic so INT64_MIN does not overflow.
-  const auto magnitude = i64 < 0 ? uint64_t{0} - static_cast<uint64_t>(i64)
-                                 : static_cast<uint64_t>(i64);
-  AppendLine(kInt64Prefix, i64 < 0, magnitude, &reply);
+  const auto magnitude = value < 0 ? uint64_t{0} - static_cast<uint64_t>(value)
+                                   : static_cast<uint64_t>(value);
+  AppendLine(kInt64Prefix, value < 0, magnitude, &reply);
   return reply;
 }
 
@@ -172,13 +172,13 @@ std::string UnknownCommand(std::string_view command,
   if (!args.empty()) {
     message.append(", with args beginning with: ");
     const size_t list_start = message.size();
-    for (const std::string_view arg : args) {
+    for (const std::string_view argument : args) {
       const size_t used = message.size() - list_start;
       if (used >= kLimit) {
         break;
       }
       message.push_back('\'');
-      message.append(arg.substr(0, kLimit - used));
+      message.append(argument.substr(0, kLimit - used));
       message.append("' ");
     }
   }
