@@ -78,30 +78,21 @@ ParseExpireStatus ParseExpireArgs(const CommandArgs& args,
   return ParseExpireStatus::kOk;
 }
 
-bool ExpireAtFromTtl(int64_t ttl, int64_t multiplier, int64_t now,
-                     int64_t* expire) {
-  if (ttl <= 0) {
-    *expire = now - 1;
-    return true;
-  }
-  if (ttl > std::numeric_limits<int64_t>::max() / multiplier) {
+// Redis' expireGenericCommand: scales `time` to milliseconds and adds
+// `base`, the current time for a relative expiration and 0 for an absolute
+// one. Negative times are allowed, and expire the key at once; only a
+// result that overflows is invalid, in either direction when scaling.
+bool ToAbsoluteMilliseconds(int64_t time, int64_t multiplier, int64_t base,
+                            int64_t* const expire) {
+  if (time > std::numeric_limits<int64_t>::max() / multiplier ||
+      time < std::numeric_limits<int64_t>::min() / multiplier) {
     return false;
   }
-  const int64_t ttl_ms = ttl * multiplier;
-  if (ttl_ms > std::numeric_limits<int64_t>::max() - now) {
+  const int64_t milliseconds = time * multiplier;
+  if (milliseconds > std::numeric_limits<int64_t>::max() - base) {
     return false;
   }
-  *expire = now + ttl_ms;
-  return true;
-}
-
-bool ScaleAbsoluteExpiration(int64_t expiration, int64_t multiplier,
-                             int64_t* scaled_expiration) {
-  if (expiration > std::numeric_limits<int64_t>::max() / multiplier ||
-      expiration < std::numeric_limits<int64_t>::min() / multiplier) {
-    return false;
-  }
-  *scaled_expiration = expiration * multiplier;
+  *expire = milliseconds + base;
   return true;
 }
 
@@ -134,11 +125,9 @@ void AddExpireReply(Client* const client, int64_t multiplier, bool absolute,
       return;
   }
   int64_t expire = 0;
-  const bool valid_expire =
-      absolute
-          ? ScaleAbsoluteExpiration(args.ttl, multiplier, &expire)
-          : ExpireAtFromTtl(args.ttl, multiplier, client->Db()->Now(), &expire);
-  if (!valid_expire) {
+  // An absolute time needs no clock read.
+  const int64_t base = absolute ? 0 : client->Db()->Now();
+  if (!ToAbsoluteMilliseconds(args.ttl, multiplier, base, &expire)) {
     std::string message = "ERR invalid expire time in '";
     message.append(command).append("' command");
     client->AddReply(reply::FromError(message));

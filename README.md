@@ -279,7 +279,7 @@ prints them: integers up to 2^62 in full, otherwise the shortest digits in
   `NOVALUES`
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
 - Persistence and stats: `BGREWRITEAOF`, `SAVE`, `BGSAVE`, `LASTSAVE`,
-  `INFO [persistence|stats]`
+  `INFO [section ...]` (`persistence`, `stats`, `threads`, or `all`)
 - Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `AUTH`, and
   `SETNAME`, `CLIENT ID|GETNAME|SETNAME|SETINFO`, `SELECT 0` (the only
   database), `PING`, `ECHO`, `QUIT`

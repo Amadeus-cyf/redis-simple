@@ -183,6 +183,13 @@ Guidance for AI coding agents working in this repository.
   bound and members by a `(score, string_view)` probe; do not reintroduce
   sentinel entries, member copies for lookups, or min/max member tracking.
   Change stored keys through `Skiplist::Update`, which repositions them.
+- Sorted-set range commands (`ZRANGE` and its older forms) encode replies
+  from `ZSet::ForEachInRankRange`, `ForEachInScoreRange`, and
+  `ForEachInLexRange`, which visit members where they are stored. The
+  vector-returning `RangeByRank`, `RangeByScore`, and `RangeByLex` copy
+  entries and are for tests and tools. Do not bring back a result cache
+  inside the storage: a listpack sorted set must stay as small after a range
+  read as before it.
 - `ListPack::ForEach`, `ForEachReverse`, and `ForEachPair` decode each
   element once through `DecodeEntry`, which yields its value and the next
   offset together. Prefer them over `Get` plus `Next` loops on read paths.

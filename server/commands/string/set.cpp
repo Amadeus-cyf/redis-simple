@@ -1,10 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <optional>
-#include <string>
 #include <string_view>
-#include <utility>
 
 #include "server/client.h"
 #include "server/commands/handlers.h"
@@ -196,30 +193,31 @@ void HandleSet(Client* const client) {
   const SetArgs* const args = &parsed;
   db::RedisDb* const redis_db = client->Db();
   const db::RedisObject* const existing = redis_db->LookupKey(args->key);
-  std::optional<std::string> old_value;
-  if (args->return_old_value && existing != nullptr) {
-    if (existing->Type() != db::RedisObject::ObjectType::kString) {
-      client->AddReply(reply::kWrongTypeError);
-      return;
-    }
-    old_value = std::string(existing->String().View());
-  }
-
   const bool exists = existing != nullptr;
+  if (args->return_old_value && exists &&
+      existing->Type() != db::RedisObject::ObjectType::kString) {
+    client->AddReply(reply::kWrongTypeError);
+    return;
+  }
   const bool blocked =
       (args->condition == SetCondition::kIfMissing && exists) ||
       (args->condition == SetCondition::kIfExists && !exists);
-  if (!blocked) {
-    redis_db->SetStringKey(args->key, args->value, args->expire,
-                           args->existing_ttl);
-    client->MarkModified();
-  }
-  if (!blocked && !args->return_old_value) {
-    client->AddReply(reply::kOk);
-  } else if (old_value.has_value()) {
-    client->AddBulkReply(*old_value);
-  } else {
+  // GET replies with the old value whether or not the key is set. Queue it
+  // before the write below overwrites that value in place, which saves
+  // copying it. Without GET, a blocked SET replies with null.
+  if (args->return_old_value && exists) {
+    client->AddBulkReply(existing->String());
+  } else if (args->return_old_value || blocked) {
     client->AddReply(reply::NullView(client->Protocol()));
+  }
+  if (blocked) {
+    return;
+  }
+  redis_db->SetStringKey(args->key, args->value, args->expire,
+                         args->existing_ttl);
+  client->MarkModified();
+  if (!args->return_old_value) {
+    client->AddReply(reply::kOk);
   }
 }
 }  // namespace redis_simple::commands::strings

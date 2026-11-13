@@ -26,8 +26,8 @@ inline std::vector<MemberScorePair> ToMemberScorePairs(
     const ZSetEntryList& entries) {
   std::vector<MemberScorePair> pairs;
   pairs.reserve(entries.size());
-  for (const auto* entry : entries) {
-    pairs.emplace_back(entry->member, entry->score);
+  for (const ZSetEntry& entry : entries) {
+    pairs.emplace_back(entry.member, entry.score);
   }
   return pairs;
 }

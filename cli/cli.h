@@ -31,8 +31,8 @@ class RedisCli {
   ~RedisCli() = default;
 
  private:
-  static constexpr const char* kErrResp = "error";
-  static constexpr const char* kNoReplyResp = "no_reply";
+  static constexpr std::string_view kErrResp = "error";
+  static constexpr std::string_view kNoReplyResp = "no_reply";
   std::optional<std::string> MaybeReadReply();
   std::string ReadReplyFromConnection();
   resp_parser::ParseStatus ProcessReply(std::vector<std::string>& reply);

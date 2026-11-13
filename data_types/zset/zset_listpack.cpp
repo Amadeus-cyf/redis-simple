@@ -115,28 +115,33 @@ std::optional<size_t> ZSetListPack::Rank(std::string_view member) const {
   return offset == member_offset ? std::optional<size_t>(rank) : std::nullopt;
 }
 
-ZSetEntryList ZSetListPack::RangeByRank(const RangeByRankSpec* spec) const {
-  range_cache_.clear();
-  range_cache_.reserve(Size());
+void ZSetListPack::ForEachInRankRange(const RangeByRankSpec* spec,
+                                      const ZSetRangeVisitor& visitor) const {
   if (spec == nullptr) {
-    return {};
+    return;
   }
   const std::optional<RangeByRankSpec> rank_spec =
       NormalizeRankRange(*spec, Size());
   if (!rank_spec.has_value() || !ValidateRangeRankSpec(&*rank_spec)) {
-    return {};
+    return;
   }
-  return spec->reverse ? RevRangeByRankUtil(&*rank_spec)
-                       : RangeByRankUtil(&*rank_spec);
+  if (spec->reverse) {
+    VisitRankRangeReversed(&*rank_spec, visitor);
+  } else {
+    VisitRankRange(&*rank_spec, visitor);
+  }
 }
 
-ZSetEntryList ZSetListPack::RangeByScore(const RangeByScoreSpec* spec) const {
-  range_cache_.clear();
-  range_cache_.reserve(Size());
+void ZSetListPack::ForEachInScoreRange(const RangeByScoreSpec* spec,
+                                       const ZSetRangeVisitor& visitor) const {
   if (!ValidateRangeScoreSpec(spec)) {
-    return {};
+    return;
   }
-  return spec->reverse ? RevRangeByScoreUtil(spec) : RangeByScoreUtil(spec);
+  if (spec->reverse) {
+    VisitScoreRangeReversed(spec, visitor);
+  } else {
+    VisitScoreRange(spec, visitor);
+  }
 }
 
 size_t ZSetListPack::Count(const RangeByScoreSpec* spec) const {
@@ -182,28 +187,29 @@ bool ZSetListPack::OverlapsLexRange(const RangeByLexSpec* spec) const {
   return first_member.has_value() && spec->BelowMax(*first_member);
 }
 
-ZSetEntryList ZSetListPack::RangeByLex(const RangeByLexSpec* spec) const {
+void ZSetListPack::ForEachInLexRange(const RangeByLexSpec* spec,
+                                     const ZSetRangeVisitor& visitor) const {
   // Redis' zzlFirstInLexRange and zzlLastInLexRange: walk from one end to
   // the first member inside the range, then on while members stay in it.
-  range_cache_.clear();
-  range_cache_.reserve(Size());
   if (!OverlapsLexRange(spec)) {
-    return {};
+    return;
   }
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   size_t skip = spec->limit ? spec->limit->offset : 0;
-  ZSetEntryList members;
   if (count.has_value() && *count == 0) {
-    return members;
+    return;
   }
+  size_t visited = 0;
+  // Returns whether the walk should go on.
   const auto visit = [&](const EntryView& entry) {
     if (skip > 0) {
       --skip;
       return true;
     }
-    members.push_back(AddRangeResult(entry.member, entry.score));
-    return !count.has_value() || members.size() < *count;
+    visitor(entry.member, entry.score);
+    ++visited;
+    return !count.has_value() || visited < *count;
   };
   if (!spec->reverse) {
     bool started = false;
@@ -219,7 +225,7 @@ ZSetEntryList ZSetListPack::RangeByLex(const RangeByLexSpec* spec) const {
       }
       member_offset = NextMemberAfterScore(entry->score_index);
     }
-    return members;
+    return;
   }
   const std::optional<size_t> last_score = listpack_->Last();
   std::optional<size_t> member_offset =
@@ -236,7 +242,6 @@ ZSetEntryList ZSetListPack::RangeByLex(const RangeByLexSpec* spec) const {
     }
     member_offset = PrevMemberBeforeMember(entry->member_index);
   }
-  return members;
 }
 
 size_t ZSetListPack::LexCount(const RangeByLexSpec* spec) const {
@@ -335,18 +340,19 @@ std::optional<double> ZSetListPack::ScoreAt(size_t offset) const {
   return score;
 }
 
-ZSetEntryList ZSetListPack::RangeByRankUtil(const RangeByRankSpec* spec) const {
+void ZSetListPack::VisitRankRange(const RangeByRankSpec* spec,
+                                  const ZSetRangeVisitor& visitor) const {
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   if (count.has_value() && *count == 0) {
-    return {};
+    return;
   }
   std::optional<size_t> offset = listpack_->First();
-  ZSetEntryList members;
+  size_t visited = 0;
   size_t rank = 0;
   const size_t size = Size();
   if (size == 0) {
-    return {};
+    return;
   }
   const auto min_rank = static_cast<size_t>(spec->min);
   const auto max_rank = static_cast<size_t>(spec->max);
@@ -357,7 +363,7 @@ ZSetEntryList ZSetListPack::RangeByRankUtil(const RangeByRankSpec* spec) const {
   }
   const size_t limit_offset = spec->limit ? spec->limit->offset : 0;
   if (start >= size) {
-    return {};
+    return;
   }
   while (offset.has_value() && rank < end) {
     const std::optional<EntryView> entry = EntryAt(*offset);
@@ -366,8 +372,9 @@ ZSetEntryList ZSetListPack::RangeByRankUtil(const RangeByRankSpec* spec) const {
     }
     if (rank >= start) {
       if (rank - start >= limit_offset) {
-        members.push_back(AddRangeResult(entry->member, entry->score));
-        if (count.has_value() && members.size() >= *count) {
+        visitor(entry->member, entry->score);
+        ++visited;
+        if (count.has_value() && visited >= *count) {
           break;
         }
       }
@@ -375,22 +382,21 @@ ZSetEntryList ZSetListPack::RangeByRankUtil(const RangeByRankSpec* spec) const {
     offset = NextMemberAfterScore(entry->score_index);
     ++rank;
   }
-  return members;
 }
 
-ZSetEntryList ZSetListPack::RevRangeByRankUtil(
-    const RangeByRankSpec* spec) const {
+void ZSetListPack::VisitRankRangeReversed(
+    const RangeByRankSpec* spec, const ZSetRangeVisitor& visitor) const {
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   if (count.has_value() && *count == 0) {
-    return {};
+    return;
   }
   std::optional<size_t> offset = listpack_->Last();
-  ZSetEntryList members;
+  size_t visited = 0;
   size_t rank = 0;
   const size_t size = Size();
   if (size == 0) {
-    return {};
+    return;
   }
   const auto min_rank = static_cast<size_t>(spec->min);
   const auto max_rank = static_cast<size_t>(spec->max);
@@ -401,7 +407,7 @@ ZSetEntryList ZSetListPack::RevRangeByRankUtil(
   }
   const size_t limit_offset = spec->limit ? spec->limit->offset : 0;
   if (start >= size) {
-    return {};
+    return;
   }
   while (offset.has_value() && rank < end) {
     const std::optional<size_t> member_offset = listpack_->Prev(*offset);
@@ -414,8 +420,9 @@ ZSetEntryList ZSetListPack::RevRangeByRankUtil(
     }
     if (rank >= start) {
       if (rank - start >= limit_offset) {
-        members.push_back(AddRangeResult(entry->member, entry->score));
-        if (count.has_value() && members.size() >= *count) {
+        visitor(entry->member, entry->score);
+        ++visited;
+        if (count.has_value() && visited >= *count) {
           break;
         }
       }
@@ -423,21 +430,20 @@ ZSetEntryList ZSetListPack::RevRangeByRankUtil(
     offset = PrevScoreBeforeMember(entry->member_index);
     ++rank;
   }
-  return members;
 }
 
-ZSetEntryList ZSetListPack::RangeByScoreUtil(
-    const RangeByScoreSpec* spec) const {
+void ZSetListPack::VisitScoreRange(const RangeByScoreSpec* spec,
+                                   const ZSetRangeVisitor& visitor) const {
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   if (count.has_value() && *count == 0) {
-    return {};
+    return;
   }
   std::optional<size_t> member_offset = FindKeyGreaterOrEqual(spec);
   if (!member_offset.has_value()) {
-    return {};
+    return;
   }
-  ZSetEntryList members;
+  size_t visited = 0;
   size_t i = 0;
   size_t offset = spec->limit ? spec->limit->offset : 0;
   while (member_offset.has_value()) {
@@ -446,29 +452,29 @@ ZSetEntryList ZSetListPack::RangeByScoreUtil(
       break;
     }
     if (IsInRange(entry->score, spec) && i >= offset) {
-      members.push_back(AddRangeResult(entry->member, entry->score));
-      if (count.has_value() && members.size() == *count) {
+      visitor(entry->member, entry->score);
+      ++visited;
+      if (count.has_value() && visited == *count) {
         break;
       }
     }
     member_offset = NextMemberAfterScore(entry->score_index);
     ++i;
   }
-  return members;
 }
 
-ZSetEntryList ZSetListPack::RevRangeByScoreUtil(
-    const RangeByScoreSpec* spec) const {
+void ZSetListPack::VisitScoreRangeReversed(
+    const RangeByScoreSpec* spec, const ZSetRangeVisitor& visitor) const {
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   if (count.has_value() && *count == 0) {
-    return {};
+    return;
   }
   std::optional<size_t> member_offset = FindKeyLessOrEqual(spec);
   if (!member_offset.has_value()) {
-    return {};
+    return;
   }
-  ZSetEntryList members;
+  size_t visited = 0;
   size_t i = 0;
   size_t offset = spec->limit ? spec->limit->offset : 0;
   while (member_offset.has_value()) {
@@ -477,21 +483,15 @@ ZSetEntryList ZSetListPack::RevRangeByScoreUtil(
       break;
     }
     if (IsInRange(entry->score, spec) && i >= offset) {
-      members.push_back(AddRangeResult(entry->member, entry->score));
-      if (count.has_value() && members.size() == *count) {
+      visitor(entry->member, entry->score);
+      ++visited;
+      if (count.has_value() && visited == *count) {
         break;
       }
     }
     member_offset = PrevMemberBeforeMember(entry->member_index);
     ++i;
   }
-  return members;
-}
-
-const ZSetEntry* ZSetListPack::AddRangeResult(std::string_view member,
-                                              double score) const {
-  range_cache_.emplace_back(member, score);
-  return &range_cache_.back();
 }
 
 std::optional<size_t> ZSetListPack::NextMemberAfterScore(

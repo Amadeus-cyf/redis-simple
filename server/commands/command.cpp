@@ -129,7 +129,7 @@ constexpr std::array kCommandTable = {
     ReadCommand("HVALS", hashes::HandleHVals, FixedArity(1), OneKey()),
     WriteCommand("INCR", strings::HandleIncr, FixedArity(1), OneKey()),
     WriteCommand("INCRBY", strings::HandleIncrBy, FixedArity(2), OneKey()),
-    AdminCommand("INFO", server_info::HandleInfo, {0, 1}),
+    AdminCommand("INFO", server_info::HandleInfo, VariableArity(0)),
     AdminCommand("LASTSAVE", persistence::HandleLastSave, FixedArity(0)),
     ReadCommand("LINDEX", lists::HandleLIndex, FixedArity(2), OneKey()),
     ReadCommand("LLEN", lists::HandleLLen, FixedArity(1), OneKey()),
@@ -288,7 +288,7 @@ constexpr std::array<uint8_t, kIndexSize> BuildIndex() {
   return index;
 }
 
-constexpr const std::array<uint8_t, kIndexSize> kCommandIndex = BuildIndex();
+constexpr std::array<uint8_t, kIndexSize> kCommandIndex = BuildIndex();
 
 constexpr std::array<FoldedName, kCommandTable.size()> BuildFoldedNames() {
   std::array<FoldedName, kCommandTable.size()> names{};
@@ -301,7 +301,7 @@ constexpr std::array<FoldedName, kCommandTable.size()> BuildFoldedNames() {
   return names;
 }
 
-constexpr const std::array<FoldedName, kCommandTable.size()> kFoldedNames =
+constexpr std::array<FoldedName, kCommandTable.size()> kFoldedNames =
     BuildFoldedNames();
 }  // namespace
 

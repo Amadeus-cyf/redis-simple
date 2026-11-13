@@ -6,6 +6,7 @@
 #include <array>
 #include <bit>
 #include <cerrno>
+#include <cinttypes>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -927,10 +928,10 @@ bool Loader::Load() {
           return false;
         }
         if (database != 0) {
-          RS_LOG_ERROR(
-              "The RDB data holds keys in database %llu; this server has only "
-              "database 0\n",
-              static_cast<unsigned long long>(database));
+          RS_LOG_ERROR("The RDB data holds keys in database %" PRIu64
+                       "; this server has only "
+                       "database 0\n",
+                       database);
           return false;
         }
         continue;
@@ -1022,10 +1023,9 @@ bool Loader::Load() {
     }
     // Zero means the writer had rdbchecksum off.
     if (checksum != 0 && checksum != expected) {
-      RS_LOG_ERROR(
-          "Wrong RDB checksum expected: (%llx) but got (%llx). Aborting now.\n",
-          static_cast<unsigned long long>(expected),
-          static_cast<unsigned long long>(checksum));
+      RS_LOG_ERROR("Wrong RDB checksum expected: (%" PRIx64
+                   ") but got (%" PRIx64 "). Aborting now.\n",
+                   expected, checksum);
       return false;
     }
   }

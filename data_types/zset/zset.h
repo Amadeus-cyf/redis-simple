@@ -45,12 +45,32 @@ class ZSet {
   bool Delete(std::string_view member);
   std::optional<double> Score(std::string_view member) const;
   std::optional<size_t> Rank(std::string_view member) const;
-  ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const;
-  ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const;
-  size_t Count(const RangeByScoreSpec* spec) const;
+  // Ranges by rank, score, and member name: `visitor(member, score)` is
+  // called for each member in the range's order, with a member view that is
+  // valid only during the call. Commands encode replies straight from these.
+  void ForEachInRankRange(const RangeByRankSpec* spec,
+                          const ZSetRangeVisitor& visitor) const {
+    storage_->ForEachInRankRange(spec, visitor);
+  }
+  void ForEachInScoreRange(const RangeByScoreSpec* spec,
+                           const ZSetRangeVisitor& visitor) const {
+    storage_->ForEachInScoreRange(spec, visitor);
+  }
+  void ForEachInLexRange(const RangeByLexSpec* spec,
+                         const ZSetRangeVisitor& visitor) const {
+    storage_->ForEachInLexRange(spec, visitor);
+  }
+  // The same ranges copied into vectors, for tests and tools.
+  ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const {
+    return storage_->RangeByRank(spec);
+  }
+  ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const {
+    return storage_->RangeByScore(spec);
+  }
   ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const {
     return storage_->RangeByLex(spec);
   }
+  size_t Count(const RangeByScoreSpec* spec) const;
   size_t LexCount(const RangeByLexSpec* spec) const {
     return storage_->LexCount(spec);
   }

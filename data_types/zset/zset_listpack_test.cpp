@@ -32,8 +32,8 @@ TEST(ZSetListPackTest, PreservesNumericMemberWhileReadingScore) {
   const ZSetEntryList entries = zset.RangeByRank(&spec);
 
   ASSERT_EQ(entries.size(), 1);
-  EXPECT_EQ(entries.front()->member, "0");
-  EXPECT_EQ(entries.front()->score, 42.0);
+  EXPECT_EQ(entries.front().member, "0");
+  EXPECT_EQ(entries.front().score, 42.0);
 }
 
 TEST(ZSetListPackTest, StoresNegativeZeroAsZero) {
@@ -71,8 +71,8 @@ TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {
   const ZSetEntryList range = zset.RangeByRank(&spec);
   ASSERT_EQ(range.size(), entries.size());
   for (size_t index = 0; index < entries.size(); ++index) {
-    EXPECT_EQ(range[index]->member, entries[index].first);
-    EXPECT_EQ(range[index]->score, entries[index].second);
+    EXPECT_EQ(range[index].member, entries[index].first);
+    EXPECT_EQ(range[index].score, entries[index].second);
   }
 }
 

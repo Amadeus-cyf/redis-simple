@@ -25,10 +25,13 @@ class ZSetSkiplist : public ZSetStorage {
     return score == nullptr ? std::nullopt : std::optional<double>(*score);
   }
   std::optional<size_t> Rank(std::string_view member) const override;
-  ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const override;
-  ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const override;
+  void ForEachInRankRange(const RangeByRankSpec* spec,
+                          const ZSetRangeVisitor& visitor) const override;
+  void ForEachInScoreRange(const RangeByScoreSpec* spec,
+                           const ZSetRangeVisitor& visitor) const override;
   size_t Count(const RangeByScoreSpec* spec) const override;
-  ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const override;
+  void ForEachInLexRange(const RangeByLexSpec* spec,
+                         const ZSetRangeVisitor& visitor) const override;
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
   size_t Scan(size_t cursor, size_t count,

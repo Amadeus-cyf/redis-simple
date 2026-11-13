@@ -13,10 +13,16 @@
 #include "data_types/zset/zset_range_spec.h"
 
 namespace redis_simple::zset {
-using ZSetEntryList = std::vector<const ZSetEntry*>;
+// A range collected into a vector of copies: a convenience for tests and
+// tools. Commands stream ranges through the ForEachIn...Range visitors.
+using ZSetEntryList = std::vector<ZSetEntry>;
 using ZSetEntryVisitor =
     std::function<bool(std::string_view member, double score)>;
 using ZSetScanVisitor =
+    std::function<void(std::string_view member, double score)>;
+// Receives the members of a range, in the range's order. The member view is
+// valid only during the call.
+using ZSetRangeVisitor =
     std::function<void(std::string_view member, double score)>;
 
 class ZSetStorage {
@@ -32,14 +38,17 @@ class ZSetStorage {
   virtual std::optional<double> Score(std::string_view member) const = 0;
   // Return the index of the given member.
   virtual std::optional<size_t> Rank(std::string_view member) const = 0;
-  // Return a list of members within the given index range.
-  virtual ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const = 0;
-  // Get a list of members within the given score range.
-  virtual ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const = 0;
+  // Visit the members within the given index range, without copying them.
+  virtual void ForEachInRankRange(const RangeByRankSpec* spec,
+                                  const ZSetRangeVisitor& visitor) const = 0;
+  // Visit the members within the given score range.
+  virtual void ForEachInScoreRange(const RangeByScoreSpec* spec,
+                                   const ZSetRangeVisitor& visitor) const = 0;
   // Count the number of members within the given range of score.
   virtual size_t Count(const RangeByScoreSpec* spec) const = 0;
-  // Return the members in a lexicographic range, as Redis' ZRANGEBYLEX does.
-  virtual ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const = 0;
+  // Visit the members in a lexicographic range, as Redis' ZRANGEBYLEX does.
+  virtual void ForEachInLexRange(const RangeByLexSpec* spec,
+                                 const ZSetRangeVisitor& visitor) const = 0;
   // Count the members in a lexicographic range, ignoring its limit.
   virtual size_t LexCount(const RangeByLexSpec* spec) const = 0;
   // Visit entries without allocating a result container.
@@ -55,6 +64,30 @@ class ZSetStorage {
   // skiplist.
   virtual std::optional<std::string_view> ListPackBytes() const = 0;
   virtual ~ZSetStorage() = default;
+
+  // The same ranges collected into vectors.
+  ZSetEntryList RangeByRank(const RangeByRankSpec* spec) const {
+    ZSetEntryList entries;
+    ForEachInRankRange(spec, Collector(&entries));
+    return entries;
+  }
+  ZSetEntryList RangeByScore(const RangeByScoreSpec* spec) const {
+    ZSetEntryList entries;
+    ForEachInScoreRange(spec, Collector(&entries));
+    return entries;
+  }
+  ZSetEntryList RangeByLex(const RangeByLexSpec* spec) const {
+    ZSetEntryList entries;
+    ForEachInLexRange(spec, Collector(&entries));
+    return entries;
+  }
+
+ private:
+  static ZSetRangeVisitor Collector(ZSetEntryList* const entries) {
+    return [entries](std::string_view member, double score) {
+      entries->emplace_back(member, score);
+    };
+  }
 };
 }  // namespace redis_simple::zset
 

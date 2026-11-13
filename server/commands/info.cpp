@@ -133,13 +133,23 @@ void AppendThreadsSection(IoThreadList threads, std::string* const info) {
 }  // namespace
 
 void HandleInfo(Client* const client) {
+  // Redis' genInfoSectionDict: no argument asks for every section, and so
+  // do "all", "default", and "everything", which differ only in sections
+  // this server does not have. Any number of sections may be named; each is
+  // reported once, in Redis' order, and unknown names are ignored.
   const commands::CommandArgs& args = client->Args();
-  const bool all = args.empty() || utils::EqualsIgnoreCase(args[0], "all") ||
-                   utils::EqualsIgnoreCase(args[0], "default");
-  const bool persistence =
-      all || utils::EqualsIgnoreCase(args[0], "persistence");
-  const bool stats = all || utils::EqualsIgnoreCase(args[0], "stats");
-  const bool threads = all || utils::EqualsIgnoreCase(args[0], "threads");
+  bool persistence = args.empty();
+  bool stats = args.empty();
+  bool threads = args.empty();
+  for (const std::string_view section : args) {
+    const bool all = utils::EqualsIgnoreCase(section, "all") ||
+                     utils::EqualsIgnoreCase(section, "default") ||
+                     utils::EqualsIgnoreCase(section, "everything");
+    persistence =
+        persistence || all || utils::EqualsIgnoreCase(section, "persistence");
+    stats = stats || all || utils::EqualsIgnoreCase(section, "stats");
+    threads = threads || all || utils::EqualsIgnoreCase(section, "threads");
+  }
   std::string info;
   if (persistence) {
     AppendPersistenceSection(client->Server().rdb, client->Aof(), &info);

@@ -5,6 +5,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "data_types/zset/zset.h"
@@ -125,7 +126,11 @@ void ZSetRangeByScore(benchmark::State& state) {
     (void)_;
     const double min = start(generator);
     const zset::RangeByScoreSpec spec(min, min + width, true, false);
-    benchmark::DoNotOptimize(zset->RangeByScore(&spec));
+    // Visit the range as ZRANGEBYSCORE does, without collecting it.
+    size_t visited = 0;
+    zset->ForEachInScoreRange(
+        &spec, [&visited](std::string_view, double) { ++visited; });
+    benchmark::DoNotOptimize(visited);
   }
   state.SetItemsProcessed(state.iterations());
 }

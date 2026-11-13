@@ -33,8 +33,8 @@ TEST(ZSetTest, InsertAndConvert) {
   spec.reverse = false;
   const ZSetEntryList entries = zset->RangeByRank(&spec);
   ASSERT_EQ(entries.size(), 256);
-  ASSERT_EQ(entries.front()->member, "key_0");
-  ASSERT_EQ(entries.back()->member, "key_255");
+  ASSERT_EQ(entries.front().member, "key_0");
+  ASSERT_EQ(entries.back().member, "key_255");
 }
 
 TEST(ZSetEncodingTest, ConvertsToSkiplistWhenMemberIsLong) {

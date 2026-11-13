@@ -118,7 +118,12 @@ int Run() {
       !ExpectReply(&cli, {"CLIENT", "NOPE"},
                    "ERR unknown subcommand 'NOPE'. Try CLIENT HELP.\n") ||
       !ExpectReply(&cli, {"SELECT", "0"}, "OK\n") ||
-      !ExpectReply(&cli, {"SELECT", "1"}, "ERR DB index is out of range\n")) {
+      !ExpectReply(&cli, {"SELECT", "1"}, "ERR DB index is out of range\n") ||
+      !ExpectReply(&cli, {"SELECT", "x"},
+                   "ERR value is not an integer or out of range\n") ||
+      !ExpectReply(&cli, {"SELECT", "99999999999"},
+                   "ERR value is out of range, value must between "
+                   "-2147483648 and 2147483647\n")) {
     return EXIT_FAILURE;
   }
   cli.AddCommand(std::vector<std::string_view>{"CLIENT", "ID"});
@@ -145,6 +150,25 @@ int Run() {
   if (!persistence_info.contains("aof_enabled:0") ||
       !persistence_info.contains("aof_last_write_status:ok")) {
     RS_LOG_DEBUG("unexpected persistence info: %s\n", persistence_info.c_str());
+    return EXIT_FAILURE;
+  }
+  // INFO takes any number of sections, reports each once in Redis' order,
+  // and ignores names it does not know.
+  cli.AddCommand(std::vector<std::string_view>{"INFO", "stats", "nosuchsection",
+                                               "persistence", "STATS"});
+  const std::string sections_info = cli.ReadReply();
+  const size_t persistence_position = sections_info.find("# Persistence");
+  const size_t stats_position = sections_info.find("# Stats");
+  if (persistence_position == std::string::npos ||
+      stats_position == std::string::npos ||
+      persistence_position > stats_position ||
+      sections_info.find("# Stats", stats_position + 1) != std::string::npos ||
+      sections_info.contains("# Threads")) {
+    RS_LOG_DEBUG("unexpected sections info: %s\n", sections_info.c_str());
+    return EXIT_FAILURE;
+  }
+  cli.AddCommand(std::vector<std::string_view>{"INFO", "everything"});
+  if (!cli.ReadReply().contains("# Threads")) {
     return EXIT_FAILURE;
   }
   if (!ExpectReply(&cli, {"QUIT"}, "OK\n")) {

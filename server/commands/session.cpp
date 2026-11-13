@@ -209,10 +209,17 @@ void HandleSelect(Client* const client) {
   // One database, as in Redis' cluster mode, but out-of-range indexes get
   // Redis' standalone error.
   int64_t index = 0;
-  if (!utils::ToInt64(client->Args()[0], &index) ||
-      index < std::numeric_limits<int32_t>::min() ||
-      index > std::numeric_limits<int32_t>::max()) {
+  if (!utils::ToInt64(client->Args()[0], &index)) {
     client->AddReply(reply::kNotAnIntegerError);
+    return;
+  }
+  // Redis reads the index with getIntFromObjectOrReply, which has its own
+  // error for an integer that does not fit an int.
+  if (index < std::numeric_limits<int32_t>::min() ||
+      index > std::numeric_limits<int32_t>::max()) {
+    client->AddReply(
+        reply::FromError("ERR value is out of range, value must between "
+                         "-2147483648 and 2147483647"));
     return;
   }
   if (index != 0) {

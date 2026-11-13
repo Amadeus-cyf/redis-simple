@@ -34,10 +34,6 @@ std::unique_ptr<ZSet> ZSet::CreateFromListPack(
   return zset;
 }
 
-/*
- * Insert a new element with score or update the score of an existing
- * element. Return true if the element is newly inserted.
- */
 bool ZSet::InsertOrUpdate(std::string_view member, double score,
                           bool* const changed) {
   if (changed != nullptr) {
@@ -67,17 +63,6 @@ std::optional<size_t> ZSet::Rank(std::string_view member) const {
   return storage_->Rank(member);
 }
 
-ZSetEntryList ZSet::RangeByRank(const RangeByRankSpec* spec) const {
-  return storage_->RangeByRank(spec);
-}
-
-ZSetEntryList ZSet::RangeByScore(const RangeByScoreSpec* spec) const {
-  return storage_->RangeByScore(spec);
-}
-
-/*
- * Count number of elements within the range of the score.
- */
 size_t ZSet::Count(const RangeByScoreSpec* spec) const {
   return storage_->Count(spec);
 }

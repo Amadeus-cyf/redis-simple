@@ -688,11 +688,9 @@ void ListPack::SetNumOfElements(uint16_t element_count) const {
   StoreLittleEndian<2>(element_count, listpack_.get() + 4);
 }
 
-/*
- * Return the beginning offset of the next element of the current element at the
- * given offset. If the offset is pointing to the EOF, return the current
- * offset.
- */
+// Return the beginning offset of the next element of the current element at the
+// given offset. If the offset is pointing to the EOF, return the current
+// offset.
 size_t ListPack::Skip(size_t offset) const {
   if (listpack_[offset] == kListPackEof) {
     return offset;
@@ -703,9 +701,7 @@ size_t ListPack::Skip(size_t offset) const {
   return next_offset;
 }
 
-/*
- * Estimate the bytes needed to store the same integer multiple times.
- */
+// Estimate the bytes needed to store the same integer multiple times.
 size_t ListPack::EstimateBytes(int64_t value, size_t repeat) {
   const size_t encoded = EncodeInteger(nullptr, value);
   const size_t entry_bytes = encoded + BacklenBytes(encoded);
@@ -732,19 +728,15 @@ size_t ListPack::EstimateEntryBytes(std::string_view value) {
   return encoded + BacklenBytes(encoded);
 }
 
-/*
- * Return whether adding bytes keeps the listpack within the safe size limit.
- */
+// Return whether adding bytes keeps the listpack within the safe size limit.
 bool ListPack::SafeToAdd(const ListPack* const listpack, size_t bytes) {
   const size_t length = (listpack != nullptr) ? listpack->TotalBytes() : 0;
   return length <= kListPackMaxSafetySize &&
          bytes <= kListPackMaxSafetySize - length;
 }
 
-/*
- * Get the encoding type of the element at the given offset of the listpack.
- * The function assumes that the offset is valid.
- */
+// Get the encoding type of the element at the given offset of the listpack.
+// The function assumes that the offset is valid.
 ListPack::EncodingType ListPack::EncodingAt(size_t offset) const {
   const unsigned char* buffer = listpack_.get() + offset;
   if ((buffer[0] & EncodingTypeMask::kType7BitUintMask) ==
@@ -777,10 +769,8 @@ ListPack::EncodingType ListPack::EncodingAt(size_t offset) const {
   }
 }
 
-/*
- * Get back length from the given element of the listpack. Note that the offset
- * provided is the beginning of the element.
- */
+// Get back length from the given element of the listpack. Note that the offset
+// provided is the beginning of the element.
 size_t ListPack::Backlen(size_t offset) const {
   return EncodedBytes(offset, EncodingAt(offset));
 }
@@ -856,9 +846,7 @@ ListPack::DecodedEntry ListPack::DecodeEntry(
   return entry;
 }
 
-/*
- * Get number of bytes required to encode the back length.
- */
+// Get number of bytes required to encode the back length.
 uint8_t ListPack::BacklenBytes(size_t backlen) {
   if (backlen <= BacklenThreshold::kSize1ByteBacklenMax) {
     return 1;
@@ -878,11 +866,9 @@ uint8_t ListPack::BacklenBytes(size_t backlen) {
   return 5;
 }
 
-/*
- * Encode the string into the given pointer of the listpack and return the
- * number of bytes needed to encode the element (not include bytes used to
- * encode back length).
- */
+// Encode the string into the given pointer of the listpack and return the
+// number of bytes needed to encode the element (not include bytes used to
+// encode back length).
 size_t ListPack::EncodeString(unsigned char* const buffer,
                               std::string_view element) {
   const auto* element_string =
@@ -919,11 +905,9 @@ size_t ListPack::EncodeString(unsigned char* const buffer,
   return backlen;
 }
 
-/*
- * Encode the int64 into the given pointer of the listpack and return the number
- * of bytes needed to encode the element (not include bytes used to encode back
- * length).
- */
+// Encode the int64 into the given pointer of the listpack and return the number
+// of bytes needed to encode the element (not include bytes used to encode back
+// length).
 size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t v) {
   size_t backlen = 0;
   if (v >= 0 && v <= kUint7BitIntMax) {
@@ -989,9 +973,7 @@ size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t v) {
   return backlen;
 }
 
-/*
- * Encode the back length to the given pointer of the listpack.
- */
+// Encode the back length to the given pointer of the listpack.
 void ListPack::EncodeBacklen(unsigned char* const buffer, size_t backlen) {
   // Redis' lpEncodeBacklen: the most significant 7 bits come first, and
   // every later byte has its high bit set, so a backward read from the
@@ -1006,12 +988,10 @@ void ListPack::EncodeBacklen(unsigned char* const buffer, size_t backlen) {
   }
 }
 
-/*
- * Decode the backlen of the element given its last byte through traversing
- * reversely to find the first byte has its most siginificant bit set to zero.
- * The function assumes that the offset is valid and is the last byte of the
- * element.
- */
+// Decode the backlen of the element given its last byte through traversing
+// reversely to find the first byte has its most siginificant bit set to zero.
+// The function assumes that the offset is valid and is the last byte of the
+// element.
 size_t ListPack::DecodeBacklen(size_t offset) const {
   // Redis' lpDecodeBacklen: read backward from the entry's last byte, low
   // bits first, until a byte without the high bit.
@@ -1029,11 +1009,9 @@ size_t ListPack::DecodeBacklen(size_t offset) const {
   return backlen;
 }
 
-/*
- * Decode the string length from the given element of the listpack.
- * The function assumes that the offset is valid and the element at the offset
- * is of string type.
- */
+// Decode the string length from the given element of the listpack.
+// The function assumes that the offset is valid and the element at the offset
+// is of string type.
 size_t ListPack::DecodeStringLength(size_t offset) const {
   const unsigned char* buffer = listpack_.get() + offset;
   switch (EncodingAt(offset)) {

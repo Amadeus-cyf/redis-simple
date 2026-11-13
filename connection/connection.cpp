@@ -173,7 +173,7 @@ ConnectionStatus Connection::Accept(int listener_fd, AddressInfo* address) {
   }
   state_ = ConnectionState::kConnected;
   fd_ = fd;
-  RS_LOG_DEBUG("conn state accept %d\n", static_cast<int>(state_));
+  RS_LOG_DEBUG("connection state after accept: %d\n", static_cast<int>(state_));
   return ConnectionStatus::kOk;
 }
 
@@ -406,7 +406,7 @@ event_loop::CallbackStatus Connection::WritableEventCallback(
 int Connection::Wait(event_loop::EventFlag flag, int64_t timeout_ms) const {
   int r = event_loop::WaitForEvent(fd_, flag, timeout_ms);
   if (r < 0) {
-    RS_LOG_DEBUG("conn sync %s failed for connection %d\n",
+    RS_LOG_DEBUG("sync %s failed for connection %d\n",
                  flag == event_loop::EventFlag::kReadable ? "read" : "write",
                  fd_);
     return -1;
