@@ -134,8 +134,9 @@ class ListPack {
   };
   unsigned char* StringAt(size_t offset, size_t* length,
                           EncodingType encoding_type) const;
-  unsigned char* IntegerAt(size_t offset, unsigned char* dst, size_t* length,
-                           int64_t* value, EncodingType encoding_type) const;
+  unsigned char* IntegerAt(size_t offset, unsigned char* destination,
+                           size_t* length, int64_t* value,
+                           EncodingType encoding_type) const;
   bool Insert(size_t offset, ListPack::Position where,
               const std::string_view* element_string,
               const int64_t* element_integer);
@@ -176,7 +177,7 @@ class ListPack {
   }
   static uint8_t BacklenBytes(size_t backlen);
   static size_t EncodeString(unsigned char* buffer, std::string_view element);
-  static size_t EncodeInteger(unsigned char* buffer, int64_t v);
+  static size_t EncodeInteger(unsigned char* buffer, int64_t value);
   static void EncodeBacklen(unsigned char* buffer, size_t backlen);
   size_t DecodeBacklen(size_t offset) const;
   size_t DecodeStringLength(size_t offset) const;

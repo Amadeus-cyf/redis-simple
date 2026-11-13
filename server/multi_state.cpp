@@ -18,8 +18,8 @@ constexpr size_t kRetainedBytes = size_t{64} * 1024;
 bool MultiState::Queue(const commands::Command* const command,
                        const commands::CommandArgs& args) {
   size_t bytes = 0;
-  for (const std::string_view arg : args) {
-    bytes += arg.size();
+  for (const std::string_view argument : args) {
+    bytes += argument.size();
   }
   if (bytes > kMaxQueuedBytes - args_.size()) {
     Reset();
@@ -28,8 +28,8 @@ bool MultiState::Queue(const commands::Command* const command,
     return false;
   }
   args_.reserve(args_.size() + bytes);
-  for (const std::string_view arg : args) {
-    args_.append(arg);
+  for (const std::string_view argument : args) {
+    args_.append(argument);
     arg_ends_.push_back(args_.size());
   }
   commands_.push_back({command, arg_ends_.size(), args.size()});

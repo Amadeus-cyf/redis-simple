@@ -231,8 +231,8 @@ std::string Encode(std::string_view command,
                    const std::vector<std::string_view>& args) {
   std::string encoded = reply::FromArrayHeader(args.size() + 1);
   reply::AppendBulkString(command, &encoded);
-  for (std::string_view arg : args) {
-    reply::AppendBulkString(arg, &encoded);
+  for (std::string_view argument : args) {
+    reply::AppendBulkString(argument, &encoded);
   }
   return encoded;
 }

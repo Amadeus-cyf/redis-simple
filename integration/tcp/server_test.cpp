@@ -33,34 +33,34 @@ ssize_t ReadWithTimeout(int fd, char* buffer, size_t length) {
 }  // namespace
 
 int Run(std::string_view port_file) {
-  int s = tcp::TcpCreateSocket(AF_INET, false);
-  if (s < 0) {
+  int listen_fd = tcp::TcpCreateSocket(AF_INET, false);
+  if (listen_fd < 0) {
     std::cerr << "failed to create TCP integration socket\n";
     RS_LOG_DEBUG("failed to create socket\n");
     return EXIT_FAILURE;
   }
   constexpr int kPort = 0;
   const tcp::TcpAddress local("localhost", kPort);
-  if (tcp::TcpBind(s, local) != tcp::TcpStatusCode::kOk) {
+  if (tcp::TcpBind(listen_fd, local) != tcp::TcpStatusCode::kOk) {
     std::cerr << "failed to bind TCP integration socket: "
               << std::strerror(errno) << '\n';
     RS_LOG_DEBUG("failed to bind tcp integration server\n");
-    close(s);
+    close(listen_fd);
     return EXIT_FAILURE;
   }
-  if (tcp::TcpListen(s) != tcp::TcpStatusCode::kOk) {
+  if (tcp::TcpListen(listen_fd) != tcp::TcpStatusCode::kOk) {
     std::cerr << "failed to listen on TCP integration socket\n";
     RS_LOG_DEBUG("failed to listen on tcp integration server\n");
-    close(s);
+    close(listen_fd);
     return EXIT_FAILURE;
   }
   sockaddr_in bound_address{};
   socklen_t bound_address_size = sizeof(bound_address);
-  if (getsockname(s, reinterpret_cast<sockaddr*>(&bound_address),
+  if (getsockname(listen_fd, reinterpret_cast<sockaddr*>(&bound_address),
                   &bound_address_size) < 0) {
     std::cerr << "failed to read TCP integration port: " << std::strerror(errno)
               << '\n';
-    close(s);
+    close(listen_fd);
     return EXIT_FAILURE;
   }
   std::ofstream ready_file{std::string(port_file)};
@@ -68,16 +68,16 @@ int Run(std::string_view port_file) {
   ready_file.close();
   if (!ready_file) {
     std::cerr << "failed to publish TCP integration port\n";
-    close(s);
+    close(listen_fd);
     return EXIT_FAILURE;
   }
 
   tcp::TcpAddress remote_address;
-  const int remote_fd = tcp::TcpAccept(s, &remote_address);
+  const int remote_fd = tcp::TcpAccept(listen_fd, &remote_address);
   if (remote_fd < 0) {
     std::cerr << "failed to accept TCP integration client\n";
     RS_LOG_DEBUG("failed to accept tcp integration client\n");
-    close(s);
+    close(listen_fd);
     return EXIT_FAILURE;
   }
   RS_LOG_DEBUG("accept connection from %s:%d\n", remote_address.ip.c_str(),
@@ -90,18 +90,18 @@ int Run(std::string_view port_file) {
       std::string_view(buffer.data(), nread) != kRequest) {
     RS_LOG_DEBUG("unexpected tcp request: %s\n", buffer.data());
     close(remote_fd);
-    close(s);
+    close(listen_fd);
     return EXIT_FAILURE;
   }
   if (write(remote_fd, kResponse.data(), kResponse.size()) !=
       static_cast<ssize_t>(kResponse.size())) {
     RS_LOG_DEBUG("failed to write tcp integration response\n");
     close(remote_fd);
-    close(s);
+    close(listen_fd);
     return EXIT_FAILURE;
   }
   close(remote_fd);
-  close(s);
+  close(listen_fd);
   return EXIT_SUCCESS;
 }
 }  // namespace redis_simple

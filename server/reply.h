@@ -46,9 +46,9 @@ constexpr std::string_view NullArrayView(ProtocolVersion protocol) {
   return protocol == ProtocolVersion::kResp2 ? kNullArrayResp2 : kNullResp3;
 }
 
-std::string FromString(std::string_view s);
-std::string FromBulkString(std::string_view s);
-std::string FromInt64(int64_t i64);
+std::string FromString(std::string_view text);
+std::string FromBulkString(std::string_view value);
+std::string FromInt64(int64_t value);
 std::string FromArray(const std::vector<std::string>& array);
 std::string FromBulkStringArray(const std::vector<std::string>& values);
 std::string FromArrayHeader(size_t size);
@@ -74,9 +74,9 @@ inline size_t DecimalDigits(uint64_t value) {
 // Copies `s` to `out`. Short values, the common case in collection replies,
 // use fixed-size overlapping copies that compile to a few moves instead of a
 // memcpy call.
-inline void CopyShort(std::string_view s, char* const out) {
-  const size_t length = s.size();
-  const char* const in = s.data();
+inline void CopyShort(std::string_view text, char* const out) {
+  const size_t length = text.size();
+  const char* const in = text.data();
   if (length >= 8 && length <= 16) {
     std::memcpy(out, in, 8);
     std::memcpy(out + length - 8, in + length - 8, 8);
@@ -93,10 +93,10 @@ inline void CopyShort(std::string_view s, char* const out) {
 }
 }  // namespace reply_internal
 
-// Appends `s` as a bulk string. Inline because collection replies call it
+// Appends `value` as a bulk string. Inline because collection replies call it
 // once per element.
-inline void AppendBulkString(std::string_view s, std::string* const reply) {
-  const size_t length = s.size();
+inline void AppendBulkString(std::string_view value, std::string* const reply) {
+  const size_t length = value.size();
   const size_t digits = reply_internal::DecimalDigits(length);
   const size_t old_size = reply->size();
   const size_t new_size = old_size + 1 + digits + 2 + length + 2;
@@ -117,7 +117,7 @@ inline void AppendBulkString(std::string_view s, std::string* const reply) {
     out += 1 + digits;
     *out++ = '\r';
     *out++ = '\n';
-    reply_internal::CopyShort(s, out);
+    reply_internal::CopyShort(value, out);
     out += length;
     *out++ = '\r';
     *out = '\n';

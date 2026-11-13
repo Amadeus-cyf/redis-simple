@@ -427,7 +427,7 @@ unsigned char* ListPack::StringAt(size_t offset, size_t* const length,
   }
 }
 
-unsigned char* ListPack::IntegerAt(size_t offset, unsigned char* dst,
+unsigned char* ListPack::IntegerAt(size_t offset, unsigned char* destination,
                                    size_t* const length, int64_t* integer_value,
                                    EncodingType encoding_type) const {
   int64_t value = 0;
@@ -476,13 +476,13 @@ unsigned char* ListPack::IntegerAt(size_t offset, unsigned char* dst,
   } else {
     value = static_cast<int64_t>(unsigned_value);
   }
-  if (dst != nullptr) {
+  if (destination != nullptr) {
     const int string_length = utils::Int64ToString(
-        {reinterpret_cast<char*>(dst), kListPackIntBufferSize}, value);
+        {reinterpret_cast<char*>(destination), kListPackIntBufferSize}, value);
     if (length != nullptr) {
       *length = string_length;
     }
-    return dst;
+    return destination;
   }
   if (integer_value != nullptr) {
     *integer_value = value;
@@ -908,63 +908,63 @@ size_t ListPack::EncodeString(unsigned char* const buffer,
 // Encode the int64 into the given pointer of the listpack and return the number
 // of bytes needed to encode the element (not include bytes used to encode back
 // length).
-size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t v) {
+size_t ListPack::EncodeInteger(unsigned char* const buffer, int64_t value) {
   size_t backlen = 0;
-  if (v >= 0 && v <= kUint7BitIntMax) {
+  if (value >= 0 && value <= kUint7BitIntMax) {
     // 7 bit unsigned integer
     backlen = 1;
     if (buffer != nullptr) {
-      buffer[0] = EncodingType::k7BitUnsignedInteger | v;
+      buffer[0] = EncodingType::k7BitUnsignedInteger | value;
     }
-  } else if (v >= -4096 && v <= 4095) {
+  } else if (value >= -4096 && value <= 4095) {
     // 13 bit integer
-    if (v < 0) {
-      v += (1 << 13);
+    if (value < 0) {
+      value += (1 << 13);
     }
     backlen = 2;
     if (buffer != nullptr) {
-      buffer[0] = EncodingType::k13BitInteger | (v >> 8);
-      buffer[1] = v & 0xff;
+      buffer[0] = EncodingType::k13BitInteger | (value >> 8);
+      buffer[1] = value & 0xff;
     }
-  } else if (v >= std::numeric_limits<int16_t>::min() &&
-             v <= std::numeric_limits<int16_t>::max()) {
+  } else if (value >= std::numeric_limits<int16_t>::min() &&
+             value <= std::numeric_limits<int16_t>::max()) {
     // 16 bit integer
-    if (v < 0) {
-      v += (1 << 16);
+    if (value < 0) {
+      value += (1 << 16);
     }
     backlen = 3;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k16BitInteger;
-      StoreLittleEndian<2>(static_cast<uint64_t>(v), buffer + 1);
+      StoreLittleEndian<2>(static_cast<uint64_t>(value), buffer + 1);
     }
-  } else if (v >= kInt24BitIntMin && v <= kInt24BitIntMax) {
+  } else if (value >= kInt24BitIntMin && value <= kInt24BitIntMax) {
     // 24 bit integer
-    if (v < 0) {
-      v += (1 << 24);
+    if (value < 0) {
+      value += (1 << 24);
     }
     backlen = 4;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k24BitInteger;
-      StoreLittleEndian<3>(static_cast<uint64_t>(v), buffer + 1);
+      StoreLittleEndian<3>(static_cast<uint64_t>(value), buffer + 1);
     }
-  } else if (v >= std::numeric_limits<int32_t>::min() &&
-             v <= std::numeric_limits<int32_t>::max()) {
+  } else if (value >= std::numeric_limits<int32_t>::min() &&
+             value <= std::numeric_limits<int32_t>::max()) {
     // 32 bit integer
-    if (v < 0) {
-      v += (static_cast<int64_t>(1) << 32);
+    if (value < 0) {
+      value += (static_cast<int64_t>(1) << 32);
     }
     backlen = 5;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k32BitInteger;
-      StoreLittleEndian<4>(static_cast<uint64_t>(v), buffer + 1);
+      StoreLittleEndian<4>(static_cast<uint64_t>(value), buffer + 1);
     }
   } else {
     // 64 bit integer
-    uint64_t uv = v;
+    uint64_t unsigned_value = value;
     backlen = 9;
     if (buffer != nullptr) {
       buffer[0] = EncodingType::k64BitInteger;
-      StoreLittleEndian<8>(uv, buffer + 1);
+      StoreLittleEndian<8>(unsigned_value, buffer + 1);
     }
   }
   if (buffer != nullptr) {

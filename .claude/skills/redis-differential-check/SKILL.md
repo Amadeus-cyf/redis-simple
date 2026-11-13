@@ -85,7 +85,24 @@ usually means the other server wrote a command this one does not implement:
 Redis' rewrite writes `SET`, `RPUSH`, `SADD`, `ZADD`, `HMSET`, and
 `PEXPIREAT`.
 
-## 4. RDB interoperability
+## 4. Change counts and WATCH
+
+Replies do not show everything a command does. After changing a write
+command, compare its side effects too:
+
+```sh
+scripts/compare_side_effects.py build/debug/redis_simple
+```
+
+For each case it compares the replies, the change count (`INFO`'s
+`rdb_changes_since_last_save`, which is what `Client::MarkModified` adds),
+and whether a `WATCH` held by a second client is failed. The cases are
+mostly commands that change nothing, such as `LTRIM` of a missing key or
+`SADD` of an existing member, because that is where Redis' rules are easy to
+miss: some signal the key without counting a change, and some do neither.
+Add a case for every new write command and option.
+
+## 5. RDB interoperability
 
 After any change to `server/rdb/`, or to the byte format of `ListPack` or
 `IntSet` (which RDB files store as they are), check that each server loads

@@ -281,13 +281,16 @@ file):
 ```sh
 scripts/run_redis_compatibility_check.sh build/debug/redis_simple
 scripts/compare_with_redis.py build/debug/redis_simple
+scripts/compare_side_effects.py build/debug/redis_simple
 scripts/check_aof_interop.sh build/debug/redis_simple
 scripts/check_rdb_interop.py build/debug/redis_simple
 ```
 
 `compare_with_redis.py` compares every supported command's replies, edge
 cases and random operations included; add cases when adding commands or
-options. `check_rdb_interop.py` checks that each server loads the other's RDB
+options. `compare_side_effects.py` compares what replies do not show: each
+command's change count and whether it fails another client's `WATCH`; add a
+case for every new write command, including ones that change nothing. `check_rdb_interop.py` checks that each server loads the other's RDB
 file.
 
 Run release and sanitizer checks after changes to ownership, memory layout,
@@ -402,7 +405,8 @@ Before committing, run the relevant build and tests.
   is a symlink to that folder, so keep one copy. Use the `pre-pr-check` skill
   before committing or opening a pull request, and update it when the checks
   in this file change. `benchmark-against-baseline` and
-  `redis-differential-check` cover performance and Redis comparisons.
+  `redis-differential-check` cover performance and Redis comparisons, and
+  `add-command` lists every place a new or changed command touches.
 - Keep CMake target-based. Source files are discovered by scoped directory
   globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
   explicitly when they do not belong in a library target.

@@ -46,8 +46,8 @@ class ReplayTransaction {
   void Queue(const commands::Command* command,
              const commands::CommandArgs& args) {
     commands_.push_back({command, args.size()});
-    for (const std::string_view arg : args) {
-      args_.emplace_back(arg);
+    for (const std::string_view argument : args) {
+      args_.emplace_back(argument);
     }
   }
 

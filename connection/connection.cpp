@@ -263,30 +263,30 @@ bool Connection::UnsetWriteCallback() {
 }
 
 ssize_t Connection::Read(std::span<char> buffer) {
-  ssize_t r = read(fd_, buffer.data(), buffer.size());
-  while (r < 0 && errno == EINTR) {
-    r = read(fd_, buffer.data(), buffer.size());
+  ssize_t bytes_read = read(fd_, buffer.data(), buffer.size());
+  while (bytes_read < 0 && errno == EINTR) {
+    bytes_read = read(fd_, buffer.data(), buffer.size());
   }
-  if (r < 0 && !WouldBlock(errno)) {
+  if (bytes_read < 0 && !WouldBlock(errno)) {
     if (state_ == ConnectionState::kConnected) {
       state_ = ConnectionState::kError;
     }
     return -1;
   }
-  if (r == 0) {
+  if (bytes_read == 0) {
     state_ = ConnectionState::kClosed;
   }
-  return r;
+  return bytes_read;
 }
 
 ssize_t Connection::SyncRead(std::span<char> buffer, int64_t timeout_ms) {
   // Try the syscall first so already-ready sockets avoid an extra poll().
-  ssize_t r = read(fd_, buffer.data(), buffer.size());
-  while (r < 0 && errno == EINTR) {
-    r = read(fd_, buffer.data(), buffer.size());
+  ssize_t bytes_read = read(fd_, buffer.data(), buffer.size());
+  while (bytes_read < 0 && errno == EINTR) {
+    bytes_read = read(fd_, buffer.data(), buffer.size());
   }
-  if (r >= 0) {
-    return r;
+  if (bytes_read >= 0) {
+    return bytes_read;
   }
   if (!WouldBlock(errno)) {
     return -1;
@@ -404,17 +404,17 @@ event_loop::CallbackStatus Connection::WritableEventCallback(
 }
 
 int Connection::Wait(event_loop::EventFlag flag, int64_t timeout_ms) const {
-  int r = event_loop::WaitForEvent(fd_, flag, timeout_ms);
-  if (r < 0) {
+  int ready = event_loop::WaitForEvent(fd_, flag, timeout_ms);
+  if (ready < 0) {
     RS_LOG_DEBUG("sync %s failed for connection %d\n",
                  flag == event_loop::EventFlag::kReadable ? "read" : "write",
                  fd_);
     return -1;
   }
-  if (r == 0) {
+  if (ready == 0) {
     RS_LOG_DEBUG("event wait timeout\n");
     return -1;
   }
-  return r;
+  return ready;
 }
 }  // namespace redis_simple::connection

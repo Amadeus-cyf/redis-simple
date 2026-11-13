@@ -70,20 +70,20 @@ int WaitForEvent(int fd, int mask, int64_t timeout_ms) {
   if ((mask & EventFlag::kWritable) != 0) {
     poll_fds[0].events |= POLLOUT;
   }
-  int r = -1;
-  while (r < 0) {
-    r = poll(poll_fds.data(), kFdCount, static_cast<int>(timeout_ms));
-    if (r < 0 && errno != EINTR) {
+  int ready = -1;
+  while (ready < 0) {
+    ready = poll(poll_fds.data(), kFdCount, static_cast<int>(timeout_ms));
+    if (ready < 0 && errno != EINTR) {
       break;
     }
   }
-  if (r < 0) {
+  if (ready < 0) {
     RS_LOG_DEBUG("poll error: %s\n", std::strerror(errno));
-    return r;
+    return ready;
   }
-  if (r == 0) {
+  if (ready == 0) {
     // The file descriptor is not ready for the requested operation.
-    return r;
+    return ready;
   }
   if ((poll_fds[0].revents & POLLNVAL) != 0) {
     return -1;

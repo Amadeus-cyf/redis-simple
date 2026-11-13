@@ -94,17 +94,17 @@ void IntSet::UpgradeAndAdd(int64_t value) {
   for (uint32_t index = old_length; index > 0; --index) {
     const uint32_t old_index = index - 1;
     int64_t old_value = 0;
-    const unsigned char* src =
+    const unsigned char* source =
         old_contents.get() + (static_cast<size_t>(old_index * old_encoding));
     if (old_encoding == kInt64) {
-      std::memcpy(&old_value, src, sizeof(old_value));
+      std::memcpy(&old_value, source, sizeof(old_value));
     } else if (old_encoding == kInt32) {
       int32_t value32 = 0;
-      std::memcpy(&value32, src, sizeof(value32));
+      std::memcpy(&value32, source, sizeof(value32));
       old_value = value32;
     } else {
       int16_t value16 = 0;
-      std::memcpy(&value16, src, sizeof(value16));
+      std::memcpy(&value16, source, sizeof(value16));
       old_value = value16;
     }
     Set(old_index + prepend, old_value);
@@ -170,42 +170,43 @@ void IntSet::AppendRedisBlob(std::string* const out) const {
 
 int64_t IntSet::EncodedValue(uint32_t index, EncodingType encoding) const {
   RS_CHECK(index < length_);
-  const unsigned char* src =
+  const unsigned char* source =
       contents_.get() + (static_cast<size_t>(index * encoding));
   if (encoding == kInt64) {
-    int64_t v64 = 0;
-    std::memcpy(&v64, src, sizeof(v64));
-    return v64;
+    int64_t value64 = 0;
+    std::memcpy(&value64, source, sizeof(value64));
+    return value64;
   }
   if (encoding == kInt32) {
-    int32_t v32 = 0;
-    std::memcpy(&v32, src, sizeof(v32));
-    return v32;
+    int32_t value32 = 0;
+    std::memcpy(&value32, source, sizeof(value32));
+    return value32;
   }
-  int16_t v16 = 0;
-  std::memcpy(&v16, src, sizeof(v16));
-  return v16;
+  int16_t value16 = 0;
+  std::memcpy(&value16, source, sizeof(value16));
+  return value16;
 }
 
 void IntSet::Set(uint32_t index, int64_t value) {
-  unsigned char* dst =
+  unsigned char* destination =
       contents_.get() + (static_cast<size_t>(index * encoding_));
   if (encoding_ == kInt64) {
-    std::memcpy(dst, &value, sizeof(value));
+    std::memcpy(destination, &value, sizeof(value));
   } else if (encoding_ == kInt32) {
     const auto value32 = static_cast<int32_t>(value);
-    std::memcpy(dst, &value32, sizeof(value32));
+    std::memcpy(destination, &value32, sizeof(value32));
   } else {
     const auto value16 = static_cast<int16_t>(value);
-    std::memcpy(dst, &value16, sizeof(value16));
+    std::memcpy(destination, &value16, sizeof(value16));
   }
 }
 
 void IntSet::MoveTail(uint32_t from, uint32_t to) {
   const size_t bytes = static_cast<size_t>(length_ - from) * encoding_;
-  const unsigned char* src =
+  const unsigned char* source =
       contents_.get() + (static_cast<size_t>(from * encoding_));
-  unsigned char* dst = contents_.get() + (static_cast<size_t>(to * encoding_));
-  std::memmove(dst, src, bytes);
+  unsigned char* destination =
+      contents_.get() + (static_cast<size_t>(to * encoding_));
+  std::memmove(destination, source, bytes);
 }
 }  // namespace redis_simple::memory

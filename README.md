@@ -465,6 +465,13 @@ operations included, in RESP2 and RESP3 (the script starts both servers):
 scripts/compare_with_redis.py build/debug/redis_simple
 ```
 
+To compare what replies do not show, each write command's change count and
+whether it fails another client's `WATCH`:
+
+```sh
+scripts/compare_side_effects.py build/debug/redis_simple
+```
+
 With `redis-server` 7 or later installed, check that each server loads the
 other's AOF directory:
 
