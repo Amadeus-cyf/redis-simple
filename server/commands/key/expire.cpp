@@ -219,8 +219,9 @@ void HandleFlushDb(Client* const client) {
     return;
   }
   db::RedisDb* const redis_db = client->Db();
+  // Redis counts every key the flush removes.
   if (redis_db->KeyCount() > 0) {
-    client->MarkModified();
+    client->MarkModified(static_cast<int64_t>(redis_db->KeyCount()));
   }
   redis_db->Flush();
   client->AddReply(reply::kOk);

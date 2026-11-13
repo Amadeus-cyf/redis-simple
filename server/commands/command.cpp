@@ -34,7 +34,9 @@ constexpr Command ReadCommand(std::string_view name, CommandCallback callback,
 
 constexpr Command WriteCommand(std::string_view name, CommandCallback callback,
                                CommandArity arity, KeySpec keys = NoKeys()) {
-  return {name, callback, arity, CommandAccess::kWrite, keys};
+  Command command{name, callback, arity, CommandAccess::kWrite, keys};
+  command.refused_on_disk_error = true;
+  return command;
 }
 
 constexpr Command AdminCommand(std::string_view name, CommandCallback callback,
@@ -60,6 +62,11 @@ constexpr Command RunsImmediatelyInMulti(Command command) {
 
 constexpr Command NotAllowedInMulti(Command command) {
   command.allowed_in_multi = false;
+  return command;
+}
+
+constexpr Command RefusedOnDiskError(Command command) {
+  command.refused_on_disk_error = true;
   return command;
 }
 
@@ -89,6 +96,8 @@ constexpr std::array kCommandTable = {
         ConnectionCommand("AUTH", session::HandleAuth, VariableArity(1))),
     AdminCommand("BGREWRITEAOF", persistence::HandleBgRewriteAof,
                  FixedArity(0)),
+    // Like Redis, any arguments but SCHEDULE are a syntax error.
+    AdminCommand("BGSAVE", persistence::HandleBgSave, VariableArity(0)),
     ConnectionCommand("CLIENT", session::HandleClient, VariableArity(1)),
     ReadCommand("DBSIZE", keys::HandleDbSize, FixedArity(0)),
     WriteCommand("DECR", strings::HandleDecr, FixedArity(1), OneKey()),
@@ -138,7 +147,8 @@ constexpr std::array kCommandTable = {
     WriteCommand("PEXPIRE", keys::HandlePExpire, VariableArity(2), OneKey()),
     WriteCommand("PEXPIREAT", keys::HandlePExpireAt, VariableArity(2),
                  OneKey()),
-    ConnectionCommand("PING", session::HandlePing, {0, 1}),
+    // Redis refuses PING too, so health checks notice the failed save.
+    RefusedOnDiskError(ConnectionCommand("PING", session::HandlePing, {0, 1})),
     ReadCommand("PTTL", keys::HandlePTtl, FixedArity(1), OneKey()),
     AllowBeforeAuth(RunsImmediatelyInMulti(
         ConnectionCommand("QUIT", session::HandleQuit, FixedArity(0)))),

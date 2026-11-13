@@ -163,7 +163,7 @@ class Server:
 def start(kind, binary, port, directory):
     log = os.path.join(directory, f"{kind}-{port}.log")
     if kind == "simple":
-        command = [binary, "--port", str(port), "--dir", directory]
+        command = [binary, "--port", str(port), "--dir", directory, "--save", ""]
     else:
         command = [binary, "--port", str(port), "--dir", directory, "--save", "",
                    "--appendonly", "no", "--enable-debug-command", "no"]

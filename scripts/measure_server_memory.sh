@@ -63,7 +63,13 @@ rss_kb() {
 # run. It runs in this shell so the exit trap can stop a failed server.
 measure() {
   local binary="$1" value_size="$2"
-  "${binary}" --port "${port}" >/dev/null 2>&1 &
+  # Builds with RDB save points turn them off, so no background save forks
+  # and no run loads an earlier one's file.
+  local -a no_save=()
+  if "${binary}" --help 2>&1 | grep -q -- "--save"; then
+    no_save=(--save "")
+  fi
+  "${binary}" --port "${port}" "${no_save[@]}" >/dev/null 2>&1 &
   server_pid=$!
   for _ in $(seq 1 100); do
     if redis-cli -p "${port}" PING >/dev/null 2>&1; then

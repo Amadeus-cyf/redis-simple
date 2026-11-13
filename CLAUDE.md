@@ -105,7 +105,17 @@ Guidance for AI coding agents working in this repository.
   through `rdbSaveRawString`'s integer and LZF rules, the CRC64, and the
   temporary-file, rename, and directory-sync order. Write RDB version 11, the
   oldest that covers what is written, unless a new type needs more. Check
-  interoperability with `scripts/check_rdb_interop.py`.
+  interoperability with `scripts/check_rdb_interop.py`. Keep `BGSAVE`, save
+  points, the save at shutdown, `stop-writes-on-bgsave-error`, and the `rdb_`
+  `INFO` fields aligned with it too.
+- Only one child runs at a time, as in Redis: `Aof::Cron` and `Rdb::Cron`
+  take `may_fork`, false while the other side's child runs, and
+  `BGREWRITEAOF` and `BGSAVE` schedule or refuse as Redis' commands do.
+- Pass Redis' change count to `Client::MarkModified(changes)`: what the
+  command adds to `server.dirty` (one per key set or deleted, member or field
+  pair given, element pushed, popped, or trimmed). It drives the save points
+  and `rdb_changes_since_last_save`. Write commands, and `PING`, are refused
+  with `MISCONF` through the command table's `refused_on_disk_error`.
 - `ListPack` and `IntSet` keep Redis' byte format in memory (little-endian
   headers, lengths, and integers, and Redis' backlen layout), since RDB files
   store them as they are; their tests compare bytes with vectors Redis
@@ -224,10 +234,11 @@ Guidance for AI coding agents working in this repository.
   is durable. Delete history files only after that, on the background thread.
   Keep failed rewrites observable through `INFO persistence` without
   disabling a still-healthy AOF.
-- No thread may allocate or free memory during the rewrite's `fork`. Pause
-  any new thread that touches the heap through the server's fork hooks, as
-  the I/O threads and the `UNLINK` reclaimer are. `BackgroundJobs` must not
-  allocate, free, or log. Keep the child free of locks and logging.
+- No thread may allocate or free memory during a `fork` (the AOF rewrite's
+  or `BGSAVE`'s). Pause any new thread that touches the heap through the
+  server's fork hooks, which both share, as the I/O threads and the `UNLINK`
+  reclaimer are. `BackgroundJobs` must not allocate, free, or log. Keep the
+  children free of locks and logging.
 - Keep rewrite snapshots visitor-based, and bound snapshot memory and replay
   command sizes together (`Limits`): split large strings into replay-safe
   commands and batch collections by encoded bytes, not only element count.
@@ -313,9 +324,9 @@ does not include the libFuzzer runtime.
 
 The leak-check script uses Apple `leaks` for the macOS unit-test binary and
 explicit LeakSanitizer options for the complete Linux sanitizer test suite.
-Forked children stall `leaks`, so the macOS run skips death tests and
-`AofTest`, whose rewrites fork; keep other forking tests out of it the same
-way.
+Forked children stall `leaks`, so the macOS run skips death tests,
+`AofTest`, whose rewrites fork, and `RdbBackgroundSaveTest`; keep other
+forking tests out of it the same way.
 
 Use Docker for a local Linux build and test check from macOS:
 
@@ -347,8 +358,12 @@ Before committing, run the relevant build and tests.
   - `integration/tcp/`
 - Keep server option and graceful shutdown coverage in the lifecycle integration
   test rather than introducing a separate command-test server implementation.
-- Keep `SAVE`, `LASTSAVE`, loading at restart, the RDB options, and refusing
-  a damaged file in the dedicated RDB integration test.
+- Keep `SAVE`, `BGSAVE`, `LASTSAVE`, save points, the save at shutdown,
+  `MISCONF` after a failed save, loading at restart, the RDB options, and
+  refusing a damaged file in the dedicated RDB integration test.
+- Servers save an RDB file at shutdown and load it at startup by default, as
+  Redis does, so test runners give each server its own `--dir`, and
+  benchmark scripts pass `--save ""`.
 - Keep AOF restart, manual and automatic rewrite compaction, shutdown flush,
   expiration, and cross-data-type recovery in the dedicated AOF integration
   test. Use injected file operations for deterministic write, sync, rename, and

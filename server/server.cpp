@@ -52,23 +52,26 @@ bool Server::Run(const ServerOptions& options) {
   if (!options.append_only && !rdb_->Load(db_.get())) {
     return false;
   }
+  // Threads that allocate or free memory wait out a child's fork: the I/O
+  // threads, as they read and parse, and the database's thread that frees
+  // UNLINKed values.
+  const auto before_fork = [this] {
+    PauseIoThreads();
+    db_->PauseBackgroundFrees();
+  };
+  const auto after_fork = [this] {
+    db_->ResumeBackgroundFrees();
+    ResumeIoThreads();
+  };
+  rdb_->SetForkHooks(before_fork, after_fork);
   if (options.append_only) {
     aof_ = aof::Aof::Open(options.aof_options, db_.get());
     if (aof_ == nullptr) {
       return false;
     }
-    // Threads that allocate or free memory wait out the rewrite's fork: the
-    // I/O threads, as they read and parse, and the database's thread that
-    // frees UNLINKed values.
-    aof_->SetForkHooks(
-        [this] {
-          PauseIoThreads();
-          db_->PauseBackgroundFrees();
-        },
-        [this] {
-          db_->ResumeBackgroundFrees();
-          ResumeIoThreads();
-        });
+    // Redis counts the loaded commands' changes as unsaved.
+    rdb_->AddChanges(aof_->ReplayedChanges());
+    aof_->SetForkHooks(before_fork, after_fork);
   }
   connection::Connection connection(
       connection::Context{.loop = loop_.get(), .fd = -1});
@@ -98,6 +101,7 @@ bool Server::Run(const ServerOptions& options) {
   context_ = {.db = db_.get(),
               .aof = aof_.get(),
               .rdb = rdb_.get(),
+              .changes = rdb_->ChangeCounter(),
               .required_password = require_pass_,
               .io_threads = io_threads_};
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
@@ -213,14 +217,25 @@ bool Server::InstallAcceptCallback() {
 int64_t Server::ServerCron() {
   constexpr int64_t kCronIntervalMs = 100;
   if (shutdown::StopRequested()) {
+    // Redis' prepareForShutdown: when the final save fails, the server keeps
+    // running.
+    if (rdb_->SaveBeforeShutdown(db_.get())) {
+      Stop();
+      return event_loop::TimeEvent::kNoMore;
+    }
+    shutdown::ClearStopRequest();
+    RS_LOG_WARN(
+        "Errors trying to shut down the server. Check the logs for more "
+        "information.\n");
+  }
+  // One child runs at a time: an AOF rewrite and a background save never
+  // overlap. Only `always` stops the server on an AOF error.
+  if (aof_ != nullptr &&
+      !aof_->Cron(db_.get(), !rdb_->BackgroundSaveInProgress())) {
     Stop();
     return event_loop::TimeEvent::kNoMore;
   }
-  // Only `always` stops the server on an AOF error.
-  if (aof_ != nullptr && !aof_->Cron(db_.get())) {
-    Stop();
-    return event_loop::TimeEvent::kNoMore;
-  }
+  rdb_->Cron(db_.get(), aof_ == nullptr || !aof_->RewriteInProgress());
   ActiveExpireCycle(db_.get());
   return kCronIntervalMs;
 }

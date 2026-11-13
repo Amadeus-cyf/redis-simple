@@ -17,6 +17,9 @@ struct ServerOptions {
   bool append_only{};
   aof::Options aof_options;
   rdb::Options rdb_options;
+  // Whether --save was given: the first replaces Redis' default save points,
+  // and later ones add to them, as save lines in a Redis config file do.
+  bool save_points_given{};
   // Clients must AUTH with this password when it is non-empty.
   std::string require_pass;
   // Without a password, refuse clients that do not connect over loopback.

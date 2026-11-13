@@ -215,6 +215,9 @@ class FileReplayer {
 
   Outcome Replay(int fd);
 
+  // Changes the replayed commands made (Client::MarkModified).
+  [[nodiscard]] int64_t Changes() const { return client_.changes_; }
+
   // Where the valid prefix ends: after the last complete command, and
   // before any transaction left open.
   [[nodiscard]] size_t ValidBytes() const {
@@ -372,6 +375,7 @@ bool Aof::ReplayFile(db::RedisDb* const db, int fd, bool last) {
     case FileReplayer::Outcome::kFailed:
       break;
   }
+  replayed_changes_ += replayer.Changes();
   db->SetLoading(false);
   return replayed;
 }

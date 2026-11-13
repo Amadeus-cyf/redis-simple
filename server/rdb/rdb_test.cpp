@@ -1,10 +1,16 @@
+#include "server/rdb/rdb.h"
+
 #include <fcntl.h>
 #include <gtest/gtest.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -14,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -555,6 +562,191 @@ TEST_F(RdbTest, LoadsAFileRedisWrote) {
   EXPECT_EQ(keys.at("expiring:hash"),
             "hash(listpack):a=b, expire=4102444800000");
   EXPECT_EQ(keys.count("expired:past"), 0);
+}
+
+// File operations whose renames fail on request, to make saves fail.
+class FailableRenames final : public aof::FileOps {
+ public:
+  ssize_t Write(int fd, const void* data, size_t size) override {
+    return write(fd, data, size);
+  }
+  ssize_t WriteVector(int fd, const iovec* blocks, int count) override {
+    return writev(fd, blocks, count);
+  }
+  int Sync(int fd) override { return fsync(fd); }
+  int Rename(const char* source, const char* destination) override {
+    if (fail_renames) {
+      errno = EIO;
+      return -1;
+    }
+    return std::rename(source, destination);
+  }
+
+  bool fail_renames{false};
+};
+
+// Rdb's background saves fork, so they run in a directory of their own,
+// which becomes the working directory, as the server's --dir does.
+class RdbBackgroundSaveTest : public testing::Test {
+ protected:
+  void SetUp() override {
+    previous_directory_ = std::filesystem::current_path();
+    directory_ = std::filesystem::temp_directory_path() /
+                 ("rdb_background_test_" + std::to_string(getpid()));
+    std::filesystem::create_directories(directory_);
+    std::filesystem::current_path(directory_);
+    db_ = db::RedisDb::Create();
+    db_->SetKey("key", RedisObject::CreateWithString("value"), 0);
+  }
+
+  void TearDown() override {
+    std::filesystem::current_path(previous_directory_);
+    std::filesystem::remove_all(directory_);
+  }
+
+  std::unique_ptr<Rdb> Create(Options options = {}) {
+    options.file_ops = file_ops_;
+    return Rdb::Create(std::move(options));
+  }
+
+  // Runs the cron until the background save's child has exited.
+  void FinishBackgroundSave(Rdb* rdb, bool may_fork = true) {
+    for (int attempt = 0; attempt < 500 && rdb->BackgroundSaveInProgress();
+         ++attempt) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      rdb->Cron(db_.get(), may_fork);
+    }
+    ASSERT_FALSE(rdb->BackgroundSaveInProgress());
+  }
+
+  // Files left in the directory besides dump.rdb, such as temporary files.
+  [[nodiscard]] std::vector<std::string> OtherFiles() const {
+    std::vector<std::string> files;
+    for (const auto& entry : std::filesystem::directory_iterator(directory_)) {
+      if (entry.path().filename() != "dump.rdb") {
+        files.push_back(entry.path().filename().string());
+      }
+    }
+    return files;
+  }
+
+  db::RedisDb* Db() { return db_.get(); }
+  FailableRenames* FileOps() { return file_ops_.get(); }
+
+ private:
+  std::filesystem::path previous_directory_;
+  std::filesystem::path directory_;
+  std::unique_ptr<db::RedisDb> db_;
+  std::shared_ptr<FailableRenames> file_ops_ =
+      std::make_shared<FailableRenames>();
+};
+
+TEST_F(RdbBackgroundSaveTest, SavesInAChildAndCountsChangesMadeMeanwhile) {
+  auto rdb = Create();
+  rdb->AddChanges(5);
+  ASSERT_EQ(rdb->StartBackgroundSave(Db()), BackgroundSaveResult::kStarted);
+  EXPECT_TRUE(rdb->BackgroundSaveInProgress());
+  EXPECT_TRUE(rdb->State().background_save_in_progress);
+  EXPECT_GE(rdb->State().current_background_save_seconds, 0);
+  EXPECT_EQ(rdb->StartBackgroundSave(Db()), BackgroundSaveResult::kInProgress);
+  // Made while the child saves, so not in the file.
+  rdb->AddChanges(2);
+  FinishBackgroundSave(rdb.get());
+
+  const RdbState state = rdb->State();
+  EXPECT_EQ(state.changes_since_last_save, 2);
+  EXPECT_EQ(state.saves, 1);
+  EXPECT_TRUE(state.last_background_save_ok);
+  EXPECT_EQ(state.consecutive_failures, 0);
+  EXPECT_GE(state.last_background_save_seconds, 0);
+  EXPECT_EQ(state.current_background_save_seconds, -1);
+  EXPECT_FALSE(rdb->DeniesWrites());
+  EXPECT_TRUE(OtherFiles().empty());
+
+  auto loaded = db::RedisDb::Create();
+  ASSERT_TRUE(Create()->Load(loaded.get()));
+  EXPECT_EQ(DescribeAll(loaded.get()), DescribeAll(Db()));
+}
+
+TEST_F(RdbBackgroundSaveTest, FailedSaveStopsWritesUntilASaveSucceeds) {
+  auto rdb = Create();
+  rdb->AddChanges(3);
+  FileOps()->fail_renames = true;
+  ASSERT_EQ(rdb->StartBackgroundSave(Db()), BackgroundSaveResult::kStarted);
+  FinishBackgroundSave(rdb.get());
+  RdbState state = rdb->State();
+  EXPECT_FALSE(state.last_background_save_ok);
+  EXPECT_EQ(state.consecutive_failures, 1);
+  EXPECT_EQ(state.changes_since_last_save, 3);
+  EXPECT_TRUE(rdb->DeniesWrites());
+  // The child removed its temporary file.
+  EXPECT_TRUE(OtherFiles().empty());
+
+  // SAVE succeeding clears the error, as Redis' rdbSave does.
+  FileOps()->fail_renames = false;
+  ASSERT_TRUE(rdb->Save(Db()));
+  state = rdb->State();
+  EXPECT_TRUE(state.last_background_save_ok);
+  EXPECT_EQ(state.changes_since_last_save, 0);
+  EXPECT_EQ(state.saves, 2);
+  EXPECT_FALSE(rdb->DeniesWrites());
+}
+
+// Options without save points, as --save "" sets them.
+Options WithoutSavePoints() {
+  Options options;
+  options.save_points.clear();
+  return options;
+}
+
+TEST_F(RdbBackgroundSaveTest, FailedSaveAllowsWritesWithoutSavePoints) {
+  Options keep_writing;
+  keep_writing.stop_writes_on_error = false;
+  for (const Options& options : {WithoutSavePoints(), keep_writing}) {
+    auto rdb = Create(options);
+    FileOps()->fail_renames = true;
+    ASSERT_EQ(rdb->StartBackgroundSave(Db()), BackgroundSaveResult::kStarted);
+    FinishBackgroundSave(rdb.get());
+    EXPECT_FALSE(rdb->State().last_background_save_ok);
+    EXPECT_FALSE(rdb->DeniesWrites());
+  }
+}
+
+TEST_F(RdbBackgroundSaveTest, ScheduledSaveWaitsForOtherChildren) {
+  auto rdb = Create();
+  rdb->ScheduleBackgroundSave();
+  // An AOF rewrite runs: no second child.
+  rdb->Cron(Db(), false);
+  EXPECT_FALSE(rdb->BackgroundSaveInProgress());
+  rdb->Cron(Db(), true);
+  EXPECT_TRUE(rdb->BackgroundSaveInProgress());
+  FinishBackgroundSave(rdb.get());
+  // Started once.
+  rdb->Cron(Db(), true);
+  EXPECT_FALSE(rdb->BackgroundSaveInProgress());
+  EXPECT_EQ(rdb->State().saves, 1);
+}
+
+TEST_F(RdbBackgroundSaveTest, SavesBeforeShutdownOnlyWithSavePoints) {
+  auto without = Create(WithoutSavePoints());
+  without->AddChanges(1);
+  ASSERT_TRUE(without->SaveBeforeShutdown(Db()));
+  EXPECT_FALSE(std::filesystem::exists("dump.rdb"));
+
+  auto rdb = Create();
+  rdb->AddChanges(1);
+  // A running background save is stopped first, so it cannot replace the
+  // file the final save writes.
+  ASSERT_EQ(rdb->StartBackgroundSave(Db()), BackgroundSaveResult::kStarted);
+  ASSERT_TRUE(rdb->SaveBeforeShutdown(Db()));
+  EXPECT_FALSE(rdb->BackgroundSaveInProgress());
+  EXPECT_TRUE(std::filesystem::exists("dump.rdb"));
+  EXPECT_TRUE(OtherFiles().empty());
+  EXPECT_EQ(rdb->State().changes_since_last_save, 0);
+
+  // A failed final save keeps the server running.
+  FileOps()->fail_renames = true;
+  EXPECT_FALSE(rdb->SaveBeforeShutdown(Db()));
 }
 }  // namespace
 }  // namespace redis_simple::rdb

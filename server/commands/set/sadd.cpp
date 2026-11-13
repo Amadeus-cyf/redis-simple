@@ -31,7 +31,7 @@ void HandleSAdd(Client* const client) {
     added += set->Add(args[i]) ? 1 : 0;
   }
   if (added > 0) {
-    client->MarkModified();
+    client->MarkModified(added);
   }
   client->AddReply(reply::FromInt64(added));
 }

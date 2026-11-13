@@ -1,6 +1,7 @@
 #ifndef REDIS_SIMPLE_SERVER_SERVER_CONTEXT_H_
 #define REDIS_SIMPLE_SERVER_SERVER_CONTEXT_H_
 
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -28,6 +29,9 @@ struct ServerContext {
   // The RDB file's snapshots. Null only for contexts tests and AOF replay
   // build.
   rdb::Rdb* rdb{nullptr};
+  // Redis' server.dirty, the changes since the last save, which `rdb` owns
+  // (Rdb::ChangeCounter). Null where `rdb` is.
+  int64_t* changes{nullptr};
   // The password clients must AUTH with; empty when AUTH is off.
   std::string_view required_password;
   // Empty when I/O is single-threaded.

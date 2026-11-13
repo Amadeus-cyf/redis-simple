@@ -135,8 +135,9 @@ persistence` reports Redis' AOF fields.
 
 When the file cannot be written, as on a full disk, the server cuts a partial
 write back off the file, keeps the buffer, and retries it; until a write
-succeeds, it rejects write commands with Redis' `-MISCONF Errors writing to
-the AOF file` error while reads keep working. A failed background fsync rejects
+succeeds, it rejects write commands, and `PING`, with Redis' `-MISCONF Errors
+writing to the AOF file` error while reads keep working; `EXEC` with queued
+writes discards the transaction with `-EXECABORT`. A failed background fsync rejects
 writes the same way until the next fsync succeeds. With `always`, which
 promises that every acknowledged write is synced, a failed write or sync stops
 the server instead.
@@ -154,12 +155,28 @@ RDB snapshots follow Redis 8.10's `src/rdb.c`. `SAVE` writes the database to
 `dump.rdb` (`--dbfilename`) in the working directory (`--dir`, which also holds
 the AOF): first as `temp-<pid>.rdb`, synced, then renamed over the file with
 the directory synced, so a crash never leaves a partial file in its place.
-`LASTSAVE` reports when the last save finished. At startup, when the AOF is
-off, the server loads the file if there is one, and refuses to start if it is
-damaged.
+`BGSAVE` does the same in a forked child while the server keeps serving. As
+in Redis, one child runs at a time: `BGSAVE SCHEDULE` waits for a running AOF
+rewrite, `BGREWRITEAOF` waits for a running save, and inside `MULTI` both are
+scheduled for after the transaction. `LASTSAVE` reports when the last save
+finished. At startup, when the AOF is off, the server loads the file if
+there is one, and refuses to start if it is damaged.
+
+Save points start background saves on their own, as Redis' `save` does:
+`--save "<seconds> <changes> ..."` saves once that many changes were made and
+more than that many seconds have passed since the last save. The default is
+Redis 8's, `3600 1 300 100 60 10000`. The first `--save` replaces it and later
+ones add pairs; `--save ""` turns saving off. Changes are counted as Redis
+counts them (one per key, member, field, or element set or removed), and
+`INFO persistence` reports them with Redis' other `rdb_` fields. With save
+points, the server also saves when it shuts down, and keeps running if that
+save fails. After a failed background save, write commands and `PING` are
+refused with Redis' `MISCONF` error until a save succeeds, unless
+`--stop-writes-on-bgsave-error no`.
 
 ```sh
-./build/debug/redis_simple --dir /var/lib/redis_simple --dbfilename dump.rdb
+./build/debug/redis_simple --dir /var/lib/redis_simple --dbfilename dump.rdb \
+  --save "900 1 300 10"
 ```
 
 The file is in Redis' format, and each server loads the other's. Values are
@@ -177,9 +194,6 @@ length, encoded listpack and intset, and duplicate is checked, so a corrupt
 file is refused, never trusted. As in Redis, a set, hash, or sorted set
 listpack that passes those checks and fits this server's limits is kept as
 stored, so loading it is a copy rather than one insert per element.
-
-`BGSAVE` and automatic save points (Redis' `save`) are not implemented yet, so
-the server saves only on `SAVE`, not on shutdown as Redis' default does.
 
 Clients can send standard RESP arrays of bulk strings or the legacy inline
 syntax, both framed as Redis frames them: inline arguments may be quoted and
@@ -255,7 +269,7 @@ prints them: integers up to 2^62 in full, otherwise the shortest digits in
   `HMGET`, `HKEYS`, `HVALS`, `HINCRBY`, `HSCAN` with `MATCH`, `COUNT`, and
   `NOVALUES`
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
-- Persistence and stats: `BGREWRITEAOF`, `SAVE`, `LASTSAVE`,
+- Persistence and stats: `BGREWRITEAOF`, `SAVE`, `BGSAVE`, `LASTSAVE`,
   `INFO [persistence|stats]`
 - Connection: `AUTH`, `HELLO` with RESP2 and RESP3 negotiation, `AUTH`, and
   `SETNAME`, `CLIENT ID|GETNAME|SETNAME|SETINFO`, `SELECT 0` (the only
@@ -551,7 +565,7 @@ event_loop/           Event loop with kqueue and epoll pollers
 fuzz/                 Stateful libFuzzer harnesses and reference models
 integration/commands/ Server/client command integration tests
 integration/aof_client_test.cpp  AOF restart integration client
-integration/rdb_client_test.cpp  RDB SAVE and restart integration client
+integration/rdb_client_test.cpp  RDB SAVE, BGSAVE, save point, and restart client
 integration/io_threads_client_test.cpp  Concurrent-clients integration client
 integration/tcp/      TCP client/server integration tests
 logging/              Project logging wrapper
@@ -559,7 +573,7 @@ memory/               Core in-memory data structures
 scripts/              Project automation and CTest runner scripts
 server/               Server, client connection glue, commands, replies, DB
 server/aof/           Append-only file: writing, loading, rewriting
-server/rdb/           RDB snapshots: the file format, SAVE, loading
+server/rdb/           RDB snapshots: the file format, SAVE, BGSAVE, loading
 data_types/           Redis hash, list, set, and sorted-set implementations
 tcp/                  TCP helpers
 utils/                Small shared utilities

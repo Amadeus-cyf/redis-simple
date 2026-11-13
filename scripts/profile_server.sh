@@ -78,11 +78,17 @@ bench() {
 }
 
 # Starts BINARY under callgrind, writing to OUTPUT, with extra server flags.
+# Builds with RDB save points turn them off, so no background save or save at
+# shutdown adds to the counts, and no run loads an earlier one's file.
 start_server() {
   local binary="$1" output="$2"
   shift 2
+  local -a no_save=()
+  if "${binary}" --help 2>&1 | grep -q -- "--save"; then
+    no_save=(--save "")
+  fi
   valgrind --tool=callgrind --callgrind-out-file="${output}" \
-    "${binary}" --port "${port}" "$@" >/dev/null 2>&1 &
+    "${binary}" --port "${port}" "${no_save[@]}" "$@" >/dev/null 2>&1 &
   server_pid=$!
   for _ in $(seq 1 150); do
     if cli PING >/dev/null 2>&1; then

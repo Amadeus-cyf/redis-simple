@@ -12,6 +12,7 @@
 
 #include "logging/logger.h"
 #include "server/aof/aof.h"
+#include "server/rdb/rdb.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
 
@@ -49,10 +50,13 @@ Client::Client(std::unique_ptr<connection::Connection> connection,
     : connection_(std::move(connection)),
       server_(server),
       output_limits_(output_limits),
+      change_counter_(server->changes != nullptr ? server->changes : &changes_),
       authenticated_(server->required_password.empty()) {}
 
 Client::Client(const ServerContext* const server)
-    : server_(server), discard_replies_(true) {}
+    : server_(server),
+      change_counter_(server->changes != nullptr ? server->changes : &changes_),
+      discard_replies_(true) {}
 
 Client::~Client() { Db()->UnwatchKeys(&watcher_); }
 
@@ -332,9 +336,8 @@ Client::RequestStatus Client::ValidateRequest(std::string_view name) {
     multi_.MarkRejected();
     return RequestStatus::kRejected;
   }
-  if (command->access == commands::CommandAccess::kWrite &&
-      !AofAcceptsWrites()) {
-    AddReply(AofWriteError());
+  if (command->refused_on_disk_error && WritesRefused()) {
+    AddReply(reply::FromError(DiskErrorMessage()));
     multi_.MarkRejected();
     return RequestStatus::kRejected;
   }
@@ -342,14 +345,23 @@ Client::RequestStatus Client::ValidateRequest(std::string_view name) {
   return RequestStatus::kReady;
 }
 
-bool Client::AofAcceptsWrites() const {
-  return server_->aof == nullptr || server_->aof->AcceptingWrites();
+bool Client::WritesRefused() const {
+  return (server_->rdb != nullptr && server_->rdb->DeniesWrites()) ||
+         (server_->aof != nullptr && !server_->aof->AcceptingWrites());
 }
 
-std::string Client::AofWriteError() const {
-  // Redis' reply while it cannot write the append-only file.
-  return reply::FromError("MISCONF Errors writing to the AOF file: " +
-                          server_->aof->LastErrorText());
+std::string Client::DiskErrorMessage() const {
+  // Redis' writeCommandsGetDiskErrorMessage: the RDB error comes first.
+  if (server_->rdb != nullptr && server_->rdb->DeniesWrites()) {
+    return "MISCONF Redis is configured to save RDB snapshots, but it's "
+           "currently unable to persist to disk. Commands that may modify the "
+           "data set are disabled, because this instance is configured to "
+           "report errors during writes if RDB snapshotting fails "
+           "(stop-writes-on-bgsave-error option). Please check the Redis logs "
+           "for details about the RDB error.";
+  }
+  return "MISCONF Errors writing to the AOF file: " +
+         server_->aof->LastErrorText();
 }
 
 bool Client::PropagateMutation(const commands::Command& command) {
@@ -423,9 +435,11 @@ void Client::ExecTransaction() {
     DiscardTransaction();
     return;
   }
-  // The AOF may have failed after the writes were queued.
-  if (!AofAcceptsWrites() && multi_.HasWriteCommand()) {
-    AddReply(AofWriteError());
+  // A save or the AOF may have failed after the writes were queued; Redis
+  // then refuses EXEC as a write, which discards the transaction.
+  if (multi_.HasWriteCommand() && WritesRefused()) {
+    AddReply(reply::FromError("EXECABORT Transaction discarded because of: " +
+                              DiskErrorMessage()));
     DiscardTransaction();
     return;
   }

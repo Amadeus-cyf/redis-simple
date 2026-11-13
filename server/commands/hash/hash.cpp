@@ -101,7 +101,8 @@ std::optional<int64_t> SetFields(Client* const client,
   for (size_t i = 1; i < args.size(); i += 2) {
     added += hash->Set(args[i], args[i + 1]) ? 1 : 0;
   }
-  client->MarkModified();
+  // Redis counts every pair set, new or not.
+  client->MarkModified(static_cast<int64_t>(args.size() / 2));
   return added;
 }
 }  // namespace
@@ -155,7 +156,7 @@ void HandleHDel(Client* const client) {
     }
   }
   if (deleted > 0) {
-    client->MarkModified();
+    client->MarkModified(deleted);
   }
   client->AddReply(reply::FromInt64(deleted));
 }

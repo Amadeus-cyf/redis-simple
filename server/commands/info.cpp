@@ -9,10 +9,12 @@
 #include "server/client.h"
 #include "server/commands/handlers.h"
 #include "server/io_thread.h"
+#include "server/rdb/rdb.h"
 #include "utils/string_utils.h"
 
 // INFO, with the sections this server reports, in Redis' field names and
-// order: persistence (the AOF), stats (threaded I/O totals), and threads.
+// order: persistence (RDB snapshots and the AOF), stats (threaded I/O
+// totals), and threads.
 namespace redis_simple::commands::server_info {
 namespace {
 void AppendField(std::string_view name, std::string_view value,
@@ -31,10 +33,37 @@ void AppendField(std::string_view name, int64_t value,
   AppendField(name, std::to_string(value), output);
 }
 
-void AppendPersistenceSection(const aof::Aof* const append_only_file,
+void AppendRdbFields(const rdb::Rdb* const snapshots, std::string* const info) {
+  const rdb::RdbState state =
+      snapshots != nullptr ? snapshots->State() : rdb::RdbState{};
+  AppendField("rdb_changes_since_last_save", state.changes_since_last_save,
+              info);
+  AppendField("rdb_bgsave_in_progress",
+              state.background_save_in_progress ? "1" : "0", info);
+  AppendField("rdb_last_save_time", state.last_save_time, info);
+  AppendField("rdb_last_bgsave_status",
+              state.last_background_save_ok ? "ok" : "err", info);
+  AppendField("rdb_last_bgsave_time_sec", state.last_background_save_seconds,
+              info);
+  AppendField("rdb_current_bgsave_time_sec",
+              state.current_background_save_seconds, info);
+  AppendField("rdb_saves", state.saves, info);
+  AppendField("rdb_saves_consecutive_failures", state.consecutive_failures,
+              info);
+  AppendField("rdb_last_load_keys_expired", state.last_load_keys_expired, info);
+  AppendField("rdb_last_load_keys_loaded", state.last_load_keys_loaded, info);
+}
+
+void AppendPersistenceSection(const rdb::Rdb* const snapshots,
+                              const aof::Aof* const append_only_file,
                               std::string* const info) {
-  // Redis' AOF fields, in its order; the size fields only when enabled.
+  // Redis' fields, in its order, without the copy-on-write sizes; the AOF
+  // size fields only when the AOF is on. The server answers no command while
+  // it loads, so loading is always 0.
   info->append("# Persistence\r\n");
+  AppendField("loading", "0", info);
+  AppendField("async_loading", "0", info);
+  AppendRdbFields(snapshots, info);
   const aof::AofState state =
       append_only_file != nullptr ? append_only_file->State() : aof::AofState{};
   AppendField("aof_enabled", append_only_file == nullptr ? "0" : "1", info);
@@ -113,7 +142,7 @@ void HandleInfo(Client* const client) {
   const bool threads = all || utils::EqualsIgnoreCase(args[0], "threads");
   std::string info;
   if (persistence) {
-    AppendPersistenceSection(client->Aof(), &info);
+    AppendPersistenceSection(client->Server().rdb, client->Aof(), &info);
   }
   if (stats) {
     if (!info.empty()) {
