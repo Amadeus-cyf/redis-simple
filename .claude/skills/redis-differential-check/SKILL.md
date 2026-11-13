@@ -104,8 +104,8 @@ Add a case for every new write command and option.
 
 ## 5. RDB interoperability
 
-After any change to `server/rdb/`, or to the byte format of `ListPack` or
-`IntSet` (which RDB files store as they are), check that each server loads
+After any change to `server/rdb/`, or to the byte format of `Listpack` or
+`Intset` (which RDB files store as they are), check that each server loads
 the other's RDB file:
 
 ```sh

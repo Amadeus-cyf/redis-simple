@@ -15,8 +15,8 @@ namespace redis_simple::list {
 class List {
  public:
   enum class Encoding {
-    kListPack,
-    kQuickList,
+    kListpack,
+    kQuicklist,
   };
   enum class RemoveDirection {
     kFromHead,
@@ -24,7 +24,7 @@ class List {
   };
 
   static constexpr size_t kDefaultListMaxListpackBytes =
-      memory::QuickList::kDefaultNodeMaxBytes;
+      memory::Quicklist::kDefaultNodeMaxBytes;
 
   static std::unique_ptr<List> Create(
       size_t list_max_listpack_bytes = kDefaultListMaxListpackBytes) {
@@ -52,11 +52,11 @@ class List {
   // Redis' byte format, as RDB files store a list: one for a listpack
   // encoding, one per quicklist node otherwise. Stops when it returns false.
   template <typename Visitor>
-  bool ForEachListPack(Visitor&& visitor) const {
+  bool ForEachListpack(Visitor&& visitor) const {
     if (listpack_ != nullptr) {
       return visitor(listpack_->Bytes());
     }
-    return quicklist_->ForEachNode([&visitor](const memory::ListPack& node) {
+    return quicklist_->ForEachNode([&visitor](const memory::Listpack& node) {
       return visitor(node.Bytes());
     });
   }
@@ -65,16 +65,16 @@ class List {
   explicit List(size_t list_max_listpack_bytes);
   bool Push(std::string_view value, bool head);
   std::optional<std::string> Pop(bool head);
-  std::optional<size_t> RemoveFromListPack(std::string_view value, size_t limit,
+  std::optional<size_t> RemoveFromListpack(std::string_view value, size_t limit,
                                            RemoveDirection direction);
-  void TrimListPack(size_t start, size_t stop);
+  void TrimListpack(size_t start, size_t stop);
   bool AdoptReplacement(std::unique_ptr<List> replacement);
   bool WouldExceedListpackLimit(std::string_view value) const;
-  bool ConvertListPackToQuickList();
-  void TryConvertQuickListToListPack();
+  bool ConvertListpackToQuicklist();
+  void TryConvertQuicklistToListpack();
 
-  std::unique_ptr<memory::ListPack> listpack_;
-  std::unique_ptr<memory::QuickList> quicklist_;
+  std::unique_ptr<memory::Listpack> listpack_;
+  std::unique_ptr<memory::Quicklist> quicklist_;
   size_t list_max_listpack_bytes_;
 };
 

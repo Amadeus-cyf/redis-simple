@@ -10,7 +10,7 @@ namespace redis_simple::memory {
 // entry as Redis' lpValidateIntegrity does with deep validation: the header's
 // total size, each entry's encoding and size within the buffer, its backlen,
 // the terminator, and the element count when the header records one.
-class ListPackReader {
+class ListpackReader {
  public:
   struct Element {
     // A string element's bytes, a view into the buffer.
@@ -25,7 +25,7 @@ class ListPackReader {
     kCorrupt,
   };
 
-  explicit ListPackReader(std::string_view blob) : blob_(blob) {}
+  explicit ListpackReader(std::string_view blob) : blob_(blob) {}
 
   // Reads the next element into `*element`. kEnd means the listpack was read
   // completely and is valid; kCorrupt that it is not, at this point or in its

@@ -387,7 +387,7 @@ ctest --preset fuzz -L fuzz --output-on-failure
 ```
 
 The fuzz targets exercise incremental RESP parsing; listpack, quicklist, Dict,
-Skiplist, and IntSet mutation; Redis list, set, hash, and sorted-set behavior;
+Skiplist, and Intset mutation; Redis list, set, hash, and sorted-set behavior;
 dynamic and reply buffers; database expiration; and deterministic event-loop
 callbacks. AOF replay also has a bounded malformed-input target. Every target
 runs under AddressSanitizer and
@@ -441,7 +441,7 @@ For debugging a single executable directly:
 For debugging one unit-test suite directly:
 
 ```sh
-./build/debug/redis_simple_tests --gtest_filter=ListPackTest.*
+./build/debug/redis_simple_tests --gtest_filter=ListpackTest.*
 ```
 
 The integration clients return nonzero on failed expectations, so they are safe

@@ -12,13 +12,13 @@
 #include "utils/check.h"
 
 namespace redis_simple::memory {
-IntSet::IntSet()
+Intset::Intset()
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
     : contents_(std::make_unique<unsigned char[]>(
           static_cast<size_t>(kInitSize) * kInt16)),
       length_(0),
       encoding_(kInt16) {}
-bool IntSet::Add(int64_t value) {
+bool Intset::Add(int64_t value) {
   uint32_t value_encode = ValueEncoding(value);
   if (value_encode > encoding_) {
     UpgradeAndAdd(value);
@@ -37,16 +37,16 @@ bool IntSet::Add(int64_t value) {
   return true;
 }
 
-int64_t IntSet::Get(uint32_t index) const {
+int64_t Intset::Get(uint32_t index) const {
   return EncodedValue(index, encoding_);
 }
 
-bool IntSet::Find(int64_t value) const {
+bool Intset::Find(int64_t value) const {
   EncodingType encoding = ValueEncoding(value);
   return encoding <= encoding_ && Search(value, nullptr);
 }
 
-bool IntSet::Delete(int64_t value) {
+bool Intset::Delete(int64_t value) {
   uint32_t index = 0;
   bool exist = Search(value, &index);
   if (!exist) {
@@ -58,11 +58,11 @@ bool IntSet::Delete(int64_t value) {
   return true;
 }
 
-int64_t IntSet::Max() const { return Get(length_ - 1); }
+int64_t Intset::Max() const { return Get(length_ - 1); }
 
-int64_t IntSet::Min() const { return Get(0); }
+int64_t Intset::Min() const { return Get(0); }
 
-IntSet::EncodingType IntSet::ValueEncoding(int64_t value) {
+Intset::EncodingType Intset::ValueEncoding(int64_t value) {
   if (value < INT32_MIN || value > INT32_MAX) {
     return kInt64;
   }
@@ -72,7 +72,7 @@ IntSet::EncodingType IntSet::ValueEncoding(int64_t value) {
   return kInt16;
 }
 
-void IntSet::Resize(uint32_t length) {
+void Intset::Resize(uint32_t length) {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
   auto new_contents = std::make_unique<unsigned char[]>(
       static_cast<size_t>(length) * encoding_);
@@ -82,7 +82,7 @@ void IntSet::Resize(uint32_t length) {
   contents_ = std::move(new_contents);
 }
 
-void IntSet::UpgradeAndAdd(int64_t value) {
+void Intset::UpgradeAndAdd(int64_t value) {
   const EncodingType old_encoding = encoding_;
   const uint32_t old_length = length_;
   auto old_contents = std::move(contents_);
@@ -117,7 +117,7 @@ void IntSet::UpgradeAndAdd(int64_t value) {
   length_ = old_length + 1;
 }
 
-bool IntSet::Search(int64_t value, uint32_t* const index) const {
+bool Intset::Search(int64_t value, uint32_t* const index) const {
   if (length_ > 0 && value < EncodedValue(0, encoding_)) {
     if (index != nullptr) {
       *index = 0;
@@ -153,7 +153,7 @@ bool IntSet::Search(int64_t value, uint32_t* const index) const {
   return false;
 }
 
-void IntSet::AppendRedisBlob(std::string* const out) const {
+void Intset::AppendRedisBlob(std::string* const out) const {
   const auto append = [out](uint64_t value, size_t width) {
     for (size_t i = 0; i < width; ++i) {
       out->push_back(static_cast<char>((value >> (8 * i)) & 0xff));
@@ -168,7 +168,7 @@ void IntSet::AppendRedisBlob(std::string* const out) const {
   }
 }
 
-int64_t IntSet::EncodedValue(uint32_t index, EncodingType encoding) const {
+int64_t Intset::EncodedValue(uint32_t index, EncodingType encoding) const {
   RS_CHECK(index < length_);
   const unsigned char* source =
       contents_.get() + (static_cast<size_t>(index * encoding));
@@ -187,7 +187,7 @@ int64_t IntSet::EncodedValue(uint32_t index, EncodingType encoding) const {
   return value16;
 }
 
-void IntSet::Set(uint32_t index, int64_t value) {
+void Intset::Set(uint32_t index, int64_t value) {
   unsigned char* destination =
       contents_.get() + (static_cast<size_t>(index * encoding_));
   if (encoding_ == kInt64) {
@@ -201,7 +201,7 @@ void IntSet::Set(uint32_t index, int64_t value) {
   }
 }
 
-void IntSet::MoveTail(uint32_t from, uint32_t to) {
+void Intset::MoveTail(uint32_t from, uint32_t to) {
   const size_t bytes = static_cast<size_t>(length_ - from) * encoding_;
   const unsigned char* source =
       contents_.get() + (static_cast<size_t>(from * encoding_));

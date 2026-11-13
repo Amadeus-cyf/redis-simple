@@ -12,20 +12,20 @@
 #include "data_types/zset/zset_storage_test_util.h"
 
 namespace redis_simple::zset {
-TEST(ZSetListPackTest, Add) { zset_storage_test::TestAdd<ZSetListPack>(); }
+TEST(ZSetListpackTest, Add) { zset_storage_test::TestAdd<ZSetListpack>(); }
 
-TEST(ZSetListPackTest, Rank) { zset_storage_test::TestRank<ZSetListPack>(); }
+TEST(ZSetListpackTest, Rank) { zset_storage_test::TestRank<ZSetListpack>(); }
 
-TEST(ZSetListPackTest, Update) {
-  zset_storage_test::TestUpdate<ZSetListPack>();
+TEST(ZSetListpackTest, Update) {
+  zset_storage_test::TestUpdate<ZSetListpack>();
 }
 
-TEST(ZSetListPackTest, RangeByRank) {
-  zset_storage_test::TestRangeByRank<ZSetListPack>();
+TEST(ZSetListpackTest, RangeByRank) {
+  zset_storage_test::TestRangeByRank<ZSetListpack>();
 }
 
-TEST(ZSetListPackTest, PreservesNumericMemberWhileReadingScore) {
-  ZSetListPack zset;
+TEST(ZSetListpackTest, PreservesNumericMemberWhileReadingScore) {
+  ZSetListpack zset;
   ASSERT_TRUE(zset.InsertOrUpdate("0", 42.0, nullptr));
   const RangeByRankSpec spec(0, 0, false, false);
 
@@ -36,17 +36,17 @@ TEST(ZSetListPackTest, PreservesNumericMemberWhileReadingScore) {
   EXPECT_EQ(entries.front().score, 42.0);
 }
 
-TEST(ZSetListPackTest, StoresNegativeZeroAsZero) {
+TEST(ZSetListpackTest, StoresNegativeZeroAsZero) {
   // Redis stores whole-number listpack scores as integers, so -0 reads back
   // as 0; the skiplist encoding keeps the sign.
-  ZSetListPack zset;
+  ZSetListpack zset;
   ASSERT_TRUE(zset.InsertOrUpdate("member", -0.0, nullptr));
   const double score = zset.Score("member").value_or(1.0);
   EXPECT_EQ(score, 0.0);
   EXPECT_FALSE(std::signbit(score));
 }
 
-TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {
+TEST(ZSetListpackTest, ReadsIntegralAndFractionalScoresExactly) {
   // Integral scores take the listpack's integer encodings; the others are
   // stored as text. Both must read back as the exact double inserted.
   const std::vector<std::pair<std::string, double>> entries = {
@@ -59,7 +59,7 @@ TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {
       {"max", 9007199254740992.0},
       {"huge", 1.5e300},
   };
-  ZSetListPack zset;
+  ZSetListpack zset;
   for (const auto& [member, score] : entries) {
     ASSERT_TRUE(zset.InsertOrUpdate(member, score, nullptr));
   }
@@ -76,13 +76,13 @@ TEST(ZSetListPackTest, ReadsIntegralAndFractionalScoresExactly) {
   }
 }
 
-TEST(ZSetListPackTest, RangeByScore) {
-  zset_storage_test::TestRangeByScore<ZSetListPack>();
+TEST(ZSetListpackTest, RangeByScore) {
+  zset_storage_test::TestRangeByScore<ZSetListpack>();
 }
 
-TEST(ZSetListPackTest, Count) { zset_storage_test::TestCount<ZSetListPack>(); }
+TEST(ZSetListpackTest, Count) { zset_storage_test::TestCount<ZSetListpack>(); }
 
-TEST(ZSetListPackTest, Delete) {
-  zset_storage_test::TestDelete<ZSetListPack>();
+TEST(ZSetListpackTest, Delete) {
+  zset_storage_test::TestDelete<ZSetListpack>();
 }
 }  // namespace redis_simple::zset

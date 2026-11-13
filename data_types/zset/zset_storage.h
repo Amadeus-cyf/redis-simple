@@ -62,7 +62,7 @@ class ZSetStorage {
   virtual size_t Size() const = 0;
   // A listpack storage's listpack, in Redis' byte format; nullopt for a
   // skiplist.
-  virtual std::optional<std::string_view> ListPackBytes() const = 0;
+  virtual std::optional<std::string_view> ListpackBytes() const = 0;
   virtual ~ZSetStorage() = default;
 
   // The same ranges collected into vectors.

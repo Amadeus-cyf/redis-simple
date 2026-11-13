@@ -8,8 +8,8 @@
 
 namespace redis_simple::memory {
 namespace {
-std::unique_ptr<IntSet> MakeFullIntSet() {
-  auto intset = std::make_unique<IntSet>();
+std::unique_ptr<Intset> MakeFullIntset() {
+  auto intset = std::make_unique<Intset>();
   intset->Add(1);
   intset->Add(5);
   intset->Add(7);
@@ -25,8 +25,8 @@ std::unique_ptr<IntSet> MakeFullIntSet() {
   return intset;
 }
 
-std::unique_ptr<IntSet> MakeIntSetAfterRemovals() {
-  auto intset = MakeFullIntSet();
+std::unique_ptr<Intset> MakeIntsetAfterRemovals() {
+  auto intset = MakeFullIntset();
   intset->Delete(INT16_MAX);
   intset->Delete(INT64_MIN);
   intset->Delete(INT64_MAX);
@@ -34,8 +34,8 @@ std::unique_ptr<IntSet> MakeIntSetAfterRemovals() {
 }
 }  // namespace
 
-TEST(IntSetTest, AddAndUpgradeAndGet) {
-  auto intset = MakeFullIntSet();
+TEST(IntsetTest, AddAndUpgradeAndGet) {
+  auto intset = MakeFullIntset();
   ASSERT_FALSE(intset->Add(1));
   ASSERT_EQ(intset->Size(), 12);
   ASSERT_FALSE(intset->Add(INT64_MIN));
@@ -57,8 +57,8 @@ TEST(IntSetTest, AddAndUpgradeAndGet) {
   ASSERT_EQ(intset->Get(11), INT64_MAX);
 }
 
-TEST(IntSetTest, Find) {
-  auto intset = MakeFullIntSet();
+TEST(IntsetTest, Find) {
+  auto intset = MakeFullIntset();
   ASSERT_TRUE(intset->Find(INT64_MIN));
   ASSERT_TRUE(intset->Find(INT64_MAX));
   ASSERT_TRUE(intset->Find(INT16_MIN));
@@ -73,8 +73,8 @@ TEST(IntSetTest, Find) {
   ASSERT_FALSE(intset->Find(INT32_MAX - 1));
 }
 
-TEST(IntSetTest, Remove) {
-  auto intset = MakeFullIntSet();
+TEST(IntsetTest, Remove) {
+  auto intset = MakeFullIntset();
   ASSERT_TRUE(intset->Delete(INT16_MAX));
   ASSERT_FALSE(intset->Find(INT16_MAX));
   ASSERT_EQ(intset->Size(), 11);
@@ -94,9 +94,9 @@ TEST(IntSetTest, Remove) {
   ASSERT_EQ(intset->Size(), 9);
 }
 
-TEST(IntSetTest, Iterator) {
-  auto intset = MakeIntSetAfterRemovals();
-  auto it = IntSet::Iterator(intset.get());
+TEST(IntsetTest, Iterator) {
+  auto intset = MakeIntsetAfterRemovals();
+  auto it = Intset::Iterator(intset.get());
   it.SeekToFirst();
   ASSERT_EQ(it.Value(), INT32_MIN);
   it.Next();
@@ -116,14 +116,14 @@ TEST(IntSetTest, Iterator) {
   it.SeekToLast();
   ASSERT_EQ(it.Value(), INT32_MAX);
 }
-TEST(IntSetDeathTest, RejectsOutOfRangeIndex) {
-  auto intset = MakeFullIntSet();
+TEST(IntsetDeathTest, RejectsOutOfRangeIndex) {
+  auto intset = MakeFullIntset();
   EXPECT_DEATH(intset->Get(-1), "Check failed");
   EXPECT_DEATH(intset->Get(intset->Size()), "Check failed");
 }
 
-TEST(IntSetTest, AppendsRedisBlob) {
-  IntSet intset;
+TEST(IntsetTest, AppendsRedisBlob) {
+  Intset intset;
   for (const int64_t value : {1, 2, 300, -70000}) {
     intset.Add(value);
   }

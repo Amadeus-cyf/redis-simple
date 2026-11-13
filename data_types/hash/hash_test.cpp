@@ -16,14 +16,14 @@ bool EntryLess(const Hash::Entry& lhs, const Hash::Entry& rhs) {
 }
 }  // namespace
 
-TEST(HashTest, SetGetDeleteWithListPackEncoding) {
+TEST(HashTest, SetGetDeleteWithListpackEncoding) {
   auto hash = Hash::Create();
 
   EXPECT_TRUE(hash->Set("field1", "value1"));
   EXPECT_TRUE(hash->Set("field2", "value2"));
   EXPECT_FALSE(hash->Set("field1", "updated"));
 
-  EXPECT_EQ(hash->Encoding(), Hash::Encoding::kListPack);
+  EXPECT_EQ(hash->Encoding(), Hash::Encoding::kListpack);
   EXPECT_EQ(hash->Size(), 2);
   EXPECT_TRUE(hash->Exists("field1"));
   EXPECT_FALSE(hash->Exists("missing"));
@@ -66,7 +66,7 @@ TEST(HashTest, FieldLookupDoesNotMatchValues) {
   EXPECT_EQ(hash->Get("field"), "same");
 }
 
-TEST(HashTest, VisitValueReturnsListPackValueWithoutCopying) {
+TEST(HashTest, VisitValueReturnsListpackValueWithoutCopying) {
   auto hash = Hash::Create();
   std::string value;
 
@@ -114,7 +114,7 @@ TEST(HashEncodingTest, ConvertsToDictWhenEntryCountExceedsLimit) {
     EXPECT_TRUE(
         hash->Set("field" + std::to_string(i), "value" + std::to_string(i)));
   }
-  EXPECT_EQ(hash->Encoding(), Hash::Encoding::kListPack);
+  EXPECT_EQ(hash->Encoding(), Hash::Encoding::kListpack);
   EXPECT_TRUE(hash->Set("field512", "value512"));
 
   EXPECT_EQ(hash->Encoding(), Hash::Encoding::kDict);

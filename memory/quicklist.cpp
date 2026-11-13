@@ -16,21 +16,21 @@ bool HasRemoveLimit(size_t limit) { return limit != 0; }
 
 }  // namespace
 
-QuickList::Node::Node()
-    : listpack(std::make_unique<ListPack>()), next(nullptr), prev(nullptr) {}
+Quicklist::Node::Node()
+    : listpack(std::make_unique<Listpack>()), next(nullptr), prev(nullptr) {}
 
-QuickList::QuickList() : QuickList(kDefaultNodeMaxBytes) {}
+Quicklist::Quicklist() : Quicklist(kDefaultNodeMaxBytes) {}
 
-QuickList::QuickList(size_t node_max_bytes)
+Quicklist::Quicklist(size_t node_max_bytes)
     : head_(nullptr),
       tail_(nullptr),
       size_(0),
       node_count_(0),
       node_max_bytes_(
           std::max(node_max_bytes,
-                   static_cast<size_t>(ListPack::kListPackHeaderSize + 1))) {}
+                   static_cast<size_t>(Listpack::kListpackHeaderSize + 1))) {}
 
-bool QuickList::LPush(std::string_view value) {
+bool Quicklist::LPush(std::string_view value) {
   if (!head_ || !CanAppendToNode(head_.get(), value)) {
     PrependNode();
   }
@@ -41,7 +41,7 @@ bool QuickList::LPush(std::string_view value) {
   return true;
 }
 
-bool QuickList::RPush(std::string_view value) {
+bool Quicklist::RPush(std::string_view value) {
   if ((tail_ == nullptr) || !CanAppendToNode(tail_, value)) {
     AppendNode();
   }
@@ -52,7 +52,7 @@ bool QuickList::RPush(std::string_view value) {
   return true;
 }
 
-std::optional<std::string> QuickList::LPop() {
+std::optional<std::string> Quicklist::LPop() {
   if (!head_) {
     return std::nullopt;
   }
@@ -71,7 +71,7 @@ std::optional<std::string> QuickList::LPop() {
   return value;
 }
 
-std::optional<std::string> QuickList::RPop() {
+std::optional<std::string> Quicklist::RPop() {
   if (tail_ == nullptr) {
     return std::nullopt;
   }
@@ -93,7 +93,7 @@ std::optional<std::string> QuickList::RPop() {
   return value;
 }
 
-std::vector<std::string> QuickList::Range(size_t start, size_t stop) const {
+std::vector<std::string> Quicklist::Range(size_t start, size_t stop) const {
   std::vector<std::string> values;
   if (start > stop || start >= size_) {
     return values;
@@ -107,7 +107,7 @@ std::vector<std::string> QuickList::Range(size_t start, size_t stop) const {
   return values;
 }
 
-bool QuickList::Set(size_t index, std::string_view value) {
+bool Quicklist::Set(size_t index, std::string_view value) {
   const std::optional<EntryLocation> location = Locate(index);
   if (!location.has_value()) {
     return false;
@@ -125,7 +125,7 @@ bool QuickList::Set(size_t index, std::string_view value) {
   return true;
 }
 
-std::optional<size_t> QuickList::Remove(std::string_view value, size_t limit,
+std::optional<size_t> Quicklist::Remove(std::string_view value, size_t limit,
                                         RemoveDirection direction) {
   if (size_ == 0) {
     return 0;
@@ -166,7 +166,7 @@ std::optional<size_t> QuickList::Remove(std::string_view value, size_t limit,
   return removed;
 }
 
-bool QuickList::Trim(size_t start, size_t stop) {
+bool Quicklist::Trim(size_t start, size_t stop) {
   if (size_ == 0 || start > stop || start >= size_) {
     Clear();
     return true;
@@ -213,7 +213,7 @@ bool QuickList::Trim(size_t start, size_t stop) {
   return true;
 }
 
-std::optional<QuickList::EntryLocation> QuickList::Locate(size_t index) const {
+std::optional<Quicklist::EntryLocation> Quicklist::Locate(size_t index) const {
   if (index >= size_) {
     return std::nullopt;
   }
@@ -242,26 +242,26 @@ std::optional<QuickList::EntryLocation> QuickList::Locate(size_t index) const {
   return std::nullopt;
 }
 
-std::optional<size_t> QuickList::ListPackBytes() const {
+std::optional<size_t> Quicklist::ListpackBytes() const {
   if (node_count_ > 1) {
     return std::nullopt;
   }
   return head_ == nullptr
-             ? std::optional<size_t>(ListPack::kListPackHeaderSize + 1)
+             ? std::optional<size_t>(Listpack::kListpackHeaderSize + 1)
              : std::optional<size_t>(head_->listpack->TotalBytes());
 }
 
-std::unique_ptr<ListPack> QuickList::ReleaseListPack() {
+std::unique_ptr<Listpack> Quicklist::ReleaseListpack() {
   if (node_count_ > 1) {
     return nullptr;
   }
-  auto listpack = head_ == nullptr ? std::make_unique<ListPack>()
+  auto listpack = head_ == nullptr ? std::make_unique<Listpack>()
                                    : std::move(head_->listpack);
   Clear();
   return listpack;
 }
 
-bool QuickList::AdoptListPack(std::unique_ptr<ListPack> listpack) {
+bool Quicklist::AdoptListpack(std::unique_ptr<Listpack> listpack) {
   RS_CHECK(head_ == nullptr && listpack != nullptr);
   if (listpack->Size() == 0) {
     return true;
@@ -272,36 +272,36 @@ bool QuickList::AdoptListPack(std::unique_ptr<ListPack> listpack) {
   return NormalizeNodeSizes(node);
 }
 
-bool QuickList::PushToHeadNode(std::string_view value) {
+bool Quicklist::PushToHeadNode(std::string_view value) {
   return head_ && head_->listpack->Prepend(value);
 }
 
-bool QuickList::PushToTailNode(std::string_view value) {
+bool Quicklist::PushToTailNode(std::string_view value) {
   return (tail_ != nullptr) && tail_->listpack->Append(value);
 }
 
-bool QuickList::CanAppendToNode(const Node* node,
+bool Quicklist::CanAppendToNode(const Node* node,
                                 std::string_view value) const {
   if (node == nullptr) {
     return false;
   }
-  const size_t estimated_bytes = ListPack::EstimateEntryBytes(value);
+  const size_t estimated_bytes = Listpack::EstimateEntryBytes(value);
   return node->listpack->Size() == 0 ||
          (node->listpack->TotalBytes() <= node_max_bytes_ &&
           estimated_bytes <= node_max_bytes_ - node->listpack->TotalBytes());
 }
 
-bool QuickList::CanMergeNodes(const Node* left, const Node* right) const {
+bool Quicklist::CanMergeNodes(const Node* left, const Node* right) const {
   if (left == nullptr || right == nullptr) {
     return false;
   }
   const size_t merged_bytes = left->listpack->TotalBytes() +
                               right->listpack->TotalBytes() -
-                              ListPack::kListPackHeaderSize - 1;
+                              Listpack::kListpackHeaderSize - 1;
   return merged_bytes <= node_max_bytes_;
 }
 
-bool QuickList::NormalizeNodeSizes(Node* node) {
+bool Quicklist::NormalizeNodeSizes(Node* node) {
   // Only `node` changed, and splitting it inserts the pieces before its
   // original successor, so the scan stops there instead of at the tail.
   const Node* const end = node->next.get();
@@ -316,7 +316,7 @@ bool QuickList::NormalizeNodeSizes(Node* node) {
   return true;
 }
 
-QuickList::Node* QuickList::SplitNode(Node* node) {
+Quicklist::Node* Quicklist::SplitNode(Node* node) {
   if (node == nullptr || node->listpack->Size() <= 1) {
     return nullptr;
   }
@@ -341,7 +341,7 @@ QuickList::Node* QuickList::SplitNode(Node* node) {
   return InsertNodeAfter(node, std::move(right));
 }
 
-QuickList::Node* QuickList::InsertNodeAfter(Node* node,
+Quicklist::Node* Quicklist::InsertNodeAfter(Node* node,
                                             std::unique_ptr<Node> new_node) {
   if (node == nullptr || new_node == nullptr) {
     return nullptr;
@@ -360,7 +360,7 @@ QuickList::Node* QuickList::InsertNodeAfter(Node* node,
   return inserted;
 }
 
-void QuickList::MergeNext(Node* left) {
+void Quicklist::MergeNext(Node* left) {
   if (!CanMergeNodes(left, left == nullptr ? nullptr : left->next.get())) {
     return;
   }
@@ -376,7 +376,7 @@ void QuickList::MergeNext(Node* left) {
   DeleteNode(right);
 }
 
-void QuickList::MergeAround(Node* node) {
+void Quicklist::MergeAround(Node* node) {
   if (node == nullptr) {
     return;
   }
@@ -389,7 +389,7 @@ void QuickList::MergeAround(Node* node) {
   }
 }
 
-void QuickList::MergeAll() {
+void Quicklist::MergeAll() {
   for (Node* node = head_.get(); node != nullptr; node = node->next.get()) {
     while (CanMergeNodes(node, node->next.get())) {
       MergeNext(node);
@@ -397,7 +397,7 @@ void QuickList::MergeAll() {
   }
 }
 
-QuickList::Node* QuickList::AppendNode() {
+Quicklist::Node* Quicklist::AppendNode() {
   auto node = std::make_unique<Node>();
   Node* inserted = node.get();
   if (!head_) {
@@ -413,7 +413,7 @@ QuickList::Node* QuickList::AppendNode() {
   return inserted;
 }
 
-QuickList::Node* QuickList::PrependNode() {
+Quicklist::Node* Quicklist::PrependNode() {
   auto node = std::make_unique<Node>();
   Node* inserted = node.get();
   if (!head_) {
@@ -428,7 +428,7 @@ QuickList::Node* QuickList::PrependNode() {
   return inserted;
 }
 
-void QuickList::DeleteNode(Node* node) {
+void Quicklist::DeleteNode(Node* node) {
   if (node == nullptr) {
     return;
   }
@@ -453,7 +453,7 @@ void QuickList::DeleteNode(Node* node) {
   --node_count_;
 }
 
-void QuickList::Clear() {
+void Quicklist::Clear() {
   head_.reset();
   tail_ = nullptr;
   size_ = 0;

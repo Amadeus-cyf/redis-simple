@@ -118,17 +118,17 @@ Guidance for AI coding agents working in this repository.
   pair given, element pushed, popped, or trimmed). It drives the save points
   and `rdb_changes_since_last_save`. Write commands, and `PING`, are refused
   with `MISCONF` through the command table's `refused_on_disk_error`.
-- `ListPack` and `IntSet` keep Redis' byte format in memory (little-endian
+- `Listpack` and `Intset` keep Redis' byte format in memory (little-endian
   headers, lengths, and integers, and Redis' backlen layout), since RDB files
   store them as they are; their tests compare bytes with vectors Redis
   produced. Keep any change to their encoding byte-identical to Redis'.
 - The RDB loader never trusts the file: it checks every length against the
   bytes left before allocating, validates encoded listpacks and intsets with
-  `memory::ListPackReader` and the intset checks, and rejects duplicates and
+  `memory::ListpackReader` and the intset checks, and rejects duplicates and
   NaN scores. Like Redis, it keeps a set, hash, or sorted set listpack's bytes
-  (`CreateFromListPack`), but only after one pass proves it is valid, fits
+  (`CreateFromListpack`), but only after one pass proves it is valid, fits
   this server's limits, holds sorted set pairs in order, and encodes each
-  element as `ListPack` would; anything else is rebuilt through the data
+  element as `Listpack` would; anything else is rebuilt through the data
   types. Values over the listpack limits start in their large encoding,
   sized for their count (`CreateForSize`), as Redis' rdbLoad does. Keep new
   types on that path.
@@ -190,17 +190,17 @@ Guidance for AI coding agents working in this repository.
   entries and are for tests and tools. Do not bring back a result cache
   inside the storage: a listpack sorted set must stay as small after a range
   read as before it.
-- `ListPack::ForEach`, `ForEachReverse`, and `ForEachPair` decode each
+- `Listpack::ForEach`, `ForEachReverse`, and `ForEachPair` decode each
   element once through `DecodeEntry`, which yields its value and the next
   offset together. Prefer them over `Get` plus `Next` loops on read paths.
   Listpack sorted sets read integer-encoded scores directly instead of
   formatting and reparsing them.
-- Keep `QuickList` aligned with Redis' quicklist: index seeks walk nodes from
+- Keep `Quicklist` aligned with Redis' quicklist: index seeks walk nodes from
   the closer end (`Locate`), an `LSET` that overflows its node splits only
   that node, and `List` converts back to a listpack after pops, `LSET`,
   `LREM`, and `LTRIM` once one node holds at most half the size limit.
   One deliberate difference: after pops, `LSET`, `LREM`, and `LTRIM`,
-  `QuickList` merges neighboring nodes that fit together, where Redis leaves
+  `Quicklist` merges neighboring nodes that fit together, where Redis leaves
   them. This server is I/O bound, so fewer, fuller nodes are worth the merge
   cost; keep the merges.
 - Canonical integer strings are stored as `int64_t`, and other values of at
@@ -408,8 +408,9 @@ Before committing, run the relevant build and tests.
   is a symlink to that folder, so keep one copy. Use the `pre-pr-check` skill
   before committing or opening a pull request, and update it when the checks
   in this file change. `benchmark-against-baseline` and
-  `redis-differential-check` cover performance and Redis comparisons, and
-  `add-command` lists every place a new or changed command touches.
+  `redis-differential-check` cover performance and Redis comparisons,
+  `add-command` lists every place a new or changed command touches, and
+  `track-redis-release` covers a new Redis release that fails CI.
 - Keep CMake target-based. Source files are discovered by scoped directory
   globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
   explicitly when they do not belong in a library target.

@@ -16,23 +16,23 @@
 namespace redis_simple::memory {
 // Compact Redis-style sequential encoding. See:
 // https://github.com/antirez/listpack/blob/master/listpack.md
-class ListPack {
+class Listpack {
  public:
-  struct ListPackEntry {
+  struct ListpackEntry {
     std::string_view string_value;
     int64_t integer_value;
     bool is_integer;
   };
   // Header: 32-bit total bytes followed by 16-bit element count.
-  static constexpr int kListPackHeaderSize = 6;
-  ListPack();
+  static constexpr int kListpackHeaderSize = 6;
+  Listpack();
   // A listpack holding a copy of `bytes`, which must be a whole listpack in
   // Redis' byte format whose elements encode as this class encodes them:
   // validate untrusted bytes first, as the RDB loader does with
-  // ListPackReader. Checks only the header and terminator.
-  static std::unique_ptr<ListPack> CreateFromBytes(std::string_view bytes);
-  ListPack(const ListPack&) = delete;
-  ListPack& operator=(const ListPack&) = delete;
+  // ListpackReader. Checks only the header and terminator.
+  static std::unique_ptr<Listpack> CreateFromBytes(std::string_view bytes);
+  Listpack(const Listpack&) = delete;
+  Listpack& operator=(const Listpack&) = delete;
   unsigned char* Get(size_t offset, size_t* length) const;
   std::optional<std::string> Get(size_t offset) const;
   std::optional<int64_t> IntegerAt(size_t offset) const;
@@ -46,10 +46,10 @@ class ListPack {
   bool Insert(size_t offset, int64_t element_integer);
   bool Replace(size_t offset, std::string_view element_string);
   bool Replace(size_t offset, int64_t element_integer);
-  bool BatchAppend(const std::vector<ListPackEntry>& entries);
-  bool BatchAppend(std::initializer_list<ListPackEntry> entries);
-  bool BatchPrepend(const std::vector<ListPackEntry>& entries);
-  bool BatchInsert(size_t offset, const std::vector<ListPackEntry>& entries);
+  bool BatchAppend(const std::vector<ListpackEntry>& entries);
+  bool BatchAppend(std::initializer_list<ListpackEntry> entries);
+  bool BatchPrepend(const std::vector<ListpackEntry>& entries);
+  bool BatchInsert(size_t offset, const std::vector<ListpackEntry>& entries);
   std::optional<size_t> OffsetAt(size_t index) const;
   // The value view is valid only during the callback invocation.
   template <typename Visitor>
@@ -75,19 +75,19 @@ class ListPack {
   size_t Size() const;
   static size_t EstimateEntryBytes(std::string_view value);
   static size_t EstimateBytes(int64_t value, size_t repeat);
-  static bool SafeToAdd(const ListPack* listpack, size_t bytes);
-  ~ListPack() = default;
+  static bool SafeToAdd(const Listpack* listpack, size_t bytes);
+  ~Listpack() = default;
 
  private:
   // Enough space for INT64_MIN plus a null terminator.
-  static constexpr int kListPackIntBufferSize = 21;
-  static constexpr uint16_t kListPackUnknownElementCount = UINT16_MAX;
+  static constexpr int kListpackIntBufferSize = 21;
+  static constexpr uint16_t kListpackUnknownElementCount = UINT16_MAX;
   static constexpr int kUint7BitIntMax = 127;
   static constexpr int kInt24BitIntMax = (1 << 23) - 1;
   static constexpr int kInt24BitIntMin = -(1 << 23);
   // Keep reallocations below the unsigned 32-bit total-bytes limit.
-  static constexpr uint32_t kListPackMaxSafetySize = 1 << 30;
-  static constexpr int64_t kListPackEof = 0xff;
+  static constexpr uint32_t kListpackMaxSafetySize = 1 << 30;
+  static constexpr int64_t kListpackEof = 0xff;
   enum class EncodingGeneralType {
     kInteger = 0,
     kString = 1,
@@ -137,13 +137,13 @@ class ListPack {
   unsigned char* IntegerAt(size_t offset, unsigned char* destination,
                            size_t* length, int64_t* value,
                            EncodingType encoding_type) const;
-  bool Insert(size_t offset, ListPack::Position where,
+  bool Insert(size_t offset, Listpack::Position where,
               const std::string_view* element_string,
               const int64_t* element_integer);
-  bool BatchInsert(size_t offset, ListPack::Position where,
-                   const ListPackEntry* entries, size_t entry_count);
+  bool BatchInsert(size_t offset, Listpack::Position where,
+                   const ListpackEntry* entries, size_t entry_count);
   // Chooses the encoding for `entry`; returns false if it is too large.
-  static bool PlanEntry(const ListPackEntry& entry, Encoding* encoding);
+  static bool PlanEntry(const ListpackEntry& entry, Encoding* encoding);
   static size_t EncodedEntryBytes(const Encoding& encoding);
   void SetTotalBytes(uint32_t listpack_bytes);
   uint16_t ElementCount() const;
@@ -162,7 +162,7 @@ class ListPack {
   };
   // Decodes the element at `offset`, which must not be EOF, reading its
   // encoding once for both the value and the next offset. Integers are rendered
-  // into `int_buffer`, which must hold kListPackIntBufferSize bytes. Iterators
+  // into `int_buffer`, which must hold kListpackIntBufferSize bytes. Iterators
   // use this instead of Get() followed by Next(), which decode each element
   // twice.
   DecodedEntry DecodeEntry(size_t offset, unsigned char* int_buffer) const;
@@ -183,17 +183,17 @@ class ListPack {
   size_t DecodeStringLength(size_t offset) const;
   static bool IsString(EncodingType encoding_type);
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
-  ListPack(std::unique_ptr<unsigned char[]> listpack, size_t capacity)
+  Listpack(std::unique_ptr<unsigned char[]> listpack, size_t capacity)
       : listpack_(std::move(listpack)), capacity_(capacity) {}
   void Realloc(size_t bytes);
   std::unique_ptr<unsigned char[]> listpack_;
   // Allocated bytes of listpack_; at least TotalBytes().
   size_t capacity_;
-  mutable std::array<unsigned char, kListPackIntBufferSize> int_buffer_{};
+  mutable std::array<unsigned char, kListpackIntBufferSize> int_buffer_{};
 };
 
 template <typename Visitor>
-bool ListPack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
+bool Listpack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   const size_t size = Size();
   if (start > stop || start >= size) {
     return true;
@@ -201,7 +201,7 @@ bool ListPack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   stop = std::min(stop, size - 1);
 
   size_t offset = Seek(start, size);
-  for (size_t index = start; index <= stop && listpack_[offset] != kListPackEof;
+  for (size_t index = start; index <= stop && listpack_[offset] != kListpackEof;
        ++index) {
     const DecodedEntry entry = DecodeEntry(offset, int_buffer_.data());
     if (!visitor(ValueView(entry))) {
@@ -213,7 +213,7 @@ bool ListPack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
 }
 
 template <typename Visitor>
-bool ListPack::ForEachReverse(size_t start, size_t stop,
+bool Listpack::ForEachReverse(size_t start, size_t stop,
                               Visitor&& visitor) const {
   const size_t size = Size();
   if (start > stop || start >= size) {
@@ -237,18 +237,18 @@ bool ListPack::ForEachReverse(size_t start, size_t stop,
 }
 
 template <typename Visitor>
-bool ListPack::ForEachPair(Visitor&& visitor) const {
+bool Listpack::ForEachPair(Visitor&& visitor) const {
   const std::optional<size_t> first = First();
   if (!first.has_value()) {
     return true;
   }
-  std::array<unsigned char, kListPackIntBufferSize> first_int_buffer{};
-  std::array<unsigned char, kListPackIntBufferSize> second_int_buffer{};
+  std::array<unsigned char, kListpackIntBufferSize> first_int_buffer{};
+  std::array<unsigned char, kListpackIntBufferSize> second_int_buffer{};
   size_t offset = *first;
-  while (listpack_[offset] != kListPackEof) {
+  while (listpack_[offset] != kListpackEof) {
     const DecodedEntry first_entry =
         DecodeEntry(offset, first_int_buffer.data());
-    if (listpack_[first_entry.next] == kListPackEof) {
+    if (listpack_[first_entry.next] == kListpackEof) {
       break;
     }
     const DecodedEntry second_entry =

@@ -12,11 +12,11 @@
 
 namespace redis_simple::fuzz {
 namespace {
-using memory::ListPack;
+using memory::Listpack;
 
-void Verify(const ListPack& listpack, const std::vector<std::string>& model) {
+void Verify(const Listpack& listpack, const std::vector<std::string>& model) {
   Require(listpack.Size() == model.size());
-  Require(listpack.TotalBytes() >= ListPack::kListPackHeaderSize + 1);
+  Require(listpack.TotalBytes() >= Listpack::kListpackHeaderSize + 1);
   Require(listpack.First().has_value() == !model.empty());
   Require(listpack.Last().has_value() == !model.empty());
 
@@ -44,7 +44,7 @@ void Verify(const ListPack& listpack, const std::vector<std::string>& model) {
 }
 
 void RunOperations(FuzzInput* input) {
-  ListPack listpack;
+  Listpack listpack;
   std::vector<std::string> model;
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();
        ++operation_count) {
@@ -116,7 +116,7 @@ void RunOperations(FuzzInput* input) {
       }
       case 9: {
         const std::string second = input->ReadValue(96);
-        const std::vector<ListPack::ListPackEntry> entries = {
+        const std::vector<Listpack::ListpackEntry> entries = {
             {value, 0, false}, {second, 0, false}};
         Require(listpack.BatchAppend(entries));
         model.push_back(value);
@@ -125,7 +125,7 @@ void RunOperations(FuzzInput* input) {
       }
       case 10: {
         const std::string second = input->ReadValue(96);
-        const std::vector<ListPack::ListPackEntry> entries = {
+        const std::vector<Listpack::ListpackEntry> entries = {
             {value, 0, false}, {second, 0, false}};
         Require(listpack.BatchPrepend(entries));
         model.insert(model.begin(), {value, second});
@@ -134,7 +134,7 @@ void RunOperations(FuzzInput* input) {
       case 11:
         if (index < model.size()) {
           const std::string second = input->ReadValue(96);
-          const std::vector<ListPack::ListPackEntry> entries = {
+          const std::vector<Listpack::ListpackEntry> entries = {
               {value, 0, false}, {second, 0, false}};
           const auto listpack_index = listpack.OffsetAt(index);
           Require(listpack.BatchInsert(ValueOrAbort(listpack_index), entries));

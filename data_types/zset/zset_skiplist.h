@@ -36,7 +36,7 @@ class ZSetSkiplist : public ZSetStorage {
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
   size_t Scan(size_t cursor, size_t count,
               const ZSetScanVisitor& visitor) override;
-  std::optional<std::string_view> ListPackBytes() const override {
+  std::optional<std::string_view> ListpackBytes() const override {
     return std::nullopt;
   }
   size_t Size() const override { return skiplist_->Size(); }

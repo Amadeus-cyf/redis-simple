@@ -193,7 +193,7 @@ then `EOF` and the CRC64 of everything before it. Each value is written in
 the encoding Redis writes for the same in-memory encoding: an intset or a
 listpack as one blob, a quicklist as its nodes' listpacks, and hash tables
 and skiplists as counted elements. Blobs are copied as they are, which works
-because `ListPack` and `IntSet` keep Redis' byte format in memory: little-endian
+because `Listpack` and `Intset` keep Redis' byte format in memory: little-endian
 headers, lengths, and integers, and Redis' backlen layout (unit tests check
 the bytes against vectors Redis produced). Strings are encoded as Redis'
 `rdbSaveRawString` does: short decimal text as an integer, longer text
@@ -211,13 +211,13 @@ The loader reads the file through a buffer that tracks the CRC64 and the bytes
 left. Every length the file claims is checked against those bytes before
 anything is allocated, an LZF string's expanded size against the 512 MiB
 string limit, and listpacks and intsets are validated as they are read
-(`memory::ListPackReader` checks each entry's encoding, size, and backlen, as
+(`memory::ListpackReader` checks each entry's encoding, size, and backlen, as
 Redis' deep validation does). As Redis does, a set, hash, or sorted set
 listpack is then kept as stored, so loading it is one copy: one pass over it
 checks every element, that keys are distinct (by sorting their views), and
 that scores are numbers, and it is kept only if it also fits this server's
 listpack limits, holds sorted set pairs in (score, member) order, and stores
-each element as `ListPack` would, an integer exactly when its text parses as
+each element as `Listpack` would, an integer exactly when its text parses as
 one, which lookups rely on. Any other value, including lists and intsets, is
 rebuilt through the data types, so no corrupt structure enters memory. A
 hash, set, or sorted set stored as a hash table and counting more entries

@@ -91,12 +91,12 @@ void ListRemoveMissing(benchmark::State& state) {
 
 // The push that grows a full listpack past its size limit and converts the
 // list to a quicklist.
-void ListConvertToQuickList(benchmark::State& state) {
+void ListConvertToQuicklist(benchmark::State& state) {
   const auto item = [](size_t i) { return "item:" + std::to_string(i); };
   // The most elements a listpack-encoded list holds before converting.
   size_t full_size = 0;
   for (auto probe = list::List::Create();
-       probe->Encoding() == list::List::Encoding::kListPack; ++full_size) {
+       probe->Encoding() == list::List::Encoding::kListpack; ++full_size) {
     probe->RPush(item(full_size));
   }
   --full_size;
@@ -124,6 +124,6 @@ BENCHMARK(ListRange)
 // 100 elements fit in one listpack; 10,000 use a quicklist.
 BENCHMARK(ListRemove)->Arg(100)->Arg(10'000)->ArgName("size");
 BENCHMARK(ListRemoveMissing)->Arg(100)->Arg(10'000)->ArgName("size");
-BENCHMARK(ListConvertToQuickList);
+BENCHMARK(ListConvertToQuicklist);
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple
