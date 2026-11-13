@@ -75,6 +75,17 @@ Guidance for AI coding agents working in this repository.
   words what it does, for readers who do not know Redis.
 - Keep command handler declarations grouped in `server/commands/handlers.h`;
   avoid per-command headers unless a handler becomes a broader shared API.
+  Implement handlers in one file per command family,
+  `server/commands/<family>.cpp`, in the namespace of the same name
+  (`commands::key`, `string`, `list`, `set`, `zset`, `hash`, `session`,
+  `transaction`, `persistence`, `info`); do not split a family into a file
+  per command.
+- Name directories and namespaces for what they hold, and keep the two the
+  same: containers that know nothing about Redis live in `containers/`
+  (`containers::`), and the Redis types built on them in `data_types/`
+  (`data_types::Set`, `List`, `Hash`, `ZSet`). Files under `utils/` are named
+  for their subject without repeating the directory (`utils/strings.h`,
+  `utils/floats.h`, `utils/integers.h`, `utils/time.h`).
 - Keep command names, arity, access mode, and key positions in the sorted
   metadata table in `server/commands/command.cpp`. Preserve its allocation-free,
   case-insensitive lookup path: `Find` hashes the name with branch-free case
@@ -124,7 +135,7 @@ Guidance for AI coding agents working in this repository.
   produced. Keep any change to their encoding byte-identical to Redis'.
 - The RDB loader never trusts the file: it checks every length against the
   bytes left before allocating, validates encoded listpacks and intsets with
-  `memory::ListpackReader` and the intset checks, and rejects duplicates and
+  `containers::ListpackReader` and the intset checks, and rejects duplicates and
   NaN scores. Like Redis, it keeps a set, hash, or sorted set listpack's bytes
   (`CreateFromListpack`), but only after one pass proves it is valid, fits
   this server's limits, holds sorted set pairs in order, and encodes each
@@ -161,7 +172,7 @@ Guidance for AI coding agents working in this repository.
   object type and null database in each command.
 - Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
   only when it is new.
-- `RedisDb` operations hash their key once as a `memory::HashedKey` and
+- `RedisDb` operations hash their key once as a `containers::HashedKey` and
   pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
   hash. Keep operations that touch more than one of those dicts on that path
   instead of looking the key up by `std::string_view` in each.

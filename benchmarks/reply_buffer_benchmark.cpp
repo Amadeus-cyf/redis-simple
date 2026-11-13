@@ -5,15 +5,15 @@
 #include <cstddef>
 #include <random>
 
-#include "memory/reply_buffer.h"
+#include "containers/reply_buffer.h"
 
 namespace redis_simple {
 namespace {
 constexpr size_t kPayloadSize = 4096;
 
 // Leaked, so the static has no destructor to run at exit.
-memory::ReplyBuffer& ReplyBufferBenchmarkBuffer() {
-  static auto& buffer = *new memory::ReplyBuffer;
+containers::ReplyBuffer& ReplyBufferBenchmarkBuffer() {
+  static auto& buffer = *new containers::ReplyBuffer;
   return buffer;
 }
 

@@ -19,7 +19,7 @@
 #include "server/db/db.h"
 #include "server/rdb/rdb_loader.h"
 #include "server/rdb/rdb_writer.h"
-#include "utils/time_utils.h"
+#include "utils/time.h"
 
 namespace redis_simple::rdb {
 namespace {

@@ -18,7 +18,9 @@ request gets, and the differential scripts compare that.
    positions. Mark it there if it runs before `AUTH`, runs immediately inside
    `MULTI`, or is refused with `MISCONF` after a failed save.
 2. Declare the handler in `server/commands/handlers.h` and implement it in
-   the command family's folder under `server/commands/`.
+   the command family's file, `server/commands/<family>.cpp` (`key.cpp`,
+   `string.cpp`, `list.cpp`, `set.cpp`, `zset.cpp`, `hash.cpp`), in the
+   namespace of the same name (`commands::set`).
 3. Rely on the table for arity. Look keys up with `server/commands/lookup.h`.
    Parse integers with `utils::ToInt64` and floats with `utils::ToDouble`.
 4. Read arguments as `std::string_view`s and copy only what is stored.

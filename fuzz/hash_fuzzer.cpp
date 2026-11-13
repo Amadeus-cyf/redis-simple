@@ -13,7 +13,7 @@ namespace redis_simple::fuzz {
 namespace {
 using HashModel = std::unordered_map<std::string, std::string>;
 
-void Verify(hash::Hash* const hash, const HashModel& model) {
+void Verify(data_types::Hash* const hash, const HashModel& model) {
   Require(hash->Size() == model.size());
   for (const auto& [field, value] : model) {
     Require(hash->Exists(field));
@@ -30,7 +30,7 @@ void Verify(hash::Hash* const hash, const HashModel& model) {
 
   // A full HSCAN pass over a dict, with no changes during it, visits each
   // entry exactly once.
-  if (hash->Encoding() == hash::Hash::Encoding::kDict) {
+  if (hash->Encoding() == data_types::Hash::Encoding::kDict) {
     HashModel scanned;
     size_t cursor = 0;
     while (true) {
@@ -48,7 +48,7 @@ void Verify(hash::Hash* const hash, const HashModel& model) {
 }
 
 void RunOperations(FuzzInput* input) {
-  auto hash = hash::Hash::Create();
+  auto hash = data_types::Hash::Create();
   HashModel model;
 
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();

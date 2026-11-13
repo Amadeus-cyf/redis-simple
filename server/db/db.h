@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-#include "memory/dict.h"
+#include "containers/dict.h"
 #include "server/db/async_reclaimer.h"
 #include "server/db/key_watcher.h"
 #include "server/db/redis_object.h"
@@ -92,7 +92,7 @@ class RedisDb {
   // mutated. Returning false from the visitor stops further callbacks.
   template <typename Visitor>
   bool ForEachObject(Visitor&& visitor);
-  // One SCAN step (memory::Dict::ScanStep): calls `visitor(key, object)`
+  // One SCAN step (containers::Dict::ScanStep): calls `visitor(key, object)`
   // for each live key it visits from `cursor`, and returns the next cursor,
   // 0 when done. Expired keys count toward `count` but are not visited, as
   // in Redis. Key views remain valid until the database is mutated.
@@ -138,20 +138,20 @@ class RedisDb {
   void SetLoading(bool loading) { loading_ = loading; }
   // Each public operation hashes its key once and passes the HashedKey to
   // the keyspace, TTL, and WATCH tables, which share one hash seed.
-  RedisObject* Lookup(const memory::HashedKey& key);
+  RedisObject* Lookup(const containers::HashedKey& key);
   // TTL and WATCH bookkeeping shared by SetKey and SetStringKey once the
   // value is stored.
-  void FinishSet(const memory::HashedKey& key, int64_t expire,
+  void FinishSet(const containers::HashedKey& key, int64_t expire,
                  ExistingTtl existing_ttl);
-  DbStatus Delete(const memory::HashedKey& key);
-  void TouchWatchedKey(const memory::HashedKey& key);
+  DbStatus Delete(const containers::HashedKey& key);
+  void TouchWatchedKey(const containers::HashedKey& key);
   bool IsKeyExpired(std::string_view key) const;
-  bool IsKeyExpired(const memory::HashedKey& key) const;
+  bool IsKeyExpired(const containers::HashedKey& key) const;
   // Reads the clock, and keeps the time if it is pinned.
   int64_t ReadClock() const;
-  std::unique_ptr<memory::Dict<std::string, RedisObjectPtr>> dict_;
-  std::unique_ptr<memory::Dict<std::string, int64_t>> expires_;
-  std::unique_ptr<memory::Dict<std::string, std::vector<KeyWatcher*>>>
+  std::unique_ptr<containers::Dict<std::string, RedisObjectPtr>> dict_;
+  std::unique_ptr<containers::Dict<std::string, int64_t>> expires_;
+  std::unique_ptr<containers::Dict<std::string, std::vector<KeyWatcher*>>>
       watched_keys_;
   AsyncReclaimer reclaimer_;
   size_t expire_cursor_{};

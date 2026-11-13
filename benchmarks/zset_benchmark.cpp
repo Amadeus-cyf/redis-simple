@@ -34,8 +34,9 @@ std::vector<std::string> MemberNames(size_t count) {
   return names;
 }
 
-std::unique_ptr<zset::ZSet> FilledZSet(const std::vector<std::string>& names) {
-  auto zset = zset::ZSet::Create();
+std::unique_ptr<data_types::ZSet> FilledZSet(
+    const std::vector<std::string>& names) {
+  auto zset = data_types::ZSet::Create();
   std::mt19937 generator = SeededRng(0);
   std::uniform_real_distribution<double> score(0, 1'000'000);
   for (const auto& name : names) {
@@ -125,7 +126,7 @@ void ZSetRangeByScore(benchmark::State& state) {
   for (auto _ : state) {
     (void)_;
     const double min = start(generator);
-    const zset::RangeByScoreSpec spec(min, min + width, true, false);
+    const data_types::RangeByScoreSpec spec(min, min + width, true, false);
     // Visit the range as ZRANGEBYSCORE does, without collecting it.
     size_t visited = 0;
     zset->ForEachInScoreRange(

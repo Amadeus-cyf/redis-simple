@@ -9,12 +9,12 @@
 #include <string>
 #include <string_view>
 
-#include "memory/listpack.h"
-#include "utils/float_utils.h"
+#include "containers/listpack.h"
+#include "utils/floats.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 ZSetListpack::ZSetListpack()
-    : listpack_(std::make_unique<memory::Listpack>()) {}
+    : listpack_(std::make_unique<containers::Listpack>()) {}
 
 bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
                                   bool* const changed) {
@@ -572,4 +572,4 @@ bool ZSetListpack::GreaterOrEqual(double score, const RangeByScoreSpec* spec) {
 bool ZSetListpack::LessOrEqual(double score, const RangeByScoreSpec* spec) {
   return spec->maxex ? score < spec->max : score <= spec->max;
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types

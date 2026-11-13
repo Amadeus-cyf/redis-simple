@@ -19,7 +19,7 @@
 #include "server/db/db.h"
 #include "server/db/redis_object.h"
 #include "server/reply.h"
-#include "utils/float_utils.h"
+#include "utils/floats.h"
 
 namespace redis_simple::aof {
 namespace {
@@ -168,7 +168,7 @@ bool EmitKey(std::string_view key, const db::RedisObject& object,
       encoded = EmitString(key, object.String(), limits, sink);
       break;
     case db::RedisObject::ObjectType::kSet: {
-      const set::Set* set = object.Set();
+      const data_types::Set* set = object.Set();
       SnapshotBatch batch("SADD", key, 1, limits, sink);
       encoded = set->ForEachMember([&batch](std::string_view member) {
         return batch.Append({member});
@@ -176,7 +176,7 @@ bool EmitKey(std::string_view key, const db::RedisObject& object,
       break;
     }
     case db::RedisObject::ObjectType::kList: {
-      const list::List* list = object.List();
+      const data_types::List* list = object.List();
       const size_t size = list->Size();
       if (size == 0) {
         encoded = true;
@@ -189,7 +189,7 @@ bool EmitKey(std::string_view key, const db::RedisObject& object,
       break;
     }
     case db::RedisObject::ObjectType::kZSet: {
-      const zset::ZSet* zset = object.ZSet();
+      const data_types::ZSet* zset = object.ZSet();
       SnapshotBatch batch("ZADD", key, 2, limits, sink);
       encoded = zset->ForEachEntry([&batch](std::string_view member,
                                             double score) {
@@ -199,7 +199,7 @@ bool EmitKey(std::string_view key, const db::RedisObject& object,
       break;
     }
     case db::RedisObject::ObjectType::kHash: {
-      const hash::Hash* hash = object.Hash();
+      const data_types::Hash* hash = object.Hash();
       SnapshotBatch batch("HSET", key, 2, limits, sink);
       encoded = hash->ForEachEntry([&batch](std::string_view field,
                                             std::string_view value) {

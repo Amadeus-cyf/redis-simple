@@ -6,7 +6,7 @@
 
 #include "logging/logger.h"
 #include "server/client.h"
-#include "server/client_connection/callback.h"
+#include "server/client_connection/io_callbacks.h"
 #include "server/server.h"
 
 namespace redis_simple::client_connection {

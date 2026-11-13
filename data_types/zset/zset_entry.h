@@ -4,7 +4,7 @@
 #include <string>
 #include <string_view>
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 // Entry storing member and score
 struct ZSetEntry {
   ZSetEntry() = default;
@@ -15,6 +15,6 @@ struct ZSetEntry {
   std::string member;
   double score{};
 };
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_ENTRY_H_

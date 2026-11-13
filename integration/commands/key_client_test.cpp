@@ -12,7 +12,7 @@
 
 #include "cli/cli.h"
 #include "logging/logger.h"
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple {
 namespace {

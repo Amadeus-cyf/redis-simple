@@ -16,8 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "containers/dynamic_buffer.h"
 #include "logging/logger.h"
-#include "memory/dynamic_buffer.h"
 #include "server/aof/aof.h"
 #include "server/aof/file_ops.h"
 #include "server/aof/manifest.h"
@@ -29,7 +29,7 @@
 #include "server/rdb/rdb_loader.h"
 #include "server/request_parser.h"
 #include "server/server_context.h"
-#include "utils/time_utils.h"
+#include "utils/time.h"
 
 // The Aof's startup: reading the manifest, upgrading a single-file AOF,
 // replaying the files, and opening the file appends go to.
@@ -240,7 +240,7 @@ class FileReplayer {
   const ServerContext server_;
   Client client_;
   const Limits* const limits_;
-  memory::DynamicBuffer input_;
+  containers::DynamicBuffer input_;
   commands::CommandArgs args_;
   size_t complete_bytes_{};
   // Records between MULTI and EXEC are copied out of `input_` and applied

@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "utils/check.h"
-#include "utils/float_utils.h"
+#include "utils/floats.h"
 
 namespace redis_simple::reply {
 constexpr std::string_view kCrlf = "\r\n";

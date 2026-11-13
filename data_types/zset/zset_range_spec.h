@@ -7,7 +7,7 @@
 #include <optional>
 #include <string_view>
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 // Spec for LIMIT flag
 struct LimitSpec {
   // 0-based index
@@ -128,6 +128,6 @@ struct RangeByLexSpec {
 
 std::optional<RangeByRankSpec> NormalizeRankRange(const RangeByRankSpec& spec,
                                                   size_t size);
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_RANGE_SPEC_H_

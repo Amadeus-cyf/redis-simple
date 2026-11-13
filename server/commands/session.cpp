@@ -10,7 +10,7 @@
 #include "server/commands/handlers.h"
 #include "server/reply.h"
 #include "server/version.h"
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple::commands::session {
 namespace {

@@ -153,23 +153,26 @@ TEST(RedisObjectTest, StringValueCopiesKeepIntegerBytes) {
 }
 
 TEST(RedisObjectTest, CollectionObjectsExposeTypedStorage) {
-  const auto set_object = RedisObject::CreateWithSet(set::Set::Create());
+  const auto set_object = RedisObject::CreateWithSet(data_types::Set::Create());
   EXPECT_EQ(set_object->Type(), RedisObject::ObjectType::kSet);
   ASSERT_NE(set_object->Set(), nullptr);
 
   EXPECT_EQ(set_object->MutableString(), nullptr);
 
-  const auto list_object = RedisObject::CreateWithList(list::List::Create());
+  const auto list_object =
+      RedisObject::CreateWithList(data_types::List::Create());
   EXPECT_EQ(list_object->Type(), RedisObject::ObjectType::kList);
   ASSERT_NE(list_object->List(), nullptr);
   EXPECT_EQ(list_object->Set(), nullptr);
 
-  const auto zset_object = RedisObject::CreateWithZSet(zset::ZSet::Create());
+  const auto zset_object =
+      RedisObject::CreateWithZSet(data_types::ZSet::Create());
   EXPECT_EQ(zset_object->Type(), RedisObject::ObjectType::kZSet);
   ASSERT_NE(zset_object->ZSet(), nullptr);
   EXPECT_EQ(zset_object->List(), nullptr);
 
-  const auto hash_object = RedisObject::CreateWithHash(hash::Hash::Create());
+  const auto hash_object =
+      RedisObject::CreateWithHash(data_types::Hash::Create());
   EXPECT_EQ(hash_object->Type(), RedisObject::ObjectType::kHash);
   ASSERT_NE(hash_object->Hash(), nullptr);
   EXPECT_EQ(hash_object->ZSet(), nullptr);
@@ -182,7 +185,7 @@ TEST(RedisObjectTest, RejectsNullCollectionStorage) {
   EXPECT_EQ(RedisObject::CreateWithHash(nullptr), nullptr);
 }
 TEST(RedisObjectDeathTest, StringAccessorsRequireAStringObject) {
-  const auto object = RedisObject::CreateWithSet(set::Set::Create());
+  const auto object = RedisObject::CreateWithSet(data_types::Set::Create());
   EXPECT_DEATH(object->String(), "Check failed");
   EXPECT_DEATH(object->Int(), "Check failed");
   EXPECT_DEATH(object->SetInt(1), "Check failed");

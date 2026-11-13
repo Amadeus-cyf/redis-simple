@@ -6,7 +6,7 @@
 #include <limits>
 #include <optional>
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 std::optional<RangeByRankSpec> NormalizeRankRange(const RangeByRankSpec& spec,
                                                   size_t size) {
   if (size == 0 ||
@@ -36,4 +36,4 @@ std::optional<RangeByRankSpec> NormalizeRankRange(const RangeByRankSpec& spec,
   normalized.max = stop;
   return normalized;
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types

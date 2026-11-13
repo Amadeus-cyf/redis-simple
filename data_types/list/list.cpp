@@ -9,18 +9,18 @@
 #include <utility>
 #include <vector>
 
-namespace redis_simple::list {
+namespace redis_simple::data_types {
 namespace {
-memory::Quicklist::RemoveDirection ToQuicklistRemoveDirection(
+containers::Quicklist::RemoveDirection ToQuicklistRemoveDirection(
     List::RemoveDirection direction) {
   return direction == List::RemoveDirection::kFromTail
-             ? memory::Quicklist::RemoveDirection::kFromTail
-             : memory::Quicklist::RemoveDirection::kFromHead;
+             ? containers::Quicklist::RemoveDirection::kFromTail
+             : containers::Quicklist::RemoveDirection::kFromHead;
 }
 }  // namespace
 
 List::List(size_t list_max_listpack_bytes)
-    : listpack_(std::make_unique<memory::Listpack>()),
+    : listpack_(std::make_unique<containers::Listpack>()),
       quicklist_(nullptr),
       list_max_listpack_bytes_(list_max_listpack_bytes) {}
 
@@ -196,14 +196,14 @@ bool List::WouldExceedListpackLimit(std::string_view value) const {
     return false;
   }
   const size_t bytes = listpack_->TotalBytes();
-  const size_t added = memory::Listpack::EstimateEntryBytes(value);
+  const size_t added = containers::Listpack::EstimateEntryBytes(value);
   return bytes > list_max_listpack_bytes_ ||
          added > list_max_listpack_bytes_ - bytes;
 }
 
 bool List::ConvertListpackToQuicklist() {
   auto quicklist =
-      std::make_unique<memory::Quicklist>(list_max_listpack_bytes_);
+      std::make_unique<containers::Quicklist>(list_max_listpack_bytes_);
   // The elements stay in the quicklist even if splitting an oversized node
   // fails, so the list is never left without its contents.
   const bool adopted = quicklist->AdoptListpack(std::move(listpack_));
@@ -222,4 +222,4 @@ void List::TryConvertQuicklistToListpack() {
   listpack_ = quicklist_->ReleaseListpack();
   quicklist_.reset();
 }
-}  // namespace redis_simple::list
+}  // namespace redis_simple::data_types

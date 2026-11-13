@@ -6,8 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "containers/dict.h"
 #include "data_types/set/set.h"
-#include "memory/dict.h"
 
 // Set-intersection benchmarks over dict-encoded sets, comparing probes that
 // reuse each member's stored hash with probes that rehash it.
@@ -15,8 +15,8 @@ namespace redis_simple {
 namespace {
 // Members 0, step, 2 * step, ..., so sets built with steps 1 and 2 share
 // every second member of the first.
-std::unique_ptr<set::Set> FilledSet(size_t count, size_t step) {
-  auto set = set::Set::Create();
+std::unique_ptr<data_types::Set> FilledSet(size_t count, size_t step) {
+  auto set = data_types::Set::Create();
   for (size_t i = 0; i < count; ++i) {
     set->Add("member:" + std::to_string(i * step));
   }
@@ -34,7 +34,7 @@ void SetIntersect(benchmark::State& state) {
     (void)_;
     size_t matches = 0;
     left->ForEachMemberWithHash(
-        [&](std::string_view member, const memory::HashedKey* hashed) {
+        [&](std::string_view member, const containers::HashedKey* hashed) {
           matches +=
               right->HasMember(member, reuse_hash ? hashed : nullptr) ? 1 : 0;
           return true;

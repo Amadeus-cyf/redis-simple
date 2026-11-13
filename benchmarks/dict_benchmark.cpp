@@ -5,13 +5,13 @@
 #include <string_view>
 #include <vector>
 
-#include "memory/dict.h"
+#include "containers/dict.h"
 
 namespace redis_simple {
-memory::Dict<std::string, std::string>& BenchmarkDict() {
+containers::Dict<std::string, std::string>& BenchmarkDict() {
   // Leaked, so the static has no destructor to run at exit.
   static auto& dict =
-      *memory::Dict<std::string, std::string>::Create().release();
+      *containers::Dict<std::string, std::string>::Create().release();
   return dict;
 }
 

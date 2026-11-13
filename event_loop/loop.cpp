@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "logging/logger.h"
-#include "utils/time_utils.h"
+#include "utils/time.h"
 
 #ifdef __APPLE__
 #include "event_loop/kqueue_poller.h"

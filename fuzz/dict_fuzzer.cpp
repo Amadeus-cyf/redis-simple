@@ -5,12 +5,12 @@
 #include <string_view>
 #include <unordered_map>
 
+#include "containers/dict.h"
 #include "fuzz/fuzz_input.h"
-#include "memory/dict.h"
 
 namespace redis_simple::fuzz {
 namespace {
-using StringDict = memory::Dict<std::string, std::string>;
+using StringDict = containers::Dict<std::string, std::string>;
 using DictModel = std::unordered_map<std::string, std::string>;
 
 DictModel ReadWithIterator(const StringDict& dict) {

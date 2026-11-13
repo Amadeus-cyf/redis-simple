@@ -78,10 +78,10 @@ static_assert(sizeof(EmbeddedString) == sizeof(std::string) + 8);
 
 class RedisObject {
  private:
-  using SetPtr = std::unique_ptr<set::Set>;
-  using ListPtr = std::unique_ptr<list::List>;
-  using ZSetPtr = std::unique_ptr<zset::ZSet>;
-  using HashPtr = std::unique_ptr<hash::Hash>;
+  using SetPtr = std::unique_ptr<data_types::Set>;
+  using ListPtr = std::unique_ptr<data_types::List>;
+  using ZSetPtr = std::unique_ptr<data_types::ZSet>;
+  using HashPtr = std::unique_ptr<data_types::Hash>;
   // Integer- and embedded-encoded strings are last so the other alternatives
   // keep indices that map directly onto ObjectType.
   using Value = std::variant<std::string, SetPtr, ListPtr, ZSetPtr, HashPtr,
@@ -115,19 +115,19 @@ class RedisObject {
     return Create<int64_t>(value);
   }
   static std::unique_ptr<RedisObject> CreateWithSet(
-      std::unique_ptr<set::Set> set) {
+      std::unique_ptr<data_types::Set> set) {
     return set == nullptr ? nullptr : Create<SetPtr>(std::move(set));
   }
   static std::unique_ptr<RedisObject> CreateWithList(
-      std::unique_ptr<list::List> list) {
+      std::unique_ptr<data_types::List> list) {
     return list == nullptr ? nullptr : Create<ListPtr>(std::move(list));
   }
   static std::unique_ptr<RedisObject> CreateWithZSet(
-      std::unique_ptr<zset::ZSet> zset) {
+      std::unique_ptr<data_types::ZSet> zset) {
     return zset == nullptr ? nullptr : Create<ZSetPtr>(std::move(zset));
   }
   static std::unique_ptr<RedisObject> CreateWithHash(
-      std::unique_ptr<hash::Hash> hash) {
+      std::unique_ptr<data_types::Hash> hash) {
     return hash == nullptr ? nullptr : Create<HashPtr>(std::move(hash));
   }
   // String accessors require a string object (Type() == kString).
@@ -147,14 +147,14 @@ class RedisObject {
   void AssignString(std::string_view value);
   Encoding StringEncoding() const;
   // Collection accessors return nullptr if the object holds another type.
-  set::Set* Set() { return Held<SetPtr>(); }
-  const set::Set* Set() const { return Held<SetPtr>(); }
-  list::List* List() { return Held<ListPtr>(); }
-  const list::List* List() const { return Held<ListPtr>(); }
-  zset::ZSet* ZSet() { return Held<ZSetPtr>(); }
-  const zset::ZSet* ZSet() const { return Held<ZSetPtr>(); }
-  hash::Hash* Hash() { return Held<HashPtr>(); }
-  const hash::Hash* Hash() const { return Held<HashPtr>(); }
+  data_types::Set* Set() { return Held<SetPtr>(); }
+  const data_types::Set* Set() const { return Held<SetPtr>(); }
+  data_types::List* List() { return Held<ListPtr>(); }
+  const data_types::List* List() const { return Held<ListPtr>(); }
+  data_types::ZSet* ZSet() { return Held<ZSetPtr>(); }
+  const data_types::ZSet* ZSet() const { return Held<ZSetPtr>(); }
+  data_types::Hash* Hash() { return Held<HashPtr>(); }
+  const data_types::Hash* Hash() const { return Held<HashPtr>(); }
   // ObjectType values follow the variant's alternative order, offset by one.
   ObjectType Type() const {
     if (value_.index() >= kFirstStringEncodingIndex) {

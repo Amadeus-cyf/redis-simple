@@ -12,7 +12,7 @@
 #include "data_types/zset/zset_entry.h"
 #include "data_types/zset/zset_range_spec.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 // A range collected into a vector of copies: a convenience for tests and
 // tools. Commands stream ranges through the ForEachIn...Range visitors.
 using ZSetEntryList = std::vector<ZSetEntry>;
@@ -89,6 +89,6 @@ class ZSetStorage {
     };
   }
 };
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_H_

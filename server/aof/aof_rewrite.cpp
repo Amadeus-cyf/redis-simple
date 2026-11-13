@@ -24,7 +24,7 @@
 #include "server/aof/snapshot.h"
 #include "server/rdb/rdb_writer.h"
 #include "utils/check.h"
-#include "utils/time_utils.h"
+#include "utils/time.h"
 
 // The Aof's rewrite: a forked child writes a snapshot as the next base file,
 // and the parent installs it with a new manifest once the child exits.

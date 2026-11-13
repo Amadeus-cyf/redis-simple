@@ -10,7 +10,7 @@
 #include "data_types/zset/zset_skiplist.h"
 #include "utils/check.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 ZSet::ZSet()
     : encoding_(Encoding::kListpack),
       storage_(std::make_unique<ZSetListpack>()) {}
@@ -25,7 +25,7 @@ std::unique_ptr<ZSet> ZSet::CreateForSize(size_t count) {
 }
 
 std::unique_ptr<ZSet> ZSet::CreateFromListpack(
-    std::unique_ptr<memory::Listpack> listpack) {
+    std::unique_ptr<containers::Listpack> listpack) {
   RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
            listpack->Size() % 2 == 0 &&
            listpack->Size() / 2 <= kListpackMaxEntries);
@@ -92,4 +92,4 @@ void ZSet::ConvertAndExpand() {
   encoding_ = Encoding::kSkiplist;
   storage_ = std::move(zset_skiplist);
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types

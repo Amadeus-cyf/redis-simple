@@ -24,18 +24,18 @@
 #include <utility>
 #include <vector>
 
+#include "containers/listpack.h"
 #include "data_types/hash/hash.h"
 #include "data_types/list/list.h"
 #include "data_types/set/set.h"
 #include "data_types/zset/zset.h"
-#include "memory/listpack.h"
 #include "server/aof/file_ops.h"
 #include "server/db/db.h"
 #include "server/db/redis_object.h"
 #include "server/rdb/rdb_loader.h"
 #include "server/rdb/rdb_writer.h"
 #include "utils/crc64.h"
-#include "utils/float_utils.h"
+#include "utils/floats.h"
 
 namespace redis_simple::rdb {
 namespace {
@@ -55,8 +55,8 @@ std::string Describe(db::RedisDb* db, std::string_view key,
       out = "string:" + std::string(object.String().View());
       break;
     case RedisObject::ObjectType::kList: {
-      const list::List* list = object.List();
-      out = list->Encoding() == list::List::Encoding::kListpack
+      const data_types::List* list = object.List();
+      out = list->Encoding() == data_types::List::Encoding::kListpack
                 ? "list(listpack):"
                 : "list(quicklist):";
       list->ForEach(0, list->Size() - 1, [&out](std::string_view value) {
@@ -66,7 +66,7 @@ std::string Describe(db::RedisDb* db, std::string_view key,
       break;
     }
     case RedisObject::ObjectType::kSet: {
-      const set::Set* set = object.Set();
+      const data_types::Set* set = object.Set();
       std::vector<std::string> members;
       set->ForEachMember([&members](std::string_view member) {
         members.emplace_back(member);
@@ -80,7 +80,7 @@ std::string Describe(db::RedisDb* db, std::string_view key,
       break;
     }
     case RedisObject::ObjectType::kZSet: {
-      const zset::ZSet* zset = object.ZSet();
+      const data_types::ZSet* zset = object.ZSet();
       out = zset->ListpackBytes().has_value() ? "zset(listpack):"
                                               : "zset(skiplist):";
       zset->ForEachEntry([&out](std::string_view member, double score) {
@@ -91,7 +91,7 @@ std::string Describe(db::RedisDb* db, std::string_view key,
       break;
     }
     case RedisObject::ObjectType::kHash: {
-      const hash::Hash* hash = object.Hash();
+      const data_types::Hash* hash = object.Hash();
       std::vector<std::string> entries;
       hash->ForEachEntry(
           [&entries](std::string_view field, std::string_view value) {
@@ -99,7 +99,7 @@ std::string Describe(db::RedisDb* db, std::string_view key,
             return true;
           });
       std::ranges::sort(entries);
-      out = hash->Encoding() == hash::Hash::Encoding::kListpack
+      out = hash->Encoding() == data_types::Hash::Encoding::kListpack
                 ? "hash(listpack):"
                 : "hash(dict):";
       for (const std::string& entry : entries) {
@@ -157,13 +157,13 @@ class RdbTest : public testing::Test {
     db->SetKey("large",
                RedisObject::CreateWithString(std::string(3 << 20, 'L')), 0);
 
-    auto small_list = list::List::Create();
+    auto small_list = data_types::List::Create();
     for (const char* value : {"a", "1", "-5", "300", "bbb"}) {
       small_list->RPush(value);
     }
     db->SetKey("list:small", RedisObject::CreateWithList(std::move(small_list)),
                0);
-    auto big_list = list::List::Create();
+    auto big_list = data_types::List::Create();
     for (int i = 0; i < 2000; ++i) {
       big_list->RPush("element-" + std::to_string(i));
     }
@@ -174,25 +174,25 @@ class RdbTest : public testing::Test {
     db->SetKey("list:big", RedisObject::CreateWithList(std::move(big_list)),
                kFuture);
 
-    auto ints = set::Set::Create();
+    auto ints = data_types::Set::Create();
     for (const char* value :
          {"3", "1", "-2", "100000", "-9223372036854775808"}) {
       ints->Add(value);
     }
     db->SetKey("set:ints", RedisObject::CreateWithSet(std::move(ints)), 0);
-    auto strings = set::Set::Create();
+    auto strings = data_types::Set::Create();
     for (const char* value : {"b", "a", "c", "10"}) {
       strings->Add(value);
     }
     db->SetKey("set:strings", RedisObject::CreateWithSet(std::move(strings)),
                0);
-    auto big_set = set::Set::Create();
+    auto big_set = data_types::Set::Create();
     for (int i = 0; i < 300; ++i) {
       big_set->Add("member-" + std::to_string(i));
     }
     db->SetKey("set:big", RedisObject::CreateWithSet(std::move(big_set)), 0);
 
-    auto small_zset = zset::ZSet::Create();
+    auto small_zset = data_types::ZSet::Create();
     small_zset->InsertOrUpdate("a", 1.5);
     small_zset->InsertOrUpdate("b", 2);
     small_zset->InsertOrUpdate("c", -3);
@@ -200,19 +200,19 @@ class RdbTest : public testing::Test {
     small_zset->InsertOrUpdate("e", 0.1);
     db->SetKey("zset:small", RedisObject::CreateWithZSet(std::move(small_zset)),
                0);
-    auto big_zset = zset::ZSet::Create();
+    auto big_zset = data_types::ZSet::Create();
     for (int i = 0; i < 300; ++i) {
       big_zset->InsertOrUpdate("member-" + std::to_string(i), i / 3.0);
     }
     big_zset->InsertOrUpdate("ninf", -std::numeric_limits<double>::infinity());
     db->SetKey("zset:big", RedisObject::CreateWithZSet(std::move(big_zset)), 0);
 
-    auto small_hash = hash::Hash::Create();
+    auto small_hash = data_types::Hash::Create();
     small_hash->Set("f1", "v1");
     small_hash->Set("n", "12345");
     db->SetKey("hash:small", RedisObject::CreateWithHash(std::move(small_hash)),
                0);
-    auto big_hash = hash::Hash::Create();
+    auto big_hash = data_types::Hash::Create();
     for (int i = 0; i < 600; ++i) {
       big_hash->Set("field-" + std::to_string(i), "value-" + std::to_string(i));
     }
@@ -316,12 +316,12 @@ TEST_F(RdbTest, SkipsExpiredKeysUnlessAsked) {
 TEST_F(RdbTest, RejectsEveryTruncationAndByteChange) {
   auto db = db::RedisDb::Create();
   db->SetKey("s", RedisObject::CreateWithString("value"), kFuture);
-  auto hash = hash::Hash::Create();
+  auto hash = data_types::Hash::Create();
   hash->Set("field", "value");
   // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
   // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
   db->SetKey("h", RedisObject::CreateWithHash(std::move(hash)), 0);
-  auto list = list::List::Create();
+  auto list = data_types::List::Create();
   list->RPush("element");
   // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
   db->SetKey("l", RedisObject::CreateWithList(std::move(list)), 0);
@@ -437,14 +437,14 @@ TEST_F(RdbTest, KeepsTheBytesOfCompactValues) {
   EXPECT_EQ(object("zset:small")->ZSet()->ListpackBytes(),
             db->MutableLookupKey("zset:small")->ZSet()->ListpackBytes());
 
-  set::Set* set = object("set:strings")->Set();
+  data_types::Set* set = object("set:strings")->Set();
   EXPECT_FALSE(set->Add("10"));
   EXPECT_TRUE(set->Add("d"));
   EXPECT_TRUE(set->HasMember("a"));
-  hash::Hash* hash = object("hash:small")->Hash();
+  data_types::Hash* hash = object("hash:small")->Hash();
   EXPECT_FALSE(hash->Set("n", "6"));
   EXPECT_EQ(hash->Get("n"), "6");
-  zset::ZSet* zset = object("zset:small")->ZSet();
+  data_types::ZSet* zset = object("zset:small")->ZSet();
   EXPECT_TRUE(zset->InsertOrUpdate("z", 1.75));
   EXPECT_EQ(zset->Rank("z"), 3);  // After c=-3, e=0.1, and a=1.5.
   EXPECT_EQ(zset->Score("e"), 0.1);
@@ -476,8 +476,8 @@ TEST_F(RdbTest, RebuildsListpacksEncodedDifferently) {
   EXPECT_EQ(Describe(db.get(), "k", *db->MutableLookupKey("k")),
             "zset(listpack):a=1,b=1,");
 
-  memory::Listpack big;
-  for (size_t i = 0; i <= hash::Hash::kListpackMaxEntries; ++i) {
+  containers::Listpack big;
+  for (size_t i = 0; i <= data_types::Hash::kListpackMaxEntries; ++i) {
     big.Append("f" + std::to_string(i));
     big.Append("v");
   }
@@ -485,9 +485,9 @@ TEST_F(RdbTest, RebuildsListpacksEncodedDifferently) {
   WriteFile(FileWithValue(kHashListpackType, std::string(big.Bytes())));
   ASSERT_TRUE(Load(db.get()));
   EXPECT_EQ(db->MutableLookupKey("k")->Hash()->Encoding(),
-            hash::Hash::Encoding::kDict);
+            data_types::Hash::Encoding::kDict);
   EXPECT_EQ(db->MutableLookupKey("k")->Hash()->Size(),
-            hash::Hash::kListpackMaxEntries + 1);
+            data_types::Hash::kListpackMaxEntries + 1);
 }
 
 TEST_F(RdbTest, RejectsInvalidCompactValues) {

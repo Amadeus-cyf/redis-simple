@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace redis_simple::hash {
+namespace redis_simple::data_types {
 namespace {
 bool EntryLess(const Hash::Entry& lhs, const Hash::Entry& rhs) {
   return lhs.field < rhs.field;
@@ -159,4 +159,4 @@ TEST(HashEncodingTest, ScanDictVisitsEveryEntryOnce) {
   ASSERT_EQ(seen.size(), 600);
   EXPECT_EQ(seen["field42"], "value42");
 }
-}  // namespace redis_simple::hash
+}  // namespace redis_simple::data_types

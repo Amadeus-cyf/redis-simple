@@ -88,7 +88,7 @@ endfunction()
 redis_simple_collect_sources(REDIS_SIMPLE_CORE_SOURCES
   connection
   event_loop
-  memory
+  containers
   server
   data_types
   tcp
@@ -154,7 +154,7 @@ redis_simple_collect_sources(REDIS_SIMPLE_UNIT_TEST_SOURCES
   cli
   connection
   event_loop
-  memory
+  containers
   server
   data_types
   tcp

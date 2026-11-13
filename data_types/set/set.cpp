@@ -11,10 +11,10 @@
 #include <vector>
 
 #include "utils/check.h"
-#include "utils/int_utils.h"
-#include "utils/string_utils.h"
+#include "utils/integers.h"
+#include "utils/strings.h"
 
-namespace redis_simple::set {
+namespace redis_simple::data_types {
 Set::Set()
     : encoding_(Encoding::kIntset),
       intset_(nullptr),
@@ -30,7 +30,7 @@ std::unique_ptr<Set> Set::CreateForSize(size_t count) {
 }
 
 std::unique_ptr<Set> Set::CreateFromListpack(
-    std::unique_ptr<memory::Listpack> listpack) {
+    std::unique_ptr<containers::Listpack> listpack) {
   RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
            listpack->Size() <= kListpackMaxEntries);
   std::unique_ptr<Set> set(new Set());
@@ -73,7 +73,7 @@ bool Set::HasMember(std::string_view value) const {
 }
 
 bool Set::HasMember(std::string_view value,
-                    const memory::HashedKey* const hashed) const {
+                    const containers::HashedKey* const hashed) const {
   if (hashed != nullptr && encoding_ == Encoding::kDict) {
     return dict_->FindValue(*hashed) != nullptr;
   }
@@ -142,7 +142,7 @@ bool Set::IntsetAddAndMaybeConvert(std::string_view value) {
   int64_t int_value = 0;
   if (utils::ToInt64(value, &int_value)) {
     if (!intset_) {
-      intset_ = std::make_unique<memory::Intset>();
+      intset_ = std::make_unique<containers::Intset>();
     }
     bool success = intset_->Add(int_value);
     if (success) {
@@ -164,8 +164,8 @@ bool Set::ListpackAddAndMaybeConvert(std::string_view value) {
   }
   if (listpack_->Size() < kListpackMaxEntries &&
       length <= kListpackMaxElementLength &&
-      memory::Listpack::SafeToAdd(
-          listpack_.get(), memory::Listpack::EstimateEntryBytes(value))) {
+      containers::Listpack::SafeToAdd(
+          listpack_.get(), containers::Listpack::EstimateEntryBytes(value))) {
     return listpack_->Append(value);
   }
   ConvertListpackToDict(listpack_->Size() + 1);
@@ -174,7 +174,7 @@ bool Set::ListpackAddAndMaybeConvert(std::string_view value) {
 
 bool Set::DictAdd(std::string_view value) {
   if (!dict_) {
-    dict_ = memory::Dict<std::string, std::nullptr_t>::Create();
+    dict_ = containers::Dict<std::string, std::nullptr_t>::Create();
   }
   return dict_->FindOrInsert(value).second;
 }
@@ -189,7 +189,7 @@ void Set::MaybeConvertIntsetToDict() {
 void Set::ConvertIntsetToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kIntset);
   encoding_ = Encoding::kDict;
-  dict_ = memory::Dict<std::string, std::nullptr_t>::Create(capacity);
+  dict_ = containers::Dict<std::string, std::nullptr_t>::Create(capacity);
   if (!intset_) {
     return;
   }
@@ -207,7 +207,7 @@ bool Set::MaybeConvertIntsetToListpack(std::string_view value) {
   size_t length = value.size();
   size_t max_integer_length = 0;
   size_t estimated_bytes = 0;
-  const size_t entry_bytes = memory::Listpack::EstimateEntryBytes(value);
+  const size_t entry_bytes = containers::Listpack::EstimateEntryBytes(value);
   int64_t estimated_integer = 0;
   if (intset_) {
     int64_t max_integer = intset_->Max();
@@ -218,14 +218,14 @@ bool Set::MaybeConvertIntsetToListpack(std::string_view value) {
     estimated_integer =
         max_integer_digits > min_integer_digits ? max_integer : min_integer;
     estimated_bytes =
-        memory::Listpack::EstimateBytes(estimated_integer, intset_->Size());
+        containers::Listpack::EstimateBytes(estimated_integer, intset_->Size());
   }
   const size_t current_size = intset_ ? intset_->Size() : 0;
   if (current_size < kListpackMaxEntries &&
       length <= kListpackMaxElementLength &&
       max_integer_length <= kListpackMaxElementLength &&
       estimated_bytes <= std::numeric_limits<size_t>::max() - entry_bytes &&
-      memory::Listpack::SafeToAdd(nullptr, estimated_bytes + entry_bytes)) {
+      containers::Listpack::SafeToAdd(nullptr, estimated_bytes + entry_bytes)) {
     ConvertIntsetToListpack(value);
     return true;
   }
@@ -235,7 +235,7 @@ bool Set::MaybeConvertIntsetToListpack(std::string_view value) {
 void Set::ConvertIntsetToListpack(std::string_view value) {
   RS_CHECK(encoding_ == Encoding::kIntset);
   encoding_ = Encoding::kListpack;
-  listpack_ = std::make_unique<memory::Listpack>();
+  listpack_ = std::make_unique<containers::Listpack>();
   if (intset_) {
     for (uint32_t i = 0; i < intset_->Size(); ++i) {
       listpack_->Append(intset_->Get(i));
@@ -248,7 +248,7 @@ void Set::ConvertIntsetToListpack(std::string_view value) {
 void Set::ConvertListpackToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kListpack);
   encoding_ = Encoding::kDict;
-  dict_ = memory::Dict<std::string, std::nullptr_t>::Create(capacity);
+  dict_ = containers::Dict<std::string, std::nullptr_t>::Create(capacity);
   if (!listpack_) {
     return;
   }
@@ -263,4 +263,4 @@ void Set::ConvertListpackToDict(size_t capacity) {
   listpack_.reset();
 }
 
-}  // namespace redis_simple::set
+}  // namespace redis_simple::data_types

@@ -5,13 +5,13 @@
 #include <string_view>
 #include <vector>
 
+#include "containers/quicklist.h"
 #include "fuzz/fuzz_input.h"
 #include "fuzz/sequence_model.h"
-#include "memory/quicklist.h"
 
 namespace redis_simple::fuzz {
 namespace {
-using memory::Quicklist;
+using containers::Quicklist;
 
 void Verify(const Quicklist& quicklist, const std::vector<std::string>& model) {
   Require(quicklist.Size() == model.size());

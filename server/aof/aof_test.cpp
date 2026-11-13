@@ -29,7 +29,7 @@
 #include "server/rdb/rdb_writer.h"
 #include "server/reply.h"
 #include "utils/check.h"
-#include "utils/time_utils.h"
+#include "utils/time.h"
 
 namespace redis_simple::aof {
 namespace {
@@ -402,10 +402,10 @@ TEST(AofTest, RewritesAllObjectTypesAndPreservesConcurrentWrites) {
                            expire),
             db::DbStatus::kOk);
 
-  auto set_value = set::Set::Create();
-  auto list_value = list::List::Create();
-  auto zset_value = zset::ZSet::Create();
-  auto hash_value = hash::Hash::Create();
+  auto set_value = data_types::Set::Create();
+  auto list_value = data_types::List::Create();
+  auto zset_value = data_types::ZSet::Create();
+  auto hash_value = data_types::Hash::Create();
   for (int index = 0; index < 65; ++index) {
     const std::string suffix = std::to_string(index);
     ASSERT_TRUE(set_value->Add("member" + suffix));
@@ -523,7 +523,7 @@ TEST(AofTest, RewritesLargeValuesAsReplayableChunks) {
 TEST(AofTest, BoundsCollectionSnapshotCommandsByBytes) {
   TempAof file;
   auto source = db::RedisDb::Create();
-  auto values = list::List::Create();
+  auto values = data_types::List::Create();
   for (int index = 0; index < 8; ++index) {
     ASSERT_TRUE(values->RPush(std::string(80, static_cast<char>('a' + index))));
   }

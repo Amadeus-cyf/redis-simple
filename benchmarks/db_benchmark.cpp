@@ -8,7 +8,7 @@
 
 #include "server/db/db.h"
 #include "server/db/redis_object.h"
-#include "utils/time_utils.h"
+#include "utils/time.h"
 
 // Keyspace benchmarks: lookups that also consult the TTL table, and string
 // SETs by value size, as new keys and as overwrites.

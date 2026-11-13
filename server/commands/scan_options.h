@@ -9,7 +9,7 @@
 
 #include "server/db/redis_object.h"
 #include "server/reply.h"
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple {
 class Client;

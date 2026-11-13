@@ -10,7 +10,7 @@
 #include <system_error>
 #include <vector>
 
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple {
 namespace {

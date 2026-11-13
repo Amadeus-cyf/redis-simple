@@ -11,7 +11,7 @@
 
 #include "server/db/key_watcher.h"
 #include "server/db/redis_object.h"
-#include "utils/time_utils.h"
+#include "utils/time.h"
 
 namespace redis_simple::db {
 TEST(RedisDbTest, SetLookupAndDeleteKey) {

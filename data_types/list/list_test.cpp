@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace redis_simple::list {
+namespace redis_simple::data_types {
 TEST(ListTest, Push) {
   auto list = List::Create();
   ASSERT_TRUE(list->LPush("12345"));
@@ -264,4 +264,4 @@ TEST(ListEncodingTest, ConvertsBackToListpackAfterTrimRemoveOrSet) {
   ASSERT_TRUE(kept->Trim(0, 2));
   EXPECT_EQ(kept->Encoding(), List::Encoding::kQuicklist);
 }
-}  // namespace redis_simple::list
+}  // namespace redis_simple::data_types

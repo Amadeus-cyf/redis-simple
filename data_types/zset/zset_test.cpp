@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 TEST(ZSetTest, InsertAndConvert) {
   auto zset = ZSet::Create();
   for (int i = 0; i < 256; ++i) {
@@ -108,4 +108,4 @@ TEST(ZSetEncodingTest, ScanSkiplistVisitsEveryMemberOnce) {
   ASSERT_EQ(seen.size(), 300);
   EXPECT_EQ(seen["member7"], 3.5);
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types

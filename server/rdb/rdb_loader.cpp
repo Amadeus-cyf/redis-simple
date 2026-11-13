@@ -19,21 +19,21 @@
 #include <utility>
 #include <vector>
 
+#include "containers/listpack.h"
+#include "containers/listpack_reader.h"
 #include "data_types/hash/hash.h"
 #include "data_types/list/list.h"
 #include "data_types/set/set.h"
 #include "data_types/zset/zset.h"
 #include "logging/logger.h"
-#include "memory/listpack.h"
-#include "memory/listpack_reader.h"
 #include "server/aof/file_ops.h"
 #include "server/db/db.h"
 #include "server/db/redis_object.h"
 #include "server/rdb/rdb_format.h"
 #include "utils/crc64.h"
-#include "utils/float_utils.h"
+#include "utils/floats.h"
 #include "utils/lzf.h"
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple::rdb {
 namespace {
@@ -169,22 +169,22 @@ constexpr CompactKind kSetKind{
     .name = "set",
     .keys = "members",
     .elements_per_entry = 1,
-    .max_entries = set::Set::kListpackMaxEntries,
-    .max_element_length = set::Set::kListpackMaxElementLength,
+    .max_entries = data_types::Set::kListpackMaxEntries,
+    .max_element_length = data_types::Set::kListpackMaxElementLength,
     .sorted_set = false};
 constexpr CompactKind kHashKind{
     .name = "hash",
     .keys = "fields",
     .elements_per_entry = 2,
-    .max_entries = hash::Hash::kListpackMaxEntries,
-    .max_element_length = hash::Hash::kListpackMaxElementLength,
+    .max_entries = data_types::Hash::kListpackMaxEntries,
+    .max_element_length = data_types::Hash::kListpackMaxElementLength,
     .sorted_set = false};
 constexpr CompactKind kZSetKind{
     .name = "sorted set",
     .keys = "members",
     .elements_per_entry = 2,
-    .max_entries = zset::ZSet::kListpackMaxEntries,
-    .max_element_length = zset::ZSet::kListpackMaxElementLength,
+    .max_entries = data_types::ZSet::kListpackMaxEntries,
+    .max_element_length = data_types::ZSet::kListpackMaxElementLength,
     .sorted_set = true};
 
 class Loader {
@@ -394,7 +394,7 @@ class Loader {
   ValueStatus ReadSet(int type, db::RedisObjectPtr* out);
   ValueStatus ReadZSet(int type, db::RedisObjectPtr* out);
   ValueStatus ReadHash(int type, db::RedisObjectPtr* out);
-  bool ReadIntset(const std::string& blob, set::Set* set);
+  bool ReadIntset(const std::string& blob, data_types::Set* set);
   bool SkipAux();
 
   Input input_;
@@ -408,7 +408,7 @@ class Loader {
 };
 
 // The text of a listpack element, formatted into `buffer` for an integer.
-std::string_view ElementText(const memory::ListpackReader::Element& element,
+std::string_view ElementText(const containers::ListpackReader::Element& element,
                              std::array<char, 21>* const buffer) {
   if (!element.is_integer) {
     return element.string;
@@ -428,9 +428,10 @@ CompactCheck Loader::CheckCompactListpack(std::string_view blob,
                                           const CompactKind& kind) {
   strings_.clear();
   integers_.clear();
-  memory::ListpackReader reader(blob);
-  memory::ListpackReader::Element element;
-  memory::ListpackReader::Status status = memory::ListpackReader::Status::kEnd;
+  containers::ListpackReader reader(blob);
+  containers::ListpackReader::Element element;
+  containers::ListpackReader::Status status =
+      containers::ListpackReader::Status::kEnd;
   bool fits = true;
   size_t count = 0;
   // A sorted set's previous and current members as text; integer members
@@ -441,7 +442,7 @@ CompactCheck Loader::CheckCompactListpack(std::string_view blob,
   std::string_view previous_member;
   double previous_score = 0;
   while ((status = reader.Next(&element)) ==
-         memory::ListpackReader::Status::kElement) {
+         containers::ListpackReader::Status::kElement) {
     const bool is_key = count % kind.elements_per_entry == 0;
     ++count;
     if (!element.is_integer) {
@@ -485,7 +486,7 @@ CompactCheck Loader::CheckCompactListpack(std::string_view blob,
     previous_member = member;
     buffer_index ^= 1;
   }
-  if (status == memory::ListpackReader::Status::kCorrupt ||
+  if (status == containers::ListpackReader::Status::kCorrupt ||
       count % kind.elements_per_entry != 0) {
     Corrupt(std::string("a ") + std::string(kind.name) +
             " listpack failed its integrity check");
@@ -511,7 +512,7 @@ ValueStatus Loader::ReadList(int type, db::RedisObjectPtr* const out) {
   if (!ReadCount(&count)) {
     return ValueStatus::kFailed;
   }
-  std::unique_ptr<list::List> list = list::List::Create();
+  std::unique_ptr<data_types::List> list = data_types::List::Create();
   std::string element;
   if (type == kTypeList) {
     for (; count > 0; --count) {
@@ -544,15 +545,15 @@ ValueStatus Loader::ReadList(int type, db::RedisObjectPtr* const out) {
         list->RPush(node);
         continue;
       }
-      memory::ListpackReader reader(node);
-      memory::ListpackReader::Element listpack_element;
-      memory::ListpackReader::Status status =
-          memory::ListpackReader::Status::kEnd;
+      containers::ListpackReader reader(node);
+      containers::ListpackReader::Element listpack_element;
+      containers::ListpackReader::Status status =
+          containers::ListpackReader::Status::kEnd;
       while ((status = reader.Next(&listpack_element)) ==
-             memory::ListpackReader::Status::kElement) {
+             containers::ListpackReader::Status::kElement) {
         list->RPush(ElementText(listpack_element, &buffer));
       }
-      if (status == memory::ListpackReader::Status::kCorrupt) {
+      if (status == containers::ListpackReader::Status::kCorrupt) {
         Corrupt("a list listpack failed its integrity check");
         return ValueStatus::kFailed;
       }
@@ -567,7 +568,7 @@ ValueStatus Loader::ReadList(int type, db::RedisObjectPtr* const out) {
 
 // Redis' intsetValidateIntegrity with deep validation: a known width, a
 // length matching the blob, and values in strictly ascending order.
-bool Loader::ReadIntset(const std::string& blob, set::Set* const set) {
+bool Loader::ReadIntset(const std::string& blob, data_types::Set* const set) {
   const auto* bytes = reinterpret_cast<const unsigned char*>(blob.data());
   const auto load = [bytes](size_t offset, size_t width) {
     uint64_t value = 0;
@@ -603,14 +604,14 @@ bool Loader::ReadIntset(const std::string& blob, set::Set* const set) {
 }
 
 ValueStatus Loader::ReadSet(int type, db::RedisObjectPtr* const out) {
-  std::unique_ptr<set::Set> set = set::Set::Create();
+  std::unique_ptr<data_types::Set> set = data_types::Set::Create();
   std::string element;
   if (type == kTypeSet) {
     uint64_t count = 0;
     if (!ReadCount(&count)) {
       return ValueStatus::kFailed;
     }
-    set = set::Set::CreateForSize(count);
+    set = data_types::Set::CreateForSize(count);
     for (; count > 0; --count) {
       if (!ReadString(&element)) {
         return ValueStatus::kFailed;
@@ -630,27 +631,28 @@ ValueStatus Loader::ReadSet(int type, db::RedisObjectPtr* const out) {
     }
     switch (CheckCompactListpack(element, kSetKind)) {
       case CompactCheck::kAdopt:
-        *out = db::RedisObject::CreateWithSet(set::Set::CreateFromListpack(
-            memory::Listpack::CreateFromBytes(element)));
+        *out =
+            db::RedisObject::CreateWithSet(data_types::Set::CreateFromListpack(
+                containers::Listpack::CreateFromBytes(element)));
         return ValueStatus::kRead;
       case CompactCheck::kCorrupt:
         return ValueStatus::kFailed;
       case CompactCheck::kRebuild:
         break;
     }
-    memory::ListpackReader reader(element);
-    memory::ListpackReader::Element member;
-    memory::ListpackReader::Status status =
-        memory::ListpackReader::Status::kEnd;
+    containers::ListpackReader reader(element);
+    containers::ListpackReader::Element member;
+    containers::ListpackReader::Status status =
+        containers::ListpackReader::Status::kEnd;
     std::array<char, 21> buffer{};
     while ((status = reader.Next(&member)) ==
-           memory::ListpackReader::Status::kElement) {
+           containers::ListpackReader::Status::kElement) {
       if (!set->Add(ElementText(member, &buffer))) {
         Corrupt("duplicate set members");
         return ValueStatus::kFailed;
       }
     }
-    if (status == memory::ListpackReader::Status::kCorrupt) {
+    if (status == containers::ListpackReader::Status::kCorrupt) {
       Corrupt("a set listpack failed its integrity check");
       return ValueStatus::kFailed;
     }
@@ -663,7 +665,7 @@ ValueStatus Loader::ReadSet(int type, db::RedisObjectPtr* const out) {
 }
 
 ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
-  std::unique_ptr<zset::ZSet> zset = zset::ZSet::Create();
+  std::unique_ptr<data_types::ZSet> zset = data_types::ZSet::Create();
   std::string member;
   const auto insert = [this, &zset](std::string_view member_view,
                                     double score) {
@@ -680,7 +682,7 @@ ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
     if (!ReadCount(&count)) {
       return ValueStatus::kFailed;
     }
-    zset = zset::ZSet::CreateForSize(count);
+    zset = data_types::ZSet::CreateForSize(count);
     for (; count > 0; --count) {
       double score = 0;
       if (!ReadString(&member) ||
@@ -699,22 +701,23 @@ ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
     }
     switch (CheckCompactListpack(blob, kZSetKind)) {
       case CompactCheck::kAdopt:
-        *out = db::RedisObject::CreateWithZSet(zset::ZSet::CreateFromListpack(
-            memory::Listpack::CreateFromBytes(blob)));
+        *out = db::RedisObject::CreateWithZSet(
+            data_types::ZSet::CreateFromListpack(
+                containers::Listpack::CreateFromBytes(blob)));
         return ValueStatus::kRead;
       case CompactCheck::kCorrupt:
         return ValueStatus::kFailed;
       case CompactCheck::kRebuild:
         break;
     }
-    memory::ListpackReader reader(blob);
-    memory::ListpackReader::Element element;
-    memory::ListpackReader::Status status =
-        memory::ListpackReader::Status::kEnd;
+    containers::ListpackReader reader(blob);
+    containers::ListpackReader::Element element;
+    containers::ListpackReader::Status status =
+        containers::ListpackReader::Status::kEnd;
     std::array<char, 21> buffer{};
     bool expecting_score = false;
     while ((status = reader.Next(&element)) ==
-           memory::ListpackReader::Status::kElement) {
+           containers::ListpackReader::Status::kElement) {
       if (!expecting_score) {
         member.assign(ElementText(element, &buffer));
         expecting_score = true;
@@ -732,7 +735,8 @@ ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
         return ValueStatus::kFailed;
       }
     }
-    if (status == memory::ListpackReader::Status::kCorrupt || expecting_score) {
+    if (status == containers::ListpackReader::Status::kCorrupt ||
+        expecting_score) {
       Corrupt("a sorted set listpack failed its integrity check");
       return ValueStatus::kFailed;
     }
@@ -745,7 +749,7 @@ ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
 }
 
 ValueStatus Loader::ReadHash(int type, db::RedisObjectPtr* const out) {
-  std::unique_ptr<hash::Hash> hash = hash::Hash::Create();
+  std::unique_ptr<data_types::Hash> hash = data_types::Hash::Create();
   std::string field;
   std::string value;
   if (type == kTypeHash) {
@@ -753,7 +757,7 @@ ValueStatus Loader::ReadHash(int type, db::RedisObjectPtr* const out) {
     if (!ReadCount(&count)) {
       return ValueStatus::kFailed;
     }
-    hash = hash::Hash::CreateForSize(count);
+    hash = data_types::Hash::CreateForSize(count);
     for (; count > 0; --count) {
       if (!ReadString(&field) || !ReadString(&value)) {
         return ValueStatus::kFailed;
@@ -770,22 +774,23 @@ ValueStatus Loader::ReadHash(int type, db::RedisObjectPtr* const out) {
     }
     switch (CheckCompactListpack(blob, kHashKind)) {
       case CompactCheck::kAdopt:
-        *out = db::RedisObject::CreateWithHash(hash::Hash::CreateFromListpack(
-            memory::Listpack::CreateFromBytes(blob)));
+        *out = db::RedisObject::CreateWithHash(
+            data_types::Hash::CreateFromListpack(
+                containers::Listpack::CreateFromBytes(blob)));
         return ValueStatus::kRead;
       case CompactCheck::kCorrupt:
         return ValueStatus::kFailed;
       case CompactCheck::kRebuild:
         break;
     }
-    memory::ListpackReader reader(blob);
-    memory::ListpackReader::Element element;
-    memory::ListpackReader::Status status =
-        memory::ListpackReader::Status::kEnd;
+    containers::ListpackReader reader(blob);
+    containers::ListpackReader::Element element;
+    containers::ListpackReader::Status status =
+        containers::ListpackReader::Status::kEnd;
     std::array<char, 21> buffer{};
     bool expecting_value = false;
     while ((status = reader.Next(&element)) ==
-           memory::ListpackReader::Status::kElement) {
+           containers::ListpackReader::Status::kElement) {
       if (!expecting_value) {
         field.assign(ElementText(element, &buffer));
         expecting_value = true;
@@ -797,7 +802,8 @@ ValueStatus Loader::ReadHash(int type, db::RedisObjectPtr* const out) {
         return ValueStatus::kFailed;
       }
     }
-    if (status == memory::ListpackReader::Status::kCorrupt || expecting_value) {
+    if (status == containers::ListpackReader::Status::kCorrupt ||
+        expecting_value) {
       Corrupt("a hash listpack failed its integrity check");
       return ValueStatus::kFailed;
     }

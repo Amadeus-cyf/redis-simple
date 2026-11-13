@@ -7,12 +7,12 @@
 #include <string>
 #include <string_view>
 
+#include "containers/listpack.h"
 #include "data_types/zset/zset_entry.h"
 #include "data_types/zset/zset_range_spec.h"
 #include "data_types/zset/zset_storage.h"
-#include "memory/listpack.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 class ZSet {
  public:
   enum class Encoding {
@@ -37,7 +37,7 @@ class ZSet {
   // kListpackMaxElementLength, at most kListpackMaxEntries pairs, and scores
   // that are not NaN, in ascending (score, member) order.
   static std::unique_ptr<ZSet> CreateFromListpack(
-      std::unique_ptr<memory::Listpack> listpack);
+      std::unique_ptr<containers::Listpack> listpack);
   // Returns true if `member` is new. `*changed`, when given, reports whether it
   // was inserted or its score changed.
   bool InsertOrUpdate(std::string_view member, double score,
@@ -78,7 +78,7 @@ class ZSet {
   // One ZSCAN step, as Redis runs it: calls `visitor(member, score)` for
   // each member it visits and returns the next cursor, 0 when done. A
   // skiplist-encoded set steps through its member dict
-  // (memory::Dict::ScanStep); a listpack is small, so it is visited whole,
+  // (containers::Dict::ScanStep); a listpack is small, so it is visited whole,
   // whatever the cursor and `count`, and returns 0.
   size_t Scan(size_t cursor, size_t count, const ZSetScanVisitor& visitor) {
     return storage_->Scan(cursor, count, visitor);
@@ -98,6 +98,6 @@ class ZSet {
   enum Encoding encoding_;
   std::unique_ptr<ZSetStorage> storage_;
 };
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_H_

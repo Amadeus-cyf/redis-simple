@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple::cli::resp_parser {
 namespace {

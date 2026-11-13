@@ -4,15 +4,15 @@
 #include <cstddef>
 #include <random>
 
-#include "memory/dynamic_buffer.h"
+#include "containers/dynamic_buffer.h"
 
 namespace redis_simple {
 namespace {
 constexpr size_t kPayloadSize = 4096;
 
 // Leaked, so the static has no destructor to run at exit.
-memory::DynamicBuffer& DynamicBufferBenchmarkBuffer() {
-  static auto& buffer = *new memory::DynamicBuffer;
+containers::DynamicBuffer& DynamicBufferBenchmarkBuffer() {
+  static auto& buffer = *new containers::DynamicBuffer;
   return buffer;
 }
 

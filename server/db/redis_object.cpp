@@ -9,7 +9,7 @@
 #include <variant>
 
 #include "utils/check.h"
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple::db {
 StringValue::StringValue(int64_t value) {

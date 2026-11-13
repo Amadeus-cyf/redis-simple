@@ -7,9 +7,9 @@
 #include <string>
 #include <string_view>
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 ZSetSkiplist::ZSetSkiplist(size_t capacity)
-    : dict_(memory::Dict<std::string, double>::Create(capacity)),
+    : dict_(containers::Dict<std::string, double>::Create(capacity)),
       skiplist_(std::make_unique<SkiplistType>()) {}
 
 bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,
@@ -176,4 +176,4 @@ std::optional<ZSetSkiplist::SkiplistType::Limit> ZSetSkiplist::ToLimit(
   }
   return SkiplistType::Limit{.offset = limit->offset, .count = limit->count};
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types

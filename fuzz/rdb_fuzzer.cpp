@@ -24,7 +24,7 @@
 #include "server/db/redis_object.h"
 #include "server/rdb/rdb_loader.h"
 #include "server/rdb/rdb_writer.h"
-#include "utils/float_utils.h"
+#include "utils/floats.h"
 
 namespace redis_simple::fuzz {
 namespace {
@@ -41,7 +41,7 @@ std::string Describe(const RedisObject& object) {
     case RedisObject::ObjectType::kString:
       return "s:" + std::string(object.String().View());
     case RedisObject::ObjectType::kList: {
-      const list::List* list = object.List();
+      const data_types::List* list = object.List();
       out = "l:";
       list->ForEach(0, list->Size() - 1, [&out](std::string_view value) {
         out.append(value).push_back('\0');
@@ -129,7 +129,7 @@ void Populate(FuzzInput* input, db::RedisDb* db) {
                                        : std::string(elements * 13, 'r'));
         break;
       case 1: {
-        auto list = list::List::Create();
+        auto list = data_types::List::Create();
         for (size_t i = 0; i < elements; ++i) {
           list->RPush(ReadElement(input));
         }
@@ -137,7 +137,7 @@ void Populate(FuzzInput* input, db::RedisDb* db) {
         break;
       }
       case 2: {
-        auto set = set::Set::Create();
+        auto set = data_types::Set::Create();
         for (size_t i = 0; i < elements; ++i) {
           set->Add(ReadElement(input));
         }
@@ -145,7 +145,7 @@ void Populate(FuzzInput* input, db::RedisDb* db) {
         break;
       }
       case 3: {
-        auto zset = zset::ZSet::Create();
+        auto zset = data_types::ZSet::Create();
         for (size_t i = 0; i < elements; ++i) {
           // Commands store neither NaN nor -0 (ZADD reads "-0" as 0, as
           // Redis does), and a listpack keeps no sign for zero.
@@ -159,7 +159,7 @@ void Populate(FuzzInput* input, db::RedisDb* db) {
         break;
       }
       default: {
-        auto hash = hash::Hash::Create();
+        auto hash = data_types::Hash::Create();
         for (size_t i = 0; i < elements; ++i) {
           hash->Set(ReadElement(input), ReadElement(input));
         }

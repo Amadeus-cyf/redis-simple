@@ -8,10 +8,10 @@
 #include <string_view>
 #include <vector>
 
-#include "memory/listpack.h"
-#include "memory/quicklist.h"
+#include "containers/listpack.h"
+#include "containers/quicklist.h"
 
-namespace redis_simple::list {
+namespace redis_simple::data_types {
 class List {
  public:
   enum class Encoding {
@@ -24,7 +24,7 @@ class List {
   };
 
   static constexpr size_t kDefaultListMaxListpackBytes =
-      memory::Quicklist::kDefaultNodeMaxBytes;
+      containers::Quicklist::kDefaultNodeMaxBytes;
 
   static std::unique_ptr<List> Create(
       size_t list_max_listpack_bytes = kDefaultListMaxListpackBytes) {
@@ -56,9 +56,10 @@ class List {
     if (listpack_ != nullptr) {
       return visitor(listpack_->Bytes());
     }
-    return quicklist_->ForEachNode([&visitor](const memory::Listpack& node) {
-      return visitor(node.Bytes());
-    });
+    return quicklist_->ForEachNode(
+        [&visitor](const containers::Listpack& node) {
+          return visitor(node.Bytes());
+        });
   }
 
  private:
@@ -73,8 +74,8 @@ class List {
   bool ConvertListpackToQuicklist();
   void TryConvertQuicklistToListpack();
 
-  std::unique_ptr<memory::Listpack> listpack_;
-  std::unique_ptr<memory::Quicklist> quicklist_;
+  std::unique_ptr<containers::Listpack> listpack_;
+  std::unique_ptr<containers::Quicklist> quicklist_;
   size_t list_max_listpack_bytes_;
 };
 
@@ -89,6 +90,6 @@ bool List::ForEachReverse(size_t start, size_t stop, Visitor&& visitor) const {
   return listpack_ ? listpack_->ForEachReverse(start, stop, visitor)
                    : quicklist_->ForEachReverse(start, stop, visitor);
 }
-}  // namespace redis_simple::list
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_LIST_LIST_H_

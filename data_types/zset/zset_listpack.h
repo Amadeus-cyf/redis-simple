@@ -7,14 +7,14 @@
 #include <string_view>
 #include <utility>
 
+#include "containers/listpack.h"
 #include "data_types/zset/zset_storage.h"
-#include "memory/listpack.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 class ZSetListpack : public ZSetStorage {
  public:
   ZSetListpack();
-  explicit ZSetListpack(std::unique_ptr<memory::Listpack> listpack)
+  explicit ZSetListpack(std::unique_ptr<containers::Listpack> listpack)
       : listpack_(std::move(listpack)) {}
   bool InsertOrUpdate(std::string_view member, double score,
                       bool* changed) override;
@@ -76,8 +76,8 @@ class ZSetListpack : public ZSetStorage {
   static bool GreaterOrEqual(double score, const RangeByScoreSpec* spec);
   static bool LessOrEqual(double score, const RangeByScoreSpec* spec);
   // Listpack storing member score pairs
-  std::unique_ptr<memory::Listpack> listpack_;
+  std::unique_ptr<containers::Listpack> listpack_;
 };
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_LISTPACK_H_

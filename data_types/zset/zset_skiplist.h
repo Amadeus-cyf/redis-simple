@@ -8,11 +8,11 @@
 #include <string>
 #include <string_view>
 
+#include "containers/dict.h"
+#include "containers/skiplist.h"
 #include "data_types/zset/zset_storage.h"
-#include "memory/dict.h"
-#include "memory/skiplist.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 class ZSetSkiplist : public ZSetStorage {
  public:
   // `capacity` sizes the member dict for that many members.
@@ -77,17 +77,17 @@ class ZSetSkiplist : public ZSetStorage {
     }
   };
 
-  using SkiplistType = memory::Skiplist<ZSetEntry, EntryOrder>;
+  using SkiplistType = containers::Skiplist<ZSetEntry, EntryOrder>;
 
   bool OverlapsLexRange(const RangeByLexSpec* spec) const;
   static std::optional<SkiplistType::Limit> ToLimit(
       const std::optional<LimitSpec>& limit);
 
   // Maps each member to its score.
-  std::unique_ptr<memory::Dict<std::string, double>> dict_;
+  std::unique_ptr<containers::Dict<std::string, double>> dict_;
   // Entries ordered by score, then member name.
   std::unique_ptr<SkiplistType> skiplist_;
 };
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_SKIPLIST_H_
