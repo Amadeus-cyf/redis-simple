@@ -98,7 +98,9 @@ Guidance for AI coding agents working in this repository.
   scheduling and limiting, and `INFO` fields. Document any deliberate
   difference in the README and `docs/design.md`; two exist, where Redis can
   lose data. Check interoperability with a `redis-server` when one is
-  available: each must load the other's AOF directory in the command format.
+  available: each must load the other's AOF directory, with the base file
+  as RDB (`aof-use-rdb-preamble yes`, the default) and as commands. Detect a
+  base's format by its content (`REDIS`), as Redis does, never by its name.
 - RDB snapshots live in `server/rdb/` (see `docs/design.md`). Keep the file
   format and `SAVE` aligned with the latest Redis release's `src/rdb.c`:
   values in the RDB types Redis writes for each in-memory encoding, strings

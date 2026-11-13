@@ -73,17 +73,28 @@ Enable AOF persistence with Redis-style fsync policies:
 ```
 
 AOF is disabled by default. When enabled, it follows Redis 8.10's multi-part
-AOF (`src/aof.c`), and Redis loads its files and it loads Redis' (in Redis'
-command format, `aof-use-rdb-preamble no`). The AOF is a directory
+AOF (`src/aof.c`), and Redis loads its files and it loads Redis', with the
+base file in either of Redis' formats. The AOF is a directory
 (`--appenddirname`, default `appendonlydir`) holding one base file, the
 snapshot of the last rewrite, then incremental files with the mutations since,
 and a manifest that lists them in Redis' format; base and incremental files
 are numbered separately:
 
 ```
-file appendonly.aof.2.base.aof seq 2 type b
+file appendonly.aof.2.base.rdb seq 2 type b
 file appendonly.aof.2.incr.aof seq 2 type i
 ```
+
+As in Redis (`--aof-use-rdb-preamble yes`, the default), the base file is an
+RDB snapshot (`.base.rdb`, following `--rdbcompression` and `--rdbchecksum`),
+which is smaller and faster to write and load than commands; with
+`--aof-use-rdb-preamble no` it holds commands (`.base.aof`). Loading reads
+either by its content, whatever the option says, as Redis does: a file that
+starts with `REDIS` is read as RDB, keeping keys whose time has passed until
+loading ends, as the commands after it expect, and then any commands after
+it, so an old single-file AOF with an RDB preamble loads too. On 770,900 keys
+of every type, the RDB base was 2.6 times smaller (46 MB against 120 MB),
+written 1.8 times as fast, and loaded about twice as fast.
 
 `--appendfilename` (default `appendonly.aof`) is the files' name prefix, a
 name without a directory as in Redis; the manifest quotes names that need it.
@@ -108,9 +119,9 @@ Redis' `#TS:` annotations, which loading skips.
 incremental file and lists it in the manifest, then forks a child that writes
 a snapshot of the database, from its copy-on-write view of memory, as
 `temp-rewriteaof-bg-<pid>.aof`, syncing every 4 MiB
-(`--aof-rewrite-incremental-fsync`); the server keeps serving meanwhile. Large
-strings are split into replay-safe commands, and collection batches are
-limited by encoded bytes. When the child finishes, its file becomes the next
+(`--aof-rewrite-incremental-fsync`); the server keeps serving meanwhile. In
+the command format, large strings are split into replay-safe commands, and
+collection batches are limited by encoded bytes. When the child finishes, its file becomes the next
 base file, and a new manifest lists it with the incremental file opened at the
 start. The old base and incremental files are then deleted on a background
 thread, as Redis' bio thread does. Writes made during the rewrite are already
@@ -147,9 +158,7 @@ a new manifest is renamed into place but syncing the directory fails, Redis
 deletes the new files the live manifest lists; this server keeps them, rejects
 writes, and keeps the replaced files until a later manifest persists safely.
 And a rewrite does not start while a failed write is still pending, since
-Redis would then replay those commands twice. Base files are always in the
-command format; Redis' default RDB-format base (`aof-use-rdb-preamble yes`)
-is not supported yet.
+Redis would then replay those commands twice.
 
 RDB snapshots follow Redis 8.10's `src/rdb.c`. `SAVE` writes the database to
 `dump.rdb` (`--dbfilename`) in the working directory (`--dir`, which also holds
@@ -401,6 +410,8 @@ This runs:
   compaction, shutdown, restart, expiration, and cross-data-type recovery checks.
 - `redis_simple_integration_aof_io_threads`: the same against a server with
   `--io-threads 4`, so rewrites fork while I/O threads run.
+- `redis_simple_integration_aof_command_base`: the same with
+  `--aof-use-rdb-preamble no`, so the base file holds commands.
 - `redis_simple_integration_command_connection`: connection command integration
   checks.
 - `redis_simple_integration_command_key`: generic key command integration

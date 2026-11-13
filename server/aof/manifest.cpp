@@ -14,7 +14,9 @@
 
 namespace redis_simple::aof {
 namespace {
-constexpr std::string_view kBaseSuffix = ".base.aof";
+constexpr std::string_view kBaseSuffix = ".base";
+constexpr std::string_view kAofFormatSuffix = ".aof";
+constexpr std::string_view kRdbFormatSuffix = ".rdb";
 constexpr std::string_view kIncrementSuffix = ".incr.aof";
 constexpr std::string_view kManifestSuffix = ".manifest";
 
@@ -136,9 +138,13 @@ ManifestFile MakeManifestFile(std::string name, int64_t sequence,
   return file;
 }
 
-std::string BaseFileName(std::string_view prefix, int64_t sequence) {
+std::string BaseFileName(std::string_view prefix, int64_t sequence,
+                         bool rdb_format) {
   std::string name(prefix);
-  name.append(".").append(std::to_string(sequence)).append(kBaseSuffix);
+  name.append(".")
+      .append(std::to_string(sequence))
+      .append(kBaseSuffix)
+      .append(rdb_format ? kRdbFormatSuffix : kAofFormatSuffix);
   return name;
 }
 

@@ -65,7 +65,11 @@ bool Server::Run(const ServerOptions& options) {
   };
   rdb_->SetForkHooks(before_fork, after_fork);
   if (options.append_only) {
-    aof_ = aof::Aof::Open(options.aof_options, db_.get());
+    // An RDB base file follows the RDB options, as in Redis.
+    aof::Options aof_options = options.aof_options;
+    aof_options.rdb_compression = options.rdb_options.compression;
+    aof_options.rdb_checksum = options.rdb_options.checksum;
+    aof_ = aof::Aof::Open(aof_options, db_.get());
     if (aof_ == nullptr) {
       return false;
     }

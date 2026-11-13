@@ -22,6 +22,9 @@
 #include "server/aof/file_ops.h"
 #include "server/aof/manifest.h"
 #include "server/aof/snapshot.h"
+#include "server/rdb/rdb_writer.h"
+#include "utils/check.h"
+#include "utils/time_utils.h"
 
 // The Aof's rewrite: a forked child writes a snapshot as the next base file,
 // and the parent installs it with a new manifest once the child exits.
@@ -118,14 +121,38 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
   return RewriteResult::kStarted;
 }
 
+SnapshotStatus Aof::WriteBaseFile(db::RedisDb* const db,
+                                  const std::string& path) const {
+  if (!use_rdb_preamble_) {
+    return WriteSnapshotFile(db, path, SnapshotSettings(), file_ops_.get());
+  }
+  // Redis' rewriteAppendOnlyFile with aof-use-rdb-preamble: an RDB file
+  // marked with the "aof-base" aux field.
+  switch (
+      rdb::WriteRdbFile(db, path,
+                        {.compression = rdb_compression_,
+                         .checksum = rdb_checksum_,
+                         .incremental_fsync = rewrite_incremental_fsync_,
+                         .aof_base = true,
+                         .creation_time = utils::NowInMilliseconds() / 1000},
+                        file_ops_.get())) {
+    case rdb::WriteStatus::kWritten:
+      return SnapshotStatus::kWritten;
+    case rdb::WriteStatus::kWriteFailed:
+      return SnapshotStatus::kWriteFailed;
+    case rdb::WriteStatus::kSyncFailed:
+      return SnapshotStatus::kSyncFailed;
+  }
+  utils::Unreachable();
+}
+
 void Aof::RunRewriteChild(db::RedisDb* const db) const {
   // The child writes temp-rewriteaof-<pid>.aof and renames it to
   // temp-rewriteaof-bg-<pid>.aof once it is complete and synced.
   const pid_t self = getpid();
   const std::string path = FilePath(std::string(kTempPrefix) + "rewriteaof-" +
                                     std::to_string(self) + ".aof");
-  SnapshotStatus status =
-      WriteSnapshotFile(db, path, SnapshotSettings(), file_ops_.get());
+  SnapshotStatus status = WriteBaseFile(db, path);
   if (status == SnapshotStatus::kWritten &&
       std::rename(path.c_str(), RewriteTempPath(self).c_str()) < 0) {
     unlink(path.c_str());
@@ -212,7 +239,8 @@ AofError Aof::InstallRewrite(pid_t child, int* const error_number) {
                             std::move(*manifest.base));
   }
   const int64_t base_sequence = ++manifest.base_sequence;
-  const std::string base_name = BaseFileName(file_name_, base_sequence);
+  const std::string base_name =
+      BaseFileName(file_name_, base_sequence, use_rdb_preamble_);
   manifest.base =
       MakeManifestFile(base_name, base_sequence, ManifestFile::Type::kBase);
   if (file_ops_->Rename(RewriteTempPath(child).c_str(),

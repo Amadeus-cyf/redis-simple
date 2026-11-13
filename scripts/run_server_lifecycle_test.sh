@@ -33,6 +33,10 @@ for save in "60" "0 1" "60 -1" "60 x"; do
     exit 1
   fi
 done
+if "$server" --aof-use-rdb-preamble maybe >/dev/null 2>&1; then
+  echo "server accepted an invalid aof-use-rdb-preamble" >&2
+  exit 1
+fi
 if "$server" --stop-writes-on-bgsave-error maybe >/dev/null 2>&1; then
   echo "server accepted an invalid stop-writes-on-bgsave-error" >&2
   exit 1

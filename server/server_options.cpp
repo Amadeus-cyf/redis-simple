@@ -168,6 +168,12 @@ constexpr auto kOptionSpecs = std::to_array<OptionSpec>({
            return ParseYesNo(value, &options->rdb_options.checksum);
          },
      .error = "rdbchecksum must be yes or no"},
+    {.name = "--aof-use-rdb-preamble",
+     .apply =
+         [](std::string_view value, ServerOptions* options) {
+           return ParseYesNo(value, &options->aof_options.use_rdb_preamble);
+         },
+     .error = "aof-use-rdb-preamble must be yes or no"},
     {.name = "--save",
      .apply = ParseSavePoints,
      .error = "Invalid save parameters"},
@@ -317,6 +323,7 @@ std::string_view ServerUsage() {
          "[--appendonly <yes|no>] [--appendfilename <name>] "
          "[--appenddirname <dir>] "
          "[--aof-load-truncated <yes|no>] "
+         "[--aof-use-rdb-preamble <yes|no>] "
          "[--aof-load-corrupt-tail-max-size <bytes>] "
          "[--aof-timestamp-enabled <yes|no>] "
          "[--aof-rewrite-incremental-fsync <yes|no>] "

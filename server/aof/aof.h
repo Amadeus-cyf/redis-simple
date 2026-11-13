@@ -62,6 +62,14 @@ struct Options {
   bool rewrite_incremental_fsync{true};
   // Redis' no-appendfsync-on-rewrite: no fsync while a rewrite runs.
   bool no_fsync_on_rewrite{false};
+  // Redis' aof-use-rdb-preamble: rewrites write the base file as an RDB
+  // snapshot ("<prefix>.<sequence>.base.rdb"), which is smaller and loads
+  // faster than commands ("<prefix>.<sequence>.base.aof"). Loading reads
+  // either, whatever this says.
+  bool use_rdb_preamble{true};
+  // Redis' rdbcompression and rdbchecksum, which an RDB base file follows.
+  bool rdb_compression{true};
+  bool rdb_checksum{true};
   Limits limits;
   std::shared_ptr<FileOps> file_ops;
 };
@@ -207,7 +215,7 @@ class Aof {
   // Startup and loading (aof_load.cpp).
   bool LoadManifest();
   bool Replay(db::RedisDb* db);
-  bool ReplayFile(db::RedisDb* db, int fd, bool last);
+  bool ReplayFile(db::RedisDb* db, int fd, const std::string& name, bool last);
   bool HandleTruncatedFile(int fd, bool last, size_t valid_bytes) const;
   bool HandleCorruptTail(int fd, bool last, size_t corrupt_from) const;
   bool CutTail(int fd, size_t valid_bytes) const;
@@ -239,6 +247,14 @@ class Aof {
   void LogSyncFailure();
   static void RecordError(AofError error, int error_number);
   SnapshotOptions SnapshotSettings() const;
+  // Writes the dataset to `path` in the base file's format: an RDB snapshot
+  // or commands. Runs in the rewrite's child, so it neither locks nor logs.
+  SnapshotStatus WriteBaseFile(db::RedisDb* db, const std::string& path) const;
+  // Loads an RDB snapshot at the start of `fd`, if the file has one (Redis'
+  // "REDIS" signature check), and leaves `fd` where the commands after it
+  // start. Returns false after logging a damaged snapshot.
+  bool LoadRdbPreamble(db::RedisDb* db, int fd, const std::string& name,
+                       size_t* preamble_bytes) const;
 
   // Event-loop thread only.
   std::string directory_;
@@ -253,6 +269,9 @@ class Aof {
   bool timestamp_enabled_;
   bool rewrite_incremental_fsync_;
   bool no_fsync_on_rewrite_;
+  bool use_rdb_preamble_;
+  bool rdb_compression_;
+  bool rdb_checksum_;
   std::shared_ptr<FileOps> file_ops_;
   // Syncs, closes, and deletes files on its own thread.
   BackgroundJobs jobs_;

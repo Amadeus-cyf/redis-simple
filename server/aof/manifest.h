@@ -53,9 +53,11 @@ ManifestFile MakeManifestFile(std::string name, int64_t sequence,
 
 // File names inside the AOF directory, as Redis 7 and later name them, for
 // the configured file name `prefix` (appendfilename):
+// "<prefix>.<sequence>.base.rdb" for an RDB base file (`rdb_format`) or
 // "<prefix>.<sequence>.base.aof", "<prefix>.<sequence>.incr.aof", and
 // "<prefix>.manifest". Temporary files start with "temp-".
-std::string BaseFileName(std::string_view prefix, int64_t sequence);
+std::string BaseFileName(std::string_view prefix, int64_t sequence,
+                         bool rdb_format);
 std::string IncrementFileName(std::string_view prefix, int64_t sequence);
 std::string ManifestFileName(std::string_view prefix);
 inline constexpr std::string_view kTempPrefix = "temp-";

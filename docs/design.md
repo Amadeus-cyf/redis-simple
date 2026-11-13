@@ -87,7 +87,7 @@ return. Connections close on their I/O thread; the main thread only frees the
 | `aof_rewrite.cpp` | `BGREWRITEAOF` and automatic rewrites: the fork, installing the new base, retry backoff, and the cron |
 | `manifest.h`, `.cpp` | The manifest format, and file naming |
 | `records.h`, `.cpp` | Encoding mutations as AOF records |
-| `snapshot.h`, `.cpp` | Writing the database as commands, for a new base file |
+| `snapshot.h`, `.cpp` | Writing the database as commands, for a base file with `--aof-use-rdb-preamble no` |
 | `background_jobs.h`, `.cpp` | The background thread that syncs, closes, and deletes files |
 | `file_ops.h`, `.cpp` | File system helpers, and the `FileOps` interface tests use to inject failures |
 
@@ -96,7 +96,16 @@ return. Connections close on their I/O thread; the main thread only frees the
 The AOF is a directory with one base file (the snapshot the last rewrite
 wrote), incremental files with the mutations since, and a manifest listing
 them, in Redis' format. Loading replays the base, then each incremental file
-in order. A file the manifest lists that is missing is fatal, and only the
+in order. The base is an RDB snapshot (`<prefix>.<n>.base.rdb`, written by
+`rdb::WriteRdbFile` with the `aof-base` aux field) unless
+`--aof-use-rdb-preamble no` makes it commands (`.base.aof`). Like Redis,
+`Aof::LoadRdbPreamble` decides by content, not name or option: a file starting
+with `REDIS` loads through `rdb::LoadRdb` with `keep_expired` (Redis'
+`RDBFLAGS_AOF_PREAMBLE`: commands after the snapshot were written while its
+keys existed), and the replayer continues after the bytes the loader
+consumed, counting offsets from the file's start so a torn tail is cut at the
+right place. That also loads an old single-file AOF that begins with an RDB
+preamble. A file the manifest lists that is missing is fatal, and only the
 last file may end in a torn record, which is cut off. Restarts keep appending
 to the last incremental file; only a rewrite starts a new one.
 
@@ -132,8 +141,8 @@ data was on disk.
 A rewrite first switches appends to a new incremental file, so writes made
 during the rewrite need no buffering. It then forks, unless a background
 save's child is running (see Background saves). The child writes a
-snapshot of its copy-on-write view of the database (`WriteSnapshotFile`) and
-exits; its exit code reports how it went. The server cron notices the exit
+snapshot of its copy-on-write view of the database (`Aof::WriteBaseFile`: an
+RDB file, or commands through `WriteSnapshotFile`) and exits; its exit code reports how it went. The server cron notices the exit
 (`Aof::Cron`), renames the snapshot to the next base file, and persists a
 manifest listing it and the new incremental file. The old base and incremental
 files become history and are deleted once that manifest is durable.

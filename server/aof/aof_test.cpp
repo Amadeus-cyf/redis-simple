@@ -26,6 +26,7 @@
 
 #include "server/db/db.h"
 #include "server/db/redis_object.h"
+#include "server/rdb/rdb_writer.h"
 #include "server/reply.h"
 #include "utils/check.h"
 #include "utils/time_utils.h"
@@ -54,8 +55,13 @@ class TempAof {
 
   [[nodiscard]] const std::string& Root() const { return root_; }
   [[nodiscard]] const std::string& Directory() const { return directory_; }
+  // Options with a command-format base file, which most tests read back
+  // and whose rewrite writes the test file operations tell apart; the RDB
+  // base file has tests of its own.
   [[nodiscard]] Options MakeOptions(FsyncPolicy policy) const {
-    return {directory_, std::string(kFileName), policy};
+    Options options{directory_, std::string(kFileName), policy};
+    options.use_rdb_preamble = false;
+    return options;
   }
   [[nodiscard]] std::string ManifestPath() const {
     return directory_ + "/" + std::string(kFileName) + ".manifest";
@@ -242,6 +248,42 @@ Options Always(const TempAof& file, const std::shared_ptr<FileOps>& file_ops) {
   Options options = Always(file);
   options.file_ops = file_ops;
   return options;
+}
+
+// Options writing an RDB base file, Redis' default.
+Options WithRdbPreamble(const TempAof& file) {
+  Options options = Always(file);
+  options.use_rdb_preamble = true;
+  return options;
+}
+
+// `db` as an AOF base RDB file's bytes, written next to the AOF directory.
+std::string RdbBytes(db::RedisDb* db, const TempAof& file) {
+  const std::string path = file.Root() + "/snapshot.rdb";
+  if (rdb::WriteRdbFile(db, path, {.aof_base = true}, DefaultFileOps().get()) !=
+      rdb::WriteStatus::kWritten) {
+    return {};
+  }
+  std::ifstream input(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(input),
+          std::istreambuf_iterator<char>()};
+}
+
+// Writes an old single-file AOF, which Redis may have started with an RDB
+// preamble, where Aof::Open looks for one, and opens it.
+std::unique_ptr<Aof> OpenSingleFile(const TempAof& file, std::string_view data,
+                                    db::RedisDb* db) {
+  const std::filesystem::path previous = std::filesystem::current_path();
+  std::filesystem::current_path(file.Root());
+  {
+    std::ofstream legacy("appendonly.aof", std::ios::binary);
+    legacy.write(data.data(), static_cast<std::streamsize>(data.size()));
+  }
+  Options options = WithRdbPreamble(file);
+  options.directory = "appendonlydir";
+  std::unique_ptr<Aof> aof = Aof::Open(options, db);
+  std::filesystem::current_path(previous);
+  return aof;
 }
 }  // namespace
 
@@ -1355,5 +1397,119 @@ TEST(AofTest, NeverCutsOffCorruptionInAnEarlierFile) {
   options.load_corrupt_tail_max_bytes = 1024;
   auto restored = db::RedisDb::Create();
   EXPECT_EQ(Aof::Open(options, restored.get()), nullptr);
+}
+TEST(AofTest, RewritesTheBaseAsAnRdbFile) {
+  TempAof file;
+  auto source = db::RedisDb::Create();
+  auto writer = Aof::Open(WithRdbPreamble(file), source.get());
+  ASSERT_NE(writer, nullptr);
+  // The base created at the first start is an RDB file too, as in Redis.
+  EXPECT_EQ(file.ManifestText(),
+            "file appendonly.aof.1.base.rdb seq 1 type b\n"
+            "file appendonly.aof.1.incr.aof seq 1 type i\n");
+  constexpr int64_t kHourMs = int64_t{3600} * 1000;
+  const int64_t expiration = utils::NowInMilliseconds() + kHourMs;
+  ASSERT_EQ(source->SetKey("text", db::RedisObject::CreateWithString("value"),
+                           expiration),
+            db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("SET", {"text", "value"}, source.get()));
+  ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
+  writer->WaitForRewrite();
+  ASSERT_TRUE(writer->State().last_rewrite_ok);
+  // Written after the rewrite started, so replayed after the RDB base.
+  ASSERT_EQ(source->SetKey("after", db::RedisObject::CreateWithString("1"), 0),
+            db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("SET", {"after", "1"}, source.get()));
+  writer.reset();
+
+  const std::string base = file.Files().front();
+  EXPECT_TRUE(base.ends_with("/appendonly.aof.2.base.rdb")) << base;
+  EXPECT_TRUE(file.Contents().starts_with("REDIS0011"));
+  auto restored = db::RedisDb::Create();
+  ASSERT_NE(Aof::Open(WithRdbPreamble(file), restored.get()), nullptr);
+  EXPECT_EQ(restored->KeyCount(), 2);
+  EXPECT_EQ(restored->LookupKey("text")->String(), "value");
+  EXPECT_EQ(restored->Expiration("text"), expiration);
+
+  // Either format loads whatever the option says; the next rewrite writes
+  // the configured one.
+  restored = db::RedisDb::Create();
+  auto commands = Aof::Open(Always(file), restored.get());
+  ASSERT_NE(commands, nullptr);
+  EXPECT_EQ(restored->KeyCount(), 2);
+  ASSERT_EQ(commands->StartRewrite(restored.get()), RewriteResult::kStarted);
+  commands->WaitForRewrite();
+  ASSERT_TRUE(commands->State().last_rewrite_ok);
+  EXPECT_EQ(commands->CurrentManifest().base.value_or(ManifestFile{}).name,
+            "appendonly.aof.3.base.aof");
+}
+
+TEST(AofTest, LoadsAnRdbPreambleAndTheCommandsAfterIt) {
+  // An old single file Redis wrote with aof-use-rdb-preamble.
+  TempAof file;
+  auto source = db::RedisDb::Create();
+  ASSERT_EQ(
+      source->SetKey("snapshot", db::RedisObject::CreateWithString("1"), 0),
+      db::DbStatus::kOk);
+  const std::string preamble = RdbBytes(source.get(), file);
+  ASSERT_FALSE(preamble.empty());
+  auto restored = db::RedisDb::Create();
+  ASSERT_NE(OpenSingleFile(file, preamble + Encode("SET", {"tail", "2"}),
+                           restored.get()),
+            nullptr);
+  EXPECT_EQ(restored->KeyCount(), 2);
+  EXPECT_EQ(restored->LookupKey("snapshot")->String(), "1");
+  EXPECT_EQ(restored->LookupKey("tail")->String(), "2");
+}
+
+TEST(AofTest, KeepsKeysThatExpiredInTheRdbBaseWhileLoading) {
+  // Redis loads them, since the commands after the base were written while
+  // they existed; here PERSIST saves the key.
+  TempAof file;
+  auto source = db::RedisDb::Create();
+  ASSERT_EQ(source->SetKey("key", db::RedisObject::CreateWithString("v"),
+                           utils::NowInMilliseconds() + 50),
+            db::DbStatus::kOk);
+  const std::string preamble = RdbBytes(source.get(), file);
+  ASSERT_FALSE(preamble.empty());
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  auto restored = db::RedisDb::Create();
+  ASSERT_NE(OpenSingleFile(file, preamble + Encode("PERSIST", {"key"}),
+                           restored.get()),
+            nullptr);
+  ASSERT_NE(restored->LookupKey("key"), nullptr);
+  EXPECT_EQ(restored->Expiration("key"), std::nullopt);
+}
+
+TEST(AofTest, CutsATornCommandAfterAnRdbPreamble) {
+  // The valid prefix counts from the start of the file, preamble included.
+  TempAof file;
+  auto source = db::RedisDb::Create();
+  ASSERT_EQ(
+      source->SetKey("snapshot", db::RedisObject::CreateWithString("1"), 0),
+      db::DbStatus::kOk);
+  const std::string valid =
+      RdbBytes(source.get(), file) + Encode("SET", {"tail", "2"});
+  auto restored = db::RedisDb::Create();
+  ASSERT_NE(OpenSingleFile(file, valid + "*3\r\n$3\r\nSET\r\n$4\r\nto",
+                           restored.get()),
+            nullptr);
+  EXPECT_EQ(restored->KeyCount(), 2);
+  EXPECT_EQ(std::filesystem::file_size(file.Directory() + "/appendonly.aof"),
+            valid.size());
+}
+
+TEST(AofTest, RefusesADamagedRdbBase) {
+  TempAof file;
+  auto source = db::RedisDb::Create();
+  ASSERT_EQ(
+      source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
+      db::DbStatus::kOk);
+  std::string preamble = RdbBytes(source.get(), file);
+  ASSERT_GT(preamble.size(), 20);
+  // A changed byte fails the checksum.
+  preamble[preamble.size() - 12] ^= 1;
+  auto restored = db::RedisDb::Create();
+  EXPECT_EQ(OpenSingleFile(file, preamble, restored.get()), nullptr);
 }
 }  // namespace redis_simple::aof

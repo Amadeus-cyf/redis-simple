@@ -75,7 +75,9 @@ scripts/check_aof_interop.sh build/debug/redis_simple
 
 It runs every write command this server supports, with its options, with a
 rewrite in between, so the directory holds a base file and an incremental
-file, then loads it in the other server and compares the keyspaces. Add new
+file, then loads it in the other server and compares the keyspaces. It runs
+each direction twice, with the base file as RDB (`aof-use-rdb-preamble yes`)
+and as commands. Add new
 write commands to its list. Its command list also makes a quick reply
 comparison: extract it and send it to both servers in RESP2 and RESP3. Set
 `INTEROP_KEEP=1` to keep the directories when it fails. A failure to load

@@ -26,8 +26,10 @@
 #include "server/client.h"
 #include "server/commands/command.h"
 #include "server/db/db.h"
+#include "server/rdb/rdb_loader.h"
 #include "server/request_parser.h"
 #include "server/server_context.h"
+#include "utils/time_utils.h"
 
 // The Aof's startup: reading the manifest, upgrading a single-file AOF,
 // replaying the files, and opening the file appends go to.
@@ -179,7 +181,8 @@ bool Aof::Replay(db::RedisDb* const db) {
       base_size_ = FileSize(fd).value_or(0);
     }
     // Only the last file may end in a torn record.
-    const bool replayed = ReplayFile(db, fd, index + 1 == files.size());
+    const bool replayed =
+        ReplayFile(db, fd, files[index]->name, index + 1 == files.size());
     close(fd);
     if (!replayed) {
       RS_LOG_ERROR("cannot load AOF file %s\n", path.c_str());
@@ -194,13 +197,16 @@ bool Aof::Replay(db::RedisDb* const db) {
 // connection, as Redis' loadSingleAppendOnlyFile does.
 class FileReplayer {
  public:
-  FileReplayer(db::RedisDb* const db, const Limits& limits)
+  // `start_bytes` is where the commands start in the file: after an RDB
+  // preamble, if there is one, so offsets count from the file's start.
+  FileReplayer(db::RedisDb* const db, const Limits& limits, size_t start_bytes)
       : server_{.db = db,
                 .aof = nullptr,
                 .required_password = {},
                 .io_threads = {}},
         client_(&server_),
-        limits_(&limits) {}
+        limits_(&limits),
+        complete_bytes_(start_bytes) {}
 
   enum class Outcome : uint8_t {
     // Every record applied.
@@ -358,9 +364,56 @@ bool FileReplayer::ApplyCommand(std::string_view name) {
   return client_.ExecuteForReplay(command, &args_);
 }
 
-bool Aof::ReplayFile(db::RedisDb* const db, int fd, bool last) {
+bool Aof::LoadRdbPreamble(db::RedisDb* const db, int fd,
+                          const std::string& name,
+                          size_t* const preamble_bytes) const {
+  // Redis reads the base file, or an old single file, as RDB when it starts
+  // with "REDIS", whatever aof-use-rdb-preamble says, and then any commands
+  // after it.
+  std::array<char, 5> signature{};
+  if (pread(fd, signature.data(), signature.size(), 0) !=
+          static_cast<ssize_t>(signature.size()) ||
+      std::string_view(signature.data(), signature.size()) != "REDIS") {
+    return true;
+  }
+  // An old single file keeps the configured name; a base file has its own.
+  const bool old_style = name == file_name_;
+  RS_LOG_INFO(old_style ? "Reading RDB preamble from AOF file...\n"
+                        : "Reading RDB base file on AOF loading...\n");
+  rdb::LoadStats stats;
+  // Redis' RDBFLAGS_AOF_PREAMBLE: keys whose time has passed are kept, as
+  // the commands after them were written with those keys present; they
+  // expire once loading is done.
+  if (!rdb::LoadRdb(
+          fd, db, {.now_ms = utils::NowInMilliseconds(), .keep_expired = true},
+          &stats)) {
+    RS_LOG_ERROR(old_style ? "Error reading the RDB preamble of the AOF file "
+                             "%s, AOF loading aborted\n"
+                           : "Error reading the RDB base file %s, AOF loading "
+                             "aborted\n",
+                 name.c_str());
+    return false;
+  }
+  if (lseek(fd, static_cast<off_t>(stats.bytes), SEEK_SET) < 0) {
+    RS_LOG_ERROR("Unrecoverable error reading the append only file %s: %s\n",
+                 name.c_str(), std::strerror(errno));
+    return false;
+  }
+  if (old_style) {
+    RS_LOG_INFO("Reading the remaining AOF tail...\n");
+  }
+  *preamble_bytes = stats.bytes;
+  return true;
+}
+
+bool Aof::ReplayFile(db::RedisDb* const db, int fd, const std::string& name,
+                     bool last) {
+  size_t preamble_bytes = 0;
+  if (!LoadRdbPreamble(db, fd, name, &preamble_bytes)) {
+    return false;
+  }
   db->SetLoading(true);
-  FileReplayer replayer(db, limits_);
+  FileReplayer replayer(db, limits_, preamble_bytes);
   bool replayed = false;
   switch (replayer.Replay(fd)) {
     case FileReplayer::Outcome::kComplete:
@@ -442,12 +495,12 @@ bool Aof::CreateBaseIfMissing(db::RedisDb* const db) {
     return true;
   }
   const int64_t sequence = manifest_.base_sequence + 1;
-  const std::string name = BaseFileName(file_name_, sequence);
+  const std::string name =
+      BaseFileName(file_name_, sequence, use_rdb_preamble_);
   const std::string temp_path =
       FilePath(std::string(kTempPrefix) + "rewriteaof-" +
                std::to_string(getpid()) + ".aof");
-  if (WriteSnapshotFile(db, temp_path, SnapshotSettings(), file_ops_.get()) !=
-      SnapshotStatus::kWritten) {
+  if (WriteBaseFile(db, temp_path) != SnapshotStatus::kWritten) {
     RS_LOG_ERROR("Write error writing append only file on disk: %s\n",
                  std::strerror(errno));
     return false;
