@@ -115,7 +115,7 @@ class TempAof {
   [[nodiscard]] off_t Size() const {
     off_t total = 0;
     for (const std::string& path : Files()) {
-      struct stat info {};
+      struct stat info{};
       if (stat(path.c_str(), &info) != 0) {
         return -1;
       }
