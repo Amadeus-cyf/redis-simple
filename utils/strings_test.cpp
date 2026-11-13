@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -115,6 +116,22 @@ TEST(StringsTest, EqualsIgnoreCase) {
   EXPECT_TRUE(EqualsIgnoreCase("+inf", "+INF"));
   EXPECT_FALSE(EqualsIgnoreCase("set", "get"));
   EXPECT_FALSE(EqualsIgnoreCase("expire", "expires"));
+}
+
+TEST(StringsTest, FindsLiteralPrefixOfGlob) {
+  EXPECT_EQ(GlobLiteralPrefix("user:*"), "user:");
+  EXPECT_EQ(GlobLiteralPrefix("*"), "");
+  EXPECT_EQ(GlobLiteralPrefix("user:"), std::nullopt);
+  EXPECT_EQ(GlobLiteralPrefix(""), std::nullopt);
+  EXPECT_EQ(GlobLiteralPrefix("a*b*"), std::nullopt);
+  EXPECT_EQ(GlobLiteralPrefix("user:?*"), std::nullopt);
+  EXPECT_EQ(GlobLiteralPrefix("user[0-9]*"), std::nullopt);
+  EXPECT_EQ(GlobLiteralPrefix(R"(user\**)"), std::nullopt);
+  // Wherever a prefix is found, it decides the same matches as the glob.
+  for (const std::string_view value : {"", "user", "user:", "user:42", "x"}) {
+    EXPECT_EQ(value.starts_with("user:"), MatchesGlob(value, "user:*"));
+    EXPECT_TRUE(MatchesGlob(value, "*"));
+  }
 }
 
 TEST(StringsTest, MatchesRedisStyleGlobs) {

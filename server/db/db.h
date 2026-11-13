@@ -190,13 +190,15 @@ size_t RedisDb::ScanKeys(size_t cursor, size_t count, Visitor&& visitor) {
   if (count == 0) {
     return 0;
   }
-  return dict_->ScanStep(
-      cursor, count,
-      [this, &visitor](const std::string& key, const RedisObjectPtr& object) {
-        if (!IsKeyExpired(key)) {
-          visitor(std::string_view(key), *object);
-        }
-      });
+  return dict_->ScanStep(cursor, count,
+                         // Take each key with its stored hash, so the TTL
+                         // lookup does not hash it again.
+                         [this, &visitor](const containers::HashedKey& key,
+                                          const RedisObjectPtr& object) {
+                           if (!IsKeyExpired(key)) {
+                             visitor(key.key, *object);
+                           }
+                         });
 }
 }  // namespace redis_simple::db
 

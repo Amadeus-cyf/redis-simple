@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -213,6 +214,17 @@ bool MatchesGlob(std::string_view value, std::string_view pattern) {
     ++pattern_offset;
   }
   return pattern_offset == pattern.size();
+}
+
+std::optional<std::string_view> GlobLiteralPrefix(std::string_view pattern) {
+  if (!pattern.ends_with('*')) {
+    return std::nullopt;
+  }
+  const std::string_view prefix = pattern.substr(0, pattern.size() - 1);
+  if (prefix.find_first_of("*?[\\") != std::string_view::npos) {
+    return std::nullopt;
+  }
+  return prefix;
 }
 
 bool ToInt64(std::string_view text, int64_t* const value) {

@@ -31,6 +31,8 @@ struct ScanOptions {
   // How many elements a step should visit.
   size_t count{kDefaultCount};
   std::optional<std::string_view> pattern;
+  // Set with `pattern` when it is a literal prefix followed by `*`.
+  std::optional<std::string_view> prefix;
   // Set when TYPE was given. A name that is not a type matches no key, as in
   // Redis 8, which has not made it an error yet.
   bool filter_type{};
@@ -40,6 +42,9 @@ struct ScanOptions {
 
   // Whether a key, member, or field matches MATCH.
   bool Matches(std::string_view element) const {
+    if (prefix.has_value()) {
+      return element.starts_with(*prefix);
+    }
     return !pattern.has_value() || utils::MatchesGlob(element, *pattern);
   }
 };

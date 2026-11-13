@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -25,6 +26,11 @@ bool EqualsIgnoreCase(std::string_view left, std::string_view right);
 bool ConstantTimeEquals(std::string_view left, std::string_view right);
 // Match Redis-style glob patterns without allocating temporary strings.
 bool MatchesGlob(std::string_view value, std::string_view pattern);
+// The prefix of a glob pattern of the form `prefix*` whose prefix has no
+// special characters, the usual shape of a SCAN pattern. A value matches
+// such a pattern exactly when it starts with the prefix, which is cheaper
+// to test than MatchesGlob. Returns nullopt for any other pattern.
+std::optional<std::string_view> GlobLiteralPrefix(std::string_view pattern);
 // Parses `s` as Redis' string2ll does: the canonical decimal text of an
 // int64, with an optional '-' and no '+', spaces, leading zeros, or "-0".
 // Only canonical text parses, so compact encodings that store a value as an

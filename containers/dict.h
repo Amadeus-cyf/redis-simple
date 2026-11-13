@@ -135,7 +135,8 @@ class Dict {
   // scans buckets from `cursor` until `count` elements have been visited,
   // the scan completes, or 10 * `count` + 1 buckets have been scanned, which
   // bounds the work in a sparse table. Returns the next cursor, 0 once the
-  // scan is complete.
+  // scan is complete. The visitor takes (key, value); for string keys it
+  // may take (HashedKey, value) instead to reuse each entry's stored hash.
   template <typename Visitor>
   size_t ScanStep(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const { return table_used_[0] + table_used_[1]; }
@@ -488,7 +489,10 @@ size_t Dict<K, V, Hash, KeyEqual>::ScanStep(size_t cursor, size_t count,
   constexpr size_t kMaxSize = std::numeric_limits<size_t>::max();
   size_t iterations_left = count > kMaxSize / 10 ? kMaxSize : count * 10;
   size_t visited = 0;
-  const auto visit = [&visited, &visitor](const K& key, const V& value) {
+  // Accepts the key in whichever form the visitor takes it; see VisitBucket.
+  const auto visit = [&visited, &visitor](const auto& key, const V& value)
+    requires std::invocable<Visitor&, decltype(key), const V&>
+  {
     ++visited;
     visitor(key, value);
   };
@@ -724,7 +728,13 @@ void Dict<K, V, Hash, KeyEqual>::VisitBucket(const DictEntry* entry,
                                              Visitor& visitor) {
   while (entry != nullptr) {
     const DictEntry* const next = entry->next;
-    visitor(entry->key, entry->value);
+    if constexpr (std::invocable<Visitor&, const K&, const V&>) {
+      visitor(entry->key, entry->value);
+    } else {
+      // A visitor that takes a HashedKey gets the hash stored with the
+      // entry, so it can look the key up in another Dict without rehashing.
+      visitor(HashedKey(entry->key, entry->hash), entry->value);
+    }
     entry = next;
   }
 }

@@ -58,6 +58,7 @@ bool ParseScanOptions(Client* const client, size_t first, ScanTarget target,
       index += 2;
     } else if (has_value && utils::EqualsIgnoreCase(option, "MATCH")) {
       options->pattern = args[index + 1];
+      options->prefix = utils::GlobLiteralPrefix(*options->pattern);
       index += 2;
     } else if (has_value && target == ScanTarget::kKeyspace &&
                utils::EqualsIgnoreCase(option, "TYPE")) {
