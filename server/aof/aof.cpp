@@ -95,6 +95,9 @@ Aof::Aof(const Options& options, std::string directory)
       timestamp_enabled_(options.timestamp_enabled),
       rewrite_incremental_fsync_(options.rewrite_incremental_fsync),
       no_fsync_on_rewrite_(options.no_fsync_on_rewrite),
+      use_rdb_preamble_(options.use_rdb_preamble),
+      rdb_compression_(options.rdb_compression),
+      rdb_checksum_(options.rdb_checksum),
       file_ops_(options.file_ops != nullptr ? options.file_ops
                                             : DefaultFileOps()),
       jobs_(file_ops_.get()),

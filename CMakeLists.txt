@@ -313,7 +313,7 @@ add_test(
     $<TARGET_FILE:redis_simple>
 )
 
-foreach(variant IN ITEMS "" _io_threads)
+foreach(variant IN ITEMS "" _io_threads _command_base)
   add_test(
     NAME redis_simple_integration_aof${variant}
     COMMAND
@@ -341,6 +341,11 @@ set_tests_properties(
 set_tests_properties(
   redis_simple_integration_aof_io_threads
   PROPERTIES ENVIRONMENT "REDIS_SIMPLE_SERVER_ARGS=--io-threads 4"
+)
+# The base file as commands instead of Redis' default RDB preamble.
+set_tests_properties(
+  redis_simple_integration_aof_command_base
+  PROPERTIES ENVIRONMENT "REDIS_SIMPLE_SERVER_ARGS=--aof-use-rdb-preamble no"
 )
 
 add_test(
@@ -463,6 +468,7 @@ set_tests_properties(
   redis_simple_integration_server_lifecycle
   redis_simple_integration_aof
   redis_simple_integration_aof_io_threads
+  redis_simple_integration_aof_command_base
   redis_simple_integration_rdb
   redis_simple_integration_rdb_io_threads
   redis_simple_integration_command_connection
@@ -485,6 +491,7 @@ set_tests_properties(
   redis_simple_integration_command_list
   redis_simple_integration_command_zset
   redis_simple_integration_command_hash
+  redis_simple_integration_command_transaction
   PROPERTIES RESOURCE_LOCK redis_simple_port_8080
 )
 set_tests_properties(
@@ -494,7 +501,13 @@ set_tests_properties(
 set_tests_properties(
   redis_simple_integration_aof
   redis_simple_integration_aof_io_threads
+  redis_simple_integration_aof_command_base
   PROPERTIES RESOURCE_LOCK redis_simple_port_18081
+)
+set_tests_properties(
+  redis_simple_integration_rdb
+  redis_simple_integration_rdb_io_threads
+  PROPERTIES RESOURCE_LOCK redis_simple_port_18082
 )
 
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable benchmark's tests" FORCE)

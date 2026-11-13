@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Checks that redis_simple and redis-server each load the other's AOF
-# directory, in the command format (no RDB preamble).
+# directory, with the base file in each format: an RDB file
+# (aof-use-rdb-preamble yes, the default) and commands.
 #
 # Each direction runs every supported write command on one server, with a
 # rewrite in the middle so the directory holds a base file and incremental
@@ -36,6 +37,8 @@ simple_port="${INTEROP_PORT:-8600}"
 redis_port=$((simple_port + 1))
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/redis_simple_aof_interop.XXXXXX")"
 server_pid=""
+# yes or no: whether both servers write the base file as RDB.
+preamble=""
 
 cleanup() {
   if [[ -n "${server_pid}" ]] && kill -0 "${server_pid}" 2>/dev/null; then
@@ -92,7 +95,8 @@ wait_for_rewrite() {
 start_simple() {
   local dir="$1"
   (cd "${dir}" && exec "${simple_binary}" --port "${simple_port}" --save '' \
-      --appendonly yes --appenddirname appendonlydir) \
+      --appendonly yes --appenddirname appendonlydir \
+      --aof-use-rdb-preamble "${preamble}") \
       >"${work_dir}/server.log" 2>&1 &
   server_pid=$!
   wait_until_ready "${simple_port}"
@@ -102,7 +106,7 @@ start_redis() {
   local dir="$1"
   "${redis_binary}" --port "${redis_port}" --dir "${dir}" --save '' \
       --appendonly yes --appenddirname appendonlydir \
-      --aof-use-rdb-preamble no >"${work_dir}/server.log" 2>&1 &
+      --aof-use-rdb-preamble "${preamble}" >"${work_dir}/server.log" 2>&1 &
   server_pid=$!
   wait_until_ready "${redis_port}"
 }
@@ -237,7 +241,7 @@ dump_keyspace() {
 # Writes with `writer`, loads with `loader`, and compares the keyspaces.
 check_direction() {
   local writer="$1" loader="$2"
-  local dir="${work_dir}/${writer}_to_${loader}"
+  local dir="${work_dir}/${writer}_to_${loader}_preamble_${preamble}"
   mkdir -p "${dir}"
   "start_${writer}" "${dir}"
   local writer_port="${simple_port}" loader_port="${redis_port}"
@@ -248,6 +252,14 @@ check_direction() {
   write_data "${writer_port}"
   dump_keyspace "${writer_port}" >"${dir}/written.txt"
   stop_server
+  local suffix=aof
+  if [[ "${preamble}" == yes ]]; then
+    suffix=rdb
+  fi
+  if ! compgen -G "${dir}/appendonlydir/*.base.${suffix}" >/dev/null; then
+    echo "$0: ${writer} wrote no .base.${suffix} file" >&2
+    exit 1
+  fi
   "start_${loader}" "${dir}"
   dump_keyspace "${loader_port}" >"${dir}/loaded.txt"
   stop_server
@@ -255,9 +267,12 @@ check_direction() {
     echo "$0: ${loader} did not load ${writer}'s AOF as written" >&2
     exit 1
   fi
-  echo "${loader} loads ${writer}'s AOF: $(wc -l <"${dir}/written.txt") lines match"
+  echo "${loader} loads ${writer}'s AOF (aof-use-rdb-preamble ${preamble}):" \
+    "$(wc -l <"${dir}/written.txt") lines match"
 }
 
-check_direction simple redis
-check_direction redis simple
+for preamble in yes no; do
+  check_direction simple redis
+  check_direction redis simple
+done
 echo "AOF interoperability checks passed"

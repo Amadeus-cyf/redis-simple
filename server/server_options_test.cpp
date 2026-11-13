@@ -28,6 +28,20 @@ TEST(ServerOptionsTest, UsesDefaults) {
   EXPECT_EQ(result.options.rdb_options.save_points,
             (std::vector<rdb::SavePoint>{{3600, 1}, {300, 100}, {60, 10000}}));
   EXPECT_TRUE(result.options.rdb_options.stop_writes_on_error);
+  EXPECT_TRUE(result.options.aof_options.use_rdb_preamble);
+}
+
+TEST(ServerOptionsTest, ParsesAofUseRdbPreamble) {
+  constexpr std::array kArgv = {"redis_simple", "--aof-use-rdb-preamble", "no"};
+  OptionsResult result = ParseServerOptions(kArgv.size(), kArgv.data());
+  ASSERT_EQ(result.status, OptionsStatus::kOk);
+  EXPECT_FALSE(result.options.aof_options.use_rdb_preamble);
+
+  constexpr std::array kInvalid = {"redis_simple", "--aof-use-rdb-preamble",
+                                   "maybe"};
+  result = ParseServerOptions(kInvalid.size(), kInvalid.data());
+  EXPECT_EQ(result.status, OptionsStatus::kError);
+  EXPECT_EQ(result.error, "aof-use-rdb-preamble must be yes or no");
 }
 
 TEST(ServerOptionsTest, ParsesSavePoints) {
