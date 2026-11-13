@@ -1407,7 +1407,8 @@ TEST(AofTest, RewritesTheBaseAsAnRdbFile) {
   EXPECT_EQ(file.ManifestText(),
             "file appendonly.aof.1.base.rdb seq 1 type b\n"
             "file appendonly.aof.1.incr.aof seq 1 type i\n");
-  const int64_t expiration = utils::NowInMilliseconds() + int64_t{3600} * 1000;
+  constexpr int64_t kHourMs = int64_t{3600} * 1000;
+  const int64_t expiration = utils::NowInMilliseconds() + kHourMs;
   ASSERT_EQ(source->SetKey("text", db::RedisObject::CreateWithString("value"),
                            expiration),
             db::DbStatus::kOk);
