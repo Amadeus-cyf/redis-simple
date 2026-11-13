@@ -245,7 +245,6 @@ namespace {
 using LimitSpec = ::redis_simple::data_types::LimitSpec;
 using RangeByRankSpec = ::redis_simple::data_types::RangeByRankSpec;
 using RangeByScoreSpec = ::redis_simple::data_types::RangeByScoreSpec;
-using ZSetRangeVisitor = ::redis_simple::data_types::ZSetRangeVisitor;
 
 constexpr std::string_view kFlagByLex = "BYLEX";
 constexpr std::string_view kFlagByScore = "BYSCORE";
@@ -389,74 +388,6 @@ void ApplyRangeOptions(const RangeOptions& options, Spec* const spec) {
   }
 }
 
-RangeStatus RangeByRank(Client* const client, const CommandArgs& args,
-                        const RangeOptions& options,
-                        const ZSetRangeVisitor& visitor) {
-  RangeByRankSpec spec;
-  if (!ParseRankRange(args[1], args[2], &spec)) {
-    return RangeStatus::kNotAnInteger;
-  }
-  ApplyRangeOptions(options, &spec);
-
-  const auto [object, wrong_type] =
-      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
-  if (wrong_type) {
-    return RangeStatus::kWrongType;
-  }
-  if (object == nullptr) {
-    return RangeStatus::kOk;
-  }
-  object->ZSet()->ForEachInRankRange(&spec, visitor);
-  return RangeStatus::kOk;
-}
-
-RangeStatus RangeByScore(Client* const client, const CommandArgs& args,
-                         const RangeOptions& options,
-                         const ZSetRangeVisitor& visitor) {
-  RangeByScoreSpec spec;
-  const std::string_view start = options.reverse ? args[2] : args[1];
-  const std::string_view stop = options.reverse ? args[1] : args[2];
-  if (!ParseScoreRange(start, stop, &spec)) {
-    return RangeStatus::kNotAFloat;
-  }
-  ApplyRangeOptions(options, &spec);
-
-  const auto [object, wrong_type] =
-      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
-  if (wrong_type) {
-    return RangeStatus::kWrongType;
-  }
-  if (object == nullptr) {
-    return RangeStatus::kOk;
-  }
-  object->ZSet()->ForEachInScoreRange(&spec, visitor);
-  return RangeStatus::kOk;
-}
-
-RangeStatus RangeByLex(Client* const client, const CommandArgs& args,
-                       const RangeOptions& options,
-                       const ZSetRangeVisitor& visitor) {
-  data_types::RangeByLexSpec spec;
-  const std::string_view start = options.reverse ? args[2] : args[1];
-  const std::string_view stop = options.reverse ? args[1] : args[2];
-  if (!ParseLexTerm(start, &spec.min, &spec.minex) ||
-      !ParseLexTerm(stop, &spec.max, &spec.maxex)) {
-    return RangeStatus::kNotALexItem;
-  }
-  ApplyRangeOptions(options, &spec);
-
-  const auto [object, wrong_type] =
-      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
-  if (wrong_type) {
-    return RangeStatus::kWrongType;
-  }
-  if (object == nullptr) {
-    return RangeStatus::kOk;
-  }
-  object->ZSet()->ForEachInLexRange(&spec, visitor);
-  return RangeStatus::kOk;
-}
-
 // Encodes a range's members as they are visited, so a reply is built in one
 // pass without copying the members first. The array header needs the count,
 // so it is sent as a separate buffer in front of the elements.
@@ -465,7 +396,8 @@ class RangeReply {
   RangeReply(bool with_scores, reply::ProtocolVersion protocol)
       : with_scores_(with_scores), protocol_(protocol) {}
 
-  void Add(std::string_view member, double score) {
+  // Inline the encoders here: this runs once per member of a range.
+  [[gnu::flatten]] void Add(std::string_view member, double score) {
     // RESP3 pairs each member with its score in a nested array; RESP2
     // replies with one flat array.
     if (NestedScores()) {
@@ -493,6 +425,86 @@ class RangeReply {
   size_t count_{};
   std::string elements_;
 };
+
+RangeStatus RangeByRank(Client* const client, const CommandArgs& args,
+                        const RangeOptions& options, RangeReply* const reply) {
+  RangeByRankSpec spec;
+  if (!ParseRankRange(args[1], args[2], &spec)) {
+    return RangeStatus::kNotAnInteger;
+  }
+  ApplyRangeOptions(options, &spec);
+
+  const auto [object, wrong_type] =
+      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  if (wrong_type) {
+    return RangeStatus::kWrongType;
+  }
+  if (object == nullptr) {
+    return RangeStatus::kOk;
+  }
+  if (reply != nullptr) {
+    object->ZSet()->ForEachInRankRange(
+        &spec, [reply](std::string_view member, double score) {
+          reply->Add(member, score);
+        });
+  }
+  return RangeStatus::kOk;
+}
+
+RangeStatus RangeByScore(Client* const client, const CommandArgs& args,
+                         const RangeOptions& options, RangeReply* const reply) {
+  RangeByScoreSpec spec;
+  const std::string_view start = options.reverse ? args[2] : args[1];
+  const std::string_view stop = options.reverse ? args[1] : args[2];
+  if (!ParseScoreRange(start, stop, &spec)) {
+    return RangeStatus::kNotAFloat;
+  }
+  ApplyRangeOptions(options, &spec);
+
+  const auto [object, wrong_type] =
+      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  if (wrong_type) {
+    return RangeStatus::kWrongType;
+  }
+  if (object == nullptr) {
+    return RangeStatus::kOk;
+  }
+  if (reply != nullptr) {
+    object->ZSet()->ForEachInScoreRange(
+        &spec, [reply](std::string_view member, double score) {
+          reply->Add(member, score);
+        });
+  }
+  return RangeStatus::kOk;
+}
+
+RangeStatus RangeByLex(Client* const client, const CommandArgs& args,
+                       const RangeOptions& options, RangeReply* const reply) {
+  data_types::RangeByLexSpec spec;
+  const std::string_view start = options.reverse ? args[2] : args[1];
+  const std::string_view stop = options.reverse ? args[1] : args[2];
+  if (!ParseLexTerm(start, &spec.min, &spec.minex) ||
+      !ParseLexTerm(stop, &spec.max, &spec.maxex)) {
+    return RangeStatus::kNotALexItem;
+  }
+  ApplyRangeOptions(options, &spec);
+
+  const auto [object, wrong_type] =
+      LookupTyped(client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  if (wrong_type) {
+    return RangeStatus::kWrongType;
+  }
+  if (object == nullptr) {
+    return RangeStatus::kOk;
+  }
+  if (reply != nullptr) {
+    object->ZSet()->ForEachInLexRange(
+        &spec, [reply](std::string_view member, double score) {
+          reply->Add(member, score);
+        });
+  }
+  return RangeStatus::kOk;
+}
 
 void AddRangeError(Client* const client, RangeStatus status) {
   switch (status) {
@@ -539,25 +551,20 @@ void AddRangeReply(Client* const client, RangeType type, Direction direction) {
 
   RangeReply reply(options.with_scores, client->Protocol());
   // A negative LIMIT offset selects nothing, but the bounds and the key's
-  // type are still checked. Capturing only `reply` keeps the visitor inside
-  // std::function's inline storage.
-  const ZSetRangeVisitor visitor =
-      options.empty
-          ? ZSetRangeVisitor([](std::string_view, double) {})
-          : ZSetRangeVisitor([&reply](std::string_view member, double score) {
-              reply.Add(member, score);
-            });
+  // type are still checked, so the range functions run with no reply to
+  // fill.
+  RangeReply* const visited = options.empty ? nullptr : &reply;
   RangeStatus status = RangeStatus::kOk;
   switch (options.type) {
     case RangeType::kAuto:
     case RangeType::kRank:
-      status = RangeByRank(client, args, options, visitor);
+      status = RangeByRank(client, args, options, visited);
       break;
     case RangeType::kScore:
-      status = RangeByScore(client, args, options, visitor);
+      status = RangeByScore(client, args, options, visited);
       break;
     case RangeType::kLex:
-      status = RangeByLex(client, args, options, visitor);
+      status = RangeByLex(client, args, options, visited);
       break;
   }
   if (status != RangeStatus::kOk) {
@@ -664,24 +671,21 @@ void AddRankReply(Client* const client, bool reverse) {
   }
   const data_types::ZSet* const zset =
       object == nullptr ? nullptr : object->ZSet();
-  std::optional<size_t> rank =
-      zset == nullptr ? std::nullopt : zset->Rank(args[1]);
-  if (!rank.has_value()) {
+  const std::optional<data_types::ZSetRank> found =
+      zset == nullptr ? std::nullopt : zset->RankAndScore(args[1]);
+  if (!found.has_value()) {
     client->AddReply(with_score ? reply::NullArrayView(client->Protocol())
                                 : reply::NullView(client->Protocol()));
     return;
   }
-  if (reverse) {
-    rank = zset->Size() - 1 - *rank;
-  }
+  const size_t rank = reverse ? zset->Size() - 1 - found->rank : found->rank;
   std::string encoded;
   if (with_score) {
     reply::AppendArrayHeader(2, &encoded);
   }
-  encoded.append(reply::FromInt64(static_cast<int64_t>(*rank)));
+  encoded.append(reply::FromInt64(static_cast<int64_t>(rank)));
   if (with_score) {
-    reply::AppendFloat(zset->Score(args[1]).value_or(0), client->Protocol(),
-                       &encoded);
+    reply::AppendFloat(found->score, client->Protocol(), &encoded);
   }
   client->AddReply(std::move(encoded));
 }

@@ -93,19 +93,19 @@ constexpr int CompareIgnoreCase(std::string_view left, std::string_view right) {
 constexpr std::array kCommandTable = {
     WriteCommand("APPEND", string::HandleAppend, FixedArity(2), OneKey()),
     AllowBeforeAuth(
-        ConnectionCommand("AUTH", session::HandleAuth, VariableArity(1))),
+        ConnectionCommand("AUTH", connection::HandleAuth, VariableArity(1))),
     AdminCommand("BGREWRITEAOF", persistence::HandleBgRewriteAof,
                  FixedArity(0)),
     // Like Redis, any arguments but SCHEDULE are a syntax error.
     AdminCommand("BGSAVE", persistence::HandleBgSave, VariableArity(0)),
-    ConnectionCommand("CLIENT", session::HandleClient, VariableArity(1)),
+    ConnectionCommand("CLIENT", connection::HandleClient, VariableArity(1)),
     ReadCommand("DBSIZE", key::HandleDbSize, FixedArity(0)),
     WriteCommand("DECR", string::HandleDecr, FixedArity(1), OneKey()),
     WriteCommand("DECRBY", string::HandleDecrBy, FixedArity(2), OneKey()),
     WriteCommand("DEL", key::HandleDel, VariableArity(1), AllKeys()),
     RunsImmediatelyInMulti(ConnectionCommand(
         "DISCARD", transaction::HandleDiscard, FixedArity(0))),
-    ConnectionCommand("ECHO", session::HandleEcho, FixedArity(1)),
+    ConnectionCommand("ECHO", connection::HandleEcho, FixedArity(1)),
     RunsImmediatelyInMulti(
         ConnectionCommand("EXEC", transaction::HandleExec, FixedArity(0))),
     ReadCommand("EXISTS", key::HandleExists, VariableArity(1), AllKeys()),
@@ -115,7 +115,7 @@ constexpr std::array kCommandTable = {
     ReadCommand("GET", string::HandleGet, FixedArity(1), OneKey()),
     WriteCommand("HDEL", hash::HandleHDel, VariableArity(2), OneKey()),
     AllowBeforeAuth(
-        ConnectionCommand("HELLO", session::HandleHello, VariableArity(0))),
+        ConnectionCommand("HELLO", connection::HandleHello, VariableArity(0))),
     ReadCommand("HEXISTS", hash::HandleHExists, FixedArity(2), OneKey()),
     ReadCommand("HGET", hash::HandleHGet, FixedArity(2), OneKey()),
     ReadCommand("HGETALL", hash::HandleHGetAll, FixedArity(1), OneKey()),
@@ -147,10 +147,11 @@ constexpr std::array kCommandTable = {
     WriteCommand("PEXPIRE", key::HandlePExpire, VariableArity(2), OneKey()),
     WriteCommand("PEXPIREAT", key::HandlePExpireAt, VariableArity(2), OneKey()),
     // Redis refuses PING too, so health checks notice the failed save.
-    RefusedOnDiskError(ConnectionCommand("PING", session::HandlePing, {0, 1})),
+    RefusedOnDiskError(
+        ConnectionCommand("PING", connection::HandlePing, {0, 1})),
     ReadCommand("PTTL", key::HandlePTtl, FixedArity(1), OneKey()),
     AllowBeforeAuth(RunsImmediatelyInMulti(
-        ConnectionCommand("QUIT", session::HandleQuit, FixedArity(0)))),
+        ConnectionCommand("QUIT", connection::HandleQuit, FixedArity(0)))),
     WriteCommand("RENAME", key::HandleRename, FixedArity(2), {0, 1, 1}),
     WriteCommand("RPOP", list::HandleRPop, {1, 2}, OneKey()),
     WriteCommand("RPUSH", list::HandleRPush, VariableArity(2), OneKey()),
@@ -160,7 +161,7 @@ constexpr std::array kCommandTable = {
     ReadCommand("SCAN", key::HandleScan, VariableArity(1)),
     ReadCommand("SCARD", set::HandleSCard, FixedArity(1), OneKey()),
     ReadCommand("SDIFF", set::HandleSDiff, VariableArity(1), AllKeys()),
-    ConnectionCommand("SELECT", session::HandleSelect, FixedArity(1)),
+    ConnectionCommand("SELECT", connection::HandleSelect, FixedArity(1)),
     WriteCommand("SET", string::HandleSet, VariableArity(2), OneKey()),
     ReadCommand("SINTER", set::HandleSInter, VariableArity(1), AllKeys()),
     ReadCommand("SISMEMBER", set::HandleSIsMember, FixedArity(2), OneKey()),

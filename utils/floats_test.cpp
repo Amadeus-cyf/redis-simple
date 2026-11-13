@@ -18,14 +18,14 @@
 #include <vector>
 
 namespace redis_simple::utils {
-TEST(FloatUtilsTest, FormatsCommonValuesConcise) {
+TEST(FloatsTest, FormatsCommonValuesConcise) {
   EXPECT_EQ(FloatToString(0.0001), "0.0001");
   EXPECT_EQ(FloatToString(1.5), "1.5");
   EXPECT_EQ(FloatToString(99999.25), "99999.25");
   EXPECT_EQ(FloatToString(100000.0), "100000");
 }
 
-TEST(FloatUtilsTest, PreservesDoubleValuesExactly) {
+TEST(FloatsTest, PreservesDoubleValuesExactly) {
   const std::array values = {
       0.00001,
       1.0000234,
@@ -41,7 +41,7 @@ TEST(FloatUtilsTest, PreservesDoubleValuesExactly) {
   }
 }
 
-TEST(FloatUtilsTest, FormatsWholeNumbersAsPlainIntegers) {
+TEST(FloatsTest, FormatsWholeNumbersAsPlainIntegers) {
   // Every integer of magnitude at most 2^53 is exactly representable, so its
   // shortest round-trip text is just its digits.
   constexpr int64_t kMaxExact = int64_t{1} << 53;
@@ -90,7 +90,7 @@ TEST(FloatUtilsTest, FormatsWholeNumbersAsPlainIntegers) {
   EXPECT_EQ(FloatToString(-2.25), "-2.25");
 }
 
-TEST(FloatUtilsTest, FormatsLikeRedisFpconv) {
+TEST(FloatsTest, FormatsLikeRedisFpconv) {
   // Outputs of Redis 8.10's fpconv_dtoa (deps/fpconv), run on these inputs.
   const std::vector<std::pair<double, std::string_view>> cases = {
       {694867.4738744653, "6.948674738744653e+5"},
@@ -162,7 +162,7 @@ std::string ReferenceFormat(double value) {
 }
 }  // namespace
 
-TEST(FloatUtilsTest, ShortDecimalsMatchShortestRoundTripText) {
+TEST(FloatsTest, ShortDecimalsMatchShortestRoundTripText) {
   std::vector<double> values = {0.0001,
                                 0.00011,
                                 0.1,
@@ -208,7 +208,7 @@ TEST(FloatUtilsTest, ShortDecimalsMatchShortestRoundTripText) {
   }
 }
 
-TEST(FloatUtilsTest, PlainDecimalsParseLikeTheGeneralParser) {
+TEST(FloatsTest, PlainDecimalsParseLikeTheGeneralParser) {
   // The plain-decimal fast path must return exactly what Redis' string2d
   // (strtod with its checks) does, and leave every other form to it.
   const auto reference = [](std::string_view text, double* value) {
@@ -291,14 +291,14 @@ TEST(FloatUtilsTest, PlainDecimalsParseLikeTheGeneralParser) {
   }
 }
 
-TEST(FloatUtilsTest, FormatFloatWritesIntoTheBuffer) {
+TEST(FloatsTest, FormatFloatWritesIntoTheBuffer) {
   FloatBuffer buffer;
   const std::string_view text = FormatFloat(-12.75, &buffer);
   EXPECT_EQ(text, "-12.75");
   EXPECT_EQ(text.data(), buffer.data());
 }
 
-TEST(FloatUtilsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {
+TEST(FloatsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {
   double value = 0;
   EXPECT_TRUE(ToDouble("-1.25e+3", &value));
   EXPECT_EQ(value, -1250);
@@ -324,7 +324,7 @@ TEST(FloatUtilsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {
   EXPECT_TRUE(ToDouble(std::string(200, '1'), &value));
 }
 
-TEST(FloatUtilsTest, ParsesRangeBoundsLikeZslParseRange) {
+TEST(FloatsTest, ParsesRangeBoundsLikeZslParseRange) {
   double value = -1;
   EXPECT_TRUE(ToRangeDouble("", &value));
   EXPECT_EQ(value, 0);
@@ -338,7 +338,7 @@ TEST(FloatUtilsTest, ParsesRangeBoundsLikeZslParseRange) {
   EXPECT_FALSE(ToRangeDouble("abc", &value));
 }
 
-TEST(FloatUtilsTest, FormatsWith17DigitsLikeRedisLd2string) {
+TEST(FloatsTest, FormatsWith17DigitsLikeRedisLd2string) {
   const auto format = [](double value) {
     FloatBuffer buffer;
     return std::string(FormatFloatWith17Digits(value, &buffer));

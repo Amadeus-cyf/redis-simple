@@ -59,10 +59,6 @@ std::optional<double> ZSet::Score(std::string_view member) const {
   return storage_->Score(member);
 }
 
-std::optional<size_t> ZSet::Rank(std::string_view member) const {
-  return storage_->Rank(member);
-}
-
 size_t ZSet::Count(const RangeByScoreSpec* spec) const {
   return storage_->Count(spec);
 }

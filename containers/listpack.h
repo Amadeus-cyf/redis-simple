@@ -189,6 +189,10 @@ class Listpack {
   std::unique_ptr<unsigned char[]> listpack_;
   // Allocated bytes of listpack_; at least TotalBytes().
   size_t capacity_;
+  // Where Get(offset, length) formats an integer element. The pointer it
+  // returns is valid only until the next such Get on this listpack, and the
+  // buffer makes that Get unsafe to call from two threads at once, although
+  // it is const. The ForEach traversals use buffers of their own.
   mutable std::array<unsigned char, kListpackIntBufferSize> int_buffer_{};
 };
 
@@ -201,9 +205,12 @@ bool Listpack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   stop = std::min(stop, size - 1);
 
   size_t offset = Seek(start, size);
+  // Integers are formatted into a buffer of this call's own, so a visitor
+  // may read the listpack again without changing the value it was given.
+  std::array<unsigned char, kListpackIntBufferSize> int_buffer{};
   for (size_t index = start; index <= stop && listpack_[offset] != kListpackEof;
        ++index) {
-    const DecodedEntry entry = DecodeEntry(offset, int_buffer_.data());
+    const DecodedEntry entry = DecodeEntry(offset, int_buffer.data());
     if (!visitor(ValueView(entry))) {
       return false;
     }
@@ -223,8 +230,9 @@ bool Listpack::ForEachReverse(size_t start, size_t stop,
 
   size_t index = stop;
   std::optional<size_t> offset = Seek(stop, size);
+  std::array<unsigned char, kListpackIntBufferSize> int_buffer{};
   while (offset.has_value() && index >= start) {
-    if (!visitor(ValueView(DecodeEntry(*offset, int_buffer_.data())))) {
+    if (!visitor(ValueView(DecodeEntry(*offset, int_buffer.data())))) {
       return false;
     }
     if (index == 0) {

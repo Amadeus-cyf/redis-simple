@@ -23,7 +23,7 @@ void HandleType(Client* client);
 void HandleUnlink(Client* client);
 }  // namespace redis_simple::commands::key
 
-namespace redis_simple::commands::session {
+namespace redis_simple::commands::connection {
 void HandleAuth(Client* client);
 void HandleEcho(Client* client);
 void HandleHello(Client* client);
@@ -31,7 +31,7 @@ void HandleClient(Client* client);
 void HandleSelect(Client* client);
 void HandlePing(Client* client);
 void HandleQuit(Client* client);
-}  // namespace redis_simple::commands::session
+}  // namespace redis_simple::commands::connection
 
 namespace redis_simple::commands::transaction {
 void HandleDiscard(Client* client);

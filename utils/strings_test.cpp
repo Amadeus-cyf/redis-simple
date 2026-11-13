@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace redis_simple::utils {
-TEST(StringUtilsTest, Split) {
+TEST(StringsTest, Split) {
   const std::vector<std::string> str0 = Split("string for testing", " ");
   ASSERT_EQ(str0, std::vector<std::string>({"string", "for", "testing"}));
 
@@ -33,7 +33,7 @@ TEST(StringUtilsTest, Split) {
   ASSERT_EQ(str5, std::vector<std::string>({""}));
 }
 
-TEST(StringUtilsTest, SplitView) {
+TEST(StringsTest, SplitView) {
   const std::string command = "set key value";
   const std::vector<std::string_view> args = SplitView(command, " ");
 
@@ -51,7 +51,7 @@ TEST(StringUtilsTest, SplitView) {
   EXPECT_EQ(empty_delimiter[0], command);
 }
 
-TEST(StringUtilsTest, ShiftCString) {
+TEST(StringsTest, ShiftCString) {
   std::array<char, 14> s1 = {'t', 'e', 's', 't', '_', 'b', 'u',
                              'f', 'f', 'e', 'r', '_', '1'};
   ShiftCString(s1.data(), s1.size(), 10);
@@ -78,7 +78,7 @@ TEST(StringUtilsTest, ShiftCString) {
   ASSERT_EQ(s5, nullptr);
 }
 
-TEST(StringUtilsTest, ToUppercase) {
+TEST(StringsTest, ToUppercase) {
   std::string s1("test");
   ToUppercase(s1);
   ASSERT_EQ(s1, "TEST");
@@ -100,7 +100,7 @@ TEST(StringUtilsTest, ToUppercase) {
   ASSERT_EQ(s5, "123456_**&&&||||%%%%");
 }
 
-TEST(StringUtilsTest, ConstantTimeEquals) {
+TEST(StringsTest, ConstantTimeEquals) {
   EXPECT_TRUE(ConstantTimeEquals("", ""));
   EXPECT_TRUE(ConstantTimeEquals("secret", "secret"));
   EXPECT_FALSE(ConstantTimeEquals("secret", "Secret"));
@@ -109,7 +109,7 @@ TEST(StringUtilsTest, ConstantTimeEquals) {
   EXPECT_FALSE(ConstantTimeEquals(std::string_view("a\0", 2), "a"));
 }
 
-TEST(StringUtilsTest, EqualsIgnoreCase) {
+TEST(StringsTest, EqualsIgnoreCase) {
   EXPECT_TRUE(EqualsIgnoreCase("zrange", "ZRANGE"));
   EXPECT_TRUE(EqualsIgnoreCase("KeepTtl", "KEEPTTL"));
   EXPECT_TRUE(EqualsIgnoreCase("+inf", "+INF"));
@@ -117,7 +117,7 @@ TEST(StringUtilsTest, EqualsIgnoreCase) {
   EXPECT_FALSE(EqualsIgnoreCase("expire", "expires"));
 }
 
-TEST(StringUtilsTest, MatchesRedisStyleGlobs) {
+TEST(StringsTest, MatchesRedisStyleGlobs) {
   EXPECT_TRUE(MatchesGlob("", "*"));
   EXPECT_TRUE(MatchesGlob("user:42", "user:*"));
   EXPECT_TRUE(MatchesGlob("key7", "key?"));
@@ -134,7 +134,7 @@ TEST(StringUtilsTest, MatchesRedisStyleGlobs) {
   EXPECT_FALSE(MatchesGlob("", "?"));
 }
 
-TEST(StringUtilsTest, ToUint64MatchesRedisString2ull) {
+TEST(StringsTest, ToUint64MatchesRedisString2ull) {
   uint64_t value = 1;
   EXPECT_TRUE(ToUint64("0", &value));
   EXPECT_EQ(value, 0);
@@ -157,7 +157,7 @@ TEST(StringUtilsTest, ToUint64MatchesRedisString2ull) {
   EXPECT_FALSE(ToUint64("abc", &value));
 }
 
-TEST(StringUtilsTest, ToInt64) {
+TEST(StringsTest, ToInt64) {
   std::string s1("100234567");
   int64_t v1 = 0;
   ASSERT_TRUE(ToInt64(s1, &v1));
@@ -229,7 +229,7 @@ TEST(StringUtilsTest, ToInt64) {
   ASSERT_FALSE(ToInt64(s19, nullptr));
 }
 
-TEST(StringUtilsTest, Int64ToString) {
+TEST(StringsTest, Int64ToString) {
   std::array<char, 21> dst1{};
   std::string s1("1234567");
   ASSERT_EQ(Int64ToString(dst1, 1234567), 7);
@@ -269,7 +269,7 @@ TEST(StringUtilsTest, Int64ToString) {
   ASSERT_EQ(dst8[1], '\0');
 }
 
-TEST(StringUtilsTest, Uint64ToString) {
+TEST(StringsTest, Uint64ToString) {
   std::array<char, 21> dst1{};
   std::string s1("1234567");
   ASSERT_EQ(Uint64ToString(dst1, 1234567), 7);

@@ -12,7 +12,7 @@
 #include "server/version.h"
 #include "utils/strings.h"
 
-namespace redis_simple::commands::session {
+namespace redis_simple::commands::connection {
 namespace {
 constexpr std::string_view kWrongPass =
     "WRONGPASS invalid username-password pair or user is disabled.";
@@ -247,4 +247,4 @@ void HandleQuit(Client* const client) {
   client->AddReply(reply::kOk);
   client->CloseAfterReply();
 }
-}  // namespace redis_simple::commands::session
+}  // namespace redis_simple::commands::connection

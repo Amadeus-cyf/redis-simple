@@ -77,7 +77,7 @@ Guidance for AI coding agents working in this repository.
   avoid per-command headers unless a handler becomes a broader shared API.
   Implement handlers in one file per command family,
   `server/commands/<family>.cpp`, in the namespace of the same name
-  (`commands::key`, `string`, `list`, `set`, `zset`, `hash`, `session`,
+  (`commands::key`, `string`, `list`, `set`, `zset`, `hash`, `connection`,
   `transaction`, `persistence`, `info`); do not split a family into a file
   per command.
 - Name directories and namespaces for what they hold, and keep the two the
@@ -196,7 +196,11 @@ Guidance for AI coding agents working in this repository.
   Change stored keys through `Skiplist::Update`, which repositions them.
 - Sorted-set range commands (`ZRANGE` and its older forms) encode replies
   from `ZSet::ForEachInRankRange`, `ForEachInScoreRange`, and
-  `ForEachInLexRange`, which visit members where they are stored. The
+  `ForEachInLexRange`, which visit members where they are stored. They are
+  templates: the skiplist encoding, which holds the large sets, calls the
+  visitor directly (`ZSetSkiplist::VisitRankRange` and its siblings), since
+  a `std::function` call per member measurably slows a 1,000-member range;
+  the listpack encoding goes through the virtual interface. The
   vector-returning `RangeByRank`, `RangeByScore`, and `RangeByLex` copy
   entries and are for tests and tools. Do not bring back a result cache
   inside the storage: a listpack sorted set must stay as small after a range

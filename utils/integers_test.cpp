@@ -3,7 +3,7 @@
 #include <gtest/gtest.h>
 
 namespace redis_simple::utils {
-TEST(IntUtilsTest, CountsDecimalDigitsAtBoundaries) {
+TEST(IntegersTest, CountsDecimalDigitsAtBoundaries) {
   EXPECT_EQ(Digits10(0), 1);
   EXPECT_EQ(Digits10(9), 1);
   EXPECT_EQ(Digits10(10), 2);
