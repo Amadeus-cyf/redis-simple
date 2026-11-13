@@ -273,12 +273,15 @@ ctest --preset debug -L unit --output-on-failure
 ctest --preset debug -L integration --output-on-failure
 ```
 
-When changing behavior shared with Redis and a reference server is available,
-run the following, as the `redis-differential-check` skill describes (the
-last two check that each server loads the other's AOF directory and RDB
-file):
+When changing behavior shared with Redis, run the following against the
+latest stable Redis release, as the `redis-differential-check` skill
+describes (the last two check that each server loads the other's AOF
+directory and RDB file). `scripts/build_latest_redis.sh` builds that release
+without installing it, and CI's compatibility job runs the same checks with
+it:
 
 ```sh
+PATH="$(scripts/build_latest_redis.sh build/reference-redis):${PATH}"
 scripts/run_redis_compatibility_check.sh build/debug/redis_simple
 scripts/compare_with_redis.py build/debug/redis_simple
 scripts/compare_side_effects.py build/debug/redis_simple

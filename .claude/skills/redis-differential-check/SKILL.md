@@ -14,18 +14,18 @@ redis-server --version
 cmake --preset debug && cmake --build --preset debug --target redis_simple
 ```
 
-When the installed server is older than the latest release, build that
-release from source and pass it to the scripts; it needs no install:
+Always compare with the latest stable Redis release, not whichever version
+is installed. `scripts/build_latest_redis.sh` finds the newest release tag,
+builds it from source, and prints the directory holding its binaries; it
+installs nothing, and CI's compatibility job uses it too:
 
 ```sh
-git clone --depth 1 --branch 8.10.3 https://github.com/redis/redis.git
-make -C redis -j"$(nproc)" BUILD_TLS=no MALLOC=libc redis-server redis-cli
-scripts/compare_with_redis.py build/debug/redis_simple \
-  --redis-server redis/src/redis-server
-scripts/check_aof_interop.sh build/debug/redis_simple redis/src/redis-server
-scripts/check_rdb_interop.py build/debug/redis_simple \
-  --redis-server redis/src/redis-server
+PATH="$(scripts/build_latest_redis.sh build/reference-redis):${PATH}"
+redis-server --version
 ```
+
+With that directory first on `PATH`, every script below uses that server.
+Set `REDIS_VERSION` to build a specific release instead.
 
 ## 1. Command compatibility script
 

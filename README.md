@@ -707,8 +707,10 @@ avoiding duplicate branch-push runs and work on superseded commits.
 GitHub Actions runs debug, release, and ASan/UBSan matrices on macOS and Ubuntu
 26.04, so both event-loop pollers are built and tested. macOS also runs Apple
 `leaks`; Ubuntu runs LeakSanitizer, ThreadSanitizer, clang-format 22,
-clang-tidy 22, and bounded libFuzzer smoke tests. A separate Ubuntu job compares supported behavior with a
-real Redis instance through `redis-cli`:
+clang-tidy 22, and bounded libFuzzer smoke tests. A separate Ubuntu job builds the latest
+stable Redis release (`scripts/build_latest_redis.sh`) and compares
+supported behavior with it: replies, change counts and `WATCH`, and AOF and
+RDB files in both directions. Locally, the first of those checks is:
 
 ```sh
 cmake --preset debug
