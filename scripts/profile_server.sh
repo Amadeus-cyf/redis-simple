@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-readonly ALL_WORKLOADS="small-mix,pipelined-get,unpipelined,large-values,mid-values,collections,aof-writes,key-expiry"
+readonly ALL_WORKLOADS="small-mix,pipelined-get,unpipelined,large-values,mid-values,collections,aof-writes,key-expiry,rdb-save-load"
 
 usage() {
   echo "usage: $0 [-w workload[,workload...]] BINARY [BASELINE]" >&2
@@ -150,6 +150,8 @@ load_key_expiry() {
 profile() {
   local binary="$1" workload="$2" tag="$3"
   local output="${output_dir}/${tag}-${workload}.cg"
+  # Callgrind files of further servers the workload starts, counted too.
+  local -a extra_outputs=()
   case "${workload}" in
     small-mix)
       start_server "${binary}" "${output}"
@@ -196,15 +198,39 @@ profile() {
       start_server "${binary}" "${output}"
       load_key_expiry
       ;;
+    rdb-save-load)
+      # Fills the database with every type, saves it repeatedly, then loads
+      # the file in new servers. Filling costs the same in both builds, so
+      # a difference comes from saving or loading.
+      local dir="${output_dir}/${tag}-rdb"
+      mkdir -p "${dir}"
+      start_server "${binary}" "${output}" --dir "${dir}"
+      bench -n 20000 -c 10 -P 16 -r 20000 -t set,lpush,sadd,hset,zadd
+      for _ in $(seq 1 20); do
+        cli SAVE >/dev/null
+      done
+      local load
+      for load in 1 2 3; do
+        stop_server
+        extra_outputs+=("${output}.load${load}")
+        start_server "${binary}" "${output}.load${load}" --dir "${dir}"
+      done
+      ;;
     *)
       echo "$0: unknown workload ${workload}" >&2
       exit 1
       ;;
   esac
   stop_server
-  rm -rf "${output_dir}/${tag}-aof.aof"* "${output_dir}/${tag}-aof"
-  instructions="$(callgrind_annotate "${output}" 2>/dev/null |
-    awk '/PROGRAM TOTALS/ { gsub(",", "", $1); print $1 }')"
+  rm -rf "${output_dir}/${tag}-aof.aof"* "${output_dir}/${tag}-aof" \
+    "${output_dir}/${tag}-rdb"
+  instructions=0
+  local file count
+  for file in "${output}" ${extra_outputs[@]+"${extra_outputs[@]}"}; do
+    count="$(callgrind_annotate "${file}" 2>/dev/null |
+      awk '/PROGRAM TOTALS/ { gsub(",", "", $1); print $1 }')"
+    instructions=$((instructions + count))
+  done
 }
 
 IFS=',' read -r -a selected <<<"${workloads}"

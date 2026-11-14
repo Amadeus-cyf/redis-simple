@@ -31,12 +31,13 @@ Pick the tools the change calls for:
 
 | Change | Tool |
 | --- | --- |
-| Anything on the request path (parsing, command dispatch, replies, the database, the AOF) | `scripts/profile_server.sh build/release/redis_simple "${base}/build/release/redis_simple"` |
+| Anything on the request path (parsing, command dispatch, replies, the database, the AOF), and RDB saving or loading | `scripts/profile_server.sh build/release/redis_simple "${base}/build/release/redis_simple"` |
 | Object layout, encodings, or anything that changes memory per key | `scripts/measure_server_memory.sh build/release/redis_simple "${base}/build/release/redis_simple"` |
 | One component (a container, the parser, reply encoding) | `redis_simple_benchmarks`, below |
 
-`profile_server.sh` runs eight workloads under callgrind; `-w` picks some
-(`-w pipelined-get,aof-writes`). Set `PROFILE_OUTPUT_DIR` to keep the
+`profile_server.sh` runs nine workloads under callgrind; `-w` picks some
+(`-w pipelined-get,aof-writes`). `rdb-save-load` is the one that covers
+`SAVE` and loading at startup (`server/rdb/`). Set `PROFILE_OUTPUT_DIR` to keep the
 callgrind files for step 3. A change that should not affect performance,
 such as a refactor, stays within about 1% on every workload; anything more
 has a cause worth finding.

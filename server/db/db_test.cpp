@@ -29,6 +29,27 @@ TEST(RedisDbTest, SetLookupAndDeleteKey) {
   EXPECT_EQ(redis_db->DeleteKey("key"), DbStatus::kError);
 }
 
+TEST(RedisDbTest, AddKeyRefusesAnExistingKey) {
+  auto redis_db = RedisDb::Create();
+  constexpr int64_t kExpire = 4'102'444'800'000;
+
+  ASSERT_TRUE(
+      redis_db->AddKey("key", RedisObject::CreateWithString("first"), kExpire));
+  EXPECT_EQ(redis_db->Expiration("key"), kExpire);
+  // The existing value and TTL stay as they were.
+  EXPECT_FALSE(
+      redis_db->AddKey("key", RedisObject::CreateWithString("second"), 0));
+  const RedisObject* object = redis_db->LookupKey("key");
+  ASSERT_NE(object, nullptr);
+  EXPECT_EQ(object->String(), "first");
+  EXPECT_EQ(redis_db->Expiration("key"), kExpire);
+
+  ASSERT_TRUE(
+      redis_db->AddKey("plain", RedisObject::CreateWithString("value"), 0));
+  EXPECT_EQ(redis_db->Expiration("plain"), std::nullopt);
+  EXPECT_EQ(redis_db->KeyCount(), 2);
+}
+
 TEST(RedisDbTest, UnlinkRemovesKeyBeforeReclaimingValue) {
   auto redis_db = RedisDb::Create();
   const int64_t future = utils::NowInMilliseconds() + 60'000;

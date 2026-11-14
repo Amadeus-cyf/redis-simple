@@ -44,15 +44,23 @@ constexpr size_t kReadBufferBytes = size_t{64} * 1024;
 
 // Reads the file through a buffer, keeping the CRC64 of what was read and
 // how much of the file remains, which bounds every length the file claims.
+//
+// The CRC is taken over each buffer at once, when it is refilled or the CRC
+// is asked for, not over each small read: most reads are a byte or two.
 class Input {
  public:
   Input(int fd, size_t remaining) : fd_(fd), remaining_(remaining) {}
 
   [[nodiscard]] size_t Consumed() const { return consumed_; }
   [[nodiscard]] size_t Remaining() const { return remaining_ - consumed_; }
-  [[nodiscard]] uint64_t Crc() const { return crc_; }
 
-  bool Read(void* const out, size_t size, bool update_crc = true) {
+  // The CRC64 of every byte read so far.
+  [[nodiscard]] uint64_t Crc() {
+    AddReadBytesToCrc();
+    return crc_;
+  }
+
+  bool Read(void* const out, size_t size) {
     auto* destination = static_cast<char*>(out);
     if (size > Remaining()) {
       return false;
@@ -62,11 +70,7 @@ class Input {
         return false;
       }
       const size_t chunk = std::min(size, filled_ - position_);
-      const std::string_view bytes(buffer_.data() + position_, chunk);
-      if (update_crc) {
-        crc_ = utils::Crc64(crc_, bytes);
-      }
-      std::memcpy(destination, bytes.data(), chunk);
+      std::memcpy(destination, buffer_.data() + position_, chunk);
       destination += chunk;
       position_ += chunk;
       consumed_ += chunk;
@@ -76,11 +80,19 @@ class Input {
   }
 
  private:
+  void AddReadBytesToCrc() {
+    crc_ = utils::Crc64(crc_, std::string_view(buffer_.data() + crc_position_,
+                                               position_ - crc_position_));
+    crc_position_ = position_;
+  }
+
   bool Fill() {
+    AddReadBytesToCrc();
     while (true) {
       const ssize_t result = read(fd_, buffer_.data(), buffer_.size());
       if (result > 0) {
         position_ = 0;
+        crc_position_ = 0;
         filled_ = static_cast<size_t>(result);
         return true;
       }
@@ -97,6 +109,8 @@ class Input {
   std::array<char, kReadBufferBytes> buffer_{};
   size_t position_{};
   size_t filled_{};
+  // Where in `buffer_` the bytes not yet in `crc_` start.
+  size_t crc_position_{};
 };
 
 // Why reading a value stopped.
@@ -404,7 +418,17 @@ class Loader {
   ValueStatus ReadSet(int type, db::RedisObjectPtr* out);
   ValueStatus ReadZSet(int type, db::RedisObjectPtr* out);
   ValueStatus ReadHash(int type, db::RedisObjectPtr* out);
+  ValueStatus ReadZSetListpack(db::RedisObjectPtr* out);
+  bool InsertZSetEntry(std::string_view member, double score,
+                       data_types::ZSet* zset);
   bool ReadIntset(const std::string& blob, data_types::Set* set);
+  // Calls `visit(first, second)` for each pair of elements in a listpack of
+  // `kind` ("hash", "sorted set"), with the first as text. Returns false,
+  // after logging, if the listpack is corrupt or ends with half a pair, or
+  // as soon as `visit` does.
+  template <typename Visit>
+  bool ForEachListpackPair(std::string_view blob, std::string_view kind,
+                           const Visit& visit);
   bool SkipAux();
 
   Input input_;
@@ -515,6 +539,37 @@ CompactCheck Loader::CheckCompactListpack(std::string_view blob,
     return CompactCheck::kCorrupt;
   }
   return CompactCheck::kAdopt;
+}
+
+template <typename Visit>
+bool Loader::ForEachListpackPair(std::string_view blob, std::string_view kind,
+                                 const Visit& visit) {
+  containers::ListpackReader reader(blob);
+  containers::ListpackReader::Element element;
+  containers::ListpackReader::Status status =
+      containers::ListpackReader::Status::kEnd;
+  std::array<char, 21> buffer{};
+  // Owned, since an integer's text lives in `buffer` only until the next
+  // element is read.
+  std::string first;
+  bool have_first = false;
+  while ((status = reader.Next(&element)) ==
+         containers::ListpackReader::Status::kElement) {
+    if (!have_first) {
+      first.assign(ElementText(element, &buffer));
+      have_first = true;
+      continue;
+    }
+    have_first = false;
+    if (!visit(std::string_view(first), element)) {
+      return false;
+    }
+  }
+  if (status == containers::ListpackReader::Status::kCorrupt || have_first) {
+    return Corrupt(std::string("a ") + std::string(kind) +
+                   " listpack failed its integrity check");
+  }
+  return true;
 }
 
 ValueStatus Loader::ReadList(int type, db::RedisObjectPtr* const out) {
@@ -674,80 +729,36 @@ ValueStatus Loader::ReadSet(int type, db::RedisObjectPtr* const out) {
   return ValueStatus::kRead;
 }
 
+// Adds a member read from the file, rejecting what Redis rejects.
+bool Loader::InsertZSetEntry(std::string_view member, double score,
+                             data_types::ZSet* const zset) {
+  if (std::isnan(score)) {
+    return Corrupt("a sorted set score that is NaN");
+  }
+  if (!zset->InsertOrUpdate(member, score)) {
+    return Corrupt("duplicate sorted set members");
+  }
+  return true;
+}
+
 ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
-  std::unique_ptr<data_types::ZSet> zset = data_types::ZSet::Create();
+  if (type == kTypeZSetListpack) {
+    return ReadZSetListpack(out);
+  }
+  // ZSET_2 stores scores as binary doubles; the older ZSET as text.
+  uint64_t count = 0;
+  if (!ReadCount(&count)) {
+    return ValueStatus::kFailed;
+  }
+  std::unique_ptr<data_types::ZSet> zset =
+      data_types::ZSet::CreateForSize(count);
   std::string member;
-  const auto insert = [this, &zset](std::string_view member_view,
-                                    double score) {
-    if (std::isnan(score)) {
-      return Corrupt("a sorted set score that is NaN");
-    }
-    if (!zset->InsertOrUpdate(member_view, score)) {
-      return Corrupt("duplicate sorted set members");
-    }
-    return true;
-  };
-  if (type == kTypeZSet || type == kTypeZSet2) {
-    uint64_t count = 0;
-    if (!ReadCount(&count)) {
-      return ValueStatus::kFailed;
-    }
-    zset = data_types::ZSet::CreateForSize(count);
-    for (; count > 0; --count) {
-      double score = 0;
-      if (!ReadString(&member) ||
-          !(type == kTypeZSet2 ? ReadBinaryDouble(&score)
-                               : ReadTextDouble(&score)) ||
-          !insert(member, score)) {
-        return ValueStatus::kFailed;
-      }
-    }
-  } else {
-    // Listpack pairs: each member, then its score as Redis' d2string text,
-    // which the listpack may store as an integer.
-    std::string blob;
-    if (!ReadString(&blob)) {
-      return ValueStatus::kFailed;
-    }
-    switch (CheckCompactListpack(blob, kZSetKind)) {
-      case CompactCheck::kAdopt:
-        *out = db::RedisObject::CreateWithZSet(
-            data_types::ZSet::CreateFromListpack(
-                containers::Listpack::CreateFromBytes(blob)));
-        return ValueStatus::kRead;
-      case CompactCheck::kCorrupt:
-        return ValueStatus::kFailed;
-      case CompactCheck::kRebuild:
-        break;
-    }
-    containers::ListpackReader reader(blob);
-    containers::ListpackReader::Element element;
-    containers::ListpackReader::Status status =
-        containers::ListpackReader::Status::kEnd;
-    std::array<char, 21> buffer{};
-    bool expecting_score = false;
-    while ((status = reader.Next(&element)) ==
-           containers::ListpackReader::Status::kElement) {
-      if (!expecting_score) {
-        member.assign(ElementText(element, &buffer));
-        expecting_score = true;
-        continue;
-      }
-      expecting_score = false;
-      const std::optional<double> score =
-          element.is_integer ? static_cast<double>(element.integer)
-                             : utils::ToDouble(element.string);
-      if (!score.has_value()) {
-        Corrupt("an invalid sorted set score");
-        return ValueStatus::kFailed;
-      }
-      if (!insert(member, *score)) {
-        return ValueStatus::kFailed;
-      }
-    }
-    if (status == containers::ListpackReader::Status::kCorrupt ||
-        expecting_score) {
-      Corrupt("a sorted set listpack failed its integrity check");
+  for (; count > 0; --count) {
+    double score = 0;
+    if (!ReadString(&member) ||
+        !(type == kTypeZSet2 ? ReadBinaryDouble(&score)
+                             : ReadTextDouble(&score)) ||
+        !InsertZSetEntry(member, score, zset.get())) {
       return ValueStatus::kFailed;
     }
   }
@@ -758,16 +769,57 @@ ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
   return ValueStatus::kRead;
 }
 
+// Listpack pairs: each member, then its score as Redis' d2string text, which
+// the listpack may store as an integer.
+ValueStatus Loader::ReadZSetListpack(db::RedisObjectPtr* const out) {
+  std::string blob;
+  if (!ReadString(&blob)) {
+    return ValueStatus::kFailed;
+  }
+  switch (CheckCompactListpack(blob, kZSetKind)) {
+    case CompactCheck::kAdopt:
+      *out =
+          db::RedisObject::CreateWithZSet(data_types::ZSet::CreateFromListpack(
+              containers::Listpack::CreateFromBytes(blob)));
+      return ValueStatus::kRead;
+    case CompactCheck::kCorrupt:
+      return ValueStatus::kFailed;
+    case CompactCheck::kRebuild:
+      break;
+  }
+  std::unique_ptr<data_types::ZSet> zset = data_types::ZSet::Create();
+  const bool read = ForEachListpackPair(
+      blob, kZSetKind.name,
+      [this, &zset](std::string_view member,
+                    const containers::ListpackReader::Element& element) {
+        const std::optional<double> score =
+            element.is_integer ? static_cast<double>(element.integer)
+                               : utils::ToDouble(element.string);
+        if (!score.has_value()) {
+          return Corrupt("an invalid sorted set score");
+        }
+        return InsertZSetEntry(member, *score, zset.get());
+      });
+  if (!read) {
+    return ValueStatus::kFailed;
+  }
+  if (zset->Size() == 0) {
+    return ValueStatus::kEmpty;
+  }
+  *out = db::RedisObject::CreateWithZSet(std::move(zset));
+  return ValueStatus::kRead;
+}
+
 ValueStatus Loader::ReadHash(int type, db::RedisObjectPtr* const out) {
   std::unique_ptr<data_types::Hash> hash = data_types::Hash::Create();
-  std::string field;
-  std::string value;
   if (type == kTypeHash) {
     uint64_t count = 0;
     if (!ReadCount(&count)) {
       return ValueStatus::kFailed;
     }
     hash = data_types::Hash::CreateForSize(count);
+    std::string field;
+    std::string value;
     for (; count > 0; --count) {
       if (!ReadString(&field) || !ReadString(&value)) {
         return ValueStatus::kFailed;
@@ -793,28 +845,16 @@ ValueStatus Loader::ReadHash(int type, db::RedisObjectPtr* const out) {
       case CompactCheck::kRebuild:
         break;
     }
-    containers::ListpackReader reader(blob);
-    containers::ListpackReader::Element element;
-    containers::ListpackReader::Status status =
-        containers::ListpackReader::Status::kEnd;
     std::array<char, 21> buffer{};
-    bool expecting_value = false;
-    while ((status = reader.Next(&element)) ==
-           containers::ListpackReader::Status::kElement) {
-      if (!expecting_value) {
-        field.assign(ElementText(element, &buffer));
-        expecting_value = true;
-        continue;
-      }
-      expecting_value = false;
-      if (!hash->Set(field, ElementText(element, &buffer))) {
-        Corrupt("duplicate hash fields");
-        return ValueStatus::kFailed;
-      }
-    }
-    if (status == containers::ListpackReader::Status::kCorrupt ||
-        expecting_value) {
-      Corrupt("a hash listpack failed its integrity check");
+    const bool read = ForEachListpackPair(
+        blob, kHashKind.name,
+        [this, &hash, &buffer](
+            std::string_view field,
+            const containers::ListpackReader::Element& element) {
+          return hash->Set(field, ElementText(element, &buffer)) ||
+                 Corrupt("duplicate hash fields");
+        });
+    if (!read) {
       return ValueStatus::kFailed;
     }
   }
@@ -923,19 +963,19 @@ bool Loader::LoadKey(int type, std::optional<int64_t>* const expire) {
     ++stats_->keys_expired;
     return true;
   }
-  if (db_->LookupKey(key) != nullptr) {
+  if (!db_->AddKey(key, std::move(value), key_expire.value_or(0))) {
     return Corrupt("a duplicated key");
   }
-  db_->SetKey(key, std::move(value), key_expire.value_or(0));
   ++stats_->keys_loaded;
   return true;
 }
 
 bool Loader::VerifyChecksum() {
+  // Taken before the checksum itself is read, which it does not cover.
   const uint64_t expected = input_.Crc();
   uint64_t checksum = 0;
   std::array<unsigned char, 8> bytes{};
-  if (!input_.Read(bytes.data(), bytes.size(), /*update_crc=*/false)) {
+  if (!input_.Read(bytes.data(), bytes.size())) {
     return ShortRead();
   }
   for (size_t i = 0; i < bytes.size(); ++i) {
