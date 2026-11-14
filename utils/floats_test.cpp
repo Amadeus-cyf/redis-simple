@@ -286,9 +286,10 @@ TEST(FloatsTest, PlainDecimalsParseLikeTheGeneralParser) {
     actual = ToDouble(input);
     ASSERT_EQ(actual.has_value(), expected_ok) << input;
     if (expected_ok) {
-      EXPECT_EQ(std::signbit(*actual), std::signbit(expected)) << input;
+      EXPECT_EQ(std::signbit(actual.value_or(0)), std::signbit(expected))
+          << input;
       EXPECT_TRUE(actual == expected ||
-                  (std::isinf(*actual) && std::isinf(expected)))
+                  (std::isinf(actual.value_or(0)) && std::isinf(expected)))
           << input;
     }
   }
@@ -311,7 +312,7 @@ TEST(FloatsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {
   EXPECT_EQ(value, 1.5);
   value = ToDouble("+inf");
   EXPECT_TRUE(value.has_value());
-  EXPECT_TRUE(std::isinf(*value));
+  EXPECT_TRUE(std::isinf(value.value_or(0)));
   EXPECT_FALSE(ToDouble("nan").has_value());
   EXPECT_FALSE(ToDouble("1.5junk").has_value());
   EXPECT_FALSE(ToDouble(" 1.5").has_value());
@@ -326,7 +327,7 @@ TEST(FloatsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {
   EXPECT_EQ(value, 4);
   value = ToDouble("-Infinity");
   EXPECT_TRUE(value.has_value());
-  EXPECT_TRUE(std::isinf(*value) && *value < 0);
+  EXPECT_TRUE(std::isinf(value.value_or(0)) && value.value_or(0) < 0);
   EXPECT_FALSE(ToDouble("1e400").has_value());
   EXPECT_FALSE(ToDouble("1e-400").has_value());
   EXPECT_FALSE(ToDouble(std::string(200, '1') + "x").has_value());
@@ -344,7 +345,7 @@ TEST(FloatsTest, ParsesRangeBoundsLikeZslParseRange) {
   EXPECT_EQ(value, 2.5);
   value = ToRangeDouble("1e400");
   EXPECT_TRUE(value.has_value());
-  EXPECT_TRUE(std::isinf(*value));
+  EXPECT_TRUE(std::isinf(value.value_or(0)));
   value = ToRangeDouble("-inf");
   EXPECT_TRUE(value.has_value());
   EXPECT_FALSE(ToRangeDouble("nan").has_value());
