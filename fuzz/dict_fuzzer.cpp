@@ -45,14 +45,40 @@ void Verify(StringDict* dict, const DictModel& model) {
   Require(ReadWithIterator(*dict) == model);
 }
 
+// Restores the default resize policy when one input's operations end, so
+// the next input starts from the same state.
+class ResizePolicyReset {
+ public:
+  ResizePolicyReset() = default;
+  ResizePolicyReset(const ResizePolicyReset&) = delete;
+  ResizePolicyReset& operator=(const ResizePolicyReset&) = delete;
+  ResizePolicyReset(ResizePolicyReset&&) = delete;
+  ResizePolicyReset& operator=(ResizePolicyReset&&) = delete;
+  ~ResizePolicyReset() {
+    containers::SetDictResizePolicy(containers::DictResizePolicy::kEnabled);
+  }
+};
+
+containers::DictResizePolicy PolicyFor(uint8_t selector) {
+  switch (selector % 3) {
+    case 0:
+      return containers::DictResizePolicy::kEnabled;
+    case 1:
+      return containers::DictResizePolicy::kAvoid;
+    default:
+      return containers::DictResizePolicy::kForbidden;
+  }
+}
+
 void RunOperations(FuzzInput* input) {
+  const ResizePolicyReset reset;
   auto dict = StringDict::Create(input->ReadIndex(8) + 1);
   Require(dict != nullptr);
   DictModel model;
 
   for (size_t operation_count = 0; operation_count < 256 && input->HasData();
        ++operation_count) {
-    const uint8_t operation = input->ReadByte() % 7;
+    const uint8_t operation = input->ReadByte() % 8;
     const std::string key = input->ReadValue(64);
     const std::string value = input->ReadValue(96);
     switch (operation) {
@@ -92,6 +118,12 @@ void RunOperations(FuzzInput* input) {
         }
         break;
       }
+      case 7:
+        // As a fork and the end of a child do in the server: tables stop
+        // growing, shrinking, or rehashing, part-way through or not.
+        containers::SetDictResizePolicy(
+            PolicyFor(key.empty() ? 0 : static_cast<uint8_t>(key[0])));
+        break;
       default:
         break;
     }

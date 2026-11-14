@@ -173,7 +173,8 @@ class Dict {
     DictEntry* next{nullptr};
   };
 
-  static constexpr int kTableInitExp = 1;
+  // Four buckets, Redis' smallest table (DICT_HT_INITIAL_SIZE).
+  static constexpr int kTableInitExp = 2;
   static constexpr size_t kTableInitSize = size_t{1} << kTableInitExp;
   // Shrink once fewer than 1/kShrinkRatio of the buckets are in use.
   static constexpr size_t kShrinkRatio = 8;
@@ -217,8 +218,8 @@ class Dict {
     return tables_[table].empty() ? 0 : tables_[table].size() - 1;
   }
   bool IsRehashing() const { return rehash_index_.has_value(); }
-  void PauseRehashing() { ++pause_rehash_; }
-  void ResumeRehashing() {
+  void PauseRehashing() const { ++pause_rehash_; }
+  void ResumeRehashing() const {
     if (pause_rehash_ > 0) {
       --pause_rehash_;
     }
@@ -241,20 +242,27 @@ class Dict {
   std::array<std::vector<DictEntry*>, 2> tables_;
   std::array<size_t, 2> table_used_{};
   std::optional<size_t> rehash_index_;
-  size_t pause_rehash_{};
+  // How many scans and iterators need entries to stay in their table.
+  // Mutable so that reading through a const Dict can hold a rehash back.
+  mutable size_t pause_rehash_{};
 };
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
+// Walks every entry once. While an iterator lives the dict moves no entry
+// between its tables (as Redis' safe iterators arrange), so the dict may be
+// looked up, and other keys inserted, during the walk; inserted keys may or
+// may not be visited. Deleting entries or clearing the dict invalidates it.
 class Dict<K, V, Hash, KeyEqual>::Iterator {
  public:
   explicit Iterator(const Dict* dict);
-  Iterator& operator=(const Iterator& it) = default;
-  bool operator==(const Iterator& it) const = default;
+  Iterator(const Iterator& other);
+  Iterator& operator=(const Iterator& other);
+  ~Iterator() { dict_->ResumeRehashing(); }
+  bool operator==(const Iterator& other) const = default;
   bool Valid() const;
   void SeekToFirst();
   void SeekToLast();
   void Next();
-  Iterator& operator++();
   const K& Key() const { return entry_->key; }
   const V& Value() const { return entry_->value; }
   // The current key with the hash stored in its entry, so it can be looked
@@ -275,7 +283,31 @@ class Dict<K, V, Hash, KeyEqual>::Iterator {
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
 Dict<K, V, Hash, KeyEqual>::Iterator::Iterator(const Dict* dict)
-    : dict_(dict), table_(0), index_(std::nullopt), entry_(nullptr) {}
+    : dict_(dict), table_(0), index_(std::nullopt), entry_(nullptr) {
+  dict_->PauseRehashing();
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+Dict<K, V, Hash, KeyEqual>::Iterator::Iterator(const Iterator& other)
+    : dict_(other.dict_),
+      table_(other.table_),
+      index_(other.index_),
+      entry_(other.entry_) {
+  dict_->PauseRehashing();
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+typename Dict<K, V, Hash, KeyEqual>::Iterator&
+Dict<K, V, Hash, KeyEqual>::Iterator::operator=(const Iterator& other) {
+  // Pause the new dict before resuming the old one, in case they are the same.
+  other.dict_->PauseRehashing();
+  dict_->ResumeRehashing();
+  dict_ = other.dict_;
+  table_ = other.table_;
+  index_ = other.index_;
+  entry_ = other.entry_;
+  return *this;
+}
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
 bool Dict<K, V, Hash, KeyEqual>::Iterator::Valid() const {
@@ -310,13 +342,6 @@ void Dict<K, V, Hash, KeyEqual>::Iterator::SeekToLast() {
   }
   table_ = 0;
   index_ = std::nullopt;
-}
-
-template <typename K, typename V, typename Hash, typename KeyEqual>
-typename Dict<K, V, Hash, KeyEqual>::Iterator&
-Dict<K, V, Hash, KeyEqual>::Iterator::operator++() {
-  SeekToNextEntry();
-  return *this;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -541,7 +566,6 @@ void Dict<K, V, Hash, KeyEqual>::Clear() {
   ClearTable(0);
   ClearTable(1);
   rehash_index_ = std::nullopt;
-  pause_rehash_ = 0;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>

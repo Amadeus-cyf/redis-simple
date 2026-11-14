@@ -376,6 +376,33 @@ void ExpectHolds(Dict<int, int>* dict, int count) {
 }
 }  // namespace
 
+TEST(DictIntTest, LookupsDuringIterationKeepEveryEntryVisitedOnce) {
+  auto dict = Dict<int, int>::Create();
+  // Enough inserts to leave a rehash under way, which lookups would advance.
+  constexpr int kCount = 1000;
+  for (int i = 0; i < kCount; ++i) {
+    dict->Set(i, i);
+  }
+  std::vector<int> seen(kCount, 0);
+  {
+    auto it = Dict<int, int>::Iterator(dict.get());
+    it.SeekToFirst();
+    while (it.Valid()) {
+      ++seen[it.Key()];
+      for (int i = 0; i < 8; ++i) {
+        ASSERT_NE(dict->FindValue(i), nullptr);
+      }
+      it.Next();
+    }
+  }
+  EXPECT_EQ(std::ranges::count(seen, 1), kCount);
+  // Once the iterator is gone, lookups finish the rehash again.
+  for (int i = 0; i < 4 * kCount; ++i) {
+    ASSERT_NE(dict->FindValue(i % kCount), nullptr);
+  }
+  EXPECT_EQ(ScanPositions(dict.get()), 1024U);
+}
+
 TEST(DictResizePolicyTest, AvoidGrowsOnlyAtFourEntriesPerBucket) {
   // While a forked child shares memory, as Redis' DICT_RESIZE_AVOID.
   const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
