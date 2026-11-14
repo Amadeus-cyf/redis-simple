@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-readonly ALL_WORKLOADS="small-mix,pipelined-get,unpipelined,large-values,mid-values,collections,aof-writes,key-expiry,rdb-save-load"
+readonly ALL_WORKLOADS="small-mix,pipelined-get,unpipelined,large-values,mid-values,collections,aof-writes,key-expiry,rdb-save-load,aof-load"
 
 usage() {
   echo "usage: $0 [-w workload[,workload...]] BINARY [BASELINE]" >&2
@@ -197,6 +197,23 @@ profile() {
     key-expiry)
       start_server "${binary}" "${output}"
       load_key_expiry
+      ;;
+    aof-load)
+      # Writes with the AOF on, as aof-writes does, then replays the file in
+      # new servers. Writing costs the same as in aof-writes, so a difference
+      # beyond that workload's comes from loading.
+      local aof_dir="${output_dir}/${tag}-aof"
+      local -a aof_load_args=(--appendonly yes --appenddirname "${aof_dir}"
+        --appendfilename appendonly.aof --appendfsync no)
+      start_server "${binary}" "${output}" "${aof_load_args[@]}"
+      bench -n 30000 -c 10 -P 16 -r 10000 -t set,incr,lpush,hset,zadd
+      local replay
+      for replay in 1 2 3; do
+        stop_server
+        extra_outputs+=("${output}.load${replay}")
+        start_server "${binary}" "${output}.load${replay}" \
+          "${aof_load_args[@]}"
+      done
       ;;
     rdb-save-load)
       # Fills the database with every type, saves it repeatedly, then loads

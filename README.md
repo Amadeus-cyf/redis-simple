@@ -62,6 +62,12 @@ send `AUTH <password>` (or `AUTH default <password>`, or `HELLO <protover>
 AUTH default <password>`) before other commands, or disable the check with
 `--protected-mode no` on a trusted network.
 
+Client sockets are set up as Redis sets up its own: Nagle's algorithm is off
+(`TCP_NODELAY`), so a reply is not held back for the acknowledgment of the
+one before it, and the kernel probes a peer that has been silent for 300
+seconds (Redis' default `tcp-keepalive`), so a client whose machine vanished
+does not keep its connection forever. The interval is not configurable.
+
 Enable AOF persistence with Redis-style fsync policies:
 
 ```sh
@@ -553,10 +559,10 @@ scripts/profile_server.sh build/release/redis_simple path/to/baseline/redis_simp
 scripts/measure_server_memory.sh build/release/redis_simple path/to/baseline/redis_simple
 ```
 
-`profile_server.sh` runs nine workloads: a small command mix, pipelined and
+`profile_server.sh` runs ten workloads: a small command mix, pipelined and
 unpipelined `GET`/`SET`, 4 KB and 36-byte values, 1,000-member collection
-reads, writes with AOF on, keys with TTLs plus `SCAN`, and saving and
-loading an RDB file of every type. Pick some with
+reads, writes with AOF on, keys with TTLs plus `SCAN`, saving and loading
+an RDB file of every type, and replaying an AOF. Pick some with
 `-w`, for example `-w unpipelined,aof-writes`. It counts instructions rather
 than time because counts barely vary between runs, so differences of a few
 percent are reliable even on a busy or small machine. Counts miss cache-miss

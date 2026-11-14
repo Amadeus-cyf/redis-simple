@@ -3,7 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
+#include <forward_list>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -73,8 +73,10 @@ struct ParseState {
   // it has.
   bool authenticated{true};
   // Inline arguments that were quoted, unescaped. Views returned by Parse
-  // point here until ReleaseUnescaped().
-  std::deque<std::string> unescaped;
+  // point here until ReleaseUnescaped(). A list keeps each string in place
+  // and, unlike a deque, allocates nothing until one is added, so a state
+  // costs nothing to create for the clients that never send one.
+  std::forward_list<std::string> unescaped;
   // Scratch space for splitting an inline request.
   std::vector<std::string_view> inline_tokens;
 };
