@@ -14,6 +14,11 @@
 namespace redis_simple::containers {
 namespace {
 constexpr size_t kInitialCapacity = 4096;
+// The most capacity an empty buffer keeps. Without a limit, one large
+// request would hold its size for as long as its connection lives; Redis
+// shrinks idle query buffers for the same reason
+// (clientsCronResizeQueryBuffer).
+constexpr size_t kMaxIdleCapacity = size_t{64} * 1024;
 }  // namespace
 
 DynamicBuffer::DynamicBuffer()
@@ -49,7 +54,7 @@ void DynamicBuffer::Reserve(size_t n) {
     return;
   }
   if (processed_ > 0) {
-    Compact();
+    MoveUnreadToFront();
     if (capacity_ - size_ >= n) {
       return;
     }
@@ -59,6 +64,15 @@ void DynamicBuffer::Reserve(size_t n) {
 }
 
 void DynamicBuffer::Compact() {
+  MoveUnreadToFront();
+  if (size_ == 0 && capacity_ > kMaxIdleCapacity) {
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
+    buffer_.reset(new char[kInitialCapacity]);
+    capacity_ = kInitialCapacity;
+  }
+}
+
+void DynamicBuffer::MoveUnreadToFront() {
   if (processed_ == 0) {
     return;
   }

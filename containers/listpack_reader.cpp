@@ -60,6 +60,69 @@ uint64_t DecodeBacklen(const unsigned char* last, size_t available) {
   }
   return std::numeric_limits<uint64_t>::max();
 }
+// What an entry's first bytes say about it.
+struct EntryHeader {
+  // False for a first byte that is no encoding.
+  bool valid{true};
+  // The encoding's own bytes: the type byte and any length or integer bytes.
+  size_t header_bytes{1};
+  // The string bytes that follow; zero for an integer.
+  size_t payload_bytes{};
+  bool is_integer{};
+  int64_t integer{};
+};
+
+// Decodes the entry at `entry`, of which `available` bytes are in the
+// buffer, as Redis' lpCurrentEncodedSizeUnsafe and lpGetIntegerIfValid do.
+// A header longer than `available` is reported by its size alone; the
+// caller rejects it.
+EntryHeader DecodeEntryHeader(const unsigned char* const entry,
+                              size_t available) {
+  const unsigned char type = entry[0];
+  EntryHeader header;
+  if ((type & 0x80) == 0) {
+    // A 7-bit unsigned integer in the type byte.
+    header.is_integer = true;
+    header.integer = type & 0x7f;
+  } else if ((type & 0xc0) == 0x80) {
+    // A string with a 6-bit length.
+    header.payload_bytes = type & 0x3f;
+  } else if ((type & 0xe0) == 0xc0) {
+    // A 13-bit signed integer.
+    header.header_bytes = 2;
+    if (available >= 2) {
+      header.is_integer = true;
+      header.integer =
+          SignExtend((static_cast<uint64_t>(type & 0x1f) << 8) | entry[1], 13);
+    }
+  } else if ((type & 0xf0) == 0xe0) {
+    // A string with a 12-bit length.
+    header.header_bytes = 2;
+    if (available >= 2) {
+      header.payload_bytes = (static_cast<size_t>(type & 0x0f) << 8) | entry[1];
+    }
+  } else if (type == 0xf0) {
+    // A string with a 32-bit length.
+    header.header_bytes = 5;
+    if (available >= 5) {
+      header.payload_bytes = LoadLittleEndian(entry + 1, 4);
+    }
+  } else if (type >= 0xf1 && type <= 0xf4) {
+    // A 16-, 24-, 32-, or 64-bit signed integer.
+    static constexpr std::array<size_t, 4> kWidths = {2, 3, 4, 8};
+    const size_t width = kWidths[type - 0xf1];
+    header.header_bytes = 1 + width;
+    if (available >= header.header_bytes) {
+      header.is_integer = true;
+      header.integer = SignExtend(LoadLittleEndian(entry + 1, width),
+                                  static_cast<unsigned>(width * 8));
+    }
+  } else {
+    // 0xf5 to 0xfe are not encodings, and 0xff may only be the last byte.
+    header.valid = false;
+  }
+  return header;
+}
 }  // namespace
 
 bool ListpackReader::ReadHeader() {
@@ -98,52 +161,13 @@ ListpackReader::Status ListpackReader::Next(Element* const element) {
   }
   const unsigned char* const entry = bytes + offset_;
   const size_t available = limit - offset_;
-  const unsigned char type = entry[0];
-  // The encoding's header bytes (type and length), and the payload's size.
-  size_t header_bytes = 1;
-  size_t payload_bytes = 0;
-  *element = {};
-  if ((type & 0x80) == 0) {
-    element->is_integer = true;
-    element->integer = type & 0x7f;
-  } else if ((type & 0xc0) == 0x80) {
-    payload_bytes = type & 0x3f;
-  } else if ((type & 0xe0) == 0xc0) {
-    header_bytes = 2;
-    if (available >= 2) {
-      element->is_integer = true;
-      element->integer =
-          SignExtend((static_cast<uint64_t>(type & 0x1f) << 8) | entry[1], 13);
-    }
-  } else if ((type & 0xf0) == 0xe0) {
-    header_bytes = 2;
-    if (available >= 2) {
-      payload_bytes = (static_cast<size_t>(type & 0x0f) << 8) | entry[1];
-    }
-  } else if (type == 0xf0) {
-    header_bytes = 5;
-    if (available >= 5) {
-      payload_bytes = LoadLittleEndian(entry + 1, 4);
-    }
-  } else if (type >= 0xf1 && type <= 0xf4) {
-    static constexpr std::array<size_t, 4> kWidths = {2, 3, 4, 8};
-    const size_t width = kWidths[type - 0xf1];
-    header_bytes = 1 + width;
-    if (available >= header_bytes) {
-      element->is_integer = true;
-      element->integer = SignExtend(LoadLittleEndian(entry + 1, width),
-                                    static_cast<unsigned>(width * 8));
-    }
-  } else {
-    // 0xf5 to 0xfe are not encodings, and 0xff may only be the last byte.
+  const EntryHeader header = DecodeEntryHeader(entry, available);
+  if (!header.valid || header.header_bytes > available ||
+      header.payload_bytes > available - header.header_bytes) {
     offset_ = 0;
     return Status::kCorrupt;
   }
-  if (header_bytes > available || payload_bytes > available - header_bytes) {
-    offset_ = 0;
-    return Status::kCorrupt;
-  }
-  const size_t encoded_bytes = header_bytes + payload_bytes;
+  const size_t encoded_bytes = header.header_bytes + header.payload_bytes;
   const size_t backlen_bytes = BacklenBytes(encoded_bytes);
   if (backlen_bytes > available - encoded_bytes ||
       DecodeBacklen(entry + encoded_bytes + backlen_bytes - 1, backlen_bytes) !=
@@ -151,9 +175,13 @@ ListpackReader::Status ListpackReader::Next(Element* const element) {
     offset_ = 0;
     return Status::kCorrupt;
   }
-  if (!element->is_integer) {
+  *element = {};
+  element->is_integer = header.is_integer;
+  element->integer = header.integer;
+  if (!header.is_integer) {
     element->string = std::string_view(
-        reinterpret_cast<const char*>(entry + header_bytes), payload_bytes);
+        reinterpret_cast<const char*>(entry + header.header_bytes),
+        header.payload_bytes);
   }
   offset_ += encoded_bytes + backlen_bytes;
   ++count_;

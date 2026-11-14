@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <climits>
 #include <compare>
 #include <cstdint>
@@ -370,6 +371,57 @@ TEST(SkiplistTest, UpdateRepositionsByNewKey) {
                                          .limit = std::nullopt,
                                          .reverse = false})),
             (std::vector<std::string>{"1b", "2a", "2b", "3a", "5a"}));
+}
+
+TEST(SkiplistTest, UpdateKeepsRanksAndSpansConsistent) {
+  // Each update moves a node across the list without reallocating it, so
+  // every level's links and spans are rewritten around it.
+  Skiplist<int64_t> skiplist;
+  constexpr int64_t kKeys = 500;
+  // Keys are slot * kSlot + tag. Initial keys take the last tag and each
+  // update a tag of its own, so no two keys are ever equal.
+  constexpr int64_t kSlot = 4096;
+  std::vector<int64_t> keys;
+  for (int64_t slot = 0; slot < kKeys; ++slot) {
+    keys.push_back((slot * kSlot) + kSlot - 1);
+    skiplist.Insert(keys.back());
+  }
+  uint32_t state = 12345;
+  for (int64_t round = 0; round < 2000; ++round) {
+    state = (state * 1103515245) + 12345;
+    const size_t index = (state >> 8) % keys.size();
+    const int64_t moved_to = (((state >> 4) % kKeys) * kSlot) + round;
+    ASSERT_TRUE(skiplist.Update(keys[index],
+                                [moved_to](int64_t& key) { key = moved_to; }));
+    keys[index] = moved_to;
+  }
+  ASSERT_EQ(skiplist.Size(), static_cast<size_t>(kKeys));
+  std::vector<int64_t> sorted = keys;
+  std::ranges::sort(sorted);
+  for (size_t rank = 0; rank < sorted.size(); ++rank) {
+    EXPECT_EQ(skiplist.FindKeyByRank(static_cast<int64_t>(rank)), sorted[rank]);
+    EXPECT_EQ(skiplist.FindRankOfKey(sorted[rank]), rank);
+  }
+  // Backward links, which Update rewrites too.
+  size_t rank = sorted.size();
+  for (auto it = skiplist.Last(); it.Valid(); --it) {
+    EXPECT_EQ(*it, sorted[--rank]);
+  }
+  EXPECT_EQ(rank, 0);
+}
+
+TEST(SkiplistTest, NodeLevelsFollowRedisDistribution) {
+  // A quarter of the nodes reach each further level, so the search path
+  // through 100,000 keys stays short. Ranks depend on every level's spans.
+  Skiplist<int64_t> skiplist;
+  constexpr int64_t kKeys = 100'000;
+  for (int64_t key = 0; key < kKeys; ++key) {
+    skiplist.Insert(key);
+  }
+  for (const int64_t key : {int64_t{0}, int64_t{1}, kKeys / 3, kKeys - 1}) {
+    EXPECT_EQ(skiplist.FindRankOfKey(key), static_cast<size_t>(key));
+    EXPECT_EQ(skiplist.FindKeyByRank(key), key);
+  }
 }
 
 TEST(SkiplistTest, Iteration) {
