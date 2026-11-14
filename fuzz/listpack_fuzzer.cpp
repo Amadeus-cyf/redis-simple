@@ -9,6 +9,7 @@
 #include "containers/listpack.h"
 #include "fuzz/fuzz_input.h"
 #include "fuzz/sequence_model.h"
+#include "utils/strings.h"
 
 namespace redis_simple::fuzz {
 namespace {
@@ -39,6 +40,10 @@ void Verify(const Listpack& listpack, const std::vector<std::string>& model) {
   for (size_t index = 0; index < model.size(); ++index) {
     const auto listpack_index = listpack.OffsetAt(index);
     Require(listpack.Get(ValueOrAbort(listpack_index)) == model[index]);
+    // An element is stored as an integer exactly when its text is one in
+    // canonical form.
+    Require(listpack.IntegerAt(ValueOrAbort(listpack_index)) ==
+            utils::ToInt64(model[index]));
   }
   Require(!listpack.OffsetAt(model.size()).has_value());
 }
@@ -115,12 +120,14 @@ void RunOperations(FuzzInput* input) {
         break;
       }
       case 9: {
-        const std::string second = input->ReadValue(96);
+        // A string, then an integer given as one, as a hash field and a
+        // counter or a sorted-set member and its score are appended.
+        const int64_t second = input->ReadInt64();
         const std::vector<Listpack::ListpackEntry> entries = {
-            {value, 0, false}, {second, 0, false}};
+            {value, 0, false}, {"", second, true}};
         Require(listpack.BatchAppend(entries));
         model.push_back(value);
-        model.push_back(second);
+        model.push_back(std::to_string(second));
         break;
       }
       case 10: {

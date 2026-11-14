@@ -10,40 +10,16 @@
 #include <vector>
 
 #include "cli/cli.h"
+#include "integration/client_helpers.h"
 #include "logging/logger.h"
 
 namespace redis_simple {
 namespace {
+using integration::Case;
+using integration::ExpectReply;
+using integration::NonEmptyLines;
+
 constexpr int kAofPort = 18081;
-
-struct Case {
-  std::string command;
-  std::string expected_reply;
-};
-
-bool ExpectReply(cli::RedisCli* const cli, const Case& test_case) {
-  cli->AddCommand(test_case.command);
-  const std::string reply = cli->ReadReply();
-  if (reply == test_case.expected_reply) {
-    return true;
-  }
-  RS_LOG_DEBUG("AOF command failed: %s expected: %s actual: %s\n",
-               test_case.command.c_str(), test_case.expected_reply.c_str(),
-               reply.c_str());
-  return false;
-}
-
-std::vector<std::string> NonEmptyLines(const std::string& reply) {
-  std::stringstream stream(reply);
-  std::string line;
-  std::vector<std::string> lines;
-  while (std::getline(stream, line)) {
-    if (!line.empty()) {
-      lines.push_back(line);
-    }
-  }
-  return lines;
-}
 
 bool WriteDataset(cli::RedisCli* const cli) {
   const std::vector<Case> cases = {

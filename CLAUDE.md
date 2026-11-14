@@ -376,7 +376,10 @@ Before committing, run the relevant build and tests.
 - Register unit tests in CTest by GoogleTest suite through
   `redis_simple_add_gtest_suite`, so failures identify the affected suite while
   preserving same-suite fixture behavior.
-- Integration tests live under `integration/`.
+- Integration tests live under `integration/`. Helpers more than one of
+  them needs (`Case`, `ExpectReply`, `NonEmptyLines`, `ScanAll`) live in
+  `integration/client_helpers.h`; add shared ones there instead of copying
+  them into each test.
 - Stateful libFuzzer harnesses live under `fuzz/`, compare operations against
   simple reference models where practical, and use bounded CTest smoke runs
   for CI.

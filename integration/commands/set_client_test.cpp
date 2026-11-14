@@ -8,38 +8,17 @@
 #include <vector>
 
 #include "cli/cli.h"
+#include "integration/client_helpers.h"
 #include "logging/logger.h"
 
 namespace redis_simple {
 namespace {
-struct Case {
-  std::string command;
-  std::string expected_reply;
-};
-
-std::vector<std::string> NonEmptyLines(const std::string& reply) {
-  std::stringstream stream(reply);
-  std::string line;
-  std::vector<std::string> lines;
-  while (std::getline(stream, line)) {
-    if (!line.empty()) {
-      lines.push_back(line);
-    }
-  }
-  return lines;
-}
-
-bool ExpectReply(cli::RedisCli* cli, const Case& test_case) {
-  cli->AddCommand(test_case.command);
-  const std::string reply = cli->ReadReply();
-  if (reply != test_case.expected_reply) {
-    RS_LOG_DEBUG("command failed: %s expected: %s actual: %s\n",
-                 test_case.command.c_str(), test_case.expected_reply.c_str(),
-                 reply.c_str());
-    return false;
-  }
-  return true;
-}
+using integration::Case;
+using integration::ExpectLines;
+using integration::ExpectReply;
+using integration::NonEmptyLines;
+using integration::ReplyLines;
+using integration::ScanAll;
 
 bool ExpectMembers(cli::RedisCli* cli, const std::string& command,
                    std::vector<std::string> expected_members) {
@@ -50,48 +29,6 @@ bool ExpectMembers(cli::RedisCli* cli, const std::string& command,
   if (actual_members != expected_members) {
     RS_LOG_DEBUG("member command failed: %s\n", command.c_str());
     return false;
-  }
-  return true;
-}
-// Sends `command` and returns the non-empty lines of its reply.
-std::vector<std::string> ReplyLines(
-    cli::RedisCli* cli, const std::vector<std::string_view>& command) {
-  cli->AddCommand(command);
-  return NonEmptyLines(cli->ReadReply());
-}
-
-// Runs `command key cursor options...` from cursor 0 until the cursor
-// returns to 0, and returns every element the steps returned.
-std::vector<std::string> ScanAll(cli::RedisCli* cli, std::string_view command,
-                                 std::string_view key,
-                                 const std::vector<std::string_view>& options) {
-  std::vector<std::string> elements;
-  std::string cursor = "0";
-  while (true) {
-    std::vector<std::string_view> request = {command, key, cursor};
-    request.insert(request.end(), options.begin(), options.end());
-    std::vector<std::string> lines = ReplyLines(cli, request);
-    if (lines.empty()) {
-      return {};
-    }
-    cursor = lines[0];
-    elements.insert(elements.end(), std::make_move_iterator(lines.begin() + 1),
-                    std::make_move_iterator(lines.end()));
-    if (cursor == "0") {
-      return elements;
-    }
-  }
-}
-
-// Runs `requests` and compares each reply's lines, in order, to `expected`.
-bool ExpectLines(cli::RedisCli* cli,
-                 const std::vector<std::vector<std::string_view>>& requests,
-                 const std::vector<std::vector<std::string>>& expected) {
-  for (size_t i = 0; i < requests.size(); ++i) {
-    if (ReplyLines(cli, requests[i]) != expected[i]) {
-      RS_LOG_DEBUG("request %zu failed\n", i);
-      return false;
-    }
   }
   return true;
 }
