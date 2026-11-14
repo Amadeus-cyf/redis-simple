@@ -112,7 +112,7 @@ still runs (`aof_delayed_fsync` counts the times it stopped waiting), so an
 operating-system crash can cost about the last two seconds. `always` syncs each
 batch (group commit), and `no` leaves syncing to the operating system. Graceful
 shutdown writes and syncs everything pending. `--no-appendfsync-on-rewrite yes`
-skips syncs while a rewrite runs, and `--aof-timestamp-enabled yes` writes
+skips syncs while a rewrite or a background save runs, and `--aof-timestamp-enabled yes` writes
 Redis' `#TS:` annotations, which loading skips.
 
 `BGREWRITEAOF` compacts command history. It first switches appends to a new

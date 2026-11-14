@@ -121,7 +121,9 @@ only after that, on the background thread.
 
 `Aof::Append` only encodes a mutation into a buffer (Redis' `aof_buf`).
 Commands whose effect depends on the clock are recorded by their result: a
-relative TTL becomes an absolute `PEXPIREAT`. An `EXEC`'s records are wrapped
+relative TTL becomes an absolute `PEXPIREAT`, and a `SET` with options
+becomes the value and TTL it left (a `SET` without options is recorded as
+given, since it has only one outcome). An `EXEC`'s records are wrapped
 in `MULTI`/`EXEC` records when there is more than one, so replay applies all
 or none of them.
 
@@ -129,7 +131,8 @@ or none of them.
 `everysec` it queues an fsync on the background thread once a second, and
 when a sync is still running it postpones the write for up to two seconds,
 since on Linux the write would block behind it. With `always` it syncs on the
-event-loop thread.
+event-loop thread. After a write, a buffer that grew past 1 MiB is released,
+so one huge command does not keep its size in memory.
 
 A failed write cuts any partial write back off the file and keeps the buffer
 to retry, and write commands and `PING` get `-MISCONF` until a write succeeds

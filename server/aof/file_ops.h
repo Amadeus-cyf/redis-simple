@@ -42,13 +42,10 @@ bool PathExists(const std::string& path);
 bool IsDirectory(const std::string& path);
 std::optional<std::string> ReadWholeFile(const std::string& path);
 
-// Writes as much of `data` as the file takes, retrying short and interrupted
-// writes. Returns the bytes written; on an error, sets `error_number`.
-size_t WritePrefix(FileOps* file_ops, int fd, std::string_view data,
-                   int* error_number);
 // Writes all of `data`, retrying short and interrupted writes, as Redis'
 // aofWrite. Returns the bytes written, or -1 if an error stopped it before the
-// first byte.
+// first byte. After anything less than all of `data`, errno says why (ENOSPC
+// when the file took no more without an error).
 ssize_t WriteAll(FileOps* file_ops, int fd, std::string_view data);
 
 // The most iovecs one writev() accepts.

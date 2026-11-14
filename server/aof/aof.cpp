@@ -34,6 +34,10 @@ namespace {
 constexpr std::chrono::seconds kSyncInterval{1};
 constexpr std::chrono::seconds kMaxFlushPostpone{2};
 constexpr std::chrono::seconds kWriteErrorLogInterval{30};
+// The most buffer capacity a flush keeps for the next batch. Redis keeps
+// under 4000 bytes; a pipelined batch is often larger, and reallocating for
+// each would cost more than holding this much.
+constexpr size_t kMaxRetainedBufferBytes = size_t{1024} * 1024;
 }  // namespace
 
 std::string_view ErrorName(AofError error) {
@@ -64,7 +68,7 @@ std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
   // Redis' startup: load the manifest (upgrading a single-file AOF), replay
   // the files, create a base file if there is none, open the last
   // incremental file, and delete history files.
-  auto aof = std::unique_ptr<Aof>(new Aof(options, options.directory));
+  auto aof = std::unique_ptr<Aof>(new Aof(options));
   if (!aof->LoadManifest() || !aof->Replay(db)) {
     return nullptr;
   }
@@ -83,8 +87,8 @@ std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
   return aof;
 }
 
-Aof::Aof(const Options& options, std::string directory)
-    : directory_(std::move(directory)),
+Aof::Aof(const Options& options)
+    : directory_(options.directory),
       file_name_(options.file_name),
       fsync_(options.fsync),
       auto_rewrite_min_bytes_(options.auto_rewrite_min_bytes),
@@ -135,10 +139,7 @@ bool Aof::Append(std::string_view command,
     database_selected_ = true;
     batch_.append(kSelectRecord);
   }
-  const size_t batch_size = batch_.size();
   if (!EncodeMutation(command, args, db, &batch_)) {
-    // Drop any partially encoded record so the batch stays replayable.
-    batch_.resize(batch_size);
     return false;
   }
   if (in_transaction_) {
@@ -170,59 +171,79 @@ bool Aof::Flush(bool force) {
   // is scheduled, so a transaction's records are never split.
   RS_CHECK(!in_transaction_);
   LogSyncFailure();
+  if (batch_.empty() && increment_fsync_offset_ == increment_size_) {
+    // Nothing to write or sync: the common case for a batch of reads.
+    return true;
+  }
   const auto now = std::chrono::steady_clock::now();
-  bool sync_in_progress = false;
+  const bool sync_in_progress =
+      fsync_ == FsyncPolicy::kEverySecond && jobs_.PendingFsyncs() != 0;
   if (batch_.empty()) {
-    if (increment_fsync_offset_ == increment_size_) {
-      return true;
-    }
     // Written but not yet synced: with `everysec`, sync once a second even
     // when no new writes come; with `always`, after a policy change.
-    if (fsync_ == FsyncPolicy::kEverySecond) {
-      if (now - last_fsync_ < kSyncInterval || (jobs_.PendingFsyncs() != 0)) {
-        return true;
-      }
-    } else if (fsync_ != FsyncPolicy::kAlways) {
+    const bool sync_due =
+        fsync_ == FsyncPolicy::kAlways ||
+        (fsync_ == FsyncPolicy::kEverySecond &&
+         now - last_fsync_ >= kSyncInterval && !sync_in_progress);
+    if (!sync_due) {
       return true;
     }
   } else {
-    if (fsync_ == FsyncPolicy::kEverySecond) {
-      sync_in_progress = (jobs_.PendingFsyncs() != 0);
+    if (sync_in_progress && !force && PostponeWrite(now)) {
+      return true;
     }
-    if (fsync_ == FsyncPolicy::kEverySecond && !force && sync_in_progress) {
-      // On Linux a write blocks behind a running fsync of the same file, so
-      // wait for it, but not for more than two seconds.
-      if (!flush_postponed_start_.has_value()) {
-        flush_postponed_start_ = now;
-        return true;
-      }
-      if (now - *flush_postponed_start_ < kMaxFlushPostpone) {
-        return true;
-      }
-      ++delayed_fsyncs_;
-      RS_LOG_INFO(
-          "Asynchronous AOF fsync is taking too long (disk is busy?). Writing "
-          "the AOF buffer without waiting for fsync to complete, this may "
-          "slow down the server.\n");
-    }
-    const ssize_t written = WriteAll(file_ops_.get(), fd_, batch_);
-    flush_postponed_start_.reset();
-    if (std::cmp_not_equal(written, batch_.size())) {
-      FailWrite(written);
+    if (!WriteBatch()) {
       // With `always` the replies already promise durability, so stop.
       return fsync_ != FsyncPolicy::kAlways;
     }
-    if (write_failed_) {
-      RS_LOG_INFO(
-          "AOF write error looks solved, the server can write again.\n");
-      write_failed_ = false;
-    }
-    current_size_ += batch_.size();
-    increment_size_ += batch_.size();
+  }
+  return SyncAfterFlush(now, sync_in_progress);
+}
+
+bool Aof::PostponeWrite(std::chrono::steady_clock::time_point now) {
+  // On Linux a write blocks behind a running fsync of the same file, so
+  // wait for it, but not for more than two seconds.
+  if (!flush_postponed_start_.has_value()) {
+    flush_postponed_start_ = now;
+    return true;
+  }
+  if (now - *flush_postponed_start_ < kMaxFlushPostpone) {
+    return true;
+  }
+  ++delayed_fsyncs_;
+  RS_LOG_INFO(
+      "Asynchronous AOF fsync is taking too long (disk is busy?). Writing "
+      "the AOF buffer without waiting for fsync to complete, this may "
+      "slow down the server.\n");
+  return false;
+}
+
+bool Aof::WriteBatch() {
+  const ssize_t written = WriteAll(file_ops_.get(), fd_, batch_);
+  flush_postponed_start_.reset();
+  if (std::cmp_not_equal(written, batch_.size())) {
+    FailWrite(written);
+    return false;
+  }
+  if (write_failed_) {
+    RS_LOG_INFO("AOF write error looks solved, the server can write again.\n");
+    write_failed_ = false;
+  }
+  current_size_ += batch_.size();
+  increment_size_ += batch_.size();
+  if (batch_.capacity() > kMaxRetainedBufferBytes) {
+    // One huge command must not pin its size in memory from then on.
+    // Swapping frees the buffer; assigning an empty string would keep it.
+    std::string().swap(batch_);
+  } else {
     batch_.clear();
   }
+  return true;
+}
 
-  if (no_fsync_on_rewrite_ && rewrite_child_ > 0) {
+bool Aof::SyncAfterFlush(std::chrono::steady_clock::time_point now,
+                         bool sync_in_progress) {
+  if (no_fsync_on_rewrite_ && (rewrite_child_ > 0 || other_child_running_)) {
     return true;
   }
   if (fsync_ == FsyncPolicy::kAlways) {
@@ -372,30 +393,27 @@ std::string Aof::ManifestPath() const {
   return FilePath(ManifestFileName(file_name_));
 }
 
-AofError Aof::PersistManifest(const Manifest& manifest) {
+Aof::Failure Aof::PersistManifest(const Manifest& manifest) {
   const std::string temp_path =
       FilePath(std::string(kTempPrefix) + ManifestFileName(file_name_));
   const int fd = OpenFile(temp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (fd < 0) {
+    const int open_errno = errno;
     RS_LOG_ERROR("Can't open the temporary manifest file %s: %s\n",
-                 temp_path.c_str(), std::strerror(errno));
-    return AofError::kWrite;
+                 temp_path.c_str(), std::strerror(open_errno));
+    return {AofError::kWrite, open_errno};
   }
   const std::string text = manifest.Encode();
-  int error_number = 0;
   const bool written =
-      WritePrefix(file_ops_.get(), fd, text, &error_number) == text.size();
+      std::cmp_equal(WriteAll(file_ops_.get(), fd, text), text.size());
   const bool synced = written && SyncFile(file_ops_.get(), fd);
-  if (!synced && error_number == 0) {
-    error_number = errno;
-  }
+  const int write_errno = errno;
   close(fd);
-  if (!written || !synced) {
+  if (!synced) {
     RS_LOG_ERROR("Error writing the temporary manifest file %s: %s\n",
-                 temp_path.c_str(), std::strerror(error_number));
+                 temp_path.c_str(), std::strerror(write_errno));
     unlink(temp_path.c_str());
-    errno = error_number;
-    return written ? AofError::kSync : AofError::kWrite;
+    return {written ? AofError::kSync : AofError::kWrite, write_errno};
   }
   if (file_ops_->Rename(temp_path.c_str(), ManifestPath().c_str()) < 0) {
     const int rename_errno = errno;
@@ -403,17 +421,17 @@ AofError Aof::PersistManifest(const Manifest& manifest) {
         "Error trying to rename the temporary manifest file %s into %s: %s\n",
         temp_path.c_str(), ManifestPath().c_str(), std::strerror(rename_errno));
     unlink(temp_path.c_str());
-    errno = rename_errno;
-    return AofError::kRename;
+    return {AofError::kRename, rename_errno};
   }
   if (!SyncDirectory(file_ops_.get(), directory_)) {
+    const int sync_errno = errno;
     RS_LOG_ERROR("Fail to fsync manifest directory %s: %s.\n",
-                 directory_.c_str(), std::strerror(errno));
-    return AofError::kDirectorySync;
+                 directory_.c_str(), std::strerror(sync_errno));
+    return {AofError::kDirectorySync, sync_errno};
   }
   // Durable: a manifest a crash could have brought back is gone for good.
   manifest_unsafe_ = false;
-  return AofError::kNone;
+  return {};
 }
 
 bool Aof::OpenNextIncrement() {
@@ -430,9 +448,8 @@ bool Aof::OpenNextIncrement() {
   }
   manifest.increments.push_back(
       MakeManifestFile(name, sequence, ManifestFile::Type::kIncrement));
-  const AofError error = PersistManifest(manifest);
-  const int error_number = errno;
-  if (error != AofError::kNone && error != AofError::kDirectorySync) {
+  const Failure failure = PersistManifest(manifest);
+  if (!failure.Ok() && failure.error != AofError::kDirectorySync) {
     close(fd);
     return false;
   }
@@ -441,8 +458,8 @@ bool Aof::OpenNextIncrement() {
   // After the rename the new manifest is live, durable or not.
   manifest_ = std::move(manifest);
   SwitchFile(fd);
-  if (error == AofError::kDirectorySync) {
-    FailDirectorySync(error_number);
+  if (!failure.Ok()) {
+    FailDirectorySync(failure.error_number);
   }
   return true;
 }

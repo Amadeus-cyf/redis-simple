@@ -128,7 +128,7 @@ bool Aof::LoadManifest() {
   Manifest manifest = manifest_;
   manifest.base = MakeManifestFile(file_name_, 1, ManifestFile::Type::kBase);
   manifest.base_sequence = 1;
-  if (PersistManifest(manifest) != AofError::kNone) {
+  if (!PersistManifest(manifest).Ok()) {
     return false;
   }
   manifest_ = std::move(manifest);
@@ -538,7 +538,7 @@ bool Aof::OpenLastIncrement() {
   }
   // A new incremental file, and a base CreateBaseIfMissing just made, which
   // only happens along with one, still need listing.
-  if (created && PersistManifest(manifest) != AofError::kNone) {
+  if (created && !PersistManifest(manifest).Ok()) {
     close(fd);
     return false;
   }
