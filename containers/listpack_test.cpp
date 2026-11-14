@@ -657,6 +657,48 @@ TEST(ListpackTest, IteratorsDecodeEveryEncoding) {
   EXPECT_EQ(calls, 3);
 }
 
+TEST(ListpackTest, IntegersRoundTripAtEveryWidthBoundary) {
+  // The smallest and largest value of each integer encoding, and the values
+  // just outside, which take the next one.
+  const std::vector<int64_t> values = {0,
+                                       127,
+                                       128,
+                                       -1,
+                                       -4096,
+                                       4095,
+                                       -4097,
+                                       4096,
+                                       INT16_MIN,
+                                       INT16_MAX,
+                                       INT16_MIN - 1,
+                                       INT16_MAX + 1,
+                                       -(1 << 23),
+                                       (1 << 23) - 1,
+                                       -(1 << 23) - 1,
+                                       1 << 23,
+                                       INT32_MIN,
+                                       INT32_MAX,
+                                       int64_t{INT32_MIN} - 1,
+                                       int64_t{INT32_MAX} + 1,
+                                       INT64_MIN,
+                                       INT64_MAX};
+  Listpack listpack;
+  for (const int64_t value : values) {
+    ASSERT_TRUE(listpack.Append(value));
+  }
+  for (size_t index = 0; index < values.size(); ++index) {
+    const std::optional<size_t> found = listpack.OffsetAt(index);
+    ASSERT_TRUE(found.has_value());
+    // value_or, not *, so clang-tidy's optional-access check, which does
+    // not follow ASSERT_TRUE, has nothing to flag.
+    const size_t offset = found.value_or(0);
+    EXPECT_EQ(listpack.IntegerAt(offset), values[index]);
+    EXPECT_EQ(listpack.Get(offset), std::to_string(values[index]));
+    EXPECT_EQ(listpack.Find(std::to_string(values[index])), found);
+  }
+  EXPECT_EQ(listpack.Size(), values.size());
+}
+
 TEST(ListpackTest, OffsetAtFindsEveryElementFromEitherEnd) {
   // Mixed encodings, so stepping back over each backlen is exercised.
   Listpack listpack;

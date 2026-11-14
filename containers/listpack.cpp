@@ -20,6 +20,17 @@
 
 namespace redis_simple::containers {
 namespace {
+// A string's encoding adds at most this much: five header bytes and five of
+// backlen. A string must leave room for it in the 32-bit total size.
+constexpr size_t kMaxStringEncodingOverhead = 10;
+
+// The signed value of the low `bits` bits of `value`, a two's-complement
+// integer that wide. `bits` is below 64.
+constexpr int64_t SignExtend(uint64_t value, unsigned bits) {
+  const uint64_t sign = uint64_t{1} << (bits - 1);
+  return static_cast<int64_t>((value ^ sign) - sign);
+}
+
 // Multi-byte fields are little-endian, as in Redis' listpack: the header's
 // total size and element count, 32-bit string lengths, and integers wider
 // than 13 bits.
@@ -97,7 +108,8 @@ unsigned char* Listpack::Get(size_t offset, size_t* const length) const {
   if (IsString(encoding_type)) {
     return StringAt(offset, length, encoding_type);
   }
-  return IntegerAt(offset, int_buffer_.data(), length, nullptr, encoding_type);
+  return FormatInteger(DecodeInteger(offset, encoding_type), int_buffer_.data(),
+                       length);
 }
 
 std::optional<std::string> Listpack::Get(size_t offset) const {
@@ -111,9 +123,10 @@ std::optional<std::string> Listpack::Get(size_t offset) const {
   std::array<unsigned char, kListpackIntBufferSize> int_buffer{};
   EncodingType encoding_type = EncodingAt(offset);
   const unsigned char* buffer =
-      IsString(encoding_type) ? StringAt(offset, &length, encoding_type)
-                              : IntegerAt(offset, int_buffer.data(), &length,
-                                          nullptr, encoding_type);
+      IsString(encoding_type)
+          ? StringAt(offset, &length, encoding_type)
+          : FormatInteger(DecodeInteger(offset, encoding_type),
+                          int_buffer.data(), &length);
   return std::string(reinterpret_cast<const char*>(buffer), length);
 }
 
@@ -127,9 +140,7 @@ std::optional<int64_t> Listpack::IntegerAt(size_t offset) const {
   if (IsString(encoding_type)) {
     return std::nullopt;
   }
-  int64_t value = 0;
-  IntegerAt(offset, nullptr, nullptr, &value, encoding_type);
-  return value;
+  return DecodeInteger(offset, encoding_type);
 }
 
 std::optional<size_t> Listpack::Find(std::string_view value) const {
@@ -187,13 +198,9 @@ std::optional<size_t> Listpack::FindAndSkip(std::string_view value,
               value) {
         return offset;
       }
-    } else if (value_is_integer) {
-      size_t length = 0;
-      int64_t integer = 0;
-      IntegerAt(offset, nullptr, &length, &integer, encoding_type);
-      if (integer == *value_integer) {
-        return offset;
-      }
+    } else if (value_is_integer &&
+               DecodeInteger(offset, encoding_type) == *value_integer) {
+      return offset;
     }
     const size_t encoded_bytes = EncodedBytes(offset, encoding_type);
     offset += encoded_bytes + BacklenBytes(encoded_bytes);
@@ -426,68 +433,37 @@ unsigned char* Listpack::StringAt(size_t offset, size_t* const length,
   }
 }
 
-unsigned char* Listpack::IntegerAt(size_t offset, unsigned char* destination,
-                                   size_t* const length, int64_t* integer_value,
-                                   EncodingType encoding_type) const {
-  int64_t value = 0;
-  uint64_t unsigned_value = 0;
-  uint64_t negative_start = 0;
-  uint64_t negative_max = 0;
+int64_t Listpack::DecodeInteger(size_t offset,
+                                EncodingType encoding_type) const {
+  const unsigned char* const entry = listpack_.get() + offset;
   switch (encoding_type) {
     case EncodingType::k7BitUnsignedInteger:
-      unsigned_value = listpack_[offset] & 0x7f;
-      // Avoid sign conversion for the unsigned 7-bit format.
-      negative_start = std::numeric_limits<uint64_t>::max();
-      break;
+      return entry[0] & 0x7f;
     case EncodingType::k13BitInteger:
-      unsigned_value =
-          ((listpack_[offset] & 0x1f) << 8) | (listpack_[offset + 1] & 0xff);
-      negative_start = 1 << 12;
-      negative_max = std::numeric_limits<uint16_t>::max() >> 3;
-      break;
+      return SignExtend(
+          (static_cast<uint64_t>(entry[0] & 0x1f) << 8) | entry[1], 13);
     case EncodingType::k16BitInteger:
-      unsigned_value = LoadLittleEndian<2>(&listpack_[offset + 1]);
-      negative_start = 1 << 15;
-      negative_max = std::numeric_limits<uint16_t>::max();
-      break;
+      return SignExtend(LoadLittleEndian<2>(entry + 1), 16);
     case EncodingType::k24BitInteger:
-      unsigned_value = LoadLittleEndian<3>(&listpack_[offset + 1]);
-      negative_start = 1L << 23;
-      negative_max = std::numeric_limits<uint32_t>::max() >> 8;
-      break;
+      return SignExtend(LoadLittleEndian<3>(entry + 1), 24);
     case EncodingType::k32BitInteger:
-      unsigned_value = LoadLittleEndian<4>(&listpack_[offset + 1]);
-      negative_start = 1UL << 31;
-      negative_max = std::numeric_limits<uint32_t>::max();
-      break;
+      return SignExtend(LoadLittleEndian<4>(entry + 1), 32);
     case EncodingType::k64BitInteger:
-      unsigned_value = LoadLittleEndian<8>(&listpack_[offset + 1]);
-      negative_start = 1UL << 63;
-      negative_max = std::numeric_limits<uint64_t>::max();
-      break;
+      return static_cast<int64_t>(LoadLittleEndian<8>(entry + 1));
     default:
-      return nullptr;
+      utils::Unreachable();
   }
-  if (unsigned_value >= negative_start) {
-    unsigned_value = negative_max - unsigned_value;
-    value = static_cast<int64_t>(unsigned_value);
-    value = -value - 1;
-  } else {
-    value = static_cast<int64_t>(unsigned_value);
-  }
-  if (destination != nullptr) {
-    const int string_length = utils::Int64ToString(
-        {reinterpret_cast<char*>(destination), kListpackIntBufferSize}, value);
-    if (length != nullptr) {
-      *length = string_length;
-    }
-    return destination;
-  }
-  if (integer_value != nullptr) {
-    *integer_value = value;
-  }
+}
 
-  return nullptr;
+unsigned char* Listpack::FormatInteger(int64_t value,
+                                       unsigned char* const destination,
+                                       size_t* const length) {
+  const int string_length = utils::Int64ToString(
+      {reinterpret_cast<char*>(destination), kListpackIntBufferSize}, value);
+  if (length != nullptr) {
+    *length = string_length;
+  }
+  return destination;
 }
 
 bool Listpack::Insert(size_t offset, Listpack::Position where,
@@ -557,7 +533,6 @@ bool Listpack::Insert(size_t offset, Listpack::Position where,
 }
 
 bool Listpack::PlanEntry(const ListpackEntry& entry, Encoding* const encoding) {
-  constexpr size_t kMaxStringEncodingOverhead = 10;
   if (!entry.is_integer &&
       entry.string_value.size() >
           std::numeric_limits<uint32_t>::max() - kMaxStringEncodingOverhead) {
@@ -594,7 +569,7 @@ bool Listpack::BatchInsert(size_t offset, Listpack::Position where,
   if (entry_count == 0) {
     return false;
   }
-  uint32_t listpack_bytes = TotalBytes();
+  const uint32_t listpack_bytes = TotalBytes();
   RS_CHECK(offset >= kListpackHeaderSize && offset < listpack_bytes);
   if (where == Position::kInsertAfter) {
     offset = Skip(offset);
@@ -613,19 +588,12 @@ bool Listpack::BatchInsert(size_t offset, Listpack::Position where,
     }
     inserted_bytes += entry_bytes;
   }
+  // The total size is a 32-bit field.
   if (inserted_bytes > std::numeric_limits<uint32_t>::max() - listpack_bytes) {
     return false;
   }
   const size_t new_listpack_bytes = listpack_bytes + inserted_bytes;
-  // Total bytes is a 4 byte unsigned integer, so the maximum bytes for the
-  // listpack is UINT32_MAX.
-  if (new_listpack_bytes > std::numeric_limits<uint32_t>::max()) {
-    return false;
-  }
-  if (new_listpack_bytes < kListpackHeaderSize + 1) {
-    return false;
-  }
-  uint16_t element_count = ElementCount();
+  const uint16_t element_count = ElementCount();
   Realloc(new_listpack_bytes);
   std::memmove(listpack_.get() + offset + inserted_bytes,
                listpack_.get() + offset, listpack_bytes - offset);
@@ -713,7 +681,6 @@ size_t Listpack::EstimateBytes(int64_t value, size_t repeat) {
 }
 
 size_t Listpack::EstimateEntryBytes(std::string_view value) {
-  constexpr size_t kMaxStringEncodingOverhead = 10;
   const std::optional<int64_t> integer = utils::ToInt64(value);
   const bool is_integer = integer.has_value();
   if (!is_integer && value.size() > std::numeric_limits<uint32_t>::max() -
@@ -835,12 +802,19 @@ Listpack::DecodedEntry Listpack::DecodeEntry(
     return {buffer + 2, length,
             offset + encoded_bytes + BacklenBytes(encoded_bytes)};
   }
+  return DecodeLongOrIntegerEntry(offset, int_buffer);
+}
+
+// Out of line, so that the short strings above, the common case, do not pay
+// for the registers and stack that decoding and formatting an integer need.
+[[gnu::noinline]] Listpack::DecodedEntry Listpack::DecodeLongOrIntegerEntry(
+    size_t offset, unsigned char* const int_buffer) const {
   const EncodingType encoding_type = EncodingAt(offset);
   DecodedEntry entry{};
   entry.data = IsString(encoding_type)
                    ? StringAt(offset, &entry.length, encoding_type)
-                   : IntegerAt(offset, int_buffer, &entry.length, nullptr,
-                               encoding_type);
+                   : FormatInteger(DecodeInteger(offset, encoding_type),
+                                   int_buffer, &entry.length);
   const size_t encoded_bytes = EncodedBytes(offset, encoding_type);
   entry.next = offset + encoded_bytes + BacklenBytes(encoded_bytes);
   return entry;
