@@ -31,8 +31,10 @@ class Quicklist {
   std::optional<std::string> LPop();
   std::optional<std::string> RPop();
   bool Set(size_t index, std::string_view value);
-  std::optional<size_t> Remove(std::string_view value, size_t limit,
-                               RemoveDirection direction);
+  // Removes elements equal to `value`, at most `limit` of them unless it is
+  // zero, starting from the given end. Returns how many were removed.
+  size_t Remove(std::string_view value, size_t limit,
+                RemoveDirection direction);
   bool Trim(size_t start, size_t stop);
   std::vector<std::string> Range(size_t start, size_t stop) const;
   template <typename Visitor>

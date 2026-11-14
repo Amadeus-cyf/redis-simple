@@ -37,8 +37,10 @@ class List {
   std::optional<std::string> LPop();
   std::optional<std::string> At(size_t index) const;
   bool Set(size_t index, std::string_view value);
-  std::optional<size_t> Remove(std::string_view value, size_t limit,
-                               RemoveDirection direction);
+  // Removes elements equal to `value`, at most `limit` of them unless it is
+  // zero, starting from the given end. Returns how many were removed.
+  size_t Remove(std::string_view value, size_t limit,
+                RemoveDirection direction);
   bool Trim(size_t start, size_t stop);
   size_t Size() const;
   size_t NodeCount() const;
@@ -66,10 +68,7 @@ class List {
   explicit List(size_t list_max_listpack_bytes);
   bool Push(std::string_view value, bool head);
   std::optional<std::string> Pop(bool head);
-  std::optional<size_t> RemoveFromListpack(std::string_view value, size_t limit,
-                                           RemoveDirection direction);
   void TrimListpack(size_t start, size_t stop);
-  bool AdoptReplacement(std::unique_ptr<List> replacement);
   bool WouldExceedListpackLimit(std::string_view value) const;
   bool ConvertListpackToQuicklist();
   void TryConvertQuicklistToListpack();

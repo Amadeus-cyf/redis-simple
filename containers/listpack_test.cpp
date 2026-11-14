@@ -657,6 +657,25 @@ TEST(ListpackTest, IteratorsDecodeEveryEncoding) {
   EXPECT_EQ(calls, 3);
 }
 
+TEST(ListpackTest, OffsetAtFindsEveryElementFromEitherEnd) {
+  // Mixed encodings, so stepping back over each backlen is exercised.
+  Listpack listpack;
+  std::vector<size_t> offsets;
+  for (int i = 0; i < 300; ++i) {
+    offsets.push_back(listpack.TotalBytes() - 1);
+    if (i % 3 == 0) {
+      ASSERT_TRUE(listpack.Append(static_cast<int64_t>(i) * 100'000));
+    } else {
+      ASSERT_TRUE(listpack.Append(std::string(static_cast<size_t>(i), 'v')));
+    }
+  }
+  for (size_t index = 0; index < offsets.size(); ++index) {
+    ASSERT_EQ(listpack.OffsetAt(index), offsets[index]);
+  }
+  EXPECT_EQ(listpack.OffsetAt(offsets.size()), std::nullopt);
+  EXPECT_EQ(Listpack().OffsetAt(0), std::nullopt);
+}
+
 TEST(ListpackTest, OffsetAt) {
   auto listpack = MakeBatchInsertedListpack();
   std::vector<size_t> indices;

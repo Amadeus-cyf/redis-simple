@@ -326,7 +326,7 @@ void HandleLRem(Client* const client) {
   size_t removed = 0;
   if (list != nullptr) {
     const auto [limit, direction] = NormalizeRemoveCount(count);
-    removed = list->Remove(args[2], limit, direction).value_or(0);
+    removed = list->Remove(args[2], limit, direction);
     DeleteIfEmpty(client, args[0], list);
   }
   if (removed > 0) {

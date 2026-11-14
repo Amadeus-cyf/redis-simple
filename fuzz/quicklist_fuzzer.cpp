@@ -98,8 +98,7 @@ void RunOperations(FuzzInput* input) {
             direction == Quicklist::RemoveDirection::kFromTail;
         const size_t expected =
             RemoveMatchesFromModel(&model, value, limit, from_tail);
-        const auto removed = quicklist.Remove(value, limit, direction);
-        Require(ValueOrAbort(removed) == expected);
+        Require(quicklist.Remove(value, limit, direction) == expected);
         break;
       }
       case 6: {
