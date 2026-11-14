@@ -12,12 +12,12 @@
 #include <system_error>
 #include <vector>
 
-#include "memory/dict.h"
-#include "memory/intset.h"
-#include "memory/listpack.h"
+#include "containers/dict.h"
+#include "containers/intset.h"
+#include "containers/listpack.h"
 #include "utils/check.h"
 
-namespace redis_simple::set {
+namespace redis_simple::data_types {
 class Set {
  public:
   enum class Encoding {
@@ -43,22 +43,23 @@ class Set {
   // distinct, at most kListpackMaxEntries, and no longer than
   // kListpackMaxElementLength, as the RDB loader checks.
   static std::unique_ptr<Set> CreateFromListpack(
-      std::unique_ptr<memory::Listpack> listpack);
+      std::unique_ptr<containers::Listpack> listpack);
   bool Add(std::string_view value);
   bool HasMember(std::string_view value) const;
   // As HasMember, but a dict-encoded set probes with `hashed`, when given, so
   // the member is not hashed again. `hashed` must describe `value`.
-  bool HasMember(std::string_view value, const memory::HashedKey* hashed) const;
+  bool HasMember(std::string_view value,
+                 const containers::HashedKey* hashed) const;
   std::vector<std::string> ListAllMembers() const;
   template <typename Visitor>
   bool ForEachMember(Visitor&& visitor) const;
   // Like ForEachMember, but also passes each member's stored hash as a
-  // `const memory::HashedKey*` when the set is dict-encoded, or nullptr
+  // `const containers::HashedKey*` when the set is dict-encoded, or nullptr
   // otherwise. Set operations hand it to HasMember on the other sets.
   template <typename Visitor>
   bool ForEachMemberWithHash(Visitor&& visitor) const;
   bool Delete(std::string_view value);
-  // One SSCAN step over a dict-encoded set (memory::Dict::ScanStep): calls
+  // One SSCAN step over a dict-encoded set (containers::Dict::ScanStep): calls
   // `visitor(member)` for each member it visits and returns the next cursor,
   // 0 when done. Smaller encodings are scanned whole through ForEachMember,
   // as Redis does.
@@ -83,9 +84,9 @@ class Set {
   void ConvertIntsetToListpack(std::string_view value);
   void ConvertListpackToDict(size_t capacity);
   enum Encoding encoding_;
-  std::unique_ptr<memory::Intset> intset_;
-  std::unique_ptr<memory::Listpack> listpack_;
-  std::unique_ptr<memory::Dict<std::string, std::nullptr_t>> dict_;
+  std::unique_ptr<containers::Intset> intset_;
+  std::unique_ptr<containers::Listpack> listpack_;
+  std::unique_ptr<containers::Dict<std::string, std::nullptr_t>> dict_;
 };
 
 template <typename Visitor>
@@ -95,7 +96,7 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     return true;
   }
   if (encoding_ == Encoding::kIntset) {
-    auto it = memory::Intset::Iterator(intset_.get());
+    auto it = containers::Intset::Iterator(intset_.get());
     it.SeekToFirst();
     while (it.Valid()) {
       std::array<char, std::numeric_limits<int64_t>::digits10 + 3> buffer{};
@@ -115,7 +116,8 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     return listpack_->ForEach(0, size - 1, visitor);
   }
   if (encoding_ == Encoding::kDict) {
-    auto it = memory::Dict<std::string, std::nullptr_t>::Iterator(dict_.get());
+    auto it =
+        containers::Dict<std::string, std::nullptr_t>::Iterator(dict_.get());
     it.SeekToFirst();
     while (it.Valid()) {
       if (!visitor(it.Key())) {
@@ -141,13 +143,15 @@ template <typename Visitor>
 bool Set::ForEachMemberWithHash(Visitor&& visitor) const {
   if (encoding_ != Encoding::kDict) {
     return ForEachMember([&visitor](std::string_view member) {
-      return visitor(member, static_cast<const memory::HashedKey*>(nullptr));
+      return visitor(member,
+                     static_cast<const containers::HashedKey*>(nullptr));
     });
   }
-  auto it = memory::Dict<std::string, std::nullptr_t>::Iterator(dict_.get());
+  auto it =
+      containers::Dict<std::string, std::nullptr_t>::Iterator(dict_.get());
   it.SeekToFirst();
   while (it.Valid()) {
-    const memory::HashedKey hashed = it.Hashed();
+    const containers::HashedKey hashed = it.Hashed();
     if (!visitor(std::string_view(it.Key()), &hashed)) {
       return false;
     }
@@ -155,6 +159,6 @@ bool Set::ForEachMemberWithHash(Visitor&& visitor) const {
   }
   return true;
 }
-}  // namespace redis_simple::set
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_SET_SET_H_

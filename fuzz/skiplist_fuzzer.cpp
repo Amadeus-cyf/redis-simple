@@ -5,12 +5,12 @@
 #include <set>
 #include <vector>
 
+#include "containers/skiplist.h"
 #include "fuzz/fuzz_input.h"
-#include "memory/skiplist.h"
 
 namespace redis_simple::fuzz {
 namespace {
-using IntSkiplist = memory::Skiplist<int64_t>;
+using IntSkiplist = containers::Skiplist<int64_t>;
 
 std::vector<int64_t> ToVector(const std::set<int64_t>& model) {
   return {model.begin(), model.end()};

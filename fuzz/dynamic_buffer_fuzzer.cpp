@@ -6,8 +6,8 @@
 #include <string_view>
 #include <utility>
 
+#include "containers/dynamic_buffer.h"
 #include "fuzz/fuzz_input.h"
-#include "memory/dynamic_buffer.h"
 
 namespace redis_simple::fuzz {
 namespace {
@@ -25,7 +25,7 @@ std::optional<std::string> ReadModelLine(std::string* model) {
   return line;
 }
 
-void Verify(const memory::DynamicBuffer& buffer, const std::string& model) {
+void Verify(const containers::DynamicBuffer& buffer, const std::string& model) {
   Require(buffer.View() == std::string_view(model));
   Require(buffer.ToString() == model);
   Require(buffer.Empty() == model.empty());
@@ -34,7 +34,7 @@ void Verify(const memory::DynamicBuffer& buffer, const std::string& model) {
 }
 
 void RunOperations(FuzzInput* input) {
-  memory::DynamicBuffer buffer;
+  containers::DynamicBuffer buffer;
   std::string model;
 
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();

@@ -14,7 +14,7 @@
 
 #include "data_types/zset/zset_storage.h"
 
-namespace redis_simple::zset::zset_storage_test {
+namespace redis_simple::data_types::zset_storage_test {
 using MemberScorePair = std::pair<std::string, double>;
 
 inline std::optional<LimitSpec> MakeLimit(size_t offset,
@@ -240,6 +240,6 @@ void TestDelete() {
   ASSERT_FALSE(zset->Rank("key1").has_value());
   ASSERT_FALSE(zset->Delete("member not exist"));
 }
-}  // namespace redis_simple::zset::zset_storage_test
+}  // namespace redis_simple::data_types::zset_storage_test
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_TEST_UTIL_H_

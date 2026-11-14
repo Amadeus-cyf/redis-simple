@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "server/reply.h"
-#include "utils/float_utils.h"
+#include "utils/floats.h"
 
 // Reply encoding benchmarks for collection replies such as LRANGE, HGETALL,
 // and ZRANGE WITHSCORES, which encode one bulk string or score per element.

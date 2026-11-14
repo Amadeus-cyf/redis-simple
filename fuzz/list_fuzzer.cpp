@@ -12,7 +12,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
-using list::List;
+using data_types::List;
 
 void Verify(const List& list, const std::vector<std::string>& model) {
   Require(list.Size() == model.size());

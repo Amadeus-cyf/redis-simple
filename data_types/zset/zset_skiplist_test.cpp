@@ -6,7 +6,7 @@
 
 #include "data_types/zset/zset_storage_test_util.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 using zset_storage_test::MemberScorePair;
 
 TEST(ZSetSkiplistTest, Add) { zset_storage_test::TestAdd<ZSetSkiplist>(); }
@@ -54,4 +54,4 @@ TEST(ZSetSkiplistStandaloneTest, DeleteRecomputesRangeBoundaries) {
   ASSERT_EQ(pairs, std::vector<MemberScorePair>({{"b", 2.0}}));
   ASSERT_EQ(zset_skiplist.Count(&spec), 1);
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types

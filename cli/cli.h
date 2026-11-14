@@ -11,7 +11,7 @@
 
 #include "cli/resp_parser.h"
 #include "connection/connection.h"
-#include "memory/dynamic_buffer.h"
+#include "containers/dynamic_buffer.h"
 
 namespace redis_simple::cli {
 enum class CliStatus {
@@ -39,8 +39,8 @@ class RedisCli {
   std::unique_ptr<connection::Connection> connection_;
   std::optional<std::string> ip_;
   std::optional<int> port_;
-  memory::DynamicBuffer query_buffer_;
-  memory::DynamicBuffer reply_buffer_;
+  containers::DynamicBuffer query_buffer_;
+  containers::DynamicBuffer reply_buffer_;
   std::mutex lock_;
 };
 }  // namespace redis_simple::cli

@@ -3,7 +3,7 @@
 #include "server/commands/handlers.h"
 #include "server/rdb/rdb.h"
 #include "server/reply.h"
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple::commands::persistence {
 void HandleBgRewriteAof(Client* const client) {

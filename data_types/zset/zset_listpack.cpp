@@ -9,12 +9,12 @@
 #include <string>
 #include <string_view>
 
-#include "memory/listpack.h"
-#include "utils/float_utils.h"
+#include "containers/listpack.h"
+#include "utils/floats.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 ZSetListpack::ZSetListpack()
-    : listpack_(std::make_unique<memory::Listpack>()) {}
+    : listpack_(std::make_unique<containers::Listpack>()) {}
 
 bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
                                   bool* const changed) {
@@ -97,26 +97,36 @@ std::optional<double> ZSetListpack::Score(std::string_view member) const {
   return entry.has_value() ? std::optional<double>(entry->score) : std::nullopt;
 }
 
-std::optional<size_t> ZSetListpack::Rank(std::string_view member) const {
+std::optional<ZSetRank> ZSetListpack::RankAndScore(
+    std::string_view member) const {
+  // Find the member first, comparing bytes without decoding scores, then
+  // count the pairs in front of it; its score is read once at the end.
   const std::optional<size_t> member_offset = listpack_->FindAndSkip(member, 1);
   if (!member_offset.has_value()) {
     return std::nullopt;
   }
-  std::optional<size_t> offset = listpack_->First();
   size_t rank = 0;
+  std::optional<size_t> offset = listpack_->First();
   while (offset.has_value() && offset != member_offset) {
-    const std::optional<EntryView> entry = EntryAt(*offset);
-    if (!entry.has_value()) {
+    const std::optional<size_t> score_offset = listpack_->Next(*offset);
+    if (!score_offset.has_value()) {
       return std::nullopt;
     }
-    offset = NextMemberAfterScore(entry->score_index);
+    offset = NextMemberAfterScore(*score_offset);
     ++rank;
   }
-  return offset == member_offset ? std::optional<size_t>(rank) : std::nullopt;
+  if (!offset.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<EntryView> entry = EntryAt(*member_offset);
+  if (!entry.has_value()) {
+    return std::nullopt;
+  }
+  return ZSetRank{.rank = rank, .score = entry->score};
 }
 
 void ZSetListpack::ForEachInRankRange(const RangeByRankSpec* spec,
-                                      const ZSetRangeVisitor& visitor) const {
+                                      const ZSetMemberVisitor& visitor) const {
   if (spec == nullptr) {
     return;
   }
@@ -133,7 +143,7 @@ void ZSetListpack::ForEachInRankRange(const RangeByRankSpec* spec,
 }
 
 void ZSetListpack::ForEachInScoreRange(const RangeByScoreSpec* spec,
-                                       const ZSetRangeVisitor& visitor) const {
+                                       const ZSetMemberVisitor& visitor) const {
   if (!ValidateRangeScoreSpec(spec)) {
     return;
   }
@@ -188,7 +198,7 @@ bool ZSetListpack::OverlapsLexRange(const RangeByLexSpec* spec) const {
 }
 
 void ZSetListpack::ForEachInLexRange(const RangeByLexSpec* spec,
-                                     const ZSetRangeVisitor& visitor) const {
+                                     const ZSetMemberVisitor& visitor) const {
   // Redis' zzlFirstInLexRange and zzlLastInLexRange: walk from one end to
   // the first member inside the range, then on while members stay in it.
   if (!OverlapsLexRange(spec)) {
@@ -269,7 +279,7 @@ size_t ZSetListpack::LexCount(const RangeByLexSpec* spec) const {
 }
 
 size_t ZSetListpack::Scan(size_t /*cursor*/, size_t /*count*/,
-                          const ZSetScanVisitor& visitor) {
+                          const ZSetMemberVisitor& visitor) {
   ForEachEntry([&visitor](std::string_view member, double score) {
     visitor(member, score);
     return true;
@@ -341,7 +351,7 @@ std::optional<double> ZSetListpack::ScoreAt(size_t offset) const {
 }
 
 void ZSetListpack::VisitRankRange(const RangeByRankSpec* spec,
-                                  const ZSetRangeVisitor& visitor) const {
+                                  const ZSetMemberVisitor& visitor) const {
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   if (count.has_value() && *count == 0) {
@@ -385,7 +395,7 @@ void ZSetListpack::VisitRankRange(const RangeByRankSpec* spec,
 }
 
 void ZSetListpack::VisitRankRangeReversed(
-    const RangeByRankSpec* spec, const ZSetRangeVisitor& visitor) const {
+    const RangeByRankSpec* spec, const ZSetMemberVisitor& visitor) const {
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   if (count.has_value() && *count == 0) {
@@ -433,7 +443,7 @@ void ZSetListpack::VisitRankRangeReversed(
 }
 
 void ZSetListpack::VisitScoreRange(const RangeByScoreSpec* spec,
-                                   const ZSetRangeVisitor& visitor) const {
+                                   const ZSetMemberVisitor& visitor) const {
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   if (count.has_value() && *count == 0) {
@@ -464,7 +474,7 @@ void ZSetListpack::VisitScoreRange(const RangeByScoreSpec* spec,
 }
 
 void ZSetListpack::VisitScoreRangeReversed(
-    const RangeByScoreSpec* spec, const ZSetRangeVisitor& visitor) const {
+    const RangeByScoreSpec* spec, const ZSetMemberVisitor& visitor) const {
   const std::optional<size_t> count =
       spec->limit ? spec->limit->count : std::nullopt;
   if (count.has_value() && *count == 0) {
@@ -572,4 +582,4 @@ bool ZSetListpack::GreaterOrEqual(double score, const RangeByScoreSpec* spec) {
 bool ZSetListpack::LessOrEqual(double score, const RangeByScoreSpec* spec) {
   return spec->maxex ? score < spec->max : score <= spec->max;
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types

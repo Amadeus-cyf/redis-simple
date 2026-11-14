@@ -10,12 +10,12 @@
 #include "server/commands/handlers.h"
 #include "server/io_thread.h"
 #include "server/rdb/rdb.h"
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 // INFO, with the sections this server reports, in Redis' field names and
 // order: persistence (RDB snapshots and the AOF), stats (threaded I/O
 // totals), and threads.
-namespace redis_simple::commands::server_info {
+namespace redis_simple::commands::info {
 namespace {
 void AppendField(std::string_view name, std::string_view value,
                  std::string* const output) {
@@ -168,4 +168,4 @@ void HandleInfo(Client* const client) {
   }
   client->AddBulkReply(info);
 }
-}  // namespace redis_simple::commands::server_info
+}  // namespace redis_simple::commands::info

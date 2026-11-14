@@ -8,11 +8,11 @@
 #include <string_view>
 #include <vector>
 
-#include "memory/dict.h"
-#include "memory/listpack.h"
+#include "containers/dict.h"
+#include "containers/listpack.h"
 #include "utils/check.h"
 
-namespace redis_simple::hash {
+namespace redis_simple::data_types {
 class Hash {
  public:
   enum class Encoding {
@@ -41,7 +41,7 @@ class Hash {
   // every element no longer than kListpackMaxElementLength, as the RDB
   // loader checks.
   static std::unique_ptr<Hash> CreateFromListpack(
-      std::unique_ptr<memory::Listpack> listpack);
+      std::unique_ptr<containers::Listpack> listpack);
 
   bool Set(std::string_view field, std::string_view value);
   std::optional<std::string> Get(std::string_view field) const;
@@ -58,7 +58,7 @@ class Hash {
   bool ForEachField(Visitor&& visitor) const;
   template <typename Visitor>
   bool ForEachValue(Visitor&& visitor) const;
-  // One HSCAN step over a dict-encoded hash (memory::Dict::ScanStep): calls
+  // One HSCAN step over a dict-encoded hash (containers::Dict::ScanStep): calls
   // `visitor(field, value)` for each entry it visits and returns the next
   // cursor, 0 when done. A listpack is scanned whole through ForEachEntry,
   // as Redis does.
@@ -79,8 +79,8 @@ class Hash {
   std::optional<size_t> FindListpackField(std::string_view field) const;
 
   enum Encoding encoding_;
-  std::unique_ptr<memory::Listpack> listpack_;
-  std::unique_ptr<memory::Dict<std::string, std::string>> dict_;
+  std::unique_ptr<containers::Listpack> listpack_;
+  std::unique_ptr<containers::Dict<std::string, std::string>> dict_;
 };
 
 template <typename Visitor>
@@ -122,7 +122,7 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
     return listpack_->ForEachPair(visitor);
   }
   if (encoding_ == Encoding::kDict) {
-    auto it = memory::Dict<std::string, std::string>::Iterator(dict_.get());
+    auto it = containers::Dict<std::string, std::string>::Iterator(dict_.get());
     it.SeekToFirst();
     while (it.Valid()) {
       if (!visitor(it.Key(), it.Value())) {
@@ -160,6 +160,6 @@ bool Hash::ForEachValue(Visitor&& visitor) const {
         return visitor(value);
       });
 }
-}  // namespace redis_simple::hash
+}  // namespace redis_simple::data_types
 
 #endif  // REDIS_SIMPLE_DATA_TYPES_HASH_HASH_H_

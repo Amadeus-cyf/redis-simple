@@ -8,7 +8,7 @@ be compared.
 ## Layers
 
 ```text
-memory/        listpack, quicklist, dict, skiplist, intset: containers that
+containers/    listpack, quicklist, dict, skiplist, intset: containers that
                know nothing about Redis types
 data_types/    set, list, sorted set, hash: Redis types built on those, each
                switching encodings as Redis does
@@ -17,7 +17,10 @@ server/db/     the keyspace (RedisDb), TTLs, WATCH, and RedisObject, which
 server/        clients, request parsing, replies, threaded I/O, the server
                lifecycle, the AOF (server/aof/), and RDB snapshots
                (server/rdb/)
-server/commands/  one handler per command, and the command table
+server/commands/  the command table, and one file of handlers per command
+               family (key.cpp, string.cpp, list.cpp, set.cpp, zset.cpp,
+               hash.cpp, and the connection, transaction, persistence, and
+               INFO commands)
 ```
 
 Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
@@ -211,7 +214,7 @@ The loader reads the file through a buffer that tracks the CRC64 and the bytes
 left. Every length the file claims is checked against those bytes before
 anything is allocated, an LZF string's expanded size against the 512 MiB
 string limit, and listpacks and intsets are validated as they are read
-(`memory::ListpackReader` checks each entry's encoding, size, and backlen, as
+(`containers::ListpackReader` checks each entry's encoding, size, and backlen, as
 Redis' deep validation does). As Redis does, a set, hash, or sorted set
 listpack is then kept as stored, so loading it is one copy: one pass over it
 checks every element, that keys are distinct (by sorting their views), and

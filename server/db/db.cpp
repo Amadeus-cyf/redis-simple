@@ -11,20 +11,20 @@
 #include <vector>
 
 #include "logging/logger.h"
-#include "utils/time_utils.h"
+#include "utils/time.h"
 
 namespace redis_simple::db {
-using memory::HashedKey;
+using containers::HashedKey;
 
 std::unique_ptr<RedisDb> RedisDb::Create() {
   return std::unique_ptr<RedisDb>(new RedisDb());
 }
 
 RedisDb::RedisDb()
-    : dict_(memory::Dict<std::string, RedisObjectPtr>::Create()),
-      expires_(memory::Dict<std::string, int64_t>::Create()),
+    : dict_(containers::Dict<std::string, RedisObjectPtr>::Create()),
+      expires_(containers::Dict<std::string, int64_t>::Create()),
       watched_keys_(
-          memory::Dict<std::string, std::vector<KeyWatcher*>>::Create()) {}
+          containers::Dict<std::string, std::vector<KeyWatcher*>>::Create()) {}
 
 const RedisObject* RedisDb::LookupKey(std::string_view key) {
   return MutableLookupKey(key);

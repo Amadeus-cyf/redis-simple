@@ -12,7 +12,7 @@ namespace redis_simple::fuzz {
 namespace {
 using MemberSet = std::unordered_set<std::string>;
 
-void Verify(const set::Set& set, const MemberSet& model) {
+void Verify(const data_types::Set& set, const MemberSet& model) {
   Require(set.Size() == model.size());
   for (const auto& member : model) {
     Require(set.HasMember(member));
@@ -27,7 +27,7 @@ void Verify(const set::Set& set, const MemberSet& model) {
 }
 
 void RunOperations(FuzzInput* input) {
-  auto set = set::Set::Create();
+  auto set = data_types::Set::Create();
   MemberSet model;
 
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();

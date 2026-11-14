@@ -27,7 +27,7 @@ std::vector<Entry> SortedEntries(const ScoreMap& model) {
   return entries;
 }
 
-void RequireEntries(const zset::ZSetEntryList& actual,
+void RequireEntries(const data_types::ZSetEntryList& actual,
                     const std::vector<Entry>& expected) {
   Require(actual.size() == expected.size());
   for (size_t index = 0; index < expected.size(); ++index) {
@@ -36,7 +36,7 @@ void RequireEntries(const zset::ZSetEntryList& actual,
   }
 }
 
-void Verify(const zset::ZSet& zset, const ScoreMap& model) {
+void Verify(const data_types::ZSet& zset, const ScoreMap& model) {
   const auto sorted = SortedEntries(model);
   Require(zset.Size() == sorted.size());
   for (size_t rank = 0; rank < sorted.size(); ++rank) {
@@ -48,25 +48,25 @@ void Verify(const zset::ZSet& zset, const ScoreMap& model) {
   if (sorted.empty()) {
     return;
   }
-  const zset::RangeByRankSpec forward_spec(
+  const data_types::RangeByRankSpec forward_spec(
       0, static_cast<int64_t>(sorted.size() - 1), false, false);
   RequireEntries(zset.RangeByRank(&forward_spec), sorted);
 
   auto reversed = sorted;
   std::reverse(reversed.begin(), reversed.end());
-  const zset::RangeByRankSpec reverse_spec(
+  const data_types::RangeByRankSpec reverse_spec(
       0, static_cast<int64_t>(sorted.size() - 1), false, false, std::nullopt,
       true);
   RequireEntries(zset.RangeByRank(&reverse_spec), reversed);
 
-  const zset::RangeByScoreSpec score_spec(
+  const data_types::RangeByScoreSpec score_spec(
       -std::numeric_limits<double>::infinity(),
       std::numeric_limits<double>::infinity(), false, false);
   RequireEntries(zset.RangeByScore(&score_spec), sorted);
   Require(zset.Count(&score_spec) == sorted.size());
 }
 
-void SetScore(zset::ZSet* zset, ScoreMap* model, const std::string& key,
+void SetScore(data_types::ZSet* zset, ScoreMap* model, const std::string& key,
               double score) {
   const auto it = model->find(key);
   const bool inserted = it == model->end();
@@ -79,7 +79,7 @@ void SetScore(zset::ZSet* zset, ScoreMap* model, const std::string& key,
 }
 
 void RunOperations(FuzzInput* input) {
-  auto zset = zset::ZSet::Create();
+  auto zset = data_types::ZSet::Create();
   ScoreMap model;
 
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();
@@ -123,7 +123,8 @@ void RunOperations(FuzzInput* input) {
         if (!std::isnan(score) && !std::isnan(other_score)) {
           const double min_score = std::min(score, other_score);
           const double max_score = std::max(score, other_score);
-          const zset::RangeByScoreSpec spec(min_score, max_score, false, false);
+          const data_types::RangeByScoreSpec spec(min_score, max_score, false,
+                                                  false);
           const auto sorted = SortedEntries(model);
           std::vector<Entry> expected;
           std::copy_if(

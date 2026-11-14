@@ -11,7 +11,7 @@
 
 #include "data_types/zset/zset_storage_test_util.h"
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 TEST(ZSetListpackTest, Add) { zset_storage_test::TestAdd<ZSetListpack>(); }
 
 TEST(ZSetListpackTest, Rank) { zset_storage_test::TestRank<ZSetListpack>(); }
@@ -85,4 +85,4 @@ TEST(ZSetListpackTest, Count) { zset_storage_test::TestCount<ZSetListpack>(); }
 TEST(ZSetListpackTest, Delete) {
   zset_storage_test::TestDelete<ZSetListpack>();
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types

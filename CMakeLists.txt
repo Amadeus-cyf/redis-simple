@@ -88,7 +88,7 @@ endfunction()
 redis_simple_collect_sources(REDIS_SIMPLE_CORE_SOURCES
   connection
   event_loop
-  memory
+  containers
   server
   data_types
   tcp
@@ -154,7 +154,7 @@ redis_simple_collect_sources(REDIS_SIMPLE_UNIT_TEST_SOURCES
   cli
   connection
   event_loop
-  memory
+  containers
   server
   data_types
   tcp
@@ -171,7 +171,7 @@ target_link_libraries(
     GTest::gtest_main
 )
 
-redis_simple_add_gtest_suite(StringUtilsTest)
+redis_simple_add_gtest_suite(StringsTest)
 redis_simple_add_gtest_suite(Crc64Test)
 redis_simple_add_gtest_suite(LzfTest)
 redis_simple_add_gtest_suite(RdbTest)
@@ -203,8 +203,8 @@ redis_simple_add_gtest_suite(IoThreadTest)
 redis_simple_add_gtest_suite(ShutdownTest)
 redis_simple_add_gtest_suite(ReplyTest)
 redis_simple_add_gtest_suite(ReplyDeathTest)
-redis_simple_add_gtest_suite(FloatUtilsTest)
-redis_simple_add_gtest_suite(IntUtilsTest)
+redis_simple_add_gtest_suite(FloatsTest)
+redis_simple_add_gtest_suite(IntegersTest)
 redis_simple_add_gtest_suite(SipHashTest)
 redis_simple_add_gtest_suite(SplitArgsTest)
 redis_simple_add_gtest_suite(ListTest)

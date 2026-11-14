@@ -10,7 +10,7 @@
 
 #include "utils/check.h"
 
-namespace redis_simple::hash {
+namespace redis_simple::data_types {
 namespace {
 bool CanStoreInListpack(std::string_view field, std::string_view value) {
   return field.size() <= Hash::kListpackMaxElementLength &&
@@ -21,7 +21,7 @@ bool CanStoreInListpack(std::string_view field, std::string_view value) {
 
 Hash::Hash()
     : encoding_(Encoding::kListpack),
-      listpack_(std::make_unique<memory::Listpack>()),
+      listpack_(std::make_unique<containers::Listpack>()),
       dict_(nullptr) {}
 
 std::unique_ptr<Hash> Hash::CreateForSize(size_t count) {
@@ -33,7 +33,7 @@ std::unique_ptr<Hash> Hash::CreateForSize(size_t count) {
 }
 
 std::unique_ptr<Hash> Hash::CreateFromListpack(
-    std::unique_ptr<memory::Listpack> listpack) {
+    std::unique_ptr<containers::Listpack> listpack) {
   RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
            listpack->Size() % 2 == 0 &&
            listpack->Size() / 2 <= kListpackMaxEntries);
@@ -113,9 +113,10 @@ std::vector<Hash::Entry> Hash::Entries() const {
 bool Hash::CanAppendToListpack(std::string_view field,
                                std::string_view value) const {
   return Size() < kListpackMaxEntries && CanStoreInListpack(field, value) &&
-         memory::Listpack::SafeToAdd(
-             listpack_.get(), memory::Listpack::EstimateEntryBytes(field) +
-                                  memory::Listpack::EstimateEntryBytes(value));
+         containers::Listpack::SafeToAdd(
+             listpack_.get(),
+             containers::Listpack::EstimateEntryBytes(field) +
+                 containers::Listpack::EstimateEntryBytes(value));
 }
 
 bool Hash::SetListpack(std::string_view field, std::string_view value) {
@@ -146,7 +147,7 @@ bool Hash::SetListpack(std::string_view field, std::string_view value) {
 bool Hash::SetDict(std::string_view field, std::string_view value) {
   RS_CHECK(encoding_ == Encoding::kDict);
   if (dict_ == nullptr) {
-    dict_ = memory::Dict<std::string, std::string>::Create();
+    dict_ = containers::Dict<std::string, std::string>::Create();
   }
   auto [stored, inserted] = dict_->FindOrInsert(field);
   stored->assign(value);
@@ -155,7 +156,7 @@ bool Hash::SetDict(std::string_view field, std::string_view value) {
 
 void Hash::ConvertListpackToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kListpack);
-  dict_ = memory::Dict<std::string, std::string>::Create(capacity);
+  dict_ = containers::Dict<std::string, std::string>::Create(capacity);
   if (listpack_ != nullptr) {
     listpack_->ForEachPair(
         [this](std::string_view field, std::string_view value) {
@@ -171,4 +172,4 @@ std::optional<size_t> Hash::FindListpackField(std::string_view field) const {
   RS_CHECK(encoding_ == Encoding::kListpack);
   return listpack_->FindAndSkip(field, 1);
 }
-}  // namespace redis_simple::hash
+}  // namespace redis_simple::data_types

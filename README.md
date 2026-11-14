@@ -587,7 +587,7 @@ integration/rdb_client_test.cpp  RDB SAVE, BGSAVE, save point, and restart clien
 integration/io_threads_client_test.cpp  Concurrent-clients integration client
 integration/tcp/      TCP client/server integration tests
 logging/              Project logging wrapper
-memory/               Core in-memory data structures
+containers/           Core in-memory data structures
 scripts/              Project automation and CTest runner scripts
 server/               Server, client connection glue, commands, replies, DB
 server/aof/           Append-only file: writing, loading, rewriting

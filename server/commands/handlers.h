@@ -5,7 +5,7 @@ namespace redis_simple {
 class Client;
 }  // namespace redis_simple
 
-namespace redis_simple::commands::keys {
+namespace redis_simple::commands::key {
 void HandleDbSize(Client* client);
 void HandleDel(Client* client);
 void HandleExpire(Client* client);
@@ -21,9 +21,9 @@ void HandleScan(Client* client);
 void HandleTtl(Client* client);
 void HandleType(Client* client);
 void HandleUnlink(Client* client);
-}  // namespace redis_simple::commands::keys
+}  // namespace redis_simple::commands::key
 
-namespace redis_simple::commands::session {
+namespace redis_simple::commands::connection {
 void HandleAuth(Client* client);
 void HandleEcho(Client* client);
 void HandleHello(Client* client);
@@ -31,7 +31,7 @@ void HandleClient(Client* client);
 void HandleSelect(Client* client);
 void HandlePing(Client* client);
 void HandleQuit(Client* client);
-}  // namespace redis_simple::commands::session
+}  // namespace redis_simple::commands::connection
 
 namespace redis_simple::commands::transaction {
 void HandleDiscard(Client* client);
@@ -48,11 +48,11 @@ void HandleSave(Client* client);
 void HandleBgSave(Client* client);
 }  // namespace redis_simple::commands::persistence
 
-namespace redis_simple::commands::server_info {
+namespace redis_simple::commands::info {
 void HandleInfo(Client* client);
-}  // namespace redis_simple::commands::server_info
+}  // namespace redis_simple::commands::info
 
-namespace redis_simple::commands::strings {
+namespace redis_simple::commands::string {
 void HandleAppend(Client* client);
 void HandleDecr(Client* client);
 void HandleDecrBy(Client* client);
@@ -63,9 +63,9 @@ void HandleMGet(Client* client);
 void HandleMSet(Client* client);
 void HandleSet(Client* client);
 void HandleStrLen(Client* client);
-}  // namespace redis_simple::commands::strings
+}  // namespace redis_simple::commands::string
 
-namespace redis_simple::commands::lists {
+namespace redis_simple::commands::list {
 void HandleLPush(Client* client);
 void HandleRPush(Client* client);
 void HandleLPop(Client* client);
@@ -76,9 +76,9 @@ void HandleLIndex(Client* client);
 void HandleLSet(Client* client);
 void HandleLRem(Client* client);
 void HandleLTrim(Client* client);
-}  // namespace redis_simple::commands::lists
+}  // namespace redis_simple::commands::list
 
-namespace redis_simple::commands::sets {
+namespace redis_simple::commands::set {
 void HandleSAdd(Client* client);
 void HandleSCard(Client* client);
 void HandleSDiff(Client* client);
@@ -88,9 +88,9 @@ void HandleSMembers(Client* client);
 void HandleSRem(Client* client);
 void HandleSScan(Client* client);
 void HandleSUnion(Client* client);
-}  // namespace redis_simple::commands::sets
+}  // namespace redis_simple::commands::set
 
-namespace redis_simple::commands::zsets {
+namespace redis_simple::commands::zset {
 void HandleZAdd(Client* client);
 void HandleZCard(Client* client);
 void HandleZCount(Client* client);
@@ -106,9 +106,9 @@ void HandleZRevRange(Client* client);
 void HandleZRem(Client* client);
 void HandleZScan(Client* client);
 void HandleZScore(Client* client);
-}  // namespace redis_simple::commands::zsets
+}  // namespace redis_simple::commands::zset
 
-namespace redis_simple::commands::hashes {
+namespace redis_simple::commands::hash {
 void HandleHDel(Client* client);
 void HandleHExists(Client* client);
 void HandleHGet(Client* client);
@@ -121,6 +121,6 @@ void HandleHSet(Client* client);
 void HandleHMSet(Client* client);
 void HandleHScan(Client* client);
 void HandleHVals(Client* client);
-}  // namespace redis_simple::commands::hashes
+}  // namespace redis_simple::commands::hash
 
 #endif  // REDIS_SIMPLE_SERVER_COMMANDS_HANDLERS_H_

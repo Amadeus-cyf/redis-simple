@@ -20,7 +20,7 @@
 #include "server/version.h"
 #include "utils/crc64.h"
 #include "utils/lzf.h"
-#include "utils/string_utils.h"
+#include "utils/strings.h"
 
 namespace redis_simple::rdb {
 namespace {
@@ -258,10 +258,10 @@ void WriteKeyValue(std::string_view key, const db::RedisObject& object,
     case ObjectType::kList: {
       // Every list is a quicklist of listpack nodes in the file; a
       // listpack-encoded list is a single node.
-      const list::List* list = object.List();
+      const data_types::List* list = object.List();
       out->Byte(kTypeListQuicklist2);
       out->String(key);
-      out->Length(list->Encoding() == list::List::Encoding::kListpack
+      out->Length(list->Encoding() == data_types::List::Encoding::kListpack
                       ? 1
                       : list->NodeCount());
       list->ForEachListpack([out](std::string_view node) {
@@ -272,9 +272,9 @@ void WriteKeyValue(std::string_view key, const db::RedisObject& object,
       return;
     }
     case ObjectType::kSet: {
-      const set::Set* set = object.Set();
+      const data_types::Set* set = object.Set();
       switch (set->Encoding()) {
-        case set::Set::Encoding::kIntset: {
+        case data_types::Set::Encoding::kIntset: {
           out->Byte(kTypeSetIntset);
           out->String(key);
           std::string blob;
@@ -282,12 +282,12 @@ void WriteKeyValue(std::string_view key, const db::RedisObject& object,
           out->String(blob);
           return;
         }
-        case set::Set::Encoding::kListpack:
+        case data_types::Set::Encoding::kListpack:
           out->Byte(kTypeSetListpack);
           out->String(key);
           out->String(set->ListpackBytes());
           return;
-        case set::Set::Encoding::kDict:
+        case data_types::Set::Encoding::kDict:
           out->Byte(kTypeSet);
           out->String(key);
           out->Length(set->Size());
@@ -300,7 +300,7 @@ void WriteKeyValue(std::string_view key, const db::RedisObject& object,
       return;
     }
     case ObjectType::kZSet: {
-      const zset::ZSet* zset = object.ZSet();
+      const data_types::ZSet* zset = object.ZSet();
       if (const std::optional<std::string_view> listpack =
               zset->ListpackBytes()) {
         out->Byte(kTypeZSetListpack);
@@ -322,8 +322,8 @@ void WriteKeyValue(std::string_view key, const db::RedisObject& object,
       return;
     }
     case ObjectType::kHash: {
-      const hash::Hash* hash = object.Hash();
-      if (hash->Encoding() == hash::Hash::Encoding::kListpack) {
+      const data_types::Hash* hash = object.Hash();
+      if (hash->Encoding() == data_types::Hash::Encoding::kListpack) {
         out->Byte(kTypeHashListpack);
         out->String(key);
         out->String(hash->ListpackBytes());

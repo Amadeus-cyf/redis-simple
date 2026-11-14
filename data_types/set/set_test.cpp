@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace redis_simple::set {
+namespace redis_simple::data_types {
 TEST(SetTest, IntegerMembersUseIntset) {
   auto set = Set::Create();
 
@@ -152,7 +152,7 @@ TEST(SetTest, MembershipWithStoredHashesMatchesPlainMembership) {
   for (const Set* source : sets) {
     size_t visited = 0;
     ASSERT_TRUE(source->ForEachMemberWithHash(
-        [&](std::string_view member, const memory::HashedKey* hashed) {
+        [&](std::string_view member, const containers::HashedKey* hashed) {
           // Only dict-encoded sets store hashes.
           EXPECT_EQ(hashed != nullptr,
                     source->Encoding() == Set::Encoding::kDict);
@@ -172,7 +172,7 @@ TEST(SetTest, MembershipWithStoredHashesMatchesPlainMembership) {
   // A visitor returning false stops the dict-encoded walk too.
   size_t calls = 0;
   EXPECT_FALSE(large->ForEachMemberWithHash(
-      [&calls](std::string_view, const memory::HashedKey*) {
+      [&calls](std::string_view, const containers::HashedKey*) {
         ++calls;
         return false;
       }));
@@ -197,4 +197,4 @@ TEST(SetTest, ScanDictVisitsEveryMemberOnce) {
   }
   EXPECT_EQ(seen.size(), 300);
 }
-}  // namespace redis_simple::set
+}  // namespace redis_simple::data_types

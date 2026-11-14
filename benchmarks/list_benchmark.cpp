@@ -13,8 +13,8 @@
 // list uses the quicklist encoding with hundreds of nodes.
 namespace redis_simple {
 namespace {
-std::unique_ptr<list::List> FilledList(size_t size) {
-  auto list = list::List::Create();
+std::unique_ptr<data_types::List> FilledList(size_t size) {
+  auto list = data_types::List::Create();
   for (size_t i = 0; i < size; ++i) {
     list->RPush("item:" + std::to_string(i));
   }
@@ -66,13 +66,13 @@ void ListRemove(benchmark::State& state) {
   for (auto _ : state) {
     (void)_;
     state.PauseTiming();
-    auto list = list::List::Create();
+    auto list = data_types::List::Create();
     for (size_t i = 0; i < size; ++i) {
       list->RPush(i % 10 == 0 ? "match" : "item:" + std::to_string(i));
     }
     state.ResumeTiming();
     benchmark::DoNotOptimize(
-        list->Remove("match", 0, list::List::RemoveDirection::kFromHead));
+        list->Remove("match", 0, data_types::List::RemoveDirection::kFromHead));
   }
   state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(size));
 }
@@ -83,8 +83,8 @@ void ListRemoveMissing(benchmark::State& state) {
   const auto list = FilledList(size);
   for (auto _ : state) {
     (void)_;
-    benchmark::DoNotOptimize(
-        list->Remove("missing", 0, list::List::RemoveDirection::kFromHead));
+    benchmark::DoNotOptimize(list->Remove(
+        "missing", 0, data_types::List::RemoveDirection::kFromHead));
   }
   state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(size));
 }
@@ -95,15 +95,16 @@ void ListConvertToQuicklist(benchmark::State& state) {
   const auto item = [](size_t i) { return "item:" + std::to_string(i); };
   // The most elements a listpack-encoded list holds before converting.
   size_t full_size = 0;
-  for (auto probe = list::List::Create();
-       probe->Encoding() == list::List::Encoding::kListpack; ++full_size) {
+  for (auto probe = data_types::List::Create();
+       probe->Encoding() == data_types::List::Encoding::kListpack;
+       ++full_size) {
     probe->RPush(item(full_size));
   }
   --full_size;
   for (auto _ : state) {
     (void)_;
     state.PauseTiming();
-    auto list = list::List::Create();
+    auto list = data_types::List::Create();
     for (size_t i = 0; i < full_size; ++i) {
       list->RPush(item(i));
     }

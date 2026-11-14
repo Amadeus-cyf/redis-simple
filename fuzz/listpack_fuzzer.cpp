@@ -6,13 +6,13 @@
 #include <string_view>
 #include <vector>
 
+#include "containers/listpack.h"
 #include "fuzz/fuzz_input.h"
 #include "fuzz/sequence_model.h"
-#include "memory/listpack.h"
 
 namespace redis_simple::fuzz {
 namespace {
-using memory::Listpack;
+using containers::Listpack;
 
 void Verify(const Listpack& listpack, const std::vector<std::string>& model) {
   Require(listpack.Size() == model.size());

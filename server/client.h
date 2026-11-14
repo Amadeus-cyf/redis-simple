@@ -12,8 +12,8 @@
 #include <vector>
 
 #include "connection/connection.h"
-#include "memory/dynamic_buffer.h"
-#include "memory/reply_buffer.h"
+#include "containers/dynamic_buffer.h"
+#include "containers/reply_buffer.h"
 #include "server/commands/command.h"
 #include "server/db/db.h"
 #include "server/db/key_watcher.h"
@@ -171,8 +171,8 @@ class Client {
   bool protocol_error_{};
   request_parser::ParseResult protocol_failure_;
   request_parser::ParseState parse_state_;
-  memory::DynamicBuffer query_buffer_;
-  memory::ReplyBuffer reply_buffer_;
+  containers::DynamicBuffer query_buffer_;
+  containers::ReplyBuffer reply_buffer_;
   std::vector<iovec> reply_blocks_;
   OutputBufferLimits output_limits_;
   reply::ProtocolVersion protocol_{reply::ProtocolVersion::kResp2};

@@ -7,9 +7,9 @@
 #include <string>
 #include <string_view>
 
-namespace redis_simple::zset {
+namespace redis_simple::data_types {
 ZSetSkiplist::ZSetSkiplist(size_t capacity)
-    : dict_(memory::Dict<std::string, double>::Create(capacity)),
+    : dict_(containers::Dict<std::string, double>::Create(capacity)),
       skiplist_(std::make_unique<SkiplistType>()) {}
 
 bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,
@@ -48,53 +48,28 @@ bool ZSetSkiplist::Delete(std::string_view member) {
   return dict_->Delete(member);
 }
 
-std::optional<size_t> ZSetSkiplist::Rank(std::string_view member) const {
+std::optional<ZSetRank> ZSetSkiplist::RankAndScore(
+    std::string_view member) const {
   const double* score = dict_->FindValue(member);
   if (score == nullptr) {
     return std::nullopt;
   }
-  return skiplist_->FindRankOfKey(MemberRef{.score = *score, .member = member});
+  const std::optional<size_t> rank =
+      skiplist_->FindRankOfKey(MemberRef{.score = *score, .member = member});
+  if (!rank.has_value()) {
+    return std::nullopt;
+  }
+  return ZSetRank{.rank = *rank, .score = *score};
 }
 
 void ZSetSkiplist::ForEachInRankRange(const RangeByRankSpec* spec,
-                                      const ZSetRangeVisitor& visitor) const {
-  if (spec == nullptr) {
-    return;
-  }
-  const std::optional<RangeByRankSpec> normalized =
-      NormalizeRankRange(*spec, Size());
-  if (!normalized.has_value()) {
-    return;
-  }
-  const SkiplistType::RankRange range{
-      .min = static_cast<size_t>(normalized->min),
-      .max = static_cast<size_t>(normalized->max),
-      .min_exclusive = normalized->minex,
-      .max_exclusive = normalized->maxex,
-      .limit = ToLimit(normalized->limit),
-      .reverse = spec->reverse,
-  };
-  skiplist_->ForEachInRange(range, [&visitor](const ZSetEntry& entry) {
-    visitor(entry.member, entry.score);
-  });
+                                      const ZSetMemberVisitor& visitor) const {
+  VisitRankRange(spec, visitor);
 }
 
 void ZSetSkiplist::ForEachInScoreRange(const RangeByScoreSpec* spec,
-                                       const ZSetRangeVisitor& visitor) const {
-  if (spec == nullptr) {
-    return;
-  }
-  const SkiplistType::KeyRange<double> range{
-      .min = spec->min,
-      .max = spec->max,
-      .min_exclusive = spec->minex,
-      .max_exclusive = spec->maxex,
-      .limit = ToLimit(spec->limit),
-      .reverse = spec->reverse,
-  };
-  skiplist_->ForEachInRange(range, [&visitor](const ZSetEntry& entry) {
-    visitor(entry.member, entry.score);
-  });
+                                       const ZSetMemberVisitor& visitor) const {
+  VisitScoreRange(spec, visitor);
 }
 
 size_t ZSetSkiplist::Count(const RangeByScoreSpec* spec) const {
@@ -120,22 +95,8 @@ bool ZSetSkiplist::OverlapsLexRange(const RangeByLexSpec* spec) const {
 }
 
 void ZSetSkiplist::ForEachInLexRange(const RangeByLexSpec* spec,
-                                     const ZSetRangeVisitor& visitor) const {
-  if (!OverlapsLexRange(spec)) {
-    return;
-  }
-  skiplist_->ForEachInRange(
-      SkiplistType::KeyRange<LexBound>{
-          .min = spec->min,
-          .max = spec->max,
-          .min_exclusive = spec->minex,
-          .max_exclusive = spec->maxex,
-          .limit = ToLimit(spec->limit),
-          .reverse = spec->reverse,
-      },
-      [&visitor](const ZSetEntry& entry) {
-        visitor(entry.member, entry.score);
-      });
+                                     const ZSetMemberVisitor& visitor) const {
+  VisitLexRange(spec, visitor);
 }
 
 size_t ZSetSkiplist::LexCount(const RangeByLexSpec* spec) const {
@@ -162,7 +123,7 @@ bool ZSetSkiplist::ForEachEntry(const ZSetEntryVisitor& visitor) const {
 }
 
 size_t ZSetSkiplist::Scan(size_t cursor, size_t count,
-                          const ZSetScanVisitor& visitor) {
+                          const ZSetMemberVisitor& visitor) {
   return dict_->ScanStep(cursor, count,
                          [&visitor](const std::string& member, double score) {
                            visitor(member, score);
@@ -176,4 +137,4 @@ std::optional<ZSetSkiplist::SkiplistType::Limit> ZSetSkiplist::ToLimit(
   }
   return SkiplistType::Limit{.offset = limit->offset, .count = limit->count};
 }
-}  // namespace redis_simple::zset
+}  // namespace redis_simple::data_types
