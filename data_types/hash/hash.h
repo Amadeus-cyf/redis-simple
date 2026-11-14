@@ -140,8 +140,8 @@ size_t Hash::ScanDict(size_t cursor, size_t count, Visitor&& visitor) {
   RS_CHECK(encoding_ == Encoding::kDict);
   return dict_->ScanStep(
       cursor, count,
-      [&visitor](const std::string& field, const std::string& value) {
-        visitor(std::string_view(field), std::string_view(value));
+      [&visitor](std::string_view field, const std::string& value) {
+        visitor(field, std::string_view(value));
       });
 }
 

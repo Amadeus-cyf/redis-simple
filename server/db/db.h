@@ -177,7 +177,7 @@ bool RedisDb::ForEachObject(Visitor&& visitor) {
   while (cursor.has_value()) {
     cursor = dict_->Scan(
         *cursor, [this, &visitor, &keep_visiting](
-                     const std::string& key, const RedisObjectPtr& object) {
+                     std::string_view key, const RedisObjectPtr& object) {
           if (keep_visiting && !IsKeyExpired(key)) {
             keep_visiting = visitor(std::string_view(key), *object);
           }

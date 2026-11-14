@@ -29,7 +29,7 @@ DictModel ReadWithScan(StringDict* dict) {
   std::optional<size_t> cursor = 0;
   while (cursor.has_value()) {
     cursor = dict->Scan(
-        *cursor, [&values](const std::string& key, const std::string& value) {
+        *cursor, [&values](std::string_view key, const std::string& value) {
           Require(values.emplace(key, value).second);
         });
   }

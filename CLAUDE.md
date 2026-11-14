@@ -172,6 +172,11 @@ Guidance for AI coding agents working in this repository.
   object type and null database in each command.
 - Prefer `Dict::FindOrInsert` for upserts so a key is hashed once and copied
   only when it is new.
+- A string-keyed `Dict` stores each key's bytes in its entry, as Redis embeds
+  keys, so a key has no allocation or `std::string` of its own. Keys are
+  read back as `std::string_view` (`Dict::KeyView`), valid until the entry
+  is deleted; take them that way in visitors, and insert by view
+  (`FindOrInsert`) instead of building a `std::string` first.
 - `RedisDb` operations hash their key once as a `containers::HashedKey` and
   pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
   hash. Keep operations that touch more than one of those dicts on that path
