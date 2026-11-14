@@ -298,10 +298,10 @@ inline ParseResult ParseFreshResp(std::string_view input,
   const bool split = utils::SplitArgs(
       input.substr(0, line_end),
       [state, &tokens](std::string_view argument, bool quoted) {
-        // Quoted arguments are unescaped copies; the deque keeps each one,
+        // Quoted arguments are unescaped copies; the list keeps each one,
         // and the views into it, in place until the requests have run.
         tokens.push_back(
-            quoted ? std::string_view(state->unescaped.emplace_back(argument))
+            quoted ? std::string_view(state->unescaped.emplace_front(argument))
                    : argument);
       });
   if (!split) {

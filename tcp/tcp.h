@@ -32,6 +32,8 @@ int TcpBindAndConnect(const TcpAddress& remote,
                       bool non_block = true);
 int TcpBind(int socket_fd, const TcpAddress& address);
 int TcpListen(int socket_fd);
+// Accepts a connection as a nonblocking, close-on-exec socket with Nagle's
+// algorithm off and keepalive probes on, as Redis sets up its clients.
 int TcpAccept(int socket_fd, TcpAddress* address);
 int Block(int fd);
 int NonBlock(int fd);

@@ -553,10 +553,10 @@ scripts/profile_server.sh build/release/redis_simple path/to/baseline/redis_simp
 scripts/measure_server_memory.sh build/release/redis_simple path/to/baseline/redis_simple
 ```
 
-`profile_server.sh` runs nine workloads: a small command mix, pipelined and
+`profile_server.sh` runs ten workloads: a small command mix, pipelined and
 unpipelined `GET`/`SET`, 4 KB and 36-byte values, 1,000-member collection
-reads, writes with AOF on, keys with TTLs plus `SCAN`, and saving and
-loading an RDB file of every type. Pick some with
+reads, writes with AOF on, keys with TTLs plus `SCAN`, saving and loading
+an RDB file of every type, and replaying an AOF. Pick some with
 `-w`, for example `-w unpipelined,aof-writes`. It counts instructions rather
 than time because counts barely vary between runs, so differences of a few
 percent are reliable even on a busy or small machine. Counts miss cache-miss

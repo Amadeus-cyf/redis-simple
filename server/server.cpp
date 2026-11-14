@@ -37,6 +37,34 @@ bool Server::Run(const ServerOptions& options) {
   aof_.reset();
   require_pass_ = options.require_pass;
   protected_mode_ = options.protected_mode;
+  if (!LoadData(options)) {
+    return false;
+  }
+  // Closes the listening socket when Run returns.
+  connection::Connection listener(
+      connection::Context{.loop = loop_.get(), .fd = -1});
+  if (!StartServing(options, &listener)) {
+    fd_ = -1;
+    // Also closes the AOF, which stops its background thread.
+    StopIoThreads();
+    return false;
+  }
+  context_ = {.db = db_.get(),
+              .aof = aof_.get(),
+              .rdb = rdb_.get(),
+              .changes = rdb_->ChangeCounter(),
+              .required_password = require_pass_,
+              .io_threads = io_threads_};
+  loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
+      [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
+  loop_->Run();
+  loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
+  fd_ = -1;
+  StopIoThreads();
+  return true;
+}
+
+bool Server::LoadData(const ServerOptions& options) {
   // Redis' dir: the RDB file and the AOF are relative to it.
   if (!options.dir.empty() && chdir(options.dir.c_str()) != 0) {
     RS_LOG_ERROR("Can't chdir to '%s': %s\n", options.dir.c_str(),
@@ -64,57 +92,39 @@ bool Server::Run(const ServerOptions& options) {
     ResumeIoThreads();
   };
   rdb_->SetForkHooks(before_fork, after_fork);
-  if (options.append_only) {
-    // An RDB base file follows the RDB options, as in Redis.
-    aof::Options aof_options = options.aof_options;
-    aof_options.rdb_compression = options.rdb_options.compression;
-    aof_options.rdb_checksum = options.rdb_options.checksum;
-    aof_ = aof::Aof::Open(aof_options, db_.get());
-    if (aof_ == nullptr) {
-      return false;
-    }
-    // Redis counts the loaded commands' changes as unsaved.
-    rdb_->AddChanges(aof_->ReplayedChanges());
-    aof_->SetForkHooks(before_fork, after_fork);
+  if (!options.append_only) {
+    return true;
   }
-  connection::Connection connection(
-      connection::Context{.loop = loop_.get(), .fd = -1});
-  const connection::AddressInfo address(options.bind_address, options.port);
-  if (connection.BindAndListen(address) ==
-      connection::ConnectionStatus::kError) {
-    aof_.reset();
+  // An RDB base file follows the RDB options, as in Redis.
+  aof::Options aof_options = options.aof_options;
+  aof_options.rdb_compression = options.rdb_options.compression;
+  aof_options.rdb_checksum = options.rdb_options.checksum;
+  aof_ = aof::Aof::Open(aof_options, db_.get());
+  if (aof_ == nullptr) {
     return false;
   }
-  fd_ = connection.Descriptor();
+  // Redis counts the loaded commands' changes as unsaved.
+  rdb_->AddChanges(aof_->ReplayedChanges());
+  aof_->SetForkHooks(before_fork, after_fork);
+  return true;
+}
+
+bool Server::StartServing(const ServerOptions& options,
+                          connection::Connection* const listener) {
+  const connection::AddressInfo address(options.bind_address, options.port);
+  if (listener->BindAndListen(address) ==
+      connection::ConnectionStatus::kError) {
+    return false;
+  }
+  fd_ = listener->Descriptor();
   // Like Redis, --io-threads counts the main thread, which runs commands
   // while the others own the client sockets.
   if (options.io_threads > 1 &&
       !StartIoThreads(static_cast<size_t>(options.io_threads) - 1)) {
     RS_LOG_WARN("failed to start %d I/O threads\n", options.io_threads - 1);
-    StopIoThreads();
-    fd_ = -1;
-    aof_.reset();
     return false;
   }
-  if (!InstallAcceptCallback()) {
-    StopIoThreads();
-    fd_ = -1;
-    aof_.reset();
-    return false;
-  }
-  context_ = {.db = db_.get(),
-              .aof = aof_.get(),
-              .rdb = rdb_.get(),
-              .changes = rdb_->ChangeCounter(),
-              .required_password = require_pass_,
-              .io_threads = io_threads_};
-  loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
-      [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
-  loop_->Run();
-  loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
-  fd_ = -1;
-  StopIoThreads();
-  return true;
+  return InstallAcceptCallback();
 }
 
 bool Server::StartIoThreads(size_t thread_count) {

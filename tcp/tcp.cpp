@@ -3,9 +3,12 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
@@ -19,6 +22,8 @@ namespace {
 // Redis' default tcp-backlog, so bursts of new connections queue instead of
 // timing out. The kernel caps it at net.core.somaxconn.
 constexpr int kBacklog = 511;
+// Redis' default tcp-keepalive: probe a silent peer after this many seconds.
+constexpr int kKeepAliveSeconds = 300;
 
 int SetCloseOnExec(int fd);
 
@@ -67,9 +72,47 @@ int SetBlock(int fd, bool block) {
   if (is_non_block == !block) {
     return ToInt(TcpStatusCode::kOk);
   }
-  block ? flags &= ~O_NONBLOCK : flags |= O_NONBLOCK;
+  if (block) {
+    flags &= ~O_NONBLOCK;
+  } else {
+    flags |= O_NONBLOCK;
+  }
   return fcntl(fd, F_SETFL, flags) < 0 ? ToInt(TcpStatusCode::kError)
                                        : ToInt(TcpStatusCode::kOk);
+}
+
+bool SetIntOption(int fd, int level, int option, int value) {
+  return setsockopt(fd, level, option, &value, sizeof(value)) == 0;
+}
+
+// Sends small replies at once instead of holding them back for the peer's
+// acknowledgment of the previous one (Nagle's algorithm), as Redis'
+// anetEnableTcpNoDelay does.
+bool DisableNagle(int fd) {
+  return SetIntOption(fd, IPPROTO_TCP, TCP_NODELAY, 1);
+}
+
+// Has the kernel probe a peer that has been silent for `seconds`, and close
+// the connection if three probes, a third of that apart, go unanswered, as
+// Redis' anetKeepAlive does. Without it a client whose machine vanished
+// keeps its connection forever.
+bool EnableKeepAlive(int fd, int seconds) {
+  if (!SetIntOption(fd, SOL_SOCKET, SO_KEEPALIVE, 1)) {
+    return false;
+  }
+  const int interval = std::max(seconds / 3, 1);
+#if defined(TCP_KEEPIDLE)
+  return SetIntOption(fd, IPPROTO_TCP, TCP_KEEPIDLE, seconds) &&
+         SetIntOption(fd, IPPROTO_TCP, TCP_KEEPINTVL, interval) &&
+         SetIntOption(fd, IPPROTO_TCP, TCP_KEEPCNT, 3);
+#elif defined(TCP_KEEPALIVE)
+  // macOS names the idle time TCP_KEEPALIVE.
+  static_cast<void>(interval);
+  return SetIntOption(fd, IPPROTO_TCP, TCP_KEEPALIVE, seconds);
+#else
+  static_cast<void>(interval);
+  return true;
+#endif
 }
 
 int SetCloseOnExec(int fd) {
@@ -153,6 +196,11 @@ int TcpAccept(int socket_fd, TcpAddress* const address) {
       SetCloseOnExec(remote_fd) == TcpStatusCode::kError) {
     close(remote_fd);
     return ToInt(TcpStatusCode::kError);
+  }
+  // Tuning only: a socket that refuses either still works.
+  if (!DisableNagle(remote_fd) ||
+      !EnableKeepAlive(remote_fd, kKeepAliveSeconds)) {
+    RS_LOG_DEBUG("socket options: %s\n", std::strerror(errno));
   }
   if (address != nullptr) {
     const auto* peer = reinterpret_cast<const sockaddr_in*>(&sa);

@@ -58,6 +58,13 @@ class Server {
 
  private:
   Server();
+  // The steps of Run(). LoadData: enters the working directory, loads the
+  // RDB file or opens and replays the AOF. StartServing: listens on
+  // `listener`, starts the I/O threads, and accepts connections. Both
+  // return false after a failure, which Run() cleans up after.
+  bool LoadData(const ServerOptions& options);
+  bool StartServing(const ServerOptions& options,
+                    connection::Connection* listener);
   bool InstallAcceptCallback();
   int64_t ServerCron();
   bool StartIoThreads(size_t thread_count);

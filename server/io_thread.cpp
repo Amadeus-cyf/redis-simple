@@ -81,9 +81,11 @@ void Wakeup::Drain() const {
   std::array<char, 64> bytes{};
   while (true) {
     const ssize_t result = read(read_fd_, bytes.data(), bytes.size());
-    // Stop once the pipe is empty (EAGAIN); keep reading after data or a
-    // signal interruption.
-    if (result == 0 || (result < 0 && errno != EINTR)) {
+    // A read that does not fill the buffer emptied the pipe, so the usual
+    // single pending byte costs one call, not a second that finds nothing.
+    // Keep reading after a full buffer or a signal interruption.
+    if (std::cmp_less(result, bytes.size()) &&
+        (result >= 0 || errno != EINTR)) {
       return;
     }
   }
