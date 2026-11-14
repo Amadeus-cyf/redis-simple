@@ -59,6 +59,22 @@ DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
   return DbStatus::kOk;
 }
 
+bool RedisDb::AddKey(std::string_view key, RedisObjectPtr object,
+                     int64_t expire) {
+  const HashedKey hashed(key);
+  const auto [slot, inserted] = dict_->FindOrInsert(hashed);
+  if (!inserted) {
+    return false;
+  }
+  *slot = std::move(object);
+  TouchWatchedKey(hashed);
+  // A new key has no TTL to clear.
+  if (expire > 0) {
+    *expires_->FindOrInsert(hashed).first = expire;
+  }
+  return true;
+}
+
 DbStatus RedisDb::SetStringKey(std::string_view key, std::string_view value,
                                int64_t expire, ExistingTtl existing_ttl) {
   const HashedKey hashed(key);

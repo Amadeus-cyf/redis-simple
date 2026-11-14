@@ -3,11 +3,13 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -34,19 +36,28 @@ constexpr size_t kAutoSyncBytes = size_t{4} * 1024 * 1024;
 // Redis compresses only strings longer than this.
 constexpr size_t kMinCompressBytes = 20;
 
-// Encodes records into a buffer and writes it to the file in blocks, keeping
-// the CRC64 of everything written.
+// The most a fixed-size field takes: a type or length byte and eight bytes.
+constexpr size_t kMaxFieldBytes = 9;
+
+// Encodes records into a block and writes it to the file when it fills,
+// keeping the CRC64 of everything written.
+//
+// Small fields are stored straight into the block: every writer leaves room
+// for one more field (`used_` stays under kBlockBytes, and the block has
+// kMaxFieldBytes to spare), so a field needs no capacity check before it,
+// only the flush check after it.
 class Encoder {
  public:
   Encoder(int fd, const WriteOptions& options, aof::FileOps* file_ops)
-      : fd_(fd), options_(&options), file_ops_(file_ops) {
-    buffer_.reserve(kBlockBytes + 64);
-  }
+      : fd_(fd),
+        options_(&options),
+        file_ops_(file_ops),
+        block_(std::make_unique_for_overwrite<Block>()) {}
 
   [[nodiscard]] WriteStatus Status() const { return status_; }
 
   void Byte(uint8_t byte) {
-    buffer_.push_back(static_cast<char>(byte));
+    (*block_)[used_++] = static_cast<char>(byte);
     MaybeFlush();
   }
 
@@ -55,13 +66,14 @@ class Encoder {
     if (length < (1U << 6)) {
       Byte(static_cast<uint8_t>(length | (kLength6Bit << 6)));
     } else if (length < (1U << 14)) {
-      Byte(static_cast<uint8_t>((length >> 8) | (kLength14Bit << 6)));
+      (*block_)[used_++] =
+          static_cast<char>((length >> 8) | (kLength14Bit << 6));
       Byte(static_cast<uint8_t>(length & 0xff));
     } else if (length <= UINT32_MAX) {
-      Byte(kLength32Bit);
+      (*block_)[used_++] = static_cast<char>(kLength32Bit);
       BigEndian(length, 4);
     } else {
-      Byte(kLength64Bit);
+      (*block_)[used_++] = static_cast<char>(kLength64Bit);
       BigEndian(length, 8);
     }
   }
@@ -106,36 +118,47 @@ class Encoder {
   }
 
   void Raw(std::string_view bytes) {
-    if (bytes.size() < kDirectWriteBytes) {
-      buffer_.append(bytes);
-      MaybeFlush();
+    if (bytes.size() >= kDirectWriteBytes) {
+      Flush();
+      UpdateCrc(bytes);
+      Write(bytes);
       return;
     }
-    Flush();
-    UpdateCrc(bytes);
-    Write(bytes);
+    // Fill the block, write it, and start the next with the rest.
+    const size_t fitting = std::min(bytes.size(), kBlockBytes - used_);
+    std::memcpy(block_->data() + used_, bytes.data(), fitting);
+    used_ += fitting;
+    MaybeFlush();
+    if (fitting < bytes.size()) {
+      std::memcpy(block_->data(), bytes.data() + fitting,
+                  bytes.size() - fitting);
+      used_ = bytes.size() - fitting;
+    }
   }
 
   // Writes what is buffered, then the checksum: the CRC64 of everything
   // before it, or zero without rdbchecksum.
   void Finish() {
-    UpdateCrc(buffer_);
-    LittleEndianUnchecked(crc_, 8);
-    Write(buffer_);
-    buffer_.clear();
+    UpdateCrc(Buffered());
+    StoreLittleEndian(crc_, 8);
+    Write(Buffered());
+    used_ = 0;
   }
 
  private:
   // Redis' rdbEncodeInteger: INT8, INT16, or INT32, little-endian.
   bool EncodeInteger(int64_t value) {
     if (value >= INT8_MIN && value <= INT8_MAX) {
-      Byte((kEncodedValue << 6) | kEncodingInt8);
+      (*block_)[used_++] =
+          static_cast<char>((kEncodedValue << 6) | kEncodingInt8);
       LittleEndian(static_cast<uint64_t>(value), 1);
     } else if (value >= INT16_MIN && value <= INT16_MAX) {
-      Byte((kEncodedValue << 6) | kEncodingInt16);
+      (*block_)[used_++] =
+          static_cast<char>((kEncodedValue << 6) | kEncodingInt16);
       LittleEndian(static_cast<uint64_t>(value), 2);
     } else if (value >= INT32_MIN && value <= INT32_MAX) {
-      Byte((kEncodedValue << 6) | kEncodingInt32);
+      (*block_)[used_++] =
+          static_cast<char>((kEncodedValue << 6) | kEncodingInt32);
       LittleEndian(static_cast<uint64_t>(value), 4);
     } else {
       return false;
@@ -159,32 +182,36 @@ class Encoder {
 
   void BigEndian(uint64_t value, size_t width) {
     for (size_t i = width; i > 0; --i) {
-      buffer_.push_back(static_cast<char>((value >> (8 * (i - 1))) & 0xff));
+      (*block_)[used_++] = static_cast<char>((value >> (8 * (i - 1))) & 0xff);
     }
     MaybeFlush();
   }
 
   void LittleEndian(uint64_t value, size_t width) {
-    LittleEndianUnchecked(value, width);
+    StoreLittleEndian(value, width);
     MaybeFlush();
   }
 
-  void LittleEndianUnchecked(uint64_t value, size_t width) {
+  void StoreLittleEndian(uint64_t value, size_t width) {
     for (size_t i = 0; i < width; ++i) {
-      buffer_.push_back(static_cast<char>((value >> (8 * i)) & 0xff));
+      (*block_)[used_++] = static_cast<char>((value >> (8 * i)) & 0xff);
     }
   }
 
+  [[nodiscard]] std::string_view Buffered() const {
+    return {block_->data(), used_};
+  }
+
   void MaybeFlush() {
-    if (buffer_.size() >= kBlockBytes) {
+    if (used_ >= kBlockBytes) {
       Flush();
     }
   }
 
   void Flush() {
-    UpdateCrc(buffer_);
-    Write(buffer_);
-    buffer_.clear();
+    UpdateCrc(Buffered());
+    Write(Buffered());
+    used_ = 0;
   }
 
   // Without rdbchecksum the CRC stays zero, which the file then ends with.
@@ -215,7 +242,11 @@ class Encoder {
   int fd_;
   const WriteOptions* options_;
   aof::FileOps* file_ops_;
-  std::string buffer_;
+  // kBlockBytes plus room for the field that fills it. Allocated without
+  // being zeroed: every byte is written before it is read.
+  using Block = std::array<char, kBlockBytes + kMaxFieldBytes>;
+  std::unique_ptr<Block> block_;
+  size_t used_{};
   uint64_t crc_{};
   size_t unsynced_bytes_{};
   WriteStatus status_{WriteStatus::kWritten};
@@ -371,15 +402,18 @@ WriteStatus WriteRdbFile(db::RedisDb* const db, const std::string& path,
     out.Byte(kOpcodeResizeDb);
     out.Length(db->KeyCount());
     out.Length(db->KeysWithExpirationCount());
-    db->ForEachObject(
-        [db, &out](std::string_view key, const db::RedisObject& object) {
-          if (const std::optional<int64_t> expire = db->Expiration(key)) {
-            out.Byte(kOpcodeExpireTimeMs);
-            out.SignedInteger(*expire);
-          }
-          WriteKeyValue(key, object, &out);
-          return out.Status() == WriteStatus::kWritten;
-        });
+    // Without any TTL there is nothing to look up for each key.
+    const bool has_expirations = db->KeysWithExpirationCount() > 0;
+    db->ForEachObject([db, has_expirations, &out](
+                          std::string_view key, const db::RedisObject& object) {
+      if (const std::optional<int64_t> expire =
+              has_expirations ? db->Expiration(key) : std::nullopt) {
+        out.Byte(kOpcodeExpireTimeMs);
+        out.SignedInteger(*expire);
+      }
+      WriteKeyValue(key, object, &out);
+      return out.Status() == WriteStatus::kWritten;
+    });
   }
   out.Byte(kOpcodeEof);
   out.Finish();

@@ -67,6 +67,10 @@ class RedisDb {
   // `expire` is an absolute time in milliseconds, or 0 for none.
   DbStatus SetKey(std::string_view key, RedisObjectPtr object, int64_t expire,
                   ExistingTtl existing_ttl = ExistingTtl::kClear);
+  // Adds a key that should not exist yet, hashing it once, as loading a
+  // file does (Redis' dbAddRDBLoad). Returns false, changing nothing, if the
+  // key exists. `expire` is as for SetKey.
+  bool AddKey(std::string_view key, RedisObjectPtr object, int64_t expire);
   // Like SetKey with a string value, but overwrites an existing string
   // object in place instead of allocating a new one.
   DbStatus SetStringKey(std::string_view key, std::string_view value,

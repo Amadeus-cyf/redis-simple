@@ -284,6 +284,37 @@ TEST_F(RdbTest, RoundTripsWithoutCompressionOrChecksum) {
   EXPECT_EQ(DescribeAll(loaded.get()), DescribeAll(db.get()));
 }
 
+TEST_F(RdbTest, RoundTripsValuesThatStraddleWriteBlocks) {
+  // Incompressible values of sizes that share no factor with the writer's
+  // 1 MiB block, so fields and payloads end on both sides of block ends, and
+  // one value just under the size written directly.
+  auto db = db::RedisDb::Create();
+  uint32_t state = 7;
+  const auto random_bytes = [&state](size_t size) {
+    std::string bytes;
+    bytes.reserve(size);
+    for (size_t i = 0; i < size; ++i) {
+      state = (state * 1103515245) + 12345;
+      bytes.push_back(static_cast<char>(state >> 16));
+    }
+    return bytes;
+  };
+  for (int i = 0; i < 40; ++i) {
+    db->SetKey("key:" + std::to_string(i),
+               RedisObject::CreateWithString(random_bytes(100'003 + (i * 977))),
+               0);
+  }
+  db->SetKey("nearly-a-block",
+             RedisObject::CreateWithString(random_bytes((1 << 20) - 1)), 0);
+  WriteOptions options;
+  options.compression = false;
+  ASSERT_EQ(Write(db.get(), options), WriteStatus::kWritten);
+
+  auto loaded = db::RedisDb::Create();
+  ASSERT_TRUE(Load(loaded.get()));
+  EXPECT_EQ(DescribeAll(loaded.get()), DescribeAll(db.get()));
+}
+
 TEST_F(RdbTest, WritesAnEmptyDatabase) {
   auto db = db::RedisDb::Create();
   ASSERT_EQ(Write(db.get()), WriteStatus::kWritten);
