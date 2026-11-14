@@ -152,6 +152,29 @@ TEST(DynamicBufferTest, ReusesConsumedCapacityBeforeGrowing) {
   EXPECT_EQ(buffer.Size(), 2500);
   EXPECT_EQ(buffer.View(), std::string(500, 'a') + second);
 }
+
+TEST(DynamicBufferTest, CompactReleasesALargeBufferOnceItIsEmpty) {
+  DynamicBuffer buffer;
+  const std::string large(size_t{1} << 20, 'x');
+  buffer.Append(large.data(), large.size());
+  ASSERT_GE(buffer.Capacity(), large.size());
+
+  // Unread bytes keep the buffer, whatever its size.
+  buffer.Consume(large.size() - 3);
+  buffer.Compact();
+  EXPECT_GE(buffer.Capacity(), large.size());
+  EXPECT_EQ(buffer.View(), "xxx");
+
+  buffer.Consume(3);
+  buffer.Compact();
+  EXPECT_LE(buffer.Capacity(), size_t{64} * 1024);
+  EXPECT_TRUE(buffer.Empty());
+
+  // It still grows again as needed.
+  buffer.Append(large.data(), large.size());
+  EXPECT_EQ(buffer.View(), large);
+}
+
 TEST(DynamicBufferDeathTest, RejectsCommitBeyondCapacity) {
   DynamicBuffer buffer;
   buffer.Append("ab", 2);

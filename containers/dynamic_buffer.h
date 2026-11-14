@@ -23,6 +23,8 @@ class DynamicBuffer {
   // with the number of bytes actually written there.
   char* WritableTail(size_t n);
   void Commit(size_t n);
+  // Moves the unread bytes to the front, making room after them, and
+  // releases a large buffer once nothing in it is unread.
   void Compact();
   std::optional<std::string_view> ReadLineView();
   std::string ReadLine();
@@ -37,6 +39,7 @@ class DynamicBuffer {
  private:
   size_t UnreadSize() const { return size_ - processed_; }
   void Reserve(size_t n);
+  void MoveUnreadToFront();
   void Resize(size_t n);
   std::unique_ptr<char[]> buffer_;
   size_t capacity_;

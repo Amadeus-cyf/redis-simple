@@ -18,9 +18,9 @@ Intset::Intset()
           static_cast<size_t>(kInitSize) * kInt16)),
       length_(0),
       encoding_(kInt16) {}
+
 bool Intset::Add(int64_t value) {
-  uint32_t value_encode = ValueEncoding(value);
-  if (value_encode > encoding_) {
+  if (ValueEncoding(value) > encoding_) {
     UpgradeAndAdd(value);
     return true;
   }
@@ -42,14 +42,12 @@ int64_t Intset::Get(uint32_t index) const {
 }
 
 bool Intset::Find(int64_t value) const {
-  EncodingType encoding = ValueEncoding(value);
-  return encoding <= encoding_ && Search(value, nullptr);
+  return ValueEncoding(value) <= encoding_ && Search(value, nullptr);
 }
 
 bool Intset::Delete(int64_t value) {
   uint32_t index = 0;
-  bool exist = Search(value, &index);
-  if (!exist) {
+  if (!Search(value, &index)) {
     return false;
   }
   MoveTail(index + 1, index);
@@ -93,21 +91,8 @@ void Intset::UpgradeAndAdd(int64_t value) {
   const uint32_t prepend = value < 0 ? 1 : 0;
   for (uint32_t index = old_length; index > 0; --index) {
     const uint32_t old_index = index - 1;
-    int64_t old_value = 0;
-    const unsigned char* source =
-        old_contents.get() + (static_cast<size_t>(old_index * old_encoding));
-    if (old_encoding == kInt64) {
-      std::memcpy(&old_value, source, sizeof(old_value));
-    } else if (old_encoding == kInt32) {
-      int32_t value32 = 0;
-      std::memcpy(&value32, source, sizeof(value32));
-      old_value = value32;
-    } else {
-      int16_t value16 = 0;
-      std::memcpy(&value16, source, sizeof(value16));
-      old_value = value16;
-    }
-    Set(old_index + prepend, old_value);
+    Set(old_index + prepend,
+        DecodeAt(old_contents.get(), old_index, old_encoding));
   }
   if (prepend == 1) {
     Set(0, value);
@@ -170,8 +155,13 @@ void Intset::AppendRedisBlob(std::string* const out) const {
 
 int64_t Intset::EncodedValue(uint32_t index, EncodingType encoding) const {
   RS_CHECK(index < length_);
+  return DecodeAt(contents_.get(), index, encoding);
+}
+
+int64_t Intset::DecodeAt(const unsigned char* contents, uint32_t index,
+                         EncodingType encoding) {
   const unsigned char* source =
-      contents_.get() + (static_cast<size_t>(index * encoding));
+      contents + (static_cast<size_t>(index) * encoding);
   if (encoding == kInt64) {
     int64_t value64 = 0;
     std::memcpy(&value64, source, sizeof(value64));
@@ -189,7 +179,7 @@ int64_t Intset::EncodedValue(uint32_t index, EncodingType encoding) const {
 
 void Intset::Set(uint32_t index, int64_t value) {
   unsigned char* destination =
-      contents_.get() + (static_cast<size_t>(index * encoding_));
+      contents_.get() + (static_cast<size_t>(index) * encoding_);
   if (encoding_ == kInt64) {
     std::memcpy(destination, &value, sizeof(value));
   } else if (encoding_ == kInt32) {
@@ -204,9 +194,9 @@ void Intset::Set(uint32_t index, int64_t value) {
 void Intset::MoveTail(uint32_t from, uint32_t to) {
   const size_t bytes = static_cast<size_t>(length_ - from) * encoding_;
   const unsigned char* source =
-      contents_.get() + (static_cast<size_t>(from * encoding_));
+      contents_.get() + (static_cast<size_t>(from) * encoding_);
   unsigned char* destination =
-      contents_.get() + (static_cast<size_t>(to * encoding_));
+      contents_.get() + (static_cast<size_t>(to) * encoding_);
   std::memmove(destination, source, bytes);
 }
 }  // namespace redis_simple::containers

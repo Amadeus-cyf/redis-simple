@@ -24,6 +24,7 @@ class Quicklist {
   explicit Quicklist(size_t node_max_bytes);
   Quicklist(const Quicklist&) = delete;
   Quicklist& operator=(const Quicklist&) = delete;
+  ~Quicklist() { Clear(); }
 
   bool LPush(std::string_view value);
   bool RPush(std::string_view value);

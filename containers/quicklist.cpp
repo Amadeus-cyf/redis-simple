@@ -42,7 +42,7 @@ bool Quicklist::LPush(std::string_view value) {
 }
 
 bool Quicklist::RPush(std::string_view value) {
-  if ((tail_ == nullptr) || !CanAppendToNode(tail_, value)) {
+  if (tail_ == nullptr || !CanAppendToNode(tail_, value)) {
     AppendNode();
   }
   if (!PushToTailNode(value)) {
@@ -277,7 +277,7 @@ bool Quicklist::PushToHeadNode(std::string_view value) {
 }
 
 bool Quicklist::PushToTailNode(std::string_view value) {
-  return (tail_ != nullptr) && tail_->listpack->Append(value);
+  return tail_ != nullptr && tail_->listpack->Append(value);
 }
 
 bool Quicklist::CanAppendToNode(const Node* node,
@@ -454,7 +454,12 @@ void Quicklist::DeleteNode(Node* node) {
 }
 
 void Quicklist::Clear() {
-  head_.reset();
+  // Unlink node by node. Destroying the head alone would destroy each node
+  // from inside the one before it, a stack frame per node, which overflows
+  // the stack for a long enough list.
+  while (head_ != nullptr) {
+    head_ = std::move(head_->next);
+  }
   tail_ = nullptr;
   size_ = 0;
   node_count_ = 0;

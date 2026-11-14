@@ -37,6 +37,9 @@ class Intset {
   static EncodingType ValueEncoding(int64_t value);
   void Resize(uint32_t length);
   int64_t EncodedValue(uint32_t index, EncodingType encoding) const;
+  // The value at `index` of `contents`, an array of `encoding`-wide integers.
+  static int64_t DecodeAt(const unsigned char* contents, uint32_t index,
+                          EncodingType encoding);
   void UpgradeAndAdd(int64_t value);
   bool Search(int64_t value, uint32_t* index) const;
   void Set(uint32_t index, int64_t value);

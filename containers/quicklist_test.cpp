@@ -304,4 +304,23 @@ TEST(QuicklistTest, SetSplitsOnlyTheReplacedNode) {
   expected[8] = large;
   EXPECT_EQ(quicklist.Range(0, 8), expected);
 }
+
+TEST(QuicklistTest, FreesAVeryLongChainOfNodes) {
+  // The smallest node size gives every element a node of its own. Freeing
+  // the nodes one inside another would need a stack frame for each.
+  constexpr size_t kNodes = 300'000;
+  {
+    Quicklist quicklist(1);
+    for (size_t index = 0; index < kNodes; ++index) {
+      ASSERT_TRUE(quicklist.RPush("element"));
+    }
+    ASSERT_EQ(quicklist.NodeCount(), kNodes);
+    // Trimming to nothing clears the list; destruction frees the rest.
+    ASSERT_TRUE(quicklist.Trim(1, 0));
+    EXPECT_EQ(quicklist.NodeCount(), 0);
+    for (size_t index = 0; index < kNodes; ++index) {
+      ASSERT_TRUE(quicklist.RPush("element"));
+    }
+  }
+}
 }  // namespace redis_simple::containers

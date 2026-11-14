@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <compare>
 #include <concepts>
 #include <cstddef>
@@ -11,7 +12,6 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <random>
 #include <utility>
 #include <vector>
 
@@ -102,34 +102,14 @@ class Skiplist {
 
   // Inserts `key` unless an equal key exists. Returns the stored key.
   const Key& Insert(Key key) {
-    const size_t insert_level = RandomLevel();
-    for (size_t i = level_; i < insert_level; ++i) {
-      head_->levels[i] = {.next = nullptr, .span = size_};
-    }
-    level_ = std::max(level_, insert_level);
-
     Path path;
     Node* const next = FindPath(key, &path);
     if (next != nullptr && compare_(next->key, key) == 0) {
       return next->key;
     }
-    auto node = std::make_unique<Node>(insert_level, std::move(key));
-    for (size_t i = 0; i < level_; ++i) {
-      Level& prev = path.prev[i]->levels[i];
-      if (i >= insert_level) {
-        ++prev.span;
-        continue;
-      }
-      const size_t distance = path.rank[0] - path.rank[i];
-      node->levels[i] = {.next = prev.next, .span = prev.span - distance};
-      prev = {.next = node.get(), .span = distance + 1};
-    }
-    node->prev = path.prev[0] == head_.get() ? nullptr : path.prev[0];
-    if (node->levels[0].next != nullptr) {
-      node->levels[0].next->prev = node.get();
-    }
-    ++size_;
-    return node.release()->key;
+    return Link(std::make_unique<Node>(RandomLevel(), std::move(key)).release(),
+                &path)
+        ->key;
   }
 
   // Each lookup has a `const Key&` overload so that literals and other values
@@ -176,10 +156,11 @@ class Skiplist {
         (node->prev == nullptr || compare_(node->prev->key, node->key) < 0) &&
         (next == nullptr || compare_(node->key, next->key) < 0);
     if (!in_place) {
+      // Move the node itself, as Redis' zslUpdateScore does, instead of
+      // freeing it and allocating another.
       Unlink(node, path);
-      Key moved = std::move(node->key);
-      delete node;
-      Insert(std::move(moved));
+      FindPath(node->key, &path);
+      Link(node, &path);
     }
     return true;
   }
@@ -282,7 +263,6 @@ class Skiplist {
 
  private:
   static constexpr size_t kMaxLevel = 32;
-  static constexpr double kPromoteProbability = 0.25;
 
   struct Node;
 
@@ -318,13 +298,18 @@ class Skiplist {
     return level;
   }
 
-  size_t RandomLevel() const {
-    std::bernoulli_distribution promote(kPromoteProbability);
-    size_t level = 1;
-    while (level < kMaxLevel && promote(random_generator_)) {
-      ++level;
-    }
-    return level;
+  // A level for a new node, as Redis' zslRandomLevel chooses it: each level
+  // is reached with probability 0.25 of the one below. Two zero bits in a row
+  // have that probability, so half the count of leading zero bits of a random
+  // word is the number of levels above the first.
+  size_t RandomLevel() {
+    // xorshift64*, whose high bits are its best.
+    random_state_ ^= random_state_ >> 12;
+    random_state_ ^= random_state_ << 25;
+    random_state_ ^= random_state_ >> 27;
+    const uint64_t word = random_state_ * 0x2545f4914f6cdd1dULL;
+    const size_t level = 1 + (static_cast<size_t>(std::countl_zero(word)) / 2);
+    return std::min(level, kMaxLevel);
   }
 
   // Search primitives. `before` must hold for a prefix of the keys in order
@@ -388,6 +373,36 @@ class Skiplist {
     const Node* const node = FirstNodeWhereNot(
         [&](const Key& key) { return compare_(key, lookup) < 0; });
     return node != nullptr && compare_(node->key, lookup) == 0 ? node : nullptr;
+  }
+
+  // Links `node`, which the skiplist then owns, after the nodes `path`
+  // holds, which FindPath recorded for its key. Returns `node`.
+  Node* Link(Node* const node, Path* const path) {
+    const size_t node_level = node->levels.size();
+    // A level the list has not used yet starts at the head and spans every
+    // node.
+    for (size_t i = level_; i < node_level; ++i) {
+      path->prev[i] = head_.get();
+      path->rank[i] = 0;
+      head_->levels[i] = {.next = nullptr, .span = size_};
+    }
+    level_ = std::max(level_, node_level);
+    for (size_t i = 0; i < level_; ++i) {
+      Level& prev = path->prev[i]->levels[i];
+      if (i >= node_level) {
+        ++prev.span;
+        continue;
+      }
+      const size_t distance = path->rank[0] - path->rank[i];
+      node->levels[i] = {.next = prev.next, .span = prev.span - distance};
+      prev = {.next = node, .span = distance + 1};
+    }
+    node->prev = path->prev[0] == head_.get() ? nullptr : path->prev[0];
+    if (node->levels[0].next != nullptr) {
+      node->levels[0].next->prev = node;
+    }
+    ++size_;
+    return node;
   }
 
   // Removes `node` from every level; the caller owns it afterwards.
@@ -474,8 +489,10 @@ class Skiplist {
   Compare compare_;
   size_t level_;
   size_t size_{};
-  // Fixed default seed keeps level choices, and so tests, reproducible.
-  mutable std::mt19937 random_generator_;
+  // RandomLevel's state, eight bytes where a standard engine would add
+  // kilobytes to every sorted set. A fixed seed keeps level choices, and so
+  // tests, reproducible; it must not be zero.
+  uint64_t random_state_{0x9e3779b97f4a7c15ULL};
 };
 
 template <typename Key, SkiplistCompareFor<Key> Compare>

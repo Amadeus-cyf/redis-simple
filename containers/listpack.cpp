@@ -852,16 +852,13 @@ uint8_t Listpack::BacklenBytes(size_t backlen) {
   if (backlen <= BacklenThreshold::kSize1ByteBacklenMax) {
     return 1;
   }
-  if (backlen > BacklenThreshold::kSize1ByteBacklenMax &&
-      backlen <= BacklenThreshold::kSize2BytesBacklenMax) {
+  if (backlen <= BacklenThreshold::kSize2BytesBacklenMax) {
     return 2;
   }
-  if (backlen > BacklenThreshold::kSize2BytesBacklenMax &&
-      backlen <= BacklenThreshold::kSize3BytesBacklenMax) {
+  if (backlen <= BacklenThreshold::kSize3BytesBacklenMax) {
     return 3;
   }
-  if (backlen > BacklenThreshold::kSize3BytesBacklenMax &&
-      backlen <= BacklenThreshold::kSize4BytesBacklenMax) {
+  if (backlen <= BacklenThreshold::kSize4BytesBacklenMax) {
     return 4;
   }
   return 5;
@@ -989,10 +986,8 @@ void Listpack::EncodeBacklen(unsigned char* const buffer, size_t backlen) {
   }
 }
 
-// Decode the backlen of the element given its last byte through traversing
-// reversely to find the first byte has its most siginificant bit set to zero.
-// The function assumes that the offset is valid and is the last byte of the
-// element.
+// Decodes an element's backlen from its last byte, at `offset`, which must
+// be valid.
 size_t Listpack::DecodeBacklen(size_t offset) const {
   // Redis' lpDecodeBacklen: read backward from the entry's last byte, low
   // bits first, until a byte without the high bit.
