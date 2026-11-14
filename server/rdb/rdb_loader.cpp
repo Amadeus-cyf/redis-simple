@@ -392,6 +392,14 @@ class Loader {
   CompactCheck CheckCompactListpack(std::string_view blob,
                                     const CompactKind& kind);
   ValueStatus ReadValue(int type, db::RedisObjectPtr* out);
+  // Reads the "REDIS" header and returns the format version, or nullopt
+  // after logging why the data cannot be loaded.
+  std::optional<int> ReadHeader();
+  // Reads the key and value that follow a value type byte and stores them,
+  // with the pending expiration, which it clears.
+  bool LoadKey(int type, std::optional<int64_t>* expire);
+  // Compares the trailing CRC64 with the one computed while reading.
+  bool VerifyChecksum();
   ValueStatus ReadList(int type, db::RedisObjectPtr* out);
   ValueStatus ReadSet(int type, db::RedisObjectPtr* out);
   ValueStatus ReadZSet(int type, db::RedisObjectPtr* out);
@@ -865,15 +873,16 @@ bool Loader::SkipAux() {
   return true;
 }
 
-bool Loader::Load() {
+std::optional<int> Loader::ReadHeader() {
   std::array<char, 9> header{};
   if (!input_.Read(header.data(), header.size())) {
-    return ShortRead();
+    ShortRead();
+    return std::nullopt;
   }
   const std::string_view header_view(header.data(), header.size());
   if (!header_view.starts_with(kMagic)) {
     RS_LOG_ERROR("Wrong signature trying to load DB from file\n");
-    return false;
+    return std::nullopt;
   }
   // The version: four digits, such as "0011".
   int version = 0;
@@ -886,11 +895,69 @@ bool Loader::Load() {
   }
   if (version < 1 || version > kMaxLoadVersion) {
     RS_LOG_ERROR("Can't handle RDB format version %d\n", version);
+    return std::nullopt;
+  }
+  return version;
+}
+
+bool Loader::LoadKey(int type, std::optional<int64_t>* const expire) {
+  std::string key;
+  if (!ReadString(&key)) {
     return false;
   }
+  // The expiration read before this key applies to it alone.
+  const std::optional<int64_t> key_expire =
+      std::exchange(*expire, std::nullopt);
+  db::RedisObjectPtr value;
+  switch (ReadValue(type, &value)) {
+    case ValueStatus::kFailed:
+      return false;
+    case ValueStatus::kEmpty:
+      ++stats_->empty_keys_skipped;
+      return true;
+    case ValueStatus::kRead:
+      break;
+  }
+  if (!options_->keep_expired && key_expire.has_value() &&
+      *key_expire < options_->now_ms) {
+    ++stats_->keys_expired;
+    return true;
+  }
+  if (db_->LookupKey(key) != nullptr) {
+    return Corrupt("a duplicated key");
+  }
+  db_->SetKey(key, std::move(value), key_expire.value_or(0));
+  ++stats_->keys_loaded;
+  return true;
+}
 
+bool Loader::VerifyChecksum() {
+  const uint64_t expected = input_.Crc();
+  uint64_t checksum = 0;
+  std::array<unsigned char, 8> bytes{};
+  if (!input_.Read(bytes.data(), bytes.size(), /*update_crc=*/false)) {
+    return ShortRead();
+  }
+  for (size_t i = 0; i < bytes.size(); ++i) {
+    checksum |= static_cast<uint64_t>(bytes[i]) << (8 * i);
+  }
+  // Zero means the writer had rdbchecksum off.
+  if (checksum != 0 && checksum != expected) {
+    RS_LOG_ERROR("Wrong RDB checksum expected: (%" PRIx64 ") but got (%" PRIx64
+                 "). Aborting now.\n",
+                 expected, checksum);
+    return false;
+  }
+  return true;
+}
+
+bool Loader::Load() {
+  const std::optional<int> version = ReadHeader();
+  if (!version.has_value()) {
+    return false;
+  }
+  // Set by an expiration opcode, for the key that follows it.
   std::optional<int64_t> expire;
-  std::string key;
   while (true) {
     uint8_t type = 0;
     if (!ReadByte(&type)) {
@@ -987,55 +1054,17 @@ bool Loader::Load() {
             "not support\n",
             type);
         return false;
-      default: {
-        if (!ReadString(&key)) {
+      default:
+        // Anything else is a value type, followed by a key and its value.
+        if (!LoadKey(type, &expire)) {
           return false;
         }
-        db::RedisObjectPtr value;
-        switch (ReadValue(type, &value)) {
-          case ValueStatus::kFailed:
-            return false;
-          case ValueStatus::kEmpty:
-            ++stats_->empty_keys_skipped;
-            expire.reset();
-            continue;
-          case ValueStatus::kRead:
-            break;
-        }
-        if (!options_->keep_expired && expire.has_value() &&
-            *expire < options_->now_ms) {
-          ++stats_->keys_expired;
-          expire.reset();
-          continue;
-        }
-        if (db_->LookupKey(key) != nullptr) {
-          return Corrupt("a duplicated key");
-        }
-        db_->SetKey(key, std::move(value), expire.value_or(0));
-        ++stats_->keys_loaded;
-        expire.reset();
         continue;
-      }
     }
     break;
   }
-  if (version >= 5) {
-    const uint64_t expected = input_.Crc();
-    uint64_t checksum = 0;
-    std::array<unsigned char, 8> bytes{};
-    if (!input_.Read(bytes.data(), bytes.size(), /*update_crc=*/false)) {
-      return ShortRead();
-    }
-    for (size_t i = 0; i < bytes.size(); ++i) {
-      checksum |= static_cast<uint64_t>(bytes[i]) << (8 * i);
-    }
-    // Zero means the writer had rdbchecksum off.
-    if (checksum != 0 && checksum != expected) {
-      RS_LOG_ERROR("Wrong RDB checksum expected: (%" PRIx64
-                   ") but got (%" PRIx64 "). Aborting now.\n",
-                   expected, checksum);
-      return false;
-    }
+  if (*version >= 5 && !VerifyChecksum()) {
+    return false;
   }
   stats_->bytes = input_.Consumed();
   return true;

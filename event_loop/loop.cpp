@@ -32,8 +32,6 @@ namespace {
 constexpr int kIoEventMask =
     ToInt(EventFlag::kReadable) | ToInt(EventFlag::kWritable);
 constexpr int64_t kDefaultPollTimeoutMs = 1000;
-constexpr int64_t kMillisecondsPerSecond = 1000;
-constexpr int64_t kNanosecondsPerMillisecond = 1000000;
 }  // namespace
 
 void FileEvent::Merge(const FileEvent* file_event) {
@@ -182,12 +180,11 @@ Status Loop::DeleteFileEvent(int fd, int mask) {
       file_events_[fd].reset();
     }
   } else {
-    int m = file_event->Mask();
-    m &= ~removed_io_mask;
-    if ((m & EventFlag::kWritable) == 0) {
-      m &= ~EventFlag::kBarrier;
+    int remaining_mask = file_event->Mask() & ~removed_io_mask;
+    if ((remaining_mask & EventFlag::kWritable) == 0) {
+      remaining_mask &= ~EventFlag::kBarrier;
     }
-    file_event->SetMask(m);
+    file_event->SetMask(remaining_mask);
   }
   return Status::kOk;
 }
@@ -289,9 +286,11 @@ timespec Loop::PollTimeout() const {
   }
 
   timespec timeout{};
-  timeout.tv_sec = static_cast<time_t>(timeout_ms / kMillisecondsPerSecond);
+  timeout.tv_sec =
+      static_cast<time_t>(timeout_ms / utils::kMillisecondsPerSecond);
   timeout.tv_nsec = static_cast<decltype(timeout.tv_nsec)>(
-      (timeout_ms % kMillisecondsPerSecond) * kNanosecondsPerMillisecond);
+      (timeout_ms % utils::kMillisecondsPerSecond) *
+      utils::kNanosecondsPerMillisecond);
   return timeout;
 }
 

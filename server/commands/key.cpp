@@ -14,6 +14,7 @@
 #include "server/db/redis_object.h"
 #include "server/reply.h"
 #include "utils/strings.h"
+#include "utils/time.h"
 
 namespace redis_simple::commands::key {
 namespace {
@@ -53,8 +54,6 @@ void HandleExists(Client* const client) {
 }
 
 namespace {
-constexpr int64_t kMillisecondsPerSecond = 1000;
-
 struct ExpireArgs {
   std::string_view key;
   int64_t ttl{0};
@@ -190,11 +189,11 @@ void AddTtlReply(Client* const client, db::TtlResolution resolution) {
 }  // namespace
 
 void HandleExpire(Client* const client) {
-  AddExpireReply(client, kMillisecondsPerSecond, false, "expire");
+  AddExpireReply(client, utils::kMillisecondsPerSecond, false, "expire");
 }
 
 void HandleExpireAt(Client* const client) {
-  AddExpireReply(client, kMillisecondsPerSecond, true, "expireat");
+  AddExpireReply(client, utils::kMillisecondsPerSecond, true, "expireat");
 }
 
 void HandlePExpire(Client* const client) {

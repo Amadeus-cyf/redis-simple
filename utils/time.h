@@ -5,6 +5,9 @@
 #include <cstdint>
 
 namespace redis_simple::utils {
+inline constexpr int64_t kMillisecondsPerSecond = 1000;
+inline constexpr int64_t kNanosecondsPerMillisecond = 1'000'000;
+
 // Wall-clock Unix time, for key expiration that must survive restarts.
 inline int64_t NowInMilliseconds() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(

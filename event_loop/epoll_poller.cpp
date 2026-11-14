@@ -13,6 +13,7 @@
 
 #include "event_loop/loop.h"
 #include "logging/logger.h"
+#include "utils/time.h"
 
 namespace redis_simple::event_loop {
 namespace {
@@ -31,15 +32,15 @@ int ToTimeoutMilliseconds(const struct timespec* const timeout_spec) {
   if (timeout_spec == nullptr) {
     return -1;
   }
-  constexpr int64_t kMillisecondsPerSecond = 1000;
-  constexpr int64_t kNanosecondsPerMillisecond = 1000000;
   const int64_t seconds = timeout_spec->tv_sec;
   const int64_t nanoseconds = timeout_spec->tv_nsec;
-  if (seconds > std::numeric_limits<int>::max() / kMillisecondsPerSecond) {
+  if (seconds >
+      std::numeric_limits<int>::max() / utils::kMillisecondsPerSecond) {
     return std::numeric_limits<int>::max();
   }
-  const int64_t milliseconds = (seconds * kMillisecondsPerSecond) +
-                               (nanoseconds / kNanosecondsPerMillisecond);
+  const int64_t milliseconds =
+      (seconds * utils::kMillisecondsPerSecond) +
+      (nanoseconds / utils::kNanosecondsPerMillisecond);
   return milliseconds > std::numeric_limits<int>::max()
              ? std::numeric_limits<int>::max()
              : static_cast<int>(milliseconds);
