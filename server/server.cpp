@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "containers/dict.h"
 #include "event_loop/file_event.h"
 #include "event_loop/time_event.h"
 #include "logging/logger.h"
@@ -83,11 +84,16 @@ bool Server::LoadData(const ServerOptions& options) {
   // Threads that allocate or free memory wait out a child's fork: the I/O
   // threads, as they read and parse, and the database's thread that frees
   // UNLINKed values.
+  // The hash tables follow Redis' updateDictResizePolicy: the child, which
+  // inherits the setting made before the fork, never rehashes, and the
+  // parent avoids it until the cron sees the child gone.
   const auto before_fork = [this] {
     PauseIoThreads();
     db_->PauseBackgroundFrees();
+    containers::SetDictResizePolicy(containers::DictResizePolicy::kForbidden);
   };
   const auto after_fork = [this] {
+    containers::SetDictResizePolicy(containers::DictResizePolicy::kAvoid);
     db_->ResumeBackgroundFrees();
     ResumeIoThreads();
   };
@@ -250,6 +256,11 @@ int64_t Server::ServerCron() {
     return event_loop::TimeEvent::kNoMore;
   }
   rdb_->Cron(db_.get(), aof_ == nullptr || !aof_->RewriteInProgress());
+  const bool child_running = rdb_->BackgroundSaveInProgress() ||
+                             (aof_ != nullptr && aof_->RewriteInProgress());
+  containers::SetDictResizePolicy(child_running
+                                      ? containers::DictResizePolicy::kAvoid
+                                      : containers::DictResizePolicy::kEnabled);
   ActiveExpireCycle(db_.get());
   return kCronIntervalMs;
 }

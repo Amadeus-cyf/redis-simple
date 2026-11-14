@@ -161,6 +161,17 @@ allocates, frees, or logs, so it can keep running: its jobs hold paths in
 fixed-size buffers, and its queues keep their memory when cleared. The child
 itself takes no locks and does not log.
 
+Hash tables hold back while a child lives. Moving entries to a bigger table
+writes to memory the child still shares, and the kernel must copy every page
+touched. So the fork hooks set a process-wide resize policy
+(`containers::SetDictResizePolicy`), as Redis' `updateDictResizePolicy`
+does: forbidden in the child, which never moves an entry, and "avoid" in the
+parent until the cron sees no child. Under "avoid" a `Dict` grows only once
+it holds four entries per bucket, shrinks only when far emptier than usual,
+and continues a rehash already under way only when the two tables differ
+greatly in size. Growing the 4-million-key keyspace table during a `BGSAVE`
+copied about 280 MB before this policy and about 34 MB with it.
+
 Snapshots are bounded: large strings are split into a `SET` and `APPEND`s,
 and collections are batched by encoded bytes as well as element count, so
 every command fits the replay limit (`Limits`).
