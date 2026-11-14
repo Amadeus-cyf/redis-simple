@@ -101,11 +101,11 @@ bool EnableKeepAlive(int fd, int seconds) {
     return false;
   }
   const int interval = std::max(seconds / 3, 1);
-#if defined(TCP_KEEPIDLE)
+#ifdef TCP_KEEPIDLE
   return SetIntOption(fd, IPPROTO_TCP, TCP_KEEPIDLE, seconds) &&
          SetIntOption(fd, IPPROTO_TCP, TCP_KEEPINTVL, interval) &&
          SetIntOption(fd, IPPROTO_TCP, TCP_KEEPCNT, 3);
-#elif defined(TCP_KEEPALIVE)
+#elifdef TCP_KEEPALIVE
   // macOS names the idle time TCP_KEEPALIVE.
   static_cast<void>(interval);
   return SetIntOption(fd, IPPROTO_TCP, TCP_KEEPALIVE, seconds);
