@@ -125,8 +125,8 @@ bool Quicklist::Set(size_t index, std::string_view value) {
   return true;
 }
 
-std::optional<size_t> Quicklist::Remove(std::string_view value, size_t limit,
-                                        RemoveDirection direction) {
+size_t Quicklist::Remove(std::string_view value, size_t limit,
+                         RemoveDirection direction) {
   if (size_ == 0) {
     return 0;
   }

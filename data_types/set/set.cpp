@@ -246,13 +246,11 @@ void Set::ConvertListpackToDict(size_t capacity) {
   if (!listpack_) {
     return;
   }
-  std::optional<size_t> offset = listpack_->First();
-  while (offset.has_value()) {
-    std::optional<std::string> string_result = listpack_->Get(*offset);
-    if (string_result.has_value()) {
-      dict_->Set(std::move(*string_result), nullptr);
-    }
-    offset = listpack_->Next(*offset);
+  if (const size_t size = listpack_->Size(); size > 0) {
+    listpack_->ForEach(0, size - 1, [this](std::string_view member) {
+      dict_->FindOrInsert(member);
+      return true;
+    });
   }
   listpack_.reset();
 }

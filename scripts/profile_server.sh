@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-readonly ALL_WORKLOADS="small-mix,pipelined-get,unpipelined,large-values,mid-values,collections,aof-writes,key-expiry,rdb-save-load,aof-load"
+readonly ALL_WORKLOADS="small-mix,pipelined-get,unpipelined,large-values,mid-values,collections,aof-writes,key-expiry,rdb-save-load,aof-load,list-edits"
 
 usage() {
   echo "usage: $0 [-w workload[,workload...]] BINARY [BASELINE]" >&2
@@ -145,6 +145,31 @@ load_key_expiry() {
   done | cli >/dev/null
 }
 
+# Edits lists by position: a listpack list and a quicklist, with LSET,
+# LINDEX, and LTRIM near both ends, and LREM.
+load_list_edits() {
+  local i
+  {
+    for i in $(seq 1 600); do
+      echo "RPUSH profile:small item:${i}"
+    done
+    for i in $(seq 1 20000); do
+      echo "RPUSH profile:large item:${i}"
+    done
+    for i in $(seq 1 3000); do
+      echo "LSET profile:small 590 edited:${i}"
+      echo "LSET profile:small 5 edited:${i}"
+      echo "LSET profile:large -40 edited:${i}"
+      echo "LINDEX profile:large 10000"
+      echo "RPUSH profile:small tail:${i}"
+      echo "LTRIM profile:small 0 599"
+      echo "RPUSH profile:large tail:${i}"
+      echo "LTRIM profile:large 1 -1"
+      echo "LREM profile:small 1 missing"
+    done
+  } | cli >/dev/null
+}
+
 # Runs WORKLOAD against BINARY and sets `instructions` to its total. It runs
 # in this shell, not a subshell, so the exit trap can stop a failed server.
 profile() {
@@ -197,6 +222,10 @@ profile() {
     key-expiry)
       start_server "${binary}" "${output}"
       load_key_expiry
+      ;;
+    list-edits)
+      start_server "${binary}" "${output}"
+      load_list_edits
       ;;
     aof-load)
       # Writes with the AOF on, as aof-writes does, then replays the file in

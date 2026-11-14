@@ -261,13 +261,12 @@ bool Listpack::BatchInsert(size_t offset,
 }
 
 std::optional<size_t> Listpack::OffsetAt(size_t index) const {
-  std::optional<size_t> offset = First();
-  size_t current_index = 0;
-  while (offset.has_value() && current_index < index) {
-    offset = Next(*offset);
-    ++current_index;
+  // Walks from whichever end is closer, as Redis' lpSeek does.
+  const size_t size = Size();
+  if (index >= size) {
+    return std::nullopt;
   }
-  return offset;
+  return Seek(index, size);
 }
 
 void Listpack::Delete(size_t offset) { DeleteRange(offset, 1); }

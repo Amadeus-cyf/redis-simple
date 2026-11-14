@@ -30,23 +30,23 @@ ParseResult FindLineEnd(std::string_view input, size_t start) {
   return {ParseStatus::kComplete, end};
 }
 
-bool ParseSize(std::string_view value, size_t* const result) {
+// A length: decimal digits only, within size_t.
+std::optional<size_t> ParseSize(std::string_view value) {
   if (value.empty()) {
-    return false;
+    return std::nullopt;
   }
   size_t parsed = 0;
   for (const char character : value) {
     if (std::isdigit(static_cast<unsigned char>(character)) == 0) {
-      return false;
+      return std::nullopt;
     }
     const auto digit = static_cast<size_t>(character - '0');
     if (parsed > (std::numeric_limits<size_t>::max() - digit) / 10) {
-      return false;
+      return std::nullopt;
     }
     parsed = (parsed * 10) + digit;
   }
-  *result = parsed;
-  return true;
+  return parsed;
 }
 
 ParseResult ParseLine(std::string_view input, size_t start,
@@ -71,10 +71,11 @@ ParseResult ParseBulkString(std::string_view input, size_t start,
     reply->emplace_back(kNilReply);
     return {ParseStatus::kComplete, header.consumed - start + 2};
   }
-  size_t length = 0;
-  if (!ParseSize(length_text, &length)) {
+  const std::optional<size_t> parsed_length = ParseSize(length_text);
+  if (!parsed_length.has_value()) {
     return {ParseStatus::kInvalid, 0};
   }
+  const size_t length = *parsed_length;
   const size_t content_start = header.consumed + 2;
   if (length > std::numeric_limits<size_t>::max() - content_start - 2) {
     return {ParseStatus::kInvalid, 0};
@@ -123,13 +124,13 @@ ParseResult ParseAggregate(std::string_view input, size_t start,
     reply->emplace_back(kNilReply);
     return {ParseStatus::kComplete, header.consumed - start + 2};
   }
-  size_t length = 0;
-  if (!ParseSize(length_text, &length) ||
-      length > std::numeric_limits<size_t>::max() / element_multiplier) {
+  const std::optional<size_t> length = ParseSize(length_text);
+  if (!length.has_value() ||
+      *length > std::numeric_limits<size_t>::max() / element_multiplier) {
     return {ParseStatus::kInvalid, 0};
   }
   size_t consumed = header.consumed - start + 2;
-  const size_t element_count = length * element_multiplier;
+  const size_t element_count = *length * element_multiplier;
   for (size_t index = 0; index < element_count; ++index) {
     const ParseResult element = ParseAt(input, start + consumed, reply);
     if (element.status != ParseStatus::kComplete) {
@@ -173,6 +174,11 @@ ParseResult ParseNull(std::string_view input, size_t start,
 }
 
 bool ParseFloatText(std::string_view value, std::string* const rendered) {
+  // RESP3 spells the values that have no digits out, as Redis sends them.
+  if (value == "inf" || value == "-inf" || value == "nan") {
+    rendered->append(value);
+    return true;
+  }
   bool negative = false;
   if (!value.empty() && (value.front() == '+' || value.front() == '-')) {
     negative = value.front() == '-';

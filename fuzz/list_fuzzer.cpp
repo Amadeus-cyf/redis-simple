@@ -85,8 +85,7 @@ void RunOperations(FuzzInput* input) {
         const bool from_tail = direction == List::RemoveDirection::kFromTail;
         const size_t expected =
             RemoveMatchesFromModel(&model, value, limit, from_tail);
-        Require(ValueOrAbort(list->Remove(value, limit, direction)) ==
-                expected);
+        Require(list->Remove(value, limit, direction) == expected);
         break;
       }
       case 6: {

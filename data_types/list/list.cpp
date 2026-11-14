@@ -66,18 +66,13 @@ bool List::Set(size_t index, std::string_view value) {
   return true;
 }
 
-std::optional<size_t> List::Remove(std::string_view value, size_t limit,
-                                   RemoveDirection direction) {
-  const size_t size = Size();
-  if (size == 0) {
-    return 0;
-  }
-
+size_t List::Remove(std::string_view value, size_t limit,
+                    RemoveDirection direction) {
   if (listpack_) {
-    return RemoveFromListpack(value, limit, direction);
+    return listpack_->DeleteMatching(value, limit,
+                                     direction == RemoveDirection::kFromTail);
   }
-
-  const std::optional<size_t> removed =
+  const size_t removed =
       quicklist_->Remove(value, limit, ToQuicklistRemoveDirection(direction));
   TryConvertQuicklistToListpack();
   return removed;
@@ -86,7 +81,10 @@ std::optional<size_t> List::Remove(std::string_view value, size_t limit,
 bool List::Trim(size_t start, size_t stop) {
   const size_t size = Size();
   if (size == 0 || start > stop || start >= size) {
-    return AdoptReplacement(List::Create(list_max_listpack_bytes_));
+    // Nothing is kept: an empty list is an empty listpack.
+    listpack_ = std::make_unique<containers::Listpack>();
+    quicklist_.reset();
+    return true;
   }
   stop = std::min(stop, size - 1);
   if (start == 0 && stop == size - 1) {
@@ -103,13 +101,6 @@ bool List::Trim(size_t start, size_t stop) {
   }
   TryConvertQuicklistToListpack();
   return true;
-}
-
-std::optional<size_t> List::RemoveFromListpack(std::string_view value,
-                                               size_t limit,
-                                               RemoveDirection direction) {
-  return listpack_->DeleteMatching(value, limit,
-                                   direction == RemoveDirection::kFromTail);
 }
 
 void List::TrimListpack(size_t start, size_t stop) {
@@ -183,12 +174,6 @@ std::optional<std::string> List::Pop(bool head) {
       head ? quicklist_->LPop() : quicklist_->RPop();
   TryConvertQuicklistToListpack();
   return value;
-}
-
-bool List::AdoptReplacement(std::unique_ptr<List> replacement) {
-  listpack_ = std::move(replacement->listpack_);
-  quicklist_ = std::move(replacement->quicklist_);
-  return true;
 }
 
 bool List::WouldExceedListpackLimit(std::string_view value) const {

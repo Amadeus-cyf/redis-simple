@@ -137,6 +137,21 @@ TEST(RespParserTest, ParseNull) {
   ASSERT_EQ(ParseBytes("_123\r\n", reply), -1);
 }
 
+TEST(RespParserTest, ParsesInfinitiesAndNotANumber) {
+  // As a RESP3 ZSCORE of an infinite score arrives.
+  for (const std::string_view text : {"inf", "-inf", "nan"}) {
+    std::vector<std::string> reply;
+    const std::string response = "," + std::string(text) + "\r\n";
+    const ParseResult result = Parse(response, reply);
+    ASSERT_EQ(result.status, ParseStatus::kComplete);
+    EXPECT_EQ(result.consumed, response.size());
+    ASSERT_EQ(reply.size(), 1);
+    EXPECT_EQ(reply.back(), text);
+  }
+  std::vector<std::string> reply;
+  EXPECT_EQ(Parse(",infinity\r\n", reply).status, ParseStatus::kInvalid);
+}
+
 TEST(RespParserTest, ParseFloat) {
   std::vector<std::string> reply;
   ASSERT_EQ(ParseBytes(",123.000002300000\r\n", reply), 19);

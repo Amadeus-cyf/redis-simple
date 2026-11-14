@@ -35,9 +35,10 @@ Pick the tools the change calls for:
 | Object layout, encodings, or anything that changes memory per key | `scripts/measure_server_memory.sh build/release/redis_simple "${base}/build/release/redis_simple"` |
 | One component (a container, the parser, reply encoding) | `redis_simple_benchmarks`, below |
 
-`profile_server.sh` runs ten workloads under callgrind; `-w` picks some
+`profile_server.sh` runs eleven workloads under callgrind; `-w` picks some
 (`-w pipelined-get,aof-writes`). `rdb-save-load` covers `SAVE` and loading
-at startup (`server/rdb/`), and `aof-load` covers replaying an AOF. Set `PROFILE_OUTPUT_DIR` to keep the
+at startup (`server/rdb/`), `aof-load` covers replaying an AOF, and `list-edits` covers `LSET`,
+`LINDEX`, `LTRIM`, and `LREM`. Set `PROFILE_OUTPUT_DIR` to keep the
 callgrind files for step 3. A change that should not affect performance,
 such as a refactor, stays within about 1% on every workload; anything more
 has a cause worth finding.
