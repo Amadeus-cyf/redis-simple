@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -278,41 +279,34 @@ bool ParseWithStrtod(std::string_view value, double* const result,
 }
 }  // namespace
 
-bool ToDouble(std::string_view value, double* const result) {
+std::optional<double> ToDouble(std::string_view value) {
   // Redis' string2d: no leading space, the whole text, no NaN, and no
   // overflow or underflow to zero; strtod also takes "inf" and hex.
   if (value.empty() ||
       std::isspace(static_cast<unsigned char>(value[0])) != 0) {
-    return false;
+    return std::nullopt;
   }
   double parsed = 0;
   if (ParsePlainDecimal(value, &parsed)) {
-    if (result != nullptr) {
-      *result = parsed;
-    }
-    return true;
+    return parsed;
   }
   bool overflow = false;
   if (!ParseWithStrtod(value, &parsed, &overflow) || std::isnan(parsed) ||
       (overflow && (std::isinf(parsed) || parsed == 0))) {
-    return false;
+    return std::nullopt;
   }
-  if (result != nullptr) {
-    *result = parsed;
-  }
-  return true;
+  return parsed;
 }
 
-bool ToRangeDouble(std::string_view value, double* const result) {
+std::optional<double> ToRangeDouble(std::string_view value) {
   // Redis' zslParseRange: strtod over the whole text, NaN rejected. Unlike
   // ToDouble, it takes leading spaces, an empty text as 0, and overflow as
   // an infinity.
   double parsed = 0;
   bool overflow = false;
   if (!ParseWithStrtod(value, &parsed, &overflow) || std::isnan(parsed)) {
-    return false;
+    return std::nullopt;
   }
-  *result = parsed;
-  return true;
+  return parsed;
 }
 }  // namespace redis_simple::utils

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -100,11 +101,11 @@ ParseResult ParseInteger(std::string_view input, size_t start,
   if (text.starts_with('+') && !text.starts_with("+-")) {
     text.remove_prefix(1);
   }
-  int64_t value = 0;
-  if (!utils::ToInt64(text, &value)) {
+  const std::optional<int64_t> value = utils::ToInt64(text);
+  if (!value.has_value()) {
     return {ParseStatus::kInvalid, 0};
   }
-  reply->push_back(std::to_string(value));
+  reply->push_back(std::to_string(*value));
   return {ParseStatus::kComplete, line.consumed - start + 2};
 }
 

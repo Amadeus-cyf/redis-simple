@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -99,9 +100,11 @@ ParseExpireStatus ParseExpireArgs(const CommandArgs& args,
   if (gt && lt) {
     return ParseExpireStatus::kGtLtIncompatible;
   }
-  if (!utils::ToInt64(args[1], &expire_args->ttl)) {
+  const std::optional<int64_t> ttl = utils::ToInt64(args[1]);
+  if (!ttl.has_value()) {
     return ParseExpireStatus::kInvalidInteger;
   }
+  expire_args->ttl = *ttl;
   expire_args->key = args[0];
   // GT already requires an existing TTL, so XX adds nothing to it.
   if (nx) {

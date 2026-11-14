@@ -20,9 +20,9 @@ StringValue::StringValue(int64_t value) {
 std::unique_ptr<RedisObject> RedisObject::CreateWithString(std::string value) {
   // ToInt64 rejects forms like "+1" and "007" so GET returns the
   // exact bytes SET stored.
-  int64_t integer = 0;
-  if (utils::ToInt64(value, &integer)) {
-    return CreateWithInt(integer);
+  if (const std::optional<int64_t> integer = utils::ToInt64(value);
+      integer.has_value()) {
+    return CreateWithInt(*integer);
   }
   if (value.size() <= EmbeddedString::kCapacity) {
     return CreateEmbedded(value);
@@ -32,9 +32,9 @@ std::unique_ptr<RedisObject> RedisObject::CreateWithString(std::string value) {
 
 std::unique_ptr<RedisObject> RedisObject::CreateWithStringCopy(
     std::string_view value) {
-  int64_t integer = 0;
-  if (utils::ToInt64(value, &integer)) {
-    return CreateWithInt(integer);
+  if (const std::optional<int64_t> integer = utils::ToInt64(value);
+      integer.has_value()) {
+    return CreateWithInt(*integer);
   }
   if (value.size() <= EmbeddedString::kCapacity) {
     return CreateEmbedded(value);
@@ -72,10 +72,7 @@ std::optional<int64_t> RedisObject::Int() const {
   if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
     return *integer;
   }
-  int64_t parsed = 0;
-  return utils::ToInt64(String().View(), &parsed)
-             ? std::optional<int64_t>(parsed)
-             : std::nullopt;
+  return utils::ToInt64(String().View());
 }
 
 std::string* RedisObject::MutableString() {
@@ -97,9 +94,9 @@ void RedisObject::SetInt(int64_t value) {
 
 void RedisObject::AssignString(std::string_view value) {
   RS_CHECK(Type() == ObjectType::kString);
-  int64_t integer = 0;
-  if (utils::ToInt64(value, &integer)) {
-    value_.emplace<int64_t>(integer);
+  if (const std::optional<int64_t> integer = utils::ToInt64(value);
+      integer.has_value()) {
+    value_.emplace<int64_t>(*integer);
     return;
   }
   // An embedded value is overwritten in place. memmove also handles a value

@@ -91,10 +91,11 @@ class Encoder {
   // Redis' rdbSaveRawString: an integer encoding for short decimal text, LZF
   // when it saves space, otherwise the length and the bytes.
   void String(std::string_view value) {
-    int64_t integer = 0;
-    if (value.size() <= 11 && utils::ToInt64(value, &integer) &&
-        EncodeInteger(integer)) {
-      return;
+    if (value.size() <= 11) {
+      const std::optional<int64_t> integer = utils::ToInt64(value);
+      if (integer.has_value() && EncodeInteger(*integer)) {
+        return;
+      }
     }
     if (options_->compression && value.size() > kMinCompressBytes &&
         Compressed(value)) {

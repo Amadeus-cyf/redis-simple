@@ -143,8 +143,8 @@ std::optional<size_t> Listpack::FindAndSkip(std::string_view value,
   // An element is stored as an integer exactly when its text parses as one,
   // so parse `value` once and compare integers as numbers, without
   // formatting them, and strings only when `value` is not an integer.
-  int64_t value_integer = 0;
-  const bool value_is_integer = utils::ToInt64(value, &value_integer);
+  const std::optional<int64_t> value_integer = utils::ToInt64(value);
+  const bool value_is_integer = value_integer.has_value();
   size_t offset = kListpackHeaderSize;
   size_t skip_count = 0;
   while (listpack_[offset] != kListpackEof) {
@@ -191,7 +191,7 @@ std::optional<size_t> Listpack::FindAndSkip(std::string_view value,
       size_t length = 0;
       int64_t integer = 0;
       IntegerAt(offset, nullptr, &length, &integer, encoding_type);
-      if (integer == value_integer) {
+      if (integer == *value_integer) {
         return offset;
       }
     }
@@ -509,15 +509,14 @@ bool Listpack::Insert(size_t offset, Listpack::Position where,
     return false;
   }
   size_t backlen = 0;
-  EncodingGeneralType encoding_type = EncodingGeneralType::kInteger;
-  int64_t integer_value = (element_integer != nullptr) ? *element_integer : 0;
-  if ((element_integer != nullptr) ||
-      utils::ToInt64(*element_string, &integer_value)) {
-    backlen = EncodeInteger(nullptr, integer_value);
-    encoding_type = EncodingGeneralType::kInteger;
+  // An element given as text is stored as an integer when it parses as one.
+  const std::optional<int64_t> integer_value =
+      element_integer != nullptr ? std::optional<int64_t>(*element_integer)
+                                 : utils::ToInt64(*element_string);
+  if (integer_value.has_value()) {
+    backlen = EncodeInteger(nullptr, *integer_value);
   } else {
     backlen = EncodeString(nullptr, *element_string);
-    encoding_type = EncodingGeneralType::kString;
   }
   uint8_t backlen_bytes = BacklenBytes(backlen);
   size_t replaced_bytes = 0;
@@ -550,8 +549,8 @@ bool Listpack::Insert(size_t offset, Listpack::Position where,
     Realloc(new_listpack_bytes);
   }
   SetTotalBytes(new_listpack_bytes);
-  if (encoding_type == EncodingGeneralType::kInteger) {
-    EncodeInteger(listpack_.get() + offset, integer_value);
+  if (integer_value.has_value()) {
+    EncodeInteger(listpack_.get() + offset, *integer_value);
   } else {
     EncodeString(listpack_.get() + offset, *element_string);
   }
@@ -565,12 +564,14 @@ bool Listpack::PlanEntry(const ListpackEntry& entry, Encoding* const encoding) {
           std::numeric_limits<uint32_t>::max() - kMaxStringEncodingOverhead) {
     return false;
   }
-  int64_t integer_value = entry.integer_value;
-  if (entry.is_integer || utils::ToInt64(entry.string_value, &integer_value)) {
-    encoding->integer_value = integer_value;
+  const std::optional<int64_t> integer_value =
+      entry.is_integer ? std::optional<int64_t>(entry.integer_value)
+                       : utils::ToInt64(entry.string_value);
+  if (integer_value.has_value()) {
+    encoding->integer_value = *integer_value;
     encoding->encoding_type = EncodingGeneralType::kInteger;
     encoding->backlen_bytes =
-        BacklenBytes(EncodeInteger(nullptr, integer_value));
+        BacklenBytes(EncodeInteger(nullptr, *integer_value));
   } else {
     encoding->string_value = entry.string_value;
     encoding->integer_value = 0;
@@ -713,14 +714,14 @@ size_t Listpack::EstimateBytes(int64_t value, size_t repeat) {
 }
 
 size_t Listpack::EstimateEntryBytes(std::string_view value) {
-  int64_t integer = 0;
   constexpr size_t kMaxStringEncodingOverhead = 10;
-  const bool is_integer = utils::ToInt64(value, &integer);
+  const std::optional<int64_t> integer = utils::ToInt64(value);
+  const bool is_integer = integer.has_value();
   if (!is_integer && value.size() > std::numeric_limits<uint32_t>::max() -
                                         kMaxStringEncodingOverhead) {
     return std::numeric_limits<size_t>::max();
   }
-  const size_t encoded = is_integer ? EncodeInteger(nullptr, integer)
+  const size_t encoded = is_integer ? EncodeInteger(nullptr, *integer)
                                     : EncodeString(nullptr, value);
   if (encoded > std::numeric_limits<size_t>::max() - BacklenBytes(encoded)) {
     return std::numeric_limits<size_t>::max();

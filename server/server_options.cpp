@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ranges>
 #include <string_view>
 #include <system_error>
@@ -88,11 +89,12 @@ bool ParseSavePoints(std::string_view value, ServerOptions* const options) {
   }
   std::vector<int64_t> numbers;
   for (const auto part : std::views::split(value, ' ')) {
-    int64_t number = 0;
-    if (!utils::ToInt64(std::string_view(part.begin(), part.end()), &number)) {
+    const std::optional<int64_t> number =
+        utils::ToInt64(std::string_view(part.begin(), part.end()));
+    if (!number.has_value()) {
       return false;
     }
-    numbers.push_back(number);
+    numbers.push_back(*number);
   }
   if (numbers.size() % 2 != 0) {
     return false;

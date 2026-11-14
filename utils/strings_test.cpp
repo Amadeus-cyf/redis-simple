@@ -152,98 +152,110 @@ TEST(StringsTest, MatchesRedisStyleGlobs) {
 }
 
 TEST(StringsTest, ToUint64MatchesRedisString2ull) {
-  uint64_t value = 1;
-  EXPECT_TRUE(ToUint64("0", &value));
+  std::optional<uint64_t> value;
+  value = ToUint64("0");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 0);
-  EXPECT_TRUE(ToUint64("18446744073709551615", &value));
+  value = ToUint64("18446744073709551615");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, std::numeric_limits<uint64_t>::max());
   // Text string2ll rejects falls back to strtoull.
-  EXPECT_TRUE(ToUint64("+5", &value));
+  value = ToUint64("+5");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 5);
-  EXPECT_TRUE(ToUint64("007", &value));
+  value = ToUint64("007");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 7);
-  EXPECT_TRUE(ToUint64(" 1", &value));
+  value = ToUint64(" 1");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 1);
-  EXPECT_TRUE(ToUint64(std::string_view("12\0junk", 7), &value));
+  value = ToUint64(std::string_view("12\0junk", 7));
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 12);
 
-  EXPECT_FALSE(ToUint64("", &value));
-  EXPECT_FALSE(ToUint64("-1", &value));
-  EXPECT_FALSE(ToUint64("18446744073709551616", &value));
-  EXPECT_FALSE(ToUint64("1 ", &value));
-  EXPECT_FALSE(ToUint64("abc", &value));
+  EXPECT_FALSE(ToUint64("").has_value());
+  EXPECT_FALSE(ToUint64("-1").has_value());
+  EXPECT_FALSE(ToUint64("18446744073709551616").has_value());
+  EXPECT_FALSE(ToUint64("1 ").has_value());
+  EXPECT_FALSE(ToUint64("abc").has_value());
 }
 
 TEST(StringsTest, ToInt64) {
   std::string s1("100234567");
-  int64_t v1 = 0;
-  ASSERT_TRUE(ToInt64(s1, &v1));
+  std::optional<int64_t> v1;
+  v1 = ToInt64(s1);
+  ASSERT_TRUE(v1.has_value());
   ASSERT_EQ(v1, 100234567);
 
   std::string s2("-100234567");
-  int64_t v2 = 0;
-  ASSERT_TRUE(ToInt64(s2, &v2));
+  std::optional<int64_t> v2;
+  v2 = ToInt64(s2);
+  ASSERT_TRUE(v2.has_value());
   ASSERT_EQ(v2, -100234567);
 
   // Redis' string2ll accepts no '+'.
   std::string s3("+100234567");
-  ASSERT_FALSE(ToInt64(s3, nullptr));
+  ASSERT_FALSE(ToInt64(s3).has_value());
 
   std::string s4("0");
-  int64_t v4 = 0;
-  ASSERT_TRUE(ToInt64(s4, &v4));
+  std::optional<int64_t> v4;
+  v4 = ToInt64(s4);
+  ASSERT_TRUE(v4.has_value());
   ASSERT_EQ(v4, 0);
 
   std::string s5(" -1234545   ");
-  ASSERT_FALSE(ToInt64(s5, nullptr));
+  ASSERT_FALSE(ToInt64(s5).has_value());
 
   std::string s6(" -1234 abcde");
-  ASSERT_FALSE(ToInt64(s6, nullptr));
+  ASSERT_FALSE(ToInt64(s6).has_value());
 
   std::string s7("-12345-123");
-  ASSERT_FALSE(ToInt64(s7, nullptr));
+  ASSERT_FALSE(ToInt64(s7).has_value());
 
   std::string s8("-12345 56778");
-  ASSERT_FALSE(ToInt64(s8, nullptr));
+  ASSERT_FALSE(ToInt64(s8).has_value());
 
   std::string s9("0000000");
-  ASSERT_FALSE(ToInt64(s9, nullptr));
+  ASSERT_FALSE(ToInt64(s9).has_value());
 
   std::string s10("+0");
-  ASSERT_FALSE(ToInt64(s10, nullptr));
+  ASSERT_FALSE(ToInt64(s10).has_value());
 
   std::string s11("-0");
-  ASSERT_FALSE(ToInt64(s11, nullptr));
+  ASSERT_FALSE(ToInt64(s11).has_value());
 
   std::string s12("0123456");
-  ASSERT_FALSE(ToInt64(s12, nullptr));
+  ASSERT_FALSE(ToInt64(s12).has_value());
 
   std::string s13("1002345670000000");
-  int64_t v13 = 0;
-  ASSERT_TRUE(ToInt64(s13, &v13));
+  std::optional<int64_t> v13;
+  v13 = ToInt64(s13);
+  ASSERT_TRUE(v13.has_value());
   ASSERT_EQ(v13, 1002345670000000);
 
   std::string s14("9223372036854775807");
-  int64_t v14 = 0;
-  ASSERT_TRUE(ToInt64(s14, &v14));
+  std::optional<int64_t> v14;
+  v14 = ToInt64(s14);
+  ASSERT_TRUE(v14.has_value());
   ASSERT_EQ(v14, INT64_MAX);
 
   std::string s15("-9223372036854775808");
-  int64_t v15 = 0;
-  ASSERT_TRUE(ToInt64(s15, &v15));
+  std::optional<int64_t> v15;
+  v15 = ToInt64(s15);
+  ASSERT_TRUE(v15.has_value());
   ASSERT_EQ(v15, INT64_MIN);
 
   std::string s16("9223372036854775808");
-  ASSERT_FALSE(ToInt64(s16, nullptr));
+  ASSERT_FALSE(ToInt64(s16).has_value());
 
   std::string s17("-9223372036854775809");
-  ASSERT_FALSE(ToInt64(s17, nullptr));
+  ASSERT_FALSE(ToInt64(s17).has_value());
 
   std::string s18("-922337203685477580812312");
-  ASSERT_FALSE(ToInt64(s18, nullptr));
+  ASSERT_FALSE(ToInt64(s18).has_value());
 
   std::string s19;
-  ASSERT_FALSE(ToInt64(s19, nullptr));
+  ASSERT_FALSE(ToInt64(s19).has_value());
 }
 
 TEST(StringsTest, Int64ToString) {

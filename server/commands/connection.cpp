@@ -84,11 +84,13 @@ void HandleHello(Client* const client) {
   int64_t version = 0;
   size_t next = 0;
   if (!args.empty()) {
-    if (!utils::ToInt64(args[0], &version)) {
+    const std::optional<int64_t> parsed = utils::ToInt64(args[0]);
+    if (!parsed.has_value()) {
       client->AddReply(reply::FromError(
           "ERR Protocol version is not an integer or out of range"));
       return;
     }
+    version = *parsed;
     if (version < 2 || version > 3) {
       client->AddReply(
           reply::FromError("NOPROTO unsupported protocol version"));
@@ -208,21 +210,21 @@ void HandleClient(Client* const client) {
 void HandleSelect(Client* const client) {
   // One database, as in Redis' cluster mode, but out-of-range indexes get
   // Redis' standalone error.
-  int64_t index = 0;
-  if (!utils::ToInt64(client->Args()[0], &index)) {
+  const std::optional<int64_t> index = utils::ToInt64(client->Args()[0]);
+  if (!index.has_value()) {
     client->AddReply(reply::kNotAnIntegerError);
     return;
   }
   // Redis reads the index with getIntFromObjectOrReply, which has its own
   // error for an integer that does not fit an int.
-  if (index < std::numeric_limits<int32_t>::min() ||
-      index > std::numeric_limits<int32_t>::max()) {
+  if (*index < std::numeric_limits<int32_t>::min() ||
+      *index > std::numeric_limits<int32_t>::max()) {
     client->AddReply(
         reply::FromError("ERR value is out of range, value must between "
                          "-2147483648 and 2147483647"));
     return;
   }
-  if (index != 0) {
+  if (*index != 0) {
     client->AddReply(reply::FromError("ERR DB index is out of range"));
     return;
   }

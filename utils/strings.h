@@ -35,12 +35,12 @@ std::optional<std::string_view> GlobLiteralPrefix(std::string_view pattern);
 // int64, with an optional '-' and no '+', spaces, leading zeros, or "-0".
 // Only canonical text parses, so compact encodings that store a value as an
 // integer reproduce the original bytes.
-bool ToInt64(std::string_view text, int64_t* value);
+std::optional<int64_t> ToInt64(std::string_view text);
 // Parses `s` as Redis' string2ull does, for SCAN cursors: canonical int64
 // text that is not negative, or else anything C's strtoull reads in full
 // without overflow (leading spaces, a sign, and leading zeros included). The
 // text ends at a NUL byte, as Redis reads it as a C string.
-bool ToUint64(std::string_view text, uint64_t* value);
+std::optional<uint64_t> ToUint64(std::string_view text);
 // Convert an int64 to string and store it in `destination`.
 int Int64ToString(std::span<char> destination, int64_t value);
 // Convert a uint64 to string and store it in `destination`. Ref to

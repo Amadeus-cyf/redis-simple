@@ -57,11 +57,8 @@ bool Set::HasMember(std::string_view value) const {
     return false;
   }
   if (encoding_ == Encoding::kIntset) {
-    int64_t int_value = 0;
-    if (!utils::ToInt64(value, &int_value)) {
-      return false;
-    }
-    return intset_->Find(int_value);
+    const std::optional<int64_t> integer = utils::ToInt64(value);
+    return integer.has_value() && intset_->Find(*integer);
   }
   if (encoding_ == Encoding::kListpack) {
     return listpack_->Find(value).has_value();
@@ -95,11 +92,8 @@ bool Set::Delete(std::string_view value) {
     return false;
   }
   if (encoding_ == Encoding::kIntset) {
-    int64_t int_value = 0;
-    if (utils::ToInt64(value, &int_value)) {
-      return intset_->Delete(int_value);
-    }
-    return false;
+    const std::optional<int64_t> integer = utils::ToInt64(value);
+    return integer.has_value() && intset_->Delete(*integer);
   }
   if (encoding_ == Encoding::kListpack) {
     const std::optional<size_t> offset = listpack_->Find(value);
@@ -139,12 +133,12 @@ size_t Set::Size() const {
 }
 
 bool Set::IntsetAddAndMaybeConvert(std::string_view value) {
-  int64_t int_value = 0;
-  if (utils::ToInt64(value, &int_value)) {
+  if (const std::optional<int64_t> integer = utils::ToInt64(value);
+      integer.has_value()) {
     if (!intset_) {
       intset_ = std::make_unique<containers::Intset>();
     }
-    bool success = intset_->Add(int_value);
+    const bool success = intset_->Add(*integer);
     if (success) {
       MaybeConvertIntsetToDict();
     }

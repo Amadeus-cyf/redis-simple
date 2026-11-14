@@ -269,8 +269,8 @@ void HandleHVals(Client* const client) {
 
 void HandleHIncrBy(Client* const client) {
   const commands::CommandArgs& args = client->Args();
-  int64_t increment = 0;
-  if (!utils::ToInt64(args[2], &increment)) {
+  const std::optional<int64_t> increment = utils::ToInt64(args[2]);
+  if (!increment.has_value()) {
     client->AddReply(reply::kNotAnIntegerError);
     return;
   }
@@ -278,17 +278,17 @@ void HandleHIncrBy(Client* const client) {
   if (!LookupOrCreateHash(client, args[0], &hash)) {
     return;
   }
-  int64_t current = 0;
-  bool parsed = true;
-  hash->VisitValue(args[1], [&current, &parsed](std::string_view value) {
-    parsed = utils::ToInt64(value, &current);
+  // A missing field counts as 0.
+  std::optional<int64_t> current = 0;
+  hash->VisitValue(args[1], [&current](std::string_view value) {
+    current = utils::ToInt64(value);
   });
-  if (!parsed) {
+  if (!current.has_value()) {
     client->AddReply(reply::FromError("ERR hash value is not an integer"));
     return;
   }
   int64_t next = 0;
-  if (!AddWithOverflowCheck(current, increment, &next)) {
+  if (!AddWithOverflowCheck(*current, *increment, &next)) {
     client->AddReply(reply::kOverflowError);
     return;
   }

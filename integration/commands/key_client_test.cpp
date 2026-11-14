@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -37,10 +38,10 @@ bool ExpectIntegerBetween(cli::RedisCli* cli, const std::string& command,
                           int64_t min_value, int64_t max_value) {
   cli->AddCommand(command);
   const std::string reply = cli->ReadReply();
-  int64_t value = 0;
-  if (reply.empty() ||
-      !utils::ToInt64(reply.substr(0, reply.size() - 1), &value) ||
-      value < min_value || value > max_value) {
+  const std::optional<int64_t> value =
+      reply.empty() ? std::nullopt
+                    : utils::ToInt64(reply.substr(0, reply.size() - 1));
+  if (!value.has_value() || *value < min_value || *value > max_value) {
     RS_LOG_DEBUG("command failed: %s expected range: [%" PRId64 ", %" PRId64
                  "] actual: %s\n",
                  command.c_str(), min_value, max_value, reply.c_str());
