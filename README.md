@@ -62,6 +62,12 @@ send `AUTH <password>` (or `AUTH default <password>`, or `HELLO <protover>
 AUTH default <password>`) before other commands, or disable the check with
 `--protected-mode no` on a trusted network.
 
+Client sockets are set up as Redis sets up its own: Nagle's algorithm is off
+(`TCP_NODELAY`), so a reply is not held back for the acknowledgment of the
+one before it, and the kernel probes a peer that has been silent for 300
+seconds (Redis' default `tcp-keepalive`), so a client whose machine vanished
+does not keep its connection forever. The interval is not configurable.
+
 Enable AOF persistence with Redis-style fsync policies:
 
 ```sh
