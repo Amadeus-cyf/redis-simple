@@ -134,9 +134,14 @@ class Listpack {
   };
   unsigned char* StringAt(size_t offset, size_t* length,
                           EncodingType encoding_type) const;
-  unsigned char* IntegerAt(size_t offset, unsigned char* destination,
-                           size_t* length, int64_t* value,
-                           EncodingType encoding_type) const;
+  // The integer at `offset`, whose encoding is `encoding_type`, an integer
+  // one.
+  int64_t DecodeInteger(size_t offset, EncodingType encoding_type) const;
+  // Writes `value` as text into `destination`, which holds
+  // kListpackIntBufferSize bytes, sets `length` if given, and returns
+  // `destination`.
+  static unsigned char* FormatInteger(int64_t value, unsigned char* destination,
+                                      size_t* length);
   bool Insert(size_t offset, Listpack::Position where,
               const std::string_view* element_string,
               const int64_t* element_integer);
@@ -166,6 +171,9 @@ class Listpack {
   // use this instead of Get() followed by Next(), which decode each element
   // twice.
   DecodedEntry DecodeEntry(size_t offset, unsigned char* int_buffer) const;
+  // DecodeEntry for everything but strings under 4096 bytes.
+  DecodedEntry DecodeLongOrIntegerEntry(size_t offset,
+                                        unsigned char* int_buffer) const;
   // Returns the offset of element `position`, which must be below `size`,
   // the element count. Walks from whichever end is closer.
   size_t Seek(size_t position, size_t size) const;

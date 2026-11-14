@@ -657,6 +657,46 @@ TEST(ListpackTest, IteratorsDecodeEveryEncoding) {
   EXPECT_EQ(calls, 3);
 }
 
+TEST(ListpackTest, IntegersRoundTripAtEveryWidthBoundary) {
+  // The smallest and largest value of each integer encoding, and the values
+  // just outside, which take the next one.
+  const std::vector<int64_t> values = {0,
+                                       127,
+                                       128,
+                                       -1,
+                                       -4096,
+                                       4095,
+                                       -4097,
+                                       4096,
+                                       INT16_MIN,
+                                       INT16_MAX,
+                                       INT16_MIN - 1,
+                                       INT16_MAX + 1,
+                                       -(1 << 23),
+                                       (1 << 23) - 1,
+                                       -(1 << 23) - 1,
+                                       1 << 23,
+                                       INT32_MIN,
+                                       INT32_MAX,
+                                       int64_t{INT32_MIN} - 1,
+                                       int64_t{INT32_MAX} + 1,
+                                       INT64_MIN,
+                                       INT64_MAX};
+  Listpack listpack;
+  for (const int64_t value : values) {
+    ASSERT_TRUE(listpack.Append(value));
+  }
+  std::optional<size_t> offset = listpack.First();
+  for (const int64_t value : values) {
+    ASSERT_TRUE(offset.has_value());
+    EXPECT_EQ(listpack.IntegerAt(*offset), value);
+    EXPECT_EQ(listpack.Get(*offset), std::to_string(value));
+    EXPECT_EQ(listpack.Find(std::to_string(value)), offset);
+    offset = listpack.Next(*offset);
+  }
+  EXPECT_FALSE(offset.has_value());
+}
+
 TEST(ListpackTest, OffsetAtFindsEveryElementFromEitherEnd) {
   // Mixed encodings, so stepping back over each backlen is exercised.
   Listpack listpack;
