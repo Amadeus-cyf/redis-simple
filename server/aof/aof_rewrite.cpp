@@ -197,14 +197,13 @@ void Aof::FinishRewrite(int wait_status) {
   if (wait_status != -1 && WIFEXITED(wait_status) &&
       WEXITSTATUS(wait_status) == static_cast<int>(SnapshotStatus::kWritten)) {
     RS_LOG_INFO("Background AOF rewrite terminated with success\n");
-    int error_number = 0;
-    const AofError error = InstallRewrite(child, &error_number);
-    if (error == AofError::kNone) {
+    const Failure failure = InstallRewrite(child);
+    if (failure.Ok()) {
       last_rewrite_ok_ = true;
       consecutive_rewrite_failures_ = 0;
       RS_LOG_INFO("Background AOF rewrite finished successfully\n");
     } else {
-      RecordError(error, error_number);
+      RecordError(failure.error, failure.error_number);
       last_rewrite_ok_ = false;
       ++consecutive_rewrite_failures_;
     }
@@ -229,7 +228,7 @@ void Aof::FinishRewrite(int wait_status) {
                               .count();
 }
 
-AofError Aof::InstallRewrite(pid_t child, int* const error_number) {
+Aof::Failure Aof::InstallRewrite(pid_t child) {
   // The previous base and every incremental file but the current one become
   // history, in Redis' order: the incremental files first, then the base.
   Manifest manifest = manifest_;
@@ -245,11 +244,11 @@ AofError Aof::InstallRewrite(pid_t child, int* const error_number) {
       MakeManifestFile(base_name, base_sequence, ManifestFile::Type::kBase);
   if (file_ops_->Rename(RewriteTempPath(child).c_str(),
                         FilePath(base_name).c_str()) < 0) {
-    *error_number = errno;
+    const int rename_errno = errno;
     RS_LOG_ERROR(
         "Error trying to rename the temporary AOF base file into %s: %s\n",
-        base_name.c_str(), std::strerror(*error_number));
-    return AofError::kRename;
+        base_name.c_str(), std::strerror(rename_errno));
+    return {AofError::kRename, rename_errno};
   }
   if (manifest.increments.size() > 1) {
     std::vector<ManifestFile> rewritten(manifest.increments.begin(),
@@ -263,25 +262,22 @@ AofError Aof::InstallRewrite(pid_t child, int* const error_number) {
     manifest.increments.erase(manifest.increments.begin(),
                               manifest.increments.end() - 1);
   }
-  const AofError persist_error = PersistManifest(manifest);
-  if (persist_error != AofError::kNone &&
-      persist_error != AofError::kDirectorySync) {
-    *error_number = errno;
+  const Failure failure = PersistManifest(manifest);
+  if (!failure.Ok() && failure.error != AofError::kDirectorySync) {
     // The old manifest still describes the AOF; drop the unused base.
     jobs_.QueueDeletion(FilePath(base_name));
-    return persist_error;
+    return failure;
   }
   // After the rename the new manifest is live, durable or not.
   manifest_ = std::move(manifest);
   current_size_ = PathSize(FilePath(base_name)).value_or(0) + increment_size_;
   base_size_ = current_size_;
-  if (persist_error == AofError::kDirectorySync) {
-    *error_number = errno;
-    FailDirectorySync(*error_number);
-    return persist_error;
+  if (!failure.Ok()) {
+    FailDirectorySync(failure.error_number);
+    return failure;
   }
   DeleteHistory();
-  return AofError::kNone;
+  return {};
 }
 
 void Aof::RemoveRewriteTempFiles(pid_t child) {
@@ -351,6 +347,7 @@ bool Aof::ShouldAutoRewrite() {
 }
 
 bool Aof::Cron(db::RedisDb* const db, bool may_fork) {
+  other_child_running_ = !may_fork;
   // A write postponed behind a sync, or a failed one, is retried here too.
   if (!Flush()) {
     return false;

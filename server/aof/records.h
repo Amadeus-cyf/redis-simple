@@ -30,18 +30,19 @@ void AppendTimestamp(int64_t seconds, std::string* output);
 // Appends the record for a successful mutation. Commands whose effect depends
 // on the time are recorded by their result, so replay reproduces it: SET
 // becomes SET plus an absolute PEXPIREAT, and EXPIRE-family commands become
-// PEXPIREAT, or DEL if the key expired. Other commands are recorded as given.
-// Returns false, leaving `output` partly written, if the record cannot be
-// encoded.
+// PEXPIREAT, or DEL if the key expired. Other commands, and a SET without
+// options, are recorded as given. Returns false, with `output` unchanged, if
+// the command has no record: a SET whose key holds another type, or too few
+// arguments.
 bool EncodeMutation(std::string_view command,
                     const std::vector<std::string_view>& args, db::RedisDb* db,
                     std::string* output);
 
 // Appends a command made of `elements`.
-bool AppendFixedCommand(std::initializer_list<std::string_view> elements,
+void AppendFixedCommand(std::initializer_list<std::string_view> elements,
                         std::string* output);
 // Appends "PEXPIREAT <key> <expire>".
-bool AppendExpireAt(std::string_view key, int64_t expire, std::string* output);
+void AppendExpireAt(std::string_view key, int64_t expire, std::string* output);
 
 // The encoded size of a bulk string, or SIZE_MAX if it overflows.
 size_t RespBulkSize(std::string_view value);

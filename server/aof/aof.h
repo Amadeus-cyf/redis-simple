@@ -60,7 +60,8 @@ struct Options {
   // Redis' aof-rewrite-incremental-fsync: the rewrite child syncs every
   // 4 MiB it writes, instead of only at the end.
   bool rewrite_incremental_fsync{true};
-  // Redis' no-appendfsync-on-rewrite: no fsync while a rewrite runs.
+  // Redis' no-appendfsync-on-rewrite: no fsync while a rewrite or a
+  // background save runs.
   bool no_fsync_on_rewrite{false};
   // Redis' aof-use-rdb-preamble: rewrites write the base file as an RDB
   // snapshot ("<prefix>.<sequence>.base.rdb"), which is smaller and loads
@@ -210,7 +211,16 @@ class Aof {
   const Manifest& CurrentManifest() const { return manifest_; }
 
  private:
-  Aof(const Options& options, std::string directory);
+  // A failed file operation, with the system error behind it. The error
+  // number travels with the result because logging between the failure and
+  // its caller may change errno.
+  struct Failure {
+    AofError error{AofError::kNone};
+    int error_number{0};
+    bool Ok() const { return error == AofError::kNone; }
+  };
+
+  explicit Aof(const Options& options);
 
   // Startup and loading (aof_load.cpp).
   bool LoadManifest();
@@ -226,7 +236,7 @@ class Aof {
   [[noreturn]] void RunRewriteChild(db::RedisDb* db) const;
   std::string RewriteTempPath(pid_t child) const;
   void FinishRewrite(int wait_status);
-  AofError InstallRewrite(pid_t child, int* error_number);
+  Failure InstallRewrite(pid_t child);
   void AbandonRewrite();
   void RemoveRewriteTempFiles(pid_t child);
   bool RewriteLimited();
@@ -236,13 +246,21 @@ class Aof {
   std::string ManifestPath() const;
   // Writes `manifest` to a temporary file, syncs it, renames it over the
   // manifest, and syncs the directory.
-  AofError PersistManifest(const Manifest& manifest);
+  Failure PersistManifest(const Manifest& manifest);
   // Creates the next incremental file, lists it in the manifest, and makes it
   // the file appends go to.
   bool OpenNextIncrement();
   void SwitchFile(int fd);
   void DeleteHistory();
   void FailDirectorySync(int error_number);
+  // The steps of Flush(). PostponeWrite: whether a write should still wait
+  // for the background sync running at `now`. WriteBatch: writes the buffer;
+  // false after a failed or short write. SyncAfterFlush: syncs as the policy
+  // asks; false when `always` could not sync.
+  bool PostponeWrite(std::chrono::steady_clock::time_point now);
+  bool WriteBatch();
+  bool SyncAfterFlush(std::chrono::steady_clock::time_point now,
+                      bool sync_in_progress);
   void FailWrite(ssize_t written);
   void LogSyncFailure();
   static void RecordError(AofError error, int error_number);
@@ -308,6 +326,9 @@ class Aof {
 
   // The running rewrite's child, and Redis' rewrite statistics.
   pid_t rewrite_child_{-1};
+  // Whether another child, a background save, ran at the last Cron(). With
+  // no-appendfsync-on-rewrite it holds syncs back as a rewrite does.
+  bool other_child_running_{false};
   std::chrono::steady_clock::time_point rewrite_start_{};
   int64_t last_rewrite_seconds_{-1};
   bool rewrite_scheduled_{false};

@@ -117,11 +117,9 @@ template <typename Sink>
 bool EmitFixedCommand(std::initializer_list<std::string_view> elements,
                       const Limits& limits, Sink* sink) {
   std::string record;
-  if (!AppendFixedCommand(elements, &record) ||
-      record.size() > limits.max_replay_command_bytes) {
-    return false;
-  }
-  return (*sink)(std::move(record));
+  AppendFixedCommand(elements, &record);
+  return record.size() <= limits.max_replay_command_bytes &&
+         (*sink)(std::move(record));
 }
 
 // A string as one SET, or, when it is larger than a block, an empty SET
@@ -213,11 +211,9 @@ bool EmitKey(std::string_view key, const db::RedisObject& object,
   }
   if (expire.has_value()) {
     std::string record;
-    if (!AppendExpireAt(key, *expire, &record) ||
-        record.size() > limits.max_replay_command_bytes ||
-        !(*sink)(std::move(record))) {
-      return false;
-    }
+    AppendExpireAt(key, *expire, &record);
+    return record.size() <= limits.max_replay_command_bytes &&
+           (*sink)(std::move(record));
   }
   return true;
 }

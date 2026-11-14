@@ -439,7 +439,11 @@ TEST(AofTest, RewritesAllObjectTypesAndPreservesConcurrentWrites) {
   ASSERT_EQ(source->SetKey(
                 "string", db::RedisObject::CreateWithString("updated"), expire),
             db::DbStatus::kOk);
-  const std::vector<std::string_view> set_args = {"string", "updated"};
+  // As the command that stored it would arrive: a SET without options is
+  // recorded as given, and one with options by the value and TTL it left.
+  const std::string expire_text = std::to_string(expire);
+  const std::vector<std::string_view> set_args = {"string", "updated", "PXAT",
+                                                  expire_text};
   ASSERT_TRUE(writer->Append("SET", set_args, source.get()));
   writer->WaitForRewrite();
   ASSERT_TRUE(writer->AcceptingWrites());
@@ -829,6 +833,28 @@ TEST(AofTest, WritesTheBatchBeforeFlushReturns) {
     EXPECT_EQ(file.Size(),
               kSelect.size() + Encode("SET", {"key", "value"}).size());
   }
+}
+
+TEST(AofTest, HoldsSyncsBackWhileABackgroundSaveRuns) {
+  TempAof file;
+  auto file_ops = std::make_shared<TestFileOps>();
+  auto source = db::RedisDb::Create();
+  Options options = Always(file, file_ops);
+  options.no_fsync_on_rewrite = true;
+  auto writer = Aof::Open(options, source.get());
+  ASSERT_NE(writer, nullptr);
+
+  // Redis' no-appendfsync-on-rewrite covers any child doing I/O, not only
+  // the rewrite's: the cron is told when a background save runs.
+  ASSERT_TRUE(writer->Cron(source.get(), false));
+  const int syncs_before = file_ops->SyncCount();
+  ASSERT_TRUE(writer->Append("SET", {"key", "value"}, source.get()));
+  ASSERT_TRUE(writer->Flush());
+  EXPECT_EQ(file_ops->SyncCount(), syncs_before);
+
+  // Once the save is over, the next flush syncs what was held back.
+  ASSERT_TRUE(writer->Cron(source.get(), true));
+  EXPECT_EQ(file_ops->SyncCount(), syncs_before + 1);
 }
 
 TEST(AofTest, SyncsEverySecondUnderSustainedWrites) {

@@ -127,6 +127,74 @@ bool EqualsIgnoringCase(std::string_view left, std::string_view right) {
     return lower(a) == lower(b);
   });
 }
+
+std::string_view TrimBlanks(std::string_view line) {
+  constexpr std::string_view kBlanks = " \t\r";
+  const size_t first = line.find_first_not_of(kBlanks);
+  if (first == std::string_view::npos) {
+    return {};
+  }
+  return line.substr(first, line.find_last_not_of(kBlanks) - first + 1);
+}
+
+// Parses one manifest line, such as "file appendonly.aof.1.incr.aof seq 1
+// type i": key/value pairs in any order. Redis requires the name, a nonzero
+// sequence, and the type, and ignores keys it does not know, for forward
+// compatibility.
+std::optional<ManifestFile> ParseLine(std::string_view line) {
+  line = TrimBlanks(line);
+  if (line.empty()) {
+    return std::nullopt;
+  }
+  std::vector<std::string> fields;
+  if (!utils::SplitArgs(line,
+                        [&fields](std::string_view field, bool /*quoted*/) {
+                          fields.emplace_back(field);
+                        }) ||
+      fields.size() < 6 || fields.size() % 2 != 0) {
+    return std::nullopt;
+  }
+  ManifestFile file;
+  bool has_name = false;
+  char type_code = '\0';
+  for (size_t index = 0; index < fields.size(); index += 2) {
+    const std::string& key = fields[index];
+    std::string& value = fields[index + 1];
+    if (EqualsIgnoringCase(key, "file")) {
+      // Redis' pathIsBaseName: a name, not a path.
+      if (value.find_first_of("/\\") != std::string::npos) {
+        return std::nullopt;
+      }
+      file.name = std::move(value);
+      has_name = true;
+    } else if (EqualsIgnoringCase(key, "seq")) {
+      file.sequence = ParseLeadingInteger(value);
+    } else if (EqualsIgnoringCase(key, "type")) {
+      type_code = value.empty() ? '\0' : value.front();
+    } else if (EqualsIgnoringCase(key, "startoffset")) {
+      file.start_offset = ParseLeadingInteger(value);
+    } else if (EqualsIgnoringCase(key, "endoffset")) {
+      file.end_offset = ParseLeadingInteger(value);
+    }
+  }
+  if (!has_name || file.sequence == 0) {
+    return std::nullopt;
+  }
+  switch (type_code) {
+    case 'b':
+      file.type = ManifestFile::Type::kBase;
+      break;
+    case 'h':
+      file.type = ManifestFile::Type::kHistory;
+      break;
+    case 'i':
+      file.type = ManifestFile::Type::kIncrement;
+      break;
+    default:
+      return std::nullopt;
+  }
+  return file;
+}
 }  // namespace
 
 ManifestFile MakeManifestFile(std::string name, int64_t sequence,
@@ -204,89 +272,40 @@ std::optional<Manifest> Manifest::Parse(std::string_view text) {
     return std::nullopt;
   }
   Manifest manifest;
-  int64_t max_increment_sequence = 0;
   while (!text.empty()) {
     const size_t line_end = text.find('\n');
     const bool has_newline = line_end != std::string_view::npos;
-    std::string_view line = text.substr(0, line_end);
+    const std::string_view line = text.substr(0, line_end);
     text = has_newline ? text.substr(line_end + 1) : std::string_view();
-    if (!line.empty() && line.front() == '#') {
+    if (line.starts_with('#')) {
       continue;
     }
     if (!has_newline || line.size() + 1 > kMaxLineBytes) {
       return std::nullopt;
     }
-    while (!line.empty() && (line.front() == ' ' || line.front() == '\t' ||
-                             line.front() == '\r')) {
-      line.remove_prefix(1);
-    }
-    while (!line.empty() &&
-           (line.back() == ' ' || line.back() == '\t' || line.back() == '\r')) {
-      line.remove_suffix(1);
-    }
-    if (line.empty()) {
+    std::optional<ManifestFile> file = ParseLine(line);
+    if (!file.has_value()) {
       return std::nullopt;
     }
-    // Key/value pairs in any order; at least the three Redis requires, and
-    // unknown keys are ignored for forward compatibility.
-    std::vector<std::string> fields;
-    if (!utils::SplitArgs(line,
-                          [&fields](std::string_view field, bool /*quoted*/) {
-                            fields.emplace_back(field);
-                          }) ||
-        fields.size() < 6 || fields.size() % 2 != 0) {
-      return std::nullopt;
-    }
-    ManifestFile file;
-    bool has_name = false;
-    char type_code = '\0';
-    for (size_t index = 0; index < fields.size(); index += 2) {
-      const std::string& key = fields[index];
-      const std::string& value = fields[index + 1];
-      if (EqualsIgnoringCase(key, "file")) {
-        if (value.find_first_of("/\\") != std::string::npos) {
-          return std::nullopt;
-        }
-        file.name = value;
-        has_name = true;
-      } else if (EqualsIgnoringCase(key, "seq")) {
-        file.sequence = ParseLeadingInteger(value);
-      } else if (EqualsIgnoringCase(key, "type")) {
-        type_code = value.empty() ? '\0' : value.front();
-      } else if (EqualsIgnoringCase(key, "startoffset")) {
-        file.start_offset = ParseLeadingInteger(value);
-      } else if (EqualsIgnoringCase(key, "endoffset")) {
-        file.end_offset = ParseLeadingInteger(value);
-      }
-    }
-    if (!has_name || file.sequence == 0 || type_code == '\0') {
-      return std::nullopt;
-    }
-    switch (type_code) {
-      case 'b':
+    switch (file->type) {
+      case ManifestFile::Type::kBase:
         if (manifest.base.has_value()) {
           return std::nullopt;
         }
-        file.type = ManifestFile::Type::kBase;
-        manifest.base_sequence = file.sequence;
-        manifest.base = std::move(file);
+        manifest.base_sequence = file->sequence;
+        manifest.base = std::move(*file);
         break;
-      case 'h':
-        file.type = ManifestFile::Type::kHistory;
-        manifest.history.push_back(std::move(file));
+      case ManifestFile::Type::kHistory:
+        manifest.history.push_back(std::move(*file));
         break;
-      case 'i':
+      case ManifestFile::Type::kIncrement:
         // Incremental files replay in order.
-        if (file.sequence <= max_increment_sequence) {
+        if (file->sequence <= manifest.increment_sequence) {
           return std::nullopt;
         }
-        file.type = ManifestFile::Type::kIncrement;
-        manifest.increment_sequence = file.sequence;
-        max_increment_sequence = file.sequence;
-        manifest.increments.push_back(std::move(file));
+        manifest.increment_sequence = file->sequence;
+        manifest.increments.push_back(std::move(*file));
         break;
-      default:
-        return std::nullopt;
     }
   }
   return manifest;

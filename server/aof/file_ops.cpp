@@ -122,25 +122,6 @@ std::optional<std::string> ReadWholeFile(const std::string& path) {
   }
 }
 
-size_t WritePrefix(FileOps* const file_ops, int fd, std::string_view data,
-                   int* const error_number) {
-  size_t written = 0;
-  while (written < data.size()) {
-    const ssize_t result =
-        file_ops->Write(fd, data.data() + written, data.size() - written);
-    if (result > 0) {
-      written += static_cast<size_t>(result);
-      continue;
-    }
-    if (result < 0 && errno == EINTR) {
-      continue;
-    }
-    *error_number = result < 0 ? errno : EIO;
-    break;
-  }
-  return written;
-}
-
 ssize_t WriteAll(FileOps* const file_ops, int fd, std::string_view data) {
   size_t written = 0;
   while (written < data.size()) {
