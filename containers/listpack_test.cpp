@@ -686,15 +686,17 @@ TEST(ListpackTest, IntegersRoundTripAtEveryWidthBoundary) {
   for (const int64_t value : values) {
     ASSERT_TRUE(listpack.Append(value));
   }
-  std::optional<size_t> offset = listpack.First();
-  for (const int64_t value : values) {
-    ASSERT_TRUE(offset.has_value());
-    EXPECT_EQ(listpack.IntegerAt(*offset), value);
-    EXPECT_EQ(listpack.Get(*offset), std::to_string(value));
-    EXPECT_EQ(listpack.Find(std::to_string(value)), offset);
-    offset = listpack.Next(*offset);
+  for (size_t index = 0; index < values.size(); ++index) {
+    const std::optional<size_t> found = listpack.OffsetAt(index);
+    ASSERT_TRUE(found.has_value());
+    // value_or, not *, so clang-tidy's optional-access check, which does
+    // not follow ASSERT_TRUE, has nothing to flag.
+    const size_t offset = found.value_or(0);
+    EXPECT_EQ(listpack.IntegerAt(offset), values[index]);
+    EXPECT_EQ(listpack.Get(offset), std::to_string(values[index]));
+    EXPECT_EQ(listpack.Find(std::to_string(values[index])), found);
   }
-  EXPECT_FALSE(offset.has_value());
+  EXPECT_EQ(listpack.Size(), values.size());
 }
 
 TEST(ListpackTest, OffsetAtFindsEveryElementFromEitherEnd) {
