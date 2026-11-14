@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -25,11 +26,11 @@ std::string FloatToString(double value);
 // Parses `value` as Redis' string2d does, for scores and other number
 // arguments: strtod over the whole text, so "inf" and hex work, but no
 // leading space, NaN, or overflow.
-bool ToDouble(std::string_view value, double* result);
+std::optional<double> ToDouble(std::string_view value);
 // Parses a score range bound as Redis' zslParseRange does: strtod over the
 // whole text, rejecting only NaN, so leading spaces, "" (0), and overflow
 // (an infinity) are accepted.
-bool ToRangeDouble(std::string_view value, double* result);
+std::optional<double> ToRangeDouble(std::string_view value);
 }  // namespace redis_simple::utils
 
 #endif  // REDIS_SIMPLE_UTILS_FLOATS_H_

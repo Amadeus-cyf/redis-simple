@@ -227,14 +227,14 @@ std::optional<std::string_view> GlobLiteralPrefix(std::string_view pattern) {
   return prefix;
 }
 
-bool ToInt64(std::string_view text, int64_t* const value) {
+std::optional<int64_t> ToInt64(std::string_view text) {
   // Redis' string2ll: an optional '-', no "-0", no '+'.
   if (text.empty() || text.size() > 20 || text.front() == '+' || text == "-0") {
-    return false;
+    return std::nullopt;
   }
   const bool has_sign = text[0] == '-';
   if (has_sign && text.size() == 1) {
-    return false;
+    return std::nullopt;
   }
   const bool negative = text[0] == '-';
   const uint64_t max_magnitude =
@@ -246,40 +246,35 @@ bool ToInt64(std::string_view text, int64_t* const value) {
         (text[i] == '0') && ((i == 0 && text.size() > 1) ||
                              (i == 1 && has_sign && text.size() > 2));
     if (has_redundant_leading_zero) {
-      return false;
+      return std::nullopt;
     }
     if (text[i] < '0' || text[i] > '9') {
-      return false;
+      return std::nullopt;
     }
     const auto digit = static_cast<uint64_t>(text[i] - '0');
     if (magnitude > (max_magnitude - digit) / 10) {
-      return false;
+      return std::nullopt;
     }
     magnitude = (magnitude * 10) + digit;
   }
-  if (value != nullptr) {
-    if (negative && magnitude == max_magnitude) {
-      *value = std::numeric_limits<int64_t>::min();
-    } else {
-      const auto positive = static_cast<int64_t>(magnitude);
-      *value = negative ? -positive : positive;
-    }
+  if (negative && magnitude == max_magnitude) {
+    return std::numeric_limits<int64_t>::min();
   }
-  return true;
+  const auto positive = static_cast<int64_t>(magnitude);
+  return negative ? -positive : positive;
 }
 
-bool ToUint64(std::string_view text, uint64_t* const value) {
+std::optional<uint64_t> ToUint64(std::string_view text) {
   text = text.substr(0, text.find('\0'));
-  int64_t signed_value = 0;
-  if (ToInt64(text, &signed_value)) {
-    if (signed_value < 0) {
-      return false;
+  if (const std::optional<int64_t> signed_value = ToInt64(text);
+      signed_value.has_value()) {
+    if (*signed_value < 0) {
+      return std::nullopt;
     }
-    *value = static_cast<uint64_t>(signed_value);
-    return true;
+    return static_cast<uint64_t>(*signed_value);
   }
   if (text.empty()) {
-    return false;
+    return std::nullopt;
   }
   // strtoull needs a terminated string; cursors are short.
   const std::string terminated(text);
@@ -288,10 +283,9 @@ bool ToUint64(std::string_view text, uint64_t* const value) {
   const uint64_t parsed = std::strtoull(terminated.c_str(), &end, 10);
   if (errno == EINVAL || errno == ERANGE ||
       end != terminated.c_str() + terminated.size()) {
-    return false;
+    return std::nullopt;
   }
-  *value = parsed;
-  return true;
+  return parsed;
 }
 
 int Int64ToString(std::span<char> destination, int64_t value) {

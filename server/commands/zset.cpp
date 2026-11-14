@@ -190,10 +190,13 @@ void HandleZAdd(Client* const client) {
   // Validate every score before changing anything.
   std::vector<double> scores((args.size() - first_score) / 2);
   for (size_t i = 0; i < scores.size(); ++i) {
-    if (!utils::ToDouble(args[first_score + (2 * i)], &scores[i])) {
+    const std::optional<double> score =
+        utils::ToDouble(args[first_score + (2 * i)]);
+    if (!score.has_value()) {
       client->AddReply(reply::kNotAFloatError);
       return;
     }
+    scores[i] = *score;
   }
 
   auto [object, wrong_type] = MutableLookupTyped(
@@ -301,14 +304,15 @@ RangeStatus ParseRangeOptions(const CommandArgs& args, RangeType type,
     if (utils::EqualsIgnoreCase(option, kFlagWithScores)) {
       parsed.with_scores = true;
     } else if (utils::EqualsIgnoreCase(option, kFlagLimit) && remaining >= 2) {
-      int64_t offset = 0;
-      if (!utils::ToInt64(args[i + 1], &offset) ||
-          !utils::ToInt64(args[i + 2], &count)) {
+      const std::optional<int64_t> offset = utils::ToInt64(args[i + 1]);
+      const std::optional<int64_t> limit_count = utils::ToInt64(args[i + 2]);
+      if (!offset.has_value() || !limit_count.has_value()) {
         return RangeStatus::kNotAnInteger;
       }
-      parsed.empty = offset < 0;
+      count = *limit_count;
+      parsed.empty = *offset < 0;
       parsed.limit.emplace(
-          static_cast<size_t>(std::max<int64_t>(offset, 0)),
+          static_cast<size_t>(std::max<int64_t>(*offset, 0)),
           count < 0 ? std::nullopt
                     : std::optional<size_t>(static_cast<size_t>(count)));
       i += 2;
@@ -345,7 +349,14 @@ RangeStatus ParseRangeOptions(const CommandArgs& args, RangeType type,
 
 bool ParseRankRange(std::string_view start, std::string_view end,
                     RangeByRankSpec* const spec) {
-  return utils::ToInt64(start, &spec->min) && utils::ToInt64(end, &spec->max);
+  const std::optional<int64_t> min = utils::ToInt64(start);
+  const std::optional<int64_t> max = utils::ToInt64(end);
+  if (!min.has_value() || !max.has_value()) {
+    return false;
+  }
+  spec->min = *min;
+  spec->max = *max;
+  return true;
 }
 
 // Redis' zslParseRange: "(" makes a bound exclusive, and the rest parses
@@ -353,7 +364,13 @@ bool ParseRankRange(std::string_view start, std::string_view end,
 bool ParseScoreTerm(std::string_view term, double* const value,
                     bool* const exclusive) {
   *exclusive = term.starts_with('(');
-  return utils::ToRangeDouble(*exclusive ? term.substr(1) : term, value);
+  const std::optional<double> bound =
+      utils::ToRangeDouble(*exclusive ? term.substr(1) : term);
+  if (!bound.has_value()) {
+    return false;
+  }
+  *value = *bound;
+  return true;
 }
 
 bool ParseScoreRange(std::string_view start, std::string_view end,

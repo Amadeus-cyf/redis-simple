@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -58,12 +59,13 @@ struct LengthLine {
   if (cr + 1 >= input.size()) {
     return {.status = ParseStatus::kIncomplete};
   }
-  int64_t value = 0;
-  if (!utils::ToInt64(input.substr(start, cr - start), &value)) {
+  const std::optional<int64_t> value =
+      utils::ToInt64(input.substr(start, cr - start));
+  if (!value.has_value()) {
     return {.status = ParseStatus::kInvalid, .error = invalid};
   }
   return {
-      .status = ParseStatus::kComplete, .value = value, .end = cr + kCrlfSize};
+      .status = ParseStatus::kComplete, .value = *value, .end = cr + kCrlfSize};
 }
 
 // Digit value of `c`, or a value above 9 for any other byte: subtracting

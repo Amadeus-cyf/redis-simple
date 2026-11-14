@@ -144,11 +144,11 @@ bool ParseSetOption(const CommandArgs& args, size_t* const index,
 // Converts the expiration option's value to an absolute time in milliseconds.
 ParseStatus ResolveExpire(ExpireUnit unit, std::string_view expire_arg,
                           int64_t now, int64_t* const expire) {
-  int64_t expiration = 0;
-  if (!utils::ToInt64(expire_arg, &expiration)) {
+  const std::optional<int64_t> expiration = utils::ToInt64(expire_arg);
+  if (!expiration.has_value()) {
     return ParseStatus::kNotAnInteger;
   }
-  if (expiration <= 0) {
+  if (*expiration <= 0) {
     return ParseStatus::kInvalidExpire;
   }
   bool valid = false;
@@ -156,15 +156,15 @@ ParseStatus ResolveExpire(ExpireUnit unit, std::string_view expire_arg,
     case ExpireUnit::kRelativeSeconds:
     case ExpireUnit::kRelativeMilliseconds:
       valid = ExpireAtFromTtl(
-          expiration,
+          *expiration,
           unit == ExpireUnit::kRelativeSeconds ? kMillisecondsPerSecond : 1,
           now, expire);
       break;
     case ExpireUnit::kAbsoluteSeconds:
-      valid = MillisecondsFromSeconds(expiration, expire);
+      valid = MillisecondsFromSeconds(*expiration, expire);
       break;
     case ExpireUnit::kAbsoluteMilliseconds:
-      *expire = expiration;
+      *expire = *expiration;
       valid = true;
       break;
     case ExpireUnit::kNone:
@@ -301,18 +301,18 @@ void UpdateInteger(Client* const client, std::string_view key, int64_t operand,
 
 void HandleIncrementBy(Client* const client, IntegerOperation operation) {
   const commands::CommandArgs& args = client->Args();
-  int64_t operand = 0;
-  if (!utils::ToInt64(args[1], &operand)) {
+  const std::optional<int64_t> operand = utils::ToInt64(args[1]);
+  if (!operand.has_value()) {
     client->AddReply(reply::kNotAnIntegerError);
     return;
   }
   // Redis negates the DECRBY operand first, which INT64_MIN would overflow.
   if (operation == IntegerOperation::kSubtract &&
-      operand == std::numeric_limits<int64_t>::min()) {
+      *operand == std::numeric_limits<int64_t>::min()) {
     client->AddReply(reply::FromError("ERR decrement would overflow"));
     return;
   }
-  UpdateInteger(client, args[0], operand, operation);
+  UpdateInteger(client, args[0], *operand, operation);
 }
 
 int64_t ToReplyInteger(size_t value) { return static_cast<int64_t>(value); }

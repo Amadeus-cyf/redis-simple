@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -26,13 +27,13 @@ constexpr size_t kMaxReservedElements = 1024;
 
 bool ParseScanCursor(Client* const client, std::string_view text,
                      size_t* const cursor) {
-  uint64_t value = 0;
-  if (!utils::ToUint64(text, &value) ||
-      std::cmp_greater(value, std::numeric_limits<size_t>::max())) {
+  const std::optional<uint64_t> value = utils::ToUint64(text);
+  if (!value.has_value() ||
+      std::cmp_greater(*value, std::numeric_limits<size_t>::max())) {
     client->AddReply(reply::FromError("ERR invalid cursor"));
     return false;
   }
-  *cursor = static_cast<size_t>(value);
+  *cursor = static_cast<size_t>(*value);
   return true;
 }
 
@@ -44,17 +45,17 @@ bool ParseScanOptions(Client* const client, size_t first, ScanTarget target,
     const bool has_value = index + 1 < args.size();
     const std::string_view option = args[index];
     if (has_value && utils::EqualsIgnoreCase(option, "COUNT")) {
-      int64_t count = 0;
-      if (!utils::ToInt64(args[index + 1], &count)) {
+      const std::optional<int64_t> count = utils::ToInt64(args[index + 1]);
+      if (!count.has_value()) {
         client->AddReply(reply::kNotAnIntegerError);
         return false;
       }
       // Redis reports a count below 1 as a syntax error.
-      if (count < 1) {
+      if (*count < 1) {
         client->AddReply(reply::kSyntaxError);
         return false;
       }
-      options->count = static_cast<size_t>(count);
+      options->count = static_cast<size_t>(*count);
       index += 2;
     } else if (has_value && utils::EqualsIgnoreCase(option, "MATCH")) {
       options->pattern = args[index + 1];

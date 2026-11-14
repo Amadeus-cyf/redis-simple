@@ -343,11 +343,7 @@ std::optional<double> ZSetListpack::ScoreAt(size_t offset) const {
     return static_cast<double>(*integer);
   }
   const std::optional<std::string_view> value = ValueAt(offset);
-  double score = 0;
-  if (!value.has_value() || !utils::ToDouble(*value, &score)) {
-    return std::nullopt;
-  }
-  return score;
+  return value.has_value() ? utils::ToDouble(*value) : std::nullopt;
 }
 
 void ZSetListpack::VisitRankRange(const RangeByRankSpec* spec,

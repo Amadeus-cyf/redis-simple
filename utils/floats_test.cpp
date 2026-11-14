@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -34,9 +35,10 @@ TEST(FloatsTest, PreservesDoubleValuesExactly) {
       std::nextafter(1.0, 2.0),
   };
   for (const double value : values) {
-    double parsed = 0;
+    std::optional<double> parsed;
     const std::string text = FloatToString(value);
-    ASSERT_TRUE(ToDouble(text, &parsed)) << text;
+    parsed = ToDouble(text);
+    ASSERT_TRUE(parsed.has_value()) << text;
     EXPECT_EQ(parsed, value) << text;
   }
 }
@@ -279,13 +281,14 @@ TEST(FloatsTest, PlainDecimalsParseLikeTheGeneralParser) {
   }
   for (const std::string& input : inputs) {
     double expected = 0;
-    double actual = 0;
+    std::optional<double> actual;
     const bool expected_ok = reference(input, &expected);
-    ASSERT_EQ(ToDouble(input, &actual), expected_ok) << input;
+    actual = ToDouble(input);
+    ASSERT_EQ(actual.has_value(), expected_ok) << input;
     if (expected_ok) {
-      EXPECT_EQ(std::signbit(actual), std::signbit(expected)) << input;
+      EXPECT_EQ(std::signbit(*actual), std::signbit(expected)) << input;
       EXPECT_TRUE(actual == expected ||
-                  (std::isinf(actual) && std::isinf(expected)))
+                  (std::isinf(*actual) && std::isinf(expected)))
           << input;
     }
   }
@@ -299,43 +302,54 @@ TEST(FloatsTest, FormatFloatWritesIntoTheBuffer) {
 }
 
 TEST(FloatsTest, ParsesOnlyCompleteFiniteOrInfiniteNumbers) {
-  double value = 0;
-  EXPECT_TRUE(ToDouble("-1.25e+3", &value));
+  std::optional<double> value;
+  value = ToDouble("-1.25e+3");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, -1250);
-  EXPECT_TRUE(ToDouble("+1.5", &value));
+  value = ToDouble("+1.5");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 1.5);
-  EXPECT_TRUE(ToDouble("+inf", &value));
-  EXPECT_TRUE(std::isinf(value));
-  EXPECT_FALSE(ToDouble("nan", &value));
-  EXPECT_FALSE(ToDouble("1.5junk", &value));
-  EXPECT_FALSE(ToDouble(" 1.5", &value));
-  EXPECT_FALSE(ToDouble("1.5 ", &value));
-  EXPECT_FALSE(ToDouble("", &value));
+  value = ToDouble("+inf");
+  EXPECT_TRUE(value.has_value());
+  EXPECT_TRUE(std::isinf(*value));
+  EXPECT_FALSE(ToDouble("nan").has_value());
+  EXPECT_FALSE(ToDouble("1.5junk").has_value());
+  EXPECT_FALSE(ToDouble(" 1.5").has_value());
+  EXPECT_FALSE(ToDouble("1.5 ").has_value());
+  EXPECT_FALSE(ToDouble("").has_value());
   // strtod forms Redis accepts, and the overflow it does not.
-  EXPECT_TRUE(ToDouble("0x10", &value));
+  value = ToDouble("0x10");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 16);
-  EXPECT_TRUE(ToDouble("0x1p2", &value));
+  value = ToDouble("0x1p2");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 4);
-  EXPECT_TRUE(ToDouble("-Infinity", &value));
-  EXPECT_TRUE(std::isinf(value) && value < 0);
-  EXPECT_FALSE(ToDouble("1e400", &value));
-  EXPECT_FALSE(ToDouble("1e-400", &value));
-  EXPECT_FALSE(ToDouble(std::string(200, '1') + "x", &value));
-  EXPECT_TRUE(ToDouble(std::string(200, '1'), &value));
+  value = ToDouble("-Infinity");
+  EXPECT_TRUE(value.has_value());
+  EXPECT_TRUE(std::isinf(*value) && *value < 0);
+  EXPECT_FALSE(ToDouble("1e400").has_value());
+  EXPECT_FALSE(ToDouble("1e-400").has_value());
+  EXPECT_FALSE(ToDouble(std::string(200, '1') + "x").has_value());
+  value = ToDouble(std::string(200, '1'));
+  EXPECT_TRUE(value.has_value());
 }
 
 TEST(FloatsTest, ParsesRangeBoundsLikeZslParseRange) {
-  double value = -1;
-  EXPECT_TRUE(ToRangeDouble("", &value));
+  std::optional<double> value;
+  value = ToRangeDouble("");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 0);
-  EXPECT_TRUE(ToRangeDouble(" 2.5", &value));
+  value = ToRangeDouble(" 2.5");
+  EXPECT_TRUE(value.has_value());
   EXPECT_EQ(value, 2.5);
-  EXPECT_TRUE(ToRangeDouble("1e400", &value));
-  EXPECT_TRUE(std::isinf(value));
-  EXPECT_TRUE(ToRangeDouble("-inf", &value));
-  EXPECT_FALSE(ToRangeDouble("nan", &value));
-  EXPECT_FALSE(ToRangeDouble("1 ", &value));
-  EXPECT_FALSE(ToRangeDouble("abc", &value));
+  value = ToRangeDouble("1e400");
+  EXPECT_TRUE(value.has_value());
+  EXPECT_TRUE(std::isinf(*value));
+  value = ToRangeDouble("-inf");
+  EXPECT_TRUE(value.has_value());
+  EXPECT_FALSE(ToRangeDouble("nan").has_value());
+  EXPECT_FALSE(ToRangeDouble("1 ").has_value());
+  EXPECT_FALSE(ToRangeDouble("abc").has_value());
 }
 
 TEST(FloatsTest, FormatsWith17DigitsLikeRedisLd2string) {

@@ -381,9 +381,11 @@ class Loader {
     if (!ReadBytes(length, &text)) {
       return false;
     }
-    if (!utils::ToRangeDouble(text, value)) {
+    const std::optional<double> parsed = utils::ToRangeDouble(text);
+    if (!parsed.has_value()) {
       return Corrupt("an invalid score");
     }
+    *value = *parsed;
     return true;
   }
 
@@ -446,9 +448,8 @@ CompactCheck Loader::CheckCompactListpack(std::string_view blob,
     const bool is_key = count % kind.elements_per_entry == 0;
     ++count;
     if (!element.is_integer) {
-      int64_t integer = 0;
       if (element.string.size() > kind.max_element_length ||
-          utils::ToInt64(element.string, &integer)) {
+          utils::ToInt64(element.string).has_value()) {
         fits = false;
       }
     }
@@ -466,13 +467,14 @@ CompactCheck Loader::CheckCompactListpack(std::string_view blob,
     if (!kind.sorted_set) {
       continue;
     }
-    double score = 0;
-    if (element.is_integer) {
-      score = static_cast<double>(element.integer);
-    } else if (!utils::ToDouble(element.string, &score)) {
+    const std::optional<double> parsed_score =
+        element.is_integer ? static_cast<double>(element.integer)
+                           : utils::ToDouble(element.string);
+    if (!parsed_score.has_value()) {
       Corrupt("an invalid sorted set score");
       return CompactCheck::kCorrupt;
     }
+    const double score = *parsed_score;
     if (std::isnan(score)) {
       Corrupt("a sorted set score that is NaN");
       return CompactCheck::kCorrupt;
@@ -724,14 +726,14 @@ ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
         continue;
       }
       expecting_score = false;
-      double score = 0;
-      if (element.is_integer) {
-        score = static_cast<double>(element.integer);
-      } else if (!utils::ToDouble(element.string, &score)) {
+      const std::optional<double> score =
+          element.is_integer ? static_cast<double>(element.integer)
+                             : utils::ToDouble(element.string);
+      if (!score.has_value()) {
         Corrupt("an invalid sorted set score");
         return ValueStatus::kFailed;
       }
-      if (!insert(member, score)) {
+      if (!insert(member, *score)) {
         return ValueStatus::kFailed;
       }
     }

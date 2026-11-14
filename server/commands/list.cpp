@@ -61,10 +61,12 @@ void DeleteIfEmpty(Client* const client, std::string_view key,
 
 bool ParseInteger(Client* const client, std::string_view text,
                   int64_t* const value) {
-  if (!utils::ToInt64(text, value)) {
+  const std::optional<int64_t> parsed = utils::ToInt64(text);
+  if (!parsed.has_value()) {
     client->AddReply(reply::kNotAnIntegerError);
     return false;
   }
+  *value = *parsed;
   return true;
 }
 
@@ -143,8 +145,8 @@ void HandlePush(Client* const client, Side side) {
 // into an array, from the side popped first.
 void HandlePopCount(Client* const client, Side side) {
   const commands::CommandArgs& args = client->Args();
-  int64_t count = 0;
-  if (!utils::ToInt64(args[1], &count) || count < 0) {
+  const std::optional<int64_t> count = utils::ToInt64(args[1]);
+  if (!count.has_value() || *count < 0) {
     client->AddReply(
         reply::FromError("ERR value is out of range, must be positive"));
     return;
@@ -158,7 +160,7 @@ void HandlePopCount(Client* const client, Side side) {
     return;
   }
   const size_t size = list->Size();
-  const size_t popped = std::min(static_cast<size_t>(count), size);
+  const size_t popped = std::min(static_cast<size_t>(*count), size);
   std::string encoded = reply::FromArrayHeader(popped);
   if (popped == 0) {
     client->AddReply(std::move(encoded));
