@@ -13,6 +13,7 @@
 #include "server/reply.h"
 #include "utils/check.h"
 #include "utils/strings.h"
+#include "utils/time.h"
 
 namespace redis_simple::commands::string {
 void HandleGet(Client* const client) {
@@ -30,7 +31,6 @@ void HandleGet(Client* const client) {
 }
 
 namespace {
-constexpr int64_t kMillisecondsPerSecond = 1000;
 
 enum class SetCondition : uint8_t {
   kNone,
@@ -61,11 +61,11 @@ bool ExpireAtFromTtl(int64_t ttl, int64_t multiplier, int64_t now,
 }
 
 bool MillisecondsFromSeconds(int64_t seconds, int64_t* milliseconds) {
-  if (seconds <= 0 ||
-      seconds > std::numeric_limits<int64_t>::max() / kMillisecondsPerSecond) {
+  if (seconds <= 0 || seconds > std::numeric_limits<int64_t>::max() /
+                                    utils::kMillisecondsPerSecond) {
     return false;
   }
-  *milliseconds = seconds * kMillisecondsPerSecond;
+  *milliseconds = seconds * utils::kMillisecondsPerSecond;
   return true;
 }
 
@@ -155,10 +155,11 @@ ParseStatus ResolveExpire(ExpireUnit unit, std::string_view expire_arg,
   switch (unit) {
     case ExpireUnit::kRelativeSeconds:
     case ExpireUnit::kRelativeMilliseconds:
-      valid = ExpireAtFromTtl(
-          *expiration,
-          unit == ExpireUnit::kRelativeSeconds ? kMillisecondsPerSecond : 1,
-          now, expire);
+      valid = ExpireAtFromTtl(*expiration,
+                              unit == ExpireUnit::kRelativeSeconds
+                                  ? utils::kMillisecondsPerSecond
+                                  : 1,
+                              now, expire);
       break;
     case ExpireUnit::kAbsoluteSeconds:
       valid = MillisecondsFromSeconds(*expiration, expire);

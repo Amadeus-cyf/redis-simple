@@ -93,28 +93,27 @@ void Connection::Close() {
 
 ConnectionStatus Connection::BindAndConnect(
     const AddressInfo& remote, const std::optional<AddressInfo>& local) {
-  if (event_loop::Loop* loop = loop_) {
-    ScopedFd fd(BindAndConnectTcp(remote, local));
-    if (fd.Get() < 0) {
-      return ConnectionStatus::kError;
-    }
-    fd_ = fd.Get();
-    state_ = ConnectionState::kConnecting;
-    auto event = event_loop::FileEvent::Create(
-        nullptr, WritableEventCallback, this,
-        event_loop::ToInt(event_loop::EventFlag::kWritable));
-    if (loop->CreateFileEvent(fd_, std::move(event)) ==
-        event_loop::Status::kError) {
-      RS_LOG_DEBUG("adding connection socket event callback error");
-      fd_ = -1;
-      return ConnectionStatus::kError;
-    }
-    flags_ |= event_loop::EventFlag::kWritable;
-    fd.Release();
-  } else {
+  if (loop_ == nullptr) {
     RS_LOG_DEBUG("no event loop\n");
     return ConnectionStatus::kError;
   }
+  ScopedFd fd(BindAndConnectTcp(remote, local));
+  if (fd.Get() < 0) {
+    return ConnectionStatus::kError;
+  }
+  fd_ = fd.Get();
+  state_ = ConnectionState::kConnecting;
+  auto event = event_loop::FileEvent::Create(
+      nullptr, WritableEventCallback, this,
+      event_loop::ToInt(event_loop::EventFlag::kWritable));
+  if (loop_->CreateFileEvent(fd_, std::move(event)) ==
+      event_loop::Status::kError) {
+    RS_LOG_DEBUG("adding connection socket event callback error\n");
+    fd_ = -1;
+    return ConnectionStatus::kError;
+  }
+  flags_ |= event_loop::EventFlag::kWritable;
+  fd.Release();
   return ConnectionStatus::kOk;
 }
 
