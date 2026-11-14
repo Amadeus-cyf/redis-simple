@@ -12,27 +12,15 @@
 #include <vector>
 
 #include "cli/cli.h"
+#include "integration/client_helpers.h"
 #include "logging/logger.h"
 #include "utils/strings.h"
 
 namespace redis_simple {
 namespace {
-struct Case {
-  std::string command;
-  std::string expected_reply;
-};
-
-bool ExpectReply(cli::RedisCli* cli, const Case& test_case) {
-  cli->AddCommand(test_case.command);
-  const std::string reply = cli->ReadReply();
-  if (reply != test_case.expected_reply) {
-    RS_LOG_DEBUG("command failed: %s expected: %s actual: %s\n",
-                 test_case.command.c_str(), test_case.expected_reply.c_str(),
-                 reply.c_str());
-    return false;
-  }
-  return true;
-}
+using integration::Case;
+using integration::ExpectReply;
+using integration::NonEmptyLines;
 
 bool ExpectIntegerBetween(cli::RedisCli* cli, const std::string& command,
                           int64_t min_value, int64_t max_value) {
@@ -48,18 +36,6 @@ bool ExpectIntegerBetween(cli::RedisCli* cli, const std::string& command,
     return false;
   }
   return true;
-}
-
-std::vector<std::string> NonEmptyLines(const std::string& reply) {
-  std::stringstream stream(reply);
-  std::string line;
-  std::vector<std::string> lines;
-  while (std::getline(stream, line)) {
-    if (!line.empty()) {
-      lines.push_back(line);
-    }
-  }
-  return lines;
 }
 
 // Scans to the end with COUNT 1, adding TYPE `type` when it is not empty.

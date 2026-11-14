@@ -4,26 +4,14 @@
 #include <vector>
 
 #include "cli/cli.h"
+#include "integration/client_helpers.h"
 #include "logging/logger.h"
 
 namespace redis_simple {
 namespace {
-struct Case {
-  std::string command;
-  std::string expected_reply;
-};
+using integration::Case;
+using integration::ExpectReply;
 
-bool ExpectReply(cli::RedisCli* cli, const Case& test_case) {
-  cli->AddCommand(test_case.command);
-  const std::string reply = cli->ReadReply();
-  if (reply != test_case.expected_reply) {
-    RS_LOG_DEBUG("command failed: %s expected: %s actual: %s\n",
-                 test_case.command.c_str(), test_case.expected_reply.c_str(),
-                 reply.c_str());
-    return false;
-  }
-  return true;
-}
 }  // namespace
 
 int Run() {

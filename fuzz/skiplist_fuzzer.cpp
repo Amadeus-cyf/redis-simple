@@ -26,6 +26,14 @@ void Verify(const IntSkiplist& skiplist, const std::set<int64_t>& model) {
   }
   Require(visited == expected);
 
+  // Backward links, which every insert, delete, and update rewrites.
+  std::vector<int64_t> visited_backward;
+  for (auto it = skiplist.Last(); it.Valid(); --it) {
+    visited_backward.push_back(*it);
+  }
+  std::ranges::reverse(visited_backward);
+  Require(visited_backward == expected);
+
   for (size_t rank = 0; rank < expected.size(); ++rank) {
     Require(skiplist.FindKeyByRank(static_cast<int64_t>(rank)) ==
             expected[rank]);

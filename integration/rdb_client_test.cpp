@@ -10,21 +10,18 @@
 #include <vector>
 
 #include "cli/cli.h"
+#include "integration/client_helpers.h"
 #include "logging/logger.h"
 
 namespace redis_simple {
 namespace {
+using integration::Case;
+using integration::NonEmptyLines;
+
 constexpr int kRdbPort = 18082;
 
-struct Case {
-  std::string command;
-  std::string expected_reply;
-};
-
-std::vector<std::string> NonEmptyLines(const std::string& reply);
-
 // Compares line by line, since the client ends arrays with a blank line.
-bool ExpectReply(cli::RedisCli* const cli, const Case& test_case) {
+bool ExpectReplyLines(cli::RedisCli* const cli, const Case& test_case) {
   cli->AddCommand(test_case.command);
   const std::string reply = cli->ReadReply();
   if (NonEmptyLines(reply) == NonEmptyLines(test_case.expected_reply)) {
@@ -38,20 +35,8 @@ bool ExpectReply(cli::RedisCli* const cli, const Case& test_case) {
 
 bool ExpectReplies(cli::RedisCli* const cli, const std::vector<Case>& cases) {
   return std::ranges::all_of(cases, [cli](const Case& test_case) {
-    return ExpectReply(cli, test_case);
+    return ExpectReplyLines(cli, test_case);
   });
-}
-
-std::vector<std::string> NonEmptyLines(const std::string& reply) {
-  std::stringstream stream(reply);
-  std::string line;
-  std::vector<std::string> lines;
-  while (std::getline(stream, line)) {
-    if (!line.empty()) {
-      lines.push_back(line);
-    }
-  }
-  return lines;
 }
 
 // LASTSAVE's reply, as a number.
@@ -158,7 +143,7 @@ bool WriteDataset(cli::RedisCli* const cli) {
     return false;
   }
   // Written after the save, so the restart must not see it.
-  return ExpectReply(cli, {"SET rdb_after_save lost\r\n", "OK\n"});
+  return ExpectReplyLines(cli, {"SET rdb_after_save lost\r\n", "OK\n"});
 }
 
 bool ReadDataset(cli::RedisCli* const cli) {
@@ -191,7 +176,7 @@ bool ReadDataset(cli::RedisCli* const cli) {
 }
 
 bool ExpectEmpty(cli::RedisCli* const cli) {
-  return ExpectReply(cli, {"DBSIZE\r\n", "0\n"});
+  return ExpectReplyLines(cli, {"DBSIZE\r\n", "0\n"});
 }
 
 using InfoFields = std::vector<std::pair<std::string_view, std::string>>;
@@ -239,7 +224,7 @@ bool BackgroundSave(cli::RedisCli* const cli) {
     return false;
   }
   // Not saved by BGSAVE, so only the save at shutdown keeps it.
-  return ExpectReply(cli, {"SET bg_after_save kept\r\n", "OK\n"});
+  return ExpectReplyLines(cli, {"SET bg_after_save kept\r\n", "OK\n"});
 }
 
 // After a restart: the save at shutdown kept the last write.
@@ -260,7 +245,7 @@ bool SavePoint(cli::RedisCli* const cli) {
   const InfoFields saved = {{"rdb_changes_since_last_save", "0"},
                             {"rdb_last_bgsave_status", "ok"}};
   const Case write = {"SET sp_key v\r\n", "OK\n"};
-  return ExpectReply(cli, write) && WaitForInfo(cli, "rdb_saves", "1") &&
+  return ExpectReplyLines(cli, write) && WaitForInfo(cli, "rdb_saves", "1") &&
          WaitForInfo(cli, "rdb_bgsave_in_progress", "0") &&
          ExpectInfo(cli, saved);
 }
@@ -288,7 +273,7 @@ bool RefusesWritesAfterFailedSave(cli::RedisCli* const cli) {
        "EXECABORT Transaction discarded because of previous errors.\n"},
   };
   const Case write = {"SET mc_key v\r\n", "OK\n"};
-  return ExpectReply(cli, write) &&
+  return ExpectReplyLines(cli, write) &&
          WaitForInfo(cli, "rdb_last_bgsave_status", "err") &&
          ExpectInfo(cli, failed) && ExpectReplies(cli, refused);
 }
@@ -300,7 +285,7 @@ bool KeepsWritingAfterFailedSave(cli::RedisCli* const cli) {
       {"PING\r\n", "PONG\n"},
   };
   const Case write = {"SET mc_key v\r\n", "OK\n"};
-  return ExpectReply(cli, write) &&
+  return ExpectReplyLines(cli, write) &&
          WaitForInfo(cli, "rdb_last_bgsave_status", "err") &&
          ExpectReplies(cli, allowed);
 }
