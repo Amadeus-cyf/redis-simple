@@ -50,8 +50,13 @@ class ZSetListpack : public ZSetStorage {
   };
 
   void DeleteMemberScorePair(size_t offset);
-  std::optional<std::string_view> ValueAt(size_t offset) const;
-  std::optional<EntryView> EntryAt(size_t member_offset) const;
+  // ValueAt and EntryAt format an integer-encoded member into the caller's
+  // buffer, so a view from one stays valid while its buffer does.
+  std::optional<std::string_view> ValueAt(
+      size_t offset, containers::Listpack::IntBuffer* buffer) const;
+  std::optional<EntryView> EntryAt(
+      size_t member_offset,
+      containers::Listpack::IntBuffer* member_buffer) const;
   std::optional<double> ScoreAt(size_t offset) const;
   // The forward and reverse walks behind the range visitors. A rank spec
   // must be normalized and valid.
