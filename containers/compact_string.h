@@ -121,7 +121,9 @@ class CompactString {
     }
   }
 
-  alignas(8) std::array<char, 16> storage_;
+  // Zeroed, so the pointer bytes of an inline string are never read
+  // uninitialized, even on paths a compiler cannot rule out.
+  alignas(8) std::array<char, 16> storage_{};
 };
 static_assert(sizeof(CompactString) == 16);
 }  // namespace redis_simple::containers

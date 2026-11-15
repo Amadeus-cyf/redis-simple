@@ -44,15 +44,23 @@ TEST(CompactStringTest, AssignMovesBetweenForms) {
   EXPECT_EQ(value.View(), long_value);
 }
 
+// Out of line so the optimizer cannot follow constant offsets into every
+// branch of View(): GCC 15 then warns that an offset past 16 indexes the
+// inline buffer, on a path that cannot run.
+[[gnu::noinline]] std::string_view Slice(const CompactString& value,
+                                         size_t position, size_t length) {
+  return value.View().substr(position, length);
+}
+
 TEST(CompactStringTest, AssignAcceptsAViewOfItsOwnBytes) {
   CompactString value(std::string(64, 'a') + std::string(64, 'b'));
-  value.Assign(value.View().substr(32, 64));  // shorter, still on the heap
+  value.Assign(Slice(value, 32, 64));  // shorter, still on the heap
   EXPECT_EQ(value.View(), std::string(32, 'a') + std::string(32, 'b'));
-  value.Assign(value.View().substr(0, 64));  // same length, overlapping
+  value.Assign(Slice(value, 0, 64));  // same length, overlapping
   EXPECT_EQ(value.View(), std::string(32, 'a') + std::string(32, 'b'));
-  value.Assign(value.View().substr(28, 8));  // to inline
+  value.Assign(Slice(value, 28, 8));  // to inline
   EXPECT_EQ(value.View(), "aaaabbbb");
-  value.Assign(value.View().substr(2, 4));  // inline to inline
+  value.Assign(Slice(value, 2, 4));  // inline to inline
   EXPECT_EQ(value.View(), "aabb");
 }
 
