@@ -181,6 +181,13 @@ Guidance for AI coding agents working in this repository.
   pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
   hash. Keep operations that touch more than one of those dicts on that path
   instead of looking the key up by `std::string_view` in each.
+- The TTL dict stores no key names: its keys are `Dict::EntryRef`s, handles
+  to keyspace entries, as Redis' expires dict shares the keyspace's keys.
+  Add a TTL through `RedisDb::SetExpire` once the key is in the keyspace,
+  and remove a key's TTL before its keyspace entry is deleted or extracted,
+  since the TTL entry reads its name from that entry. A key name that views
+  a keyspace entry (found by scanning the TTL dict) is deleted through
+  `DeleteStoredKey`, which touches watchers before freeing it.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-2
   (`utils/siphash.h`), as Redis does, to resist hash flooding. Do not depend
   on iteration or `SCAN` order in tests; it changes between runs.
