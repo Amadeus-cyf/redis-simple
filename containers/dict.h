@@ -196,6 +196,7 @@ class Dict {
   // How a stored key is read back: a std::string_view of a string key, whose
   // bytes live in its entry, and a const K& of any other.
   using KeyView = typename dict_internal::DictEntry<K, V>::KeyView;
+  class EntryRef;
   static std::unique_ptr<Dict> Create();
   static std::unique_ptr<Dict> Create(size_t capacity);
   Dict(const Dict&) = delete;
@@ -209,6 +210,9 @@ class Dict {
   // key is new. Hashes the key once and copies it only when inserting.
   template <typename Lookup>
   std::pair<V*, bool> FindOrInsert(const Lookup& key);
+  // A handle to `key`'s entry, empty (false) when the key is absent.
+  template <typename Lookup>
+  EntryRef FindEntryRef(const Lookup& key);
   void Set(const K& key, const V& value);
   void Set(const K& key, V&& value);
   void Set(K&& key, V&& value);
@@ -324,11 +328,32 @@ class Dict {
   mutable size_t pause_rehash_{};
 };
 
+// A stored entry's key and hash, held without a copy of the key, so another
+// Dict can index the same keys: the database's TTL table indexes the
+// keyspace's keys this way, as Redis' expires dict shares the keyspace's.
+// Valid until the entry is deleted or the dict cleared; rehashing relinks
+// entries without moving them.
 template <typename K, typename V, typename Hash, typename KeyEqual>
+class Dict<K, V, Hash, KeyEqual>::EntryRef {
+ public:
+  // Whether this refers to an entry; FindEntryRef returns an empty handle
+  // for a missing key. Key() and StoredHash() need a non-empty one.
+  explicit operator bool() const { return entry_ != nullptr; }
+  KeyView Key() const { return entry_->Key(); }
+  size_t StoredHash() const { return entry_->hash; }
+  bool operator==(const EntryRef& other) const = default;
+
+ private:
+  friend class Dict;
+  explicit EntryRef(const DictEntry* entry) : entry_(entry) {}
+  const DictEntry* entry_;
+};
+
 // Walks every entry once. While an iterator lives the dict moves no entry
 // between its tables (as Redis' safe iterators arrange), so the dict may be
 // looked up, and other keys inserted, during the walk; inserted keys may or
 // may not be visited. Deleting entries or clearing the dict invalidates it.
+template <typename K, typename V, typename Hash, typename KeyEqual>
 class Dict<K, V, Hash, KeyEqual>::Iterator {
  public:
   explicit Iterator(const Dict* dict);
@@ -484,6 +509,17 @@ std::optional<V> Dict<K, V, Hash, KeyEqual>::Get(const K& key) {
     return std::nullopt;
   }
   return *value;
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+template <typename Lookup>
+typename Dict<K, V, Hash, KeyEqual>::EntryRef
+Dict<K, V, Hash, KeyEqual>::FindEntryRef(const Lookup& key) {
+  if (Size() == 0) {
+    return EntryRef(nullptr);
+  }
+  RehashStepIfNeeded();
+  return EntryRef(FindEntry(key, KeyHash(key)));
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
