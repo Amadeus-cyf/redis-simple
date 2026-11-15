@@ -5,11 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <limits>
-#include <memory>
 #include <string_view>
-
-#include "utils/check.h"
 
 namespace redis_simple::containers {
 // A byte string in 16 bytes, half a std::string: up to kInlineCapacity bytes
@@ -54,32 +50,7 @@ class CompactString {
 
   // Replaces the contents with `value`, which may view this string's own
   // bytes.
-  void Assign(std::string_view value) {
-    RS_CHECK(value.size() <= std::numeric_limits<uint32_t>::max());
-    if (value.size() <= kInlineCapacity) {
-      // Copied out first: `value` may view the heap block freed below.
-      std::array<char, kInlineCapacity> bytes;
-      if (!value.empty()) {
-        std::memcpy(bytes.data(), value.data(), value.size());
-      }
-      FreeHeap();
-      if (!value.empty()) {
-        std::memcpy(storage_.data(), bytes.data(), value.size());
-      }
-      SetInlineSize(value.size());
-      return;
-    }
-    if (!IsInline() && HeapSize() == value.size()) {
-      // Same length: reuse the block. memmove, since `value` may overlap it.
-      std::memmove(HeapData(), value.data(), value.size());
-      return;
-    }
-    // A new block is filled before the old one is freed, for the same reason.
-    char* const data = new char[value.size()];
-    std::memcpy(data, value.data(), value.size());
-    FreeHeap();
-    SetHeap(data, static_cast<uint32_t>(value.size()));
-  }
+  void Assign(std::string_view value);
 
  private:
   // The last byte tells the two forms apart: an inline string's length
