@@ -101,17 +101,17 @@ struct NoValue {};
 
 namespace dict_internal {
 // One key and value in a bucket's chain. `KeyView` is how the key is read
-// back: a reference to the stored key. Entries do not store their hash, as
-// Redis' do not: it is recomputed from the key when the table grows or
-// shrinks, which saves 8 bytes on every entry of every dict.
+// back: a reference to the stored key.
 template <typename K, typename V>
 struct DictEntry {
   using KeyView = const K&;
 
   template <typename Source>
-  static DictEntry* Create(Source&& key) {
-    return new DictEntry{
-        .key = K(std::forward<Source>(key)), .value = V(), .next = nullptr};
+  static DictEntry* Create(Source&& key, size_t hash) {
+    return new DictEntry{.key = K(std::forward<Source>(key)),
+                         .value = V(),
+                         .hash = hash,
+                         .next = nullptr};
   }
   static void Destroy(DictEntry* entry) { delete entry; }
   KeyView Key() const { return key; }
@@ -119,6 +119,7 @@ struct DictEntry {
   K key;
   // Takes no space when V is empty (NoValue).
   [[no_unique_address]] V value;
+  size_t hash;
   DictEntry* next;
 };
 
@@ -131,13 +132,13 @@ template <typename V>
 struct DictEntry<std::string, V> {
   using KeyView = std::string_view;
 
-  static DictEntry* Create(std::string_view key) {
+  static DictEntry* Create(std::string_view key, size_t hash) {
     static_assert(
-        !std::is_empty_v<V> || sizeof(DictEntry) == 2 * sizeof(size_t),
+        !std::is_empty_v<V> || sizeof(DictEntry) == 3 * sizeof(size_t),
         "an empty value must take no space");
     static_assert(alignof(DictEntry) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
     void* const memory = ::operator new(sizeof(DictEntry) + key.size());
-    auto* const entry = new (memory) DictEntry(key.size());
+    auto* const entry = new (memory) DictEntry(hash, key.size());
     if (!key.empty()) {
       std::memcpy(entry->KeyBytes(), key.data(), key.size());
     }
@@ -151,11 +152,13 @@ struct DictEntry<std::string, V> {
 
   // Takes no space when V is empty (NoValue).
   [[no_unique_address]] V value{};
+  size_t hash;
   DictEntry* next{nullptr};
   size_t key_length;
 
  private:
-  explicit DictEntry(size_t length) : key_length(length) {}
+  DictEntry(size_t key_hash, size_t length)
+      : hash(key_hash), key_length(length) {}
   ~DictEntry() = default;
   char* KeyBytes() { return reinterpret_cast<char*>(this + 1); }
   const char* KeyBytes() const {
@@ -299,8 +302,7 @@ class Dict {
   bool KeyEquals(const Lookup& key, const DictEntry* entry) const;
   template <typename Lookup>
   size_t KeyHash(const Lookup& key) const;
-  // Links `entry`, whose key hashes to `hash`, into `table`.
-  void InsertEntry(DictEntry* entry, size_t hash, int table);
+  void InsertEntry(DictEntry* entry, int table);
   size_t TableSize(int table) const { return tables_[table].size(); }
   size_t TableMask(int table) const {
     return tables_[table].empty() ? 0 : tables_[table].size() - 1;
@@ -320,7 +322,7 @@ class Dict {
   void MigrateRehashedTable();
   void ClearTable(int table);
   template <typename Visitor>
-  void VisitBucket(const DictEntry* entry, Visitor& visitor) const;
+  static void VisitBucket(const DictEntry* entry, Visitor& visitor);
   static size_t NextCursor(size_t cursor, size_t mask);
   static size_t ReverseBits(size_t value);
 
@@ -344,9 +346,10 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 class Dict<K, V, Hash, KeyEqual>::EntryRef {
  public:
   // Whether this refers to an entry; FindEntryRef returns an empty handle
-  // for a missing key. Key() needs a non-empty one.
+  // for a missing key. Key() and StoredHash() need a non-empty one.
   explicit operator bool() const { return entry_ != nullptr; }
   KeyView Key() const { return entry_->Key(); }
+  size_t StoredHash() const { return entry_->hash; }
   bool operator==(const EntryRef& other) const = default;
 
  private:
@@ -373,12 +376,12 @@ class Dict<K, V, Hash, KeyEqual>::Iterator {
   void Next();
   KeyView Key() const { return entry_->Key(); }
   const V& Value() const { return entry_->value; }
-  // The current key with its hash, so it can be looked up in other Dicts
-  // that share the seeded string hash without hashing it again.
+  // The current key with the hash stored in its entry, so it can be looked
+  // up in other Dicts that share the seeded string hash without rehashing.
   HashedKey Hashed() const
     requires std::same_as<Hash, DictHash<std::string>>
   {
-    return HashedKey(entry_->Key(), dict_->hash_(entry_->Key()));
+    return HashedKey(entry_->Key(), entry_->hash);
   }
 
  private:
@@ -730,7 +733,7 @@ Dict<K, V, Hash, KeyEqual>::FindInTable(int table, const Lookup& key,
   const std::vector<DictEntry*>& buckets = tables_[table];
   for (DictEntry* entry = buckets[hash & (buckets.size() - 1)];
        entry != nullptr; entry = entry->next) {
-    if (KeyEquals(key, entry)) {
+    if (entry->hash == hash && KeyEquals(key, entry)) {
       return entry;
     }
   }
@@ -752,7 +755,7 @@ Dict<K, V, Hash, KeyEqual>::Unlink(const Lookup& key) {
     for (DictEntry** link = &tables_[table][hash & TableMask(table)];
          *link != nullptr; link = &(*link)->next) {
       DictEntry* const entry = *link;
-      if (KeyEquals(key, entry)) {
+      if (entry->hash == hash && KeyEquals(key, entry)) {
         *link = entry->next;
         entry->next = nullptr;
         --table_used_[table];
@@ -777,15 +780,14 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Source>
 typename Dict<K, V, Hash, KeyEqual>::DictEntry*
 Dict<K, V, Hash, KeyEqual>::AddEntry(Source&& key, size_t hash) {
-  DictEntry* const entry = DictEntry::Create(std::forward<Source>(key));
-  InsertEntry(entry, hash, IsRehashing() ? 1 : 0);
+  DictEntry* const entry = DictEntry::Create(std::forward<Source>(key), hash);
+  InsertEntry(entry, IsRehashing() ? 1 : 0);
   return entry;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
-void Dict<K, V, Hash, KeyEqual>::InsertEntry(DictEntry* entry, size_t hash,
-                                             int table) {
-  DictEntry*& bucket = tables_[table][hash & TableMask(table)];
+void Dict<K, V, Hash, KeyEqual>::InsertEntry(DictEntry* entry, int table) {
+  DictEntry*& bucket = tables_[table][entry->hash & TableMask(table)];
   entry->next = bucket;
   bucket = entry;
   ++table_used_[table];
@@ -887,7 +889,7 @@ void Dict<K, V, Hash, KeyEqual>::Rehash(int n) {
     while (entry != nullptr) {
       DictEntry* const next = entry->next;
       --table_used_[0];
-      InsertEntry(entry, hash_(entry->Key()), 1);
+      InsertEntry(entry, 1);
       entry = next;
     }
     tables_[0][*rehash_index_] = nullptr;
@@ -929,15 +931,15 @@ void Dict<K, V, Hash, KeyEqual>::ClearTable(int table) {
 template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Visitor>
 void Dict<K, V, Hash, KeyEqual>::VisitBucket(const DictEntry* entry,
-                                             Visitor& visitor) const {
+                                             Visitor& visitor) {
   while (entry != nullptr) {
     const DictEntry* const next = entry->next;
     if constexpr (std::invocable<Visitor&, KeyView, const V&>) {
       visitor(entry->Key(), entry->value);
     } else {
-      // A visitor that takes a HashedKey gets the key's hash, so it can look
-      // the key up in other Dicts without hashing it again.
-      visitor(HashedKey(entry->Key(), hash_(entry->Key())), entry->value);
+      // A visitor that takes a HashedKey gets the hash stored with the
+      // entry, so it can look the key up in another Dict without rehashing.
+      visitor(HashedKey(entry->Key(), entry->hash), entry->value);
     }
     entry = next;
   }
