@@ -168,7 +168,7 @@ bool Set::ListpackAddAndMaybeConvert(std::string_view value) {
 
 bool Set::DictAdd(std::string_view value) {
   if (!dict_) {
-    dict_ = containers::Dict<std::string, std::nullptr_t>::Create();
+    dict_ = containers::Dict<std::string, containers::NoValue>::Create();
   }
   return dict_->FindOrInsert(value).second;
 }
@@ -183,13 +183,13 @@ void Set::MaybeConvertIntsetToDict() {
 void Set::ConvertIntsetToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kIntset);
   encoding_ = Encoding::kDict;
-  dict_ = containers::Dict<std::string, std::nullptr_t>::Create(capacity);
+  dict_ = containers::Dict<std::string, containers::NoValue>::Create(capacity);
   if (!intset_) {
     return;
   }
   for (uint32_t i = 0; i < intset_->Size(); ++i) {
     int64_t value = intset_->Get(i);
-    dict_->Set(std::to_string(value), nullptr);
+    dict_->FindOrInsert(std::to_string(value));
   }
   intset_.reset();
 }
@@ -242,7 +242,7 @@ void Set::ConvertIntsetToListpack(std::string_view value) {
 void Set::ConvertListpackToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kListpack);
   encoding_ = Encoding::kDict;
-  dict_ = containers::Dict<std::string, std::nullptr_t>::Create(capacity);
+  dict_ = containers::Dict<std::string, containers::NoValue>::Create(capacity);
   if (!listpack_) {
     return;
   }
