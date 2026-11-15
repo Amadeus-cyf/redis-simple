@@ -20,17 +20,18 @@ bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,
   if (std::isnan(score)) {
     return false;
   }
-  auto [current_score, inserted] = dict_->FindOrInsert(member);
+  const auto [current_score, stored_member, inserted] =
+      dict_->FindOrInsertWithKey(member);
   if (!inserted) {
     if (*current_score == score) {
       return false;
     }
     // Change the score in place; the skiplist repositions the entry if its
-    // order changed, without copying the member name.
-    skiplist_->Update(MemberRef{.score = *current_score, .member = member},
-                      [score](ZSetEntry& entry) { entry.score = score; });
+    // order changed.
+    skiplist_->Update(ScoredMember{.score = *current_score, .member = member},
+                      [score](ScoredMember& entry) { entry.score = score; });
   } else {
-    skiplist_->Insert(ZSetEntry(member, score));
+    skiplist_->Insert(ScoredMember{.score = score, .member = stored_member});
   }
   *current_score = score;
   if (changed != nullptr) {
@@ -44,7 +45,8 @@ bool ZSetSkiplist::Delete(std::string_view member) {
   if (score == nullptr) {
     return false;
   }
-  skiplist_->Delete(MemberRef{.score = *score, .member = member});
+  // The skiplist entry goes first: it views the dict entry's name.
+  skiplist_->Delete(ScoredMember{.score = *score, .member = member});
   return dict_->Delete(member);
 }
 
@@ -55,7 +57,7 @@ std::optional<ZSetRank> ZSetSkiplist::RankAndScore(
     return std::nullopt;
   }
   const std::optional<size_t> rank =
-      skiplist_->FindRankOfKey(MemberRef{.score = *score, .member = member});
+      skiplist_->FindRankOfKey(ScoredMember{.score = *score, .member = member});
   if (!rank.has_value()) {
     return std::nullopt;
   }
