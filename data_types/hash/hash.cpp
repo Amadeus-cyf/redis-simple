@@ -147,20 +147,21 @@ bool Hash::SetListpack(std::string_view field, std::string_view value) {
 bool Hash::SetDict(std::string_view field, std::string_view value) {
   RS_CHECK(encoding_ == Encoding::kDict);
   if (dict_ == nullptr) {
-    dict_ = containers::Dict<std::string, std::string>::Create();
+    dict_ = containers::Dict<std::string, containers::CompactString>::Create();
   }
   auto [stored, inserted] = dict_->FindOrInsert(field);
-  stored->assign(value);
+  stored->Assign(value);
   return inserted;
 }
 
 void Hash::ConvertListpackToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kListpack);
-  dict_ = containers::Dict<std::string, std::string>::Create(capacity);
+  dict_ = containers::Dict<std::string, containers::CompactString>::Create(
+      capacity);
   if (listpack_ != nullptr) {
     listpack_->ForEachPair(
         [this](std::string_view field, std::string_view value) {
-          *dict_->FindOrInsert(field).first = std::string(value);
+          dict_->FindOrInsert(field).first->Assign(value);
           return true;
         });
   }
