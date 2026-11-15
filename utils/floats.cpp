@@ -16,10 +16,6 @@
 
 namespace redis_simple::utils {
 namespace {
-// Formats `value` as fixed-point text with at most kMaxFastDecimals decimals
-// when that text is exactly the shortest round-trip form, which covers
-// typical scores such as 1.5 or 99.95 without the general shortest-digit
-// search. Returns the length written, or 0 to fall back to it.
 constexpr int kMaxFastDecimals = 6;
 // Powers of ten that are exact doubles, shared by the fast formatting and
 // parsing paths.
@@ -27,6 +23,11 @@ constexpr std::array<double, 16> kPowersOfTen = {
     1e0, 1e1, 1e2,  1e3,  1e4,  1e5,  1e6,  1e7,
     1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15};
 
+// Formats `value` as fixed-point text with at most kMaxFastDecimals decimals
+// when that text is exactly the shortest round-trip form, which covers
+// typical scores such as 1.5 or 99.95 without the general shortest-digit
+// search. Returns the length written at `out`, or 0 to fall back to that
+// search.
 size_t FormatShortDecimal(double value, char* const out) {
   const double magnitude = std::abs(value);
   // 2^51 / 10^k bounds both the scaled integer below 2^53 and the double
@@ -51,6 +52,7 @@ size_t FormatShortDecimal(double value, char* const out) {
     }
     // Size the text first, then write it backward straight into `out`: the
     // decimals, the point, then the integer part, which is at least "0".
+    // (std::to_chars for the integer part measured slower for short scores.)
     uint64_t integer_part = scaled;
     for (int i = 0; i < decimals; ++i) {
       integer_part /= 10;
@@ -213,9 +215,10 @@ namespace {
 // significant digits and no exponent, without the general parser. Such a
 // number is n / 10^k with n below 2^53 and k at most 15, and both are exact
 // doubles, so the correctly rounded quotient is exactly the value
-// std::from_chars returns (Clinger's fast path). Returns false to fall back
-// to the general parser, never for a valid number it cannot handle.
-bool ParsePlainDecimal(std::string_view value, double* const result) {
+// std::from_chars returns (Clinger's fast path). Returns nullopt to fall
+// back to the general parser, never for a valid number it cannot handle.
+// `value` must not be empty.
+std::optional<double> ParsePlainDecimal(std::string_view value) {
   constexpr size_t kMaxDigits = 15;
   static_assert(kMaxDigits < kPowersOfTen.size());
   size_t position = 0;
@@ -232,7 +235,7 @@ bool ParsePlainDecimal(std::string_view value, double* const result) {
     const char character = value[position];
     if (character >= '0' && character <= '9') {
       if (++digits > kMaxDigits) {
-        return false;
+        return std::nullopt;
       }
       mantissa = (mantissa * 10) + static_cast<uint64_t>(character - '0');
       decimals += seen_point ? 1 : 0;
@@ -240,25 +243,28 @@ bool ParsePlainDecimal(std::string_view value, double* const result) {
     } else if (character == '.' && !seen_point && digit_before_point) {
       seen_point = true;
     } else {
-      return false;
+      return std::nullopt;
     }
   }
   // Require digits on both sides of a point, leaving forms such as "5." to
   // the general parser.
   if (!digit_before_point || (seen_point && decimals == 0)) {
-    return false;
+    return std::nullopt;
   }
-  double parsed = static_cast<double>(mantissa) / kPowersOfTen[decimals];
-  *result = negative ? -parsed : parsed;
-  return true;
+  const double parsed = static_cast<double>(mantissa) / kPowersOfTen[decimals];
+  return negative ? -parsed : parsed;
 }
-}  // namespace
 
-namespace {
-// C's strtod over all of `value`, which need not be NUL-terminated. Returns
-// false unless it consumes every byte; `*overflow` reports ERANGE.
-bool ParseWithStrtod(std::string_view value, double* const result,
-                     bool* const overflow) {
+struct StrtodResult {
+  // Whether strtod consumed every byte of the text.
+  bool complete{};
+  // Whether it reported ERANGE: overflow to an infinity, or underflow.
+  bool out_of_range{};
+  double value{};
+};
+
+// C's strtod over all of `value`, which need not be NUL-terminated.
+StrtodResult ParseWithStrtod(std::string_view value) {
   // Long inputs are rare; numbers that need more digits than this to
   // round correctly do not exist.
   constexpr size_t kInlineBytes = 128;
@@ -273,9 +279,10 @@ bool ParseWithStrtod(std::string_view value, double* const result,
   }
   errno = 0;
   char* end = nullptr;
-  *result = std::strtod(text, &end);
-  *overflow = errno == ERANGE;
-  return end == text + value.size();
+  const double parsed = std::strtod(text, &end);
+  return {.complete = end == text + value.size(),
+          .out_of_range = errno == ERANGE,
+          .value = parsed};
 }
 }  // namespace
 
@@ -286,27 +293,27 @@ std::optional<double> ToDouble(std::string_view value) {
       std::isspace(static_cast<unsigned char>(value[0])) != 0) {
     return std::nullopt;
   }
-  double parsed = 0;
-  if (ParsePlainDecimal(value, &parsed)) {
-    return parsed;
+  if (const std::optional<double> plain = ParsePlainDecimal(value);
+      plain.has_value()) {
+    return plain;
   }
-  bool overflow = false;
-  if (!ParseWithStrtod(value, &parsed, &overflow) || std::isnan(parsed) ||
-      (overflow && (std::isinf(parsed) || parsed == 0))) {
+  const StrtodResult parsed = ParseWithStrtod(value);
+  if (!parsed.complete || std::isnan(parsed.value) ||
+      (parsed.out_of_range &&
+       (std::isinf(parsed.value) || parsed.value == 0))) {
     return std::nullopt;
   }
-  return parsed;
+  return parsed.value;
 }
 
 std::optional<double> ToRangeDouble(std::string_view value) {
   // Redis' zslParseRange: strtod over the whole text, NaN rejected. Unlike
   // ToDouble, it takes leading spaces, an empty text as 0, and overflow as
   // an infinity.
-  double parsed = 0;
-  bool overflow = false;
-  if (!ParseWithStrtod(value, &parsed, &overflow) || std::isnan(parsed)) {
+  const StrtodResult parsed = ParseWithStrtod(value);
+  if (!parsed.complete || std::isnan(parsed.value)) {
     return std::nullopt;
   }
-  return parsed;
+  return parsed.value;
 }
 }  // namespace redis_simple::utils

@@ -134,11 +134,7 @@ inline void VLogf(Level level, const char* file, int line, const char* fmt,
   const auto now = std::chrono::system_clock::now();
   const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
   std::tm tm{};
-#if defined(_WIN32)
-  localtime_s(&tm, &now_time);
-#else
   localtime_r(&now_time, &tm);
-#endif
 
   std::array<char, 32> timestamp{};
   std::strftime(timestamp.data(), timestamp.size(), "%Y-%m-%d %H:%M:%S", &tm);

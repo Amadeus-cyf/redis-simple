@@ -244,7 +244,19 @@ void FuzzRdb(const uint8_t* data, size_t size) {
     if (WriteFile(path, changed)) {
       auto corrupted = db::RedisDb::Create();
       const bool accepted = LoadFile(path, corrupted.get());
-      Require(!checksum || !accepted || changed == *written);
+      // Files older than RDB version 5 carry no checksum, and Redis and
+      // this loader accept them without one, so a change to the version
+      // digits can turn the check off.
+      constexpr size_t kVersionOffset = 5;
+      constexpr size_t kVersionDigits = 4;
+      int version = 0;
+      for (const char digit :
+           std::string_view(changed).substr(kVersionOffset, kVersionDigits)) {
+        version = (version * 10) + (digit - '0');
+      }
+      constexpr int kFirstChecksummedVersion = 5;
+      const bool covered = version >= kFirstChecksummedVersion;
+      Require(!checksum || !covered || !accepted || changed == *written);
     }
   }
   unlink(path.c_str());
