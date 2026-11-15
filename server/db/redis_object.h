@@ -78,14 +78,13 @@ static_assert(sizeof(EmbeddedString) == sizeof(std::string) + 8);
 
 class RedisObject {
  private:
-  using SetPtr = std::unique_ptr<data_types::Set>;
-  using ListPtr = std::unique_ptr<data_types::List>;
-  using ZSetPtr = std::unique_ptr<data_types::ZSet>;
-  using HashPtr = std::unique_ptr<data_types::Hash>;
+  // Collections are held by value, inside the object, so a small one is not
+  // a separate allocation: each fits in the space an embedded string takes.
   // Integer- and embedded-encoded strings are last so the other alternatives
   // keep indices that map directly onto ObjectType.
-  using Value = std::variant<std::string, SetPtr, ListPtr, ZSetPtr, HashPtr,
-                             int64_t, EmbeddedString>;
+  using Value =
+      std::variant<std::string, data_types::Set, data_types::List,
+                   data_types::ZSet, data_types::Hash, int64_t, EmbeddedString>;
 
  public:
   enum class ObjectType {
@@ -114,21 +113,25 @@ class RedisObject {
   static std::unique_ptr<RedisObject> CreateWithInt(int64_t value) {
     return Create<int64_t>(value);
   }
+  // The collection is moved into the object.
   static std::unique_ptr<RedisObject> CreateWithSet(
       std::unique_ptr<data_types::Set> set) {
-    return set == nullptr ? nullptr : Create<SetPtr>(std::move(set));
+    return set == nullptr ? nullptr : Create<data_types::Set>(std::move(*set));
   }
   static std::unique_ptr<RedisObject> CreateWithList(
       std::unique_ptr<data_types::List> list) {
-    return list == nullptr ? nullptr : Create<ListPtr>(std::move(list));
+    return list == nullptr ? nullptr
+                           : Create<data_types::List>(std::move(*list));
   }
   static std::unique_ptr<RedisObject> CreateWithZSet(
       std::unique_ptr<data_types::ZSet> zset) {
-    return zset == nullptr ? nullptr : Create<ZSetPtr>(std::move(zset));
+    return zset == nullptr ? nullptr
+                           : Create<data_types::ZSet>(std::move(*zset));
   }
   static std::unique_ptr<RedisObject> CreateWithHash(
       std::unique_ptr<data_types::Hash> hash) {
-    return hash == nullptr ? nullptr : Create<HashPtr>(std::move(hash));
+    return hash == nullptr ? nullptr
+                           : Create<data_types::Hash>(std::move(*hash));
   }
   // String accessors require a string object (Type() == kString).
   StringValue String() const;
@@ -147,14 +150,22 @@ class RedisObject {
   void AssignString(std::string_view value);
   Encoding StringEncoding() const;
   // Collection accessors return nullptr if the object holds another type.
-  data_types::Set* Set() { return Held<SetPtr>(); }
-  const data_types::Set* Set() const { return Held<SetPtr>(); }
-  data_types::List* List() { return Held<ListPtr>(); }
-  const data_types::List* List() const { return Held<ListPtr>(); }
-  data_types::ZSet* ZSet() { return Held<ZSetPtr>(); }
-  const data_types::ZSet* ZSet() const { return Held<ZSetPtr>(); }
-  data_types::Hash* Hash() { return Held<HashPtr>(); }
-  const data_types::Hash* Hash() const { return Held<HashPtr>(); }
+  data_types::Set* Set() { return std::get_if<data_types::Set>(&value_); }
+  const data_types::Set* Set() const {
+    return std::get_if<data_types::Set>(&value_);
+  }
+  data_types::List* List() { return std::get_if<data_types::List>(&value_); }
+  const data_types::List* List() const {
+    return std::get_if<data_types::List>(&value_);
+  }
+  data_types::ZSet* ZSet() { return std::get_if<data_types::ZSet>(&value_); }
+  const data_types::ZSet* ZSet() const {
+    return std::get_if<data_types::ZSet>(&value_);
+  }
+  data_types::Hash* Hash() { return std::get_if<data_types::Hash>(&value_); }
+  const data_types::Hash* Hash() const {
+    return std::get_if<data_types::Hash>(&value_);
+  }
   // ObjectType values follow the variant's alternative order, offset by one.
   ObjectType Type() const {
     if (value_.index() >= kFirstStringEncodingIndex) {
@@ -180,20 +191,17 @@ class RedisObject {
   // may view this object's current bytes.
   void EmbedString(std::string_view value);
 
-  template <typename Ptr>
-  typename Ptr::element_type* Held() const {
-    const auto* holder = std::get_if<Ptr>(&value_);
-    return holder == nullptr ? nullptr : holder->get();
-  }
-
   template <ObjectType kType>
   using Alternative =
       std::variant_alternative_t<static_cast<size_t>(kType) - 1, Value>;
   static_assert(std::is_same_v<Alternative<ObjectType::kString>, std::string>);
-  static_assert(std::is_same_v<Alternative<ObjectType::kSet>, SetPtr>);
-  static_assert(std::is_same_v<Alternative<ObjectType::kList>, ListPtr>);
-  static_assert(std::is_same_v<Alternative<ObjectType::kZSet>, ZSetPtr>);
-  static_assert(std::is_same_v<Alternative<ObjectType::kHash>, HashPtr>);
+  static_assert(std::is_same_v<Alternative<ObjectType::kSet>, data_types::Set>);
+  static_assert(
+      std::is_same_v<Alternative<ObjectType::kList>, data_types::List>);
+  static_assert(
+      std::is_same_v<Alternative<ObjectType::kZSet>, data_types::ZSet>);
+  static_assert(
+      std::is_same_v<Alternative<ObjectType::kHash>, data_types::Hash>);
   // The alternatives from here on are other encodings of a string.
   static constexpr size_t kFirstStringEncodingIndex = 5;
   static_assert(std::is_same_v<
@@ -203,6 +211,10 @@ class RedisObject {
 
   Value value_;
 };
+
+// Holding collections did not make the object larger than an embedded string
+// already did.
+static_assert(sizeof(RedisObject) == sizeof(EmbeddedString) + 8);
 
 using RedisObjectPtr = std::unique_ptr<RedisObject>;
 // The type's name, as TYPE replies with it and SCAN's TYPE option matches it.
