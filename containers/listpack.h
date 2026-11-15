@@ -37,6 +37,10 @@ class Listpack {
   static std::unique_ptr<Listpack> CreateFromBytes(std::string_view bytes);
   Listpack(const Listpack&) = delete;
   Listpack& operator=(const Listpack&) = delete;
+  // A moved-from Listpack owns no bytes and may only be destroyed or
+  // assigned to.
+  Listpack(Listpack&&) noexcept = default;
+  Listpack& operator=(Listpack&&) noexcept = default;
   // The element at `offset` as text, or nullopt at the terminator. An
   // integer element is formatted into `buffer`; the view is valid while the
   // listpack is unchanged and, for an integer, while `buffer` holds it.

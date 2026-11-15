@@ -10,6 +10,7 @@
 
 #include "containers/listpack.h"
 #include "containers/quicklist.h"
+#include "utils/check.h"
 
 namespace redis_simple::data_types {
 class List {
@@ -55,7 +56,7 @@ class List {
   // encoding, one per quicklist node otherwise. Stops when it returns false.
   template <typename Visitor>
   bool ForEachListpack(Visitor&& visitor) const {
-    if (listpack_ != nullptr) {
+    if (listpack_.has_value()) {
       return visitor(listpack_->Bytes());
     }
     return quicklist_->ForEachNode(
@@ -73,7 +74,22 @@ class List {
   bool ConvertListpackToQuicklist();
   void TryConvertQuicklistToListpack();
 
-  std::unique_ptr<containers::Listpack> listpack_;
+  // The listpack of a listpack-encoded value. Aborts for another encoding,
+  // which callers rule out first.
+  containers::Listpack& ListpackStorage() {
+    if (!listpack_.has_value()) {
+      utils::Unreachable();
+    }
+    return *listpack_;
+  }
+  const containers::Listpack& ListpackStorage() const {
+    if (!listpack_.has_value()) {
+      utils::Unreachable();
+    }
+    return *listpack_;
+  }
+  // Held by value, so a small list is no allocation beyond its bytes.
+  std::optional<containers::Listpack> listpack_;
   std::unique_ptr<containers::Quicklist> quicklist_;
   size_t list_max_listpack_bytes_;
 };

@@ -16,8 +16,7 @@ bool HasRemoveLimit(size_t limit) { return limit != 0; }
 
 }  // namespace
 
-Quicklist::Node::Node()
-    : listpack(std::make_unique<Listpack>()), next(nullptr), prev(nullptr) {}
+Quicklist::Node::Node() : next(nullptr), prev(nullptr) {}
 
 Quicklist::Quicklist() : Quicklist(kDefaultNodeMaxBytes) {}
 
@@ -57,14 +56,14 @@ std::optional<std::string> Quicklist::LPop() {
     return std::nullopt;
   }
 
-  const std::optional<size_t> offset = head_->listpack->First();
+  const std::optional<size_t> offset = head_->listpack.First();
   if (!offset.has_value()) {
     return std::nullopt;
   }
-  std::optional<std::string> value = head_->listpack->Get(*offset);
-  head_->listpack->Delete(*offset);
+  std::optional<std::string> value = head_->listpack.Get(*offset);
+  head_->listpack.Delete(*offset);
   --size_;
-  if (head_->listpack->Size() == 0) {
+  if (head_->listpack.Size() == 0) {
     DeleteNode(head_.get());
   }
   MergeNext(head_.get());
@@ -77,14 +76,14 @@ std::optional<std::string> Quicklist::RPop() {
   }
 
   Node* node = tail_;
-  const std::optional<size_t> offset = node->listpack->Last();
+  const std::optional<size_t> offset = node->listpack.Last();
   if (!offset.has_value()) {
     return std::nullopt;
   }
-  std::optional<std::string> value = node->listpack->Get(*offset);
-  node->listpack->Delete(*offset);
+  std::optional<std::string> value = node->listpack.Get(*offset);
+  node->listpack.Delete(*offset);
   --size_;
-  if (node->listpack->Size() == 0) {
+  if (node->listpack.Size() == 0) {
     DeleteNode(node);
     MergeNext(tail_ != nullptr ? tail_->prev : nullptr);
   } else if (node->prev != nullptr) {
@@ -113,9 +112,9 @@ bool Quicklist::Set(size_t index, std::string_view value) {
     return false;
   }
   const std::optional<size_t> offset =
-      location->node->listpack->OffsetAt(location->local_index);
+      location->node->listpack.OffsetAt(location->local_index);
   if (!offset.has_value() ||
-      !location->node->listpack->Replace(*offset, value)) {
+      !location->node->listpack.Replace(*offset, value)) {
     return false;
   }
   if (!NormalizeNodeSizes(location->node)) {
@@ -136,10 +135,10 @@ size_t Quicklist::Remove(std::string_view value, size_t limit,
     for (Node* node = tail_; node != nullptr && removed < limit;) {
       Node* prev = node->prev;
       const size_t node_removed =
-          node->listpack->DeleteMatching(value, limit - removed, true);
+          node->listpack.DeleteMatching(value, limit - removed, true);
       removed += node_removed;
       size_ -= node_removed;
-      if (node->listpack->Size() == 0) {
+      if (node->listpack.Size() == 0) {
         DeleteNode(node);
       }
       node = prev;
@@ -154,10 +153,10 @@ size_t Quicklist::Remove(std::string_view value, size_t limit,
     const size_t node_limit =
         HasRemoveLimit(limit) ? limit - removed : size_t{0};
     const size_t node_removed =
-        node->listpack->DeleteMatching(value, node_limit);
+        node->listpack.DeleteMatching(value, node_limit);
     removed += node_removed;
     size_ -= node_removed;
-    if (node->listpack->Size() == 0) {
+    if (node->listpack.Size() == 0) {
       DeleteNode(node);
     }
     node = next;
@@ -174,17 +173,17 @@ bool Quicklist::Trim(size_t start, size_t stop) {
 
   stop = std::min(stop, size_ - 1);
   size_t suffix_count = size_ - stop - 1;
-  while (tail_ != nullptr && suffix_count >= tail_->listpack->Size()) {
-    const size_t node_size = tail_->listpack->Size();
+  while (tail_ != nullptr && suffix_count >= tail_->listpack.Size()) {
+    const size_t node_size = tail_->listpack.Size();
     suffix_count -= node_size;
     size_ -= node_size;
     DeleteNode(tail_);
   }
   if (suffix_count > 0) {
     const std::optional<size_t> first_deleted =
-        tail_->listpack->OffsetAt(tail_->listpack->Size() - suffix_count);
+        tail_->listpack.OffsetAt(tail_->listpack.Size() - suffix_count);
     if (!first_deleted.has_value() ||
-        tail_->listpack->DeleteRange(*first_deleted, suffix_count) !=
+        tail_->listpack.DeleteRange(*first_deleted, suffix_count) !=
             suffix_count) {
       return false;
     }
@@ -192,16 +191,16 @@ bool Quicklist::Trim(size_t start, size_t stop) {
   }
 
   size_t prefix_count = start;
-  while (head_ != nullptr && prefix_count >= head_->listpack->Size()) {
-    const size_t node_size = head_->listpack->Size();
+  while (head_ != nullptr && prefix_count >= head_->listpack.Size()) {
+    const size_t node_size = head_->listpack.Size();
     prefix_count -= node_size;
     size_ -= node_size;
     DeleteNode(head_.get());
   }
   if (prefix_count > 0) {
-    const std::optional<size_t> first = head_->listpack->First();
+    const std::optional<size_t> first = head_->listpack.First();
     if (!first.has_value() ||
-        head_->listpack->DeleteRange(*first, prefix_count) != prefix_count) {
+        head_->listpack.DeleteRange(*first, prefix_count) != prefix_count) {
       return false;
     }
     size_ -= prefix_count;
@@ -221,7 +220,7 @@ std::optional<Quicklist::EntryLocation> Quicklist::Locate(size_t index) const {
   if (index < size_ / 2) {
     size_t first_index = 0;
     for (Node* node = head_.get(); node != nullptr; node = node->next.get()) {
-      const size_t node_size = node->listpack->Size();
+      const size_t node_size = node->listpack.Size();
       if (index - first_index < node_size) {
         return EntryLocation{node, index - first_index};
       }
@@ -232,7 +231,7 @@ std::optional<Quicklist::EntryLocation> Quicklist::Locate(size_t index) const {
 
   size_t end_index = size_;
   for (Node* node = tail_; node != nullptr; node = node->prev) {
-    const size_t node_size = node->listpack->Size();
+    const size_t node_size = node->listpack.Size();
     const size_t first_index = end_index - node_size;
     if (index >= first_index) {
       return EntryLocation{node, index - first_index};
@@ -248,36 +247,34 @@ std::optional<size_t> Quicklist::ListpackBytes() const {
   }
   return head_ == nullptr
              ? std::optional<size_t>(Listpack::kListpackHeaderSize + 1)
-             : std::optional<size_t>(head_->listpack->TotalBytes());
+             : std::optional<size_t>(head_->listpack.TotalBytes());
 }
 
-std::unique_ptr<Listpack> Quicklist::ReleaseListpack() {
-  if (node_count_ > 1) {
-    return nullptr;
-  }
-  auto listpack = head_ == nullptr ? std::make_unique<Listpack>()
-                                   : std::move(head_->listpack);
+Listpack Quicklist::ReleaseListpack() {
+  RS_CHECK(node_count_ <= 1);
+  Listpack listpack =
+      head_ == nullptr ? Listpack() : std::move(head_->listpack);
   Clear();
   return listpack;
 }
 
-bool Quicklist::AdoptListpack(std::unique_ptr<Listpack> listpack) {
-  RS_CHECK(head_ == nullptr && listpack != nullptr);
-  if (listpack->Size() == 0) {
+bool Quicklist::AdoptListpack(Listpack listpack) {
+  RS_CHECK(head_ == nullptr);
+  if (listpack.Size() == 0) {
     return true;
   }
-  size_ = listpack->Size();
+  size_ = listpack.Size();
   Node* const node = AppendNode();
   node->listpack = std::move(listpack);
   return NormalizeNodeSizes(node);
 }
 
 bool Quicklist::PushToHeadNode(std::string_view value) {
-  return head_ && head_->listpack->Prepend(value);
+  return head_ && head_->listpack.Prepend(value);
 }
 
 bool Quicklist::PushToTailNode(std::string_view value) {
-  return tail_ != nullptr && tail_->listpack->Append(value);
+  return tail_ != nullptr && tail_->listpack.Append(value);
 }
 
 bool Quicklist::CanAppendToNode(const Node* node,
@@ -286,17 +283,17 @@ bool Quicklist::CanAppendToNode(const Node* node,
     return false;
   }
   const size_t estimated_bytes = Listpack::EstimateEntryBytes(value);
-  return node->listpack->Size() == 0 ||
-         (node->listpack->TotalBytes() <= node_max_bytes_ &&
-          estimated_bytes <= node_max_bytes_ - node->listpack->TotalBytes());
+  return node->listpack.Size() == 0 ||
+         (node->listpack.TotalBytes() <= node_max_bytes_ &&
+          estimated_bytes <= node_max_bytes_ - node->listpack.TotalBytes());
 }
 
 bool Quicklist::CanMergeNodes(const Node* left, const Node* right) const {
   if (left == nullptr || right == nullptr) {
     return false;
   }
-  const size_t merged_bytes = left->listpack->TotalBytes() +
-                              right->listpack->TotalBytes() -
+  const size_t merged_bytes = left->listpack.TotalBytes() +
+                              right->listpack.TotalBytes() -
                               Listpack::kListpackHeaderSize - 1;
   return merged_bytes <= node_max_bytes_;
 }
@@ -306,8 +303,8 @@ bool Quicklist::NormalizeNodeSizes(Node* node) {
   // original successor, so the scan stops there instead of at the tail.
   const Node* const end = node->next.get();
   for (Node* current = node; current != end; current = current->next.get()) {
-    while (current->listpack->TotalBytes() > node_max_bytes_ &&
-           current->listpack->Size() > 1) {
+    while (current->listpack.TotalBytes() > node_max_bytes_ &&
+           current->listpack.Size() > 1) {
       if (SplitNode(current) == nullptr) {
         return false;
       }
@@ -317,24 +314,24 @@ bool Quicklist::NormalizeNodeSizes(Node* node) {
 }
 
 Quicklist::Node* Quicklist::SplitNode(Node* node) {
-  if (node == nullptr || node->listpack->Size() <= 1) {
+  if (node == nullptr || node->listpack.Size() <= 1) {
     return nullptr;
   }
 
-  const size_t node_size = node->listpack->Size();
+  const size_t node_size = node->listpack.Size();
   const size_t split_index = node_size / 2;
 
   auto right = std::make_unique<Node>();
-  if (!node->listpack->ForEach(split_index, node_size - 1,
-                               [&right](std::string_view value) {
-                                 return right->listpack->Append(value);
-                               })) {
+  if (!node->listpack.ForEach(split_index, node_size - 1,
+                              [&right](std::string_view value) {
+                                return right->listpack.Append(value);
+                              })) {
     return nullptr;
   }
 
-  const std::optional<size_t> offset = node->listpack->OffsetAt(split_index);
+  const std::optional<size_t> offset = node->listpack.OffsetAt(split_index);
   if (!offset.has_value() ||
-      node->listpack->DeleteRange(*offset, node_size - split_index) !=
+      node->listpack.DeleteRange(*offset, node_size - split_index) !=
           node_size - split_index) {
     return nullptr;
   }
@@ -366,10 +363,10 @@ void Quicklist::MergeNext(Node* left) {
   }
 
   Node* right = left->next.get();
-  const size_t right_size = right->listpack->Size();
-  if (right_size > 0 && !right->listpack->ForEach(
+  const size_t right_size = right->listpack.Size();
+  if (right_size > 0 && !right->listpack.ForEach(
                             0, right_size - 1, [left](std::string_view value) {
-                              return left->listpack->Append(value);
+                              return left->listpack.Append(value);
                             })) {
     return;
   }

@@ -80,7 +80,22 @@ class Hash {
   std::optional<size_t> FindListpackField(std::string_view field) const;
 
   enum Encoding encoding_;
-  std::unique_ptr<containers::Listpack> listpack_;
+  // The listpack of a listpack-encoded value. Aborts for another encoding,
+  // which callers rule out first.
+  containers::Listpack& ListpackStorage() {
+    if (!listpack_.has_value()) {
+      utils::Unreachable();
+    }
+    return *listpack_;
+  }
+  const containers::Listpack& ListpackStorage() const {
+    if (!listpack_.has_value()) {
+      utils::Unreachable();
+    }
+    return *listpack_;
+  }
+  // Held by value, so a small hash is no allocation beyond its bytes.
+  std::optional<containers::Listpack> listpack_;
   std::unique_ptr<containers::Dict<std::string, containers::CompactString>>
       dict_;
 };

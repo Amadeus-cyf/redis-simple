@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -66,7 +67,14 @@ class Set {
   template <typename Visitor>
   size_t ScanDict(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const;
-  Encoding Encoding() const { return encoding_; }
+  // Which storage the set holds decides its encoding, so no field records it:
+  // that keeps a Set within the space RedisObject gives each value.
+  Encoding Encoding() const {
+    if (dict_ != nullptr) {
+      return Encoding::kDict;
+    }
+    return listpack_.has_value() ? Encoding::kListpack : Encoding::kIntset;
+  }
   // The encoded forms RDB files store. A listpack-encoded set's listpack,
   // in Redis' byte format.
   std::string_view ListpackBytes() const;
@@ -83,9 +91,24 @@ class Set {
   bool MaybeConvertIntsetToListpack(std::string_view value);
   void ConvertIntsetToListpack(std::string_view value);
   void ConvertListpackToDict(size_t capacity);
-  enum Encoding encoding_;
+  // Created on the first insert while the set is intset-encoded.
   std::unique_ptr<containers::Intset> intset_;
-  std::unique_ptr<containers::Listpack> listpack_;
+  // The listpack of a listpack-encoded value. Aborts for another encoding,
+  // which callers rule out first.
+  containers::Listpack& ListpackStorage() {
+    if (!listpack_.has_value()) {
+      utils::Unreachable();
+    }
+    return *listpack_;
+  }
+  const containers::Listpack& ListpackStorage() const {
+    if (!listpack_.has_value()) {
+      utils::Unreachable();
+    }
+    return *listpack_;
+  }
+  // Held by value, so a small set is no allocation beyond its bytes.
+  std::optional<containers::Listpack> listpack_;
   std::unique_ptr<containers::Dict<std::string, containers::NoValue>> dict_;
 };
 
@@ -95,7 +118,7 @@ bool Set::ForEachMember(Visitor&& visitor) const {
   if (size == 0) {
     return true;
   }
-  if (encoding_ == Encoding::kIntset) {
+  if (Encoding() == Encoding::kIntset) {
     auto it = containers::Intset::Iterator(intset_.get());
     it.SeekToFirst();
     while (it.Valid()) {
@@ -112,10 +135,10 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     }
     return true;
   }
-  if (encoding_ == Encoding::kListpack) {
+  if (Encoding() == Encoding::kListpack) {
     return listpack_->ForEach(0, size - 1, visitor);
   }
-  if (encoding_ == Encoding::kDict) {
+  if (Encoding() == Encoding::kDict) {
     auto it = containers::Dict<std::string, containers::NoValue>::Iterator(
         dict_.get());
     it.SeekToFirst();
@@ -132,7 +155,7 @@ bool Set::ForEachMember(Visitor&& visitor) const {
 
 template <typename Visitor>
 size_t Set::ScanDict(size_t cursor, size_t count, Visitor&& visitor) {
-  RS_CHECK(encoding_ == Encoding::kDict);
+  RS_CHECK(Encoding() == Encoding::kDict);
   return dict_->ScanStep(
       cursor, count, [&visitor](std::string_view member, containers::NoValue) {
         visitor(std::string_view(member));
@@ -141,7 +164,7 @@ size_t Set::ScanDict(size_t cursor, size_t count, Visitor&& visitor) {
 
 template <typename Visitor>
 bool Set::ForEachMemberWithHash(Visitor&& visitor) const {
-  if (encoding_ != Encoding::kDict) {
+  if (Encoding() != Encoding::kDict) {
     return ForEachMember([&visitor](std::string_view member) {
       return visitor(member,
                      static_cast<const containers::HashedKey*>(nullptr));

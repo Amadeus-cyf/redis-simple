@@ -15,7 +15,7 @@ class ZSetListpack : public ZSetStorage {
  public:
   ZSetListpack();
   explicit ZSetListpack(std::unique_ptr<containers::Listpack> listpack)
-      : listpack_(std::move(listpack)) {}
+      : listpack_(std::move(*listpack)) {}
   bool InsertOrUpdate(std::string_view member, double score,
                       bool* changed) override;
   bool Delete(std::string_view member) override;
@@ -31,14 +31,14 @@ class ZSetListpack : public ZSetStorage {
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
   std::optional<std::string_view> ListpackBytes() const override {
-    return listpack_->Bytes();
+    return listpack_.Bytes();
   }
   size_t Scan(size_t cursor, size_t count,
               const ZSetMemberVisitor& visitor) override;
   size_t Size() const override {
     // Since listpack include both members and scores, the actual size should be
     // divided by 2.
-    return listpack_->Size() / 2;
+    return listpack_.Size() / 2;
   }
 
  private:
@@ -81,7 +81,7 @@ class ZSetListpack : public ZSetStorage {
   static bool GreaterOrEqual(double score, const RangeByScoreSpec* spec);
   static bool LessOrEqual(double score, const RangeByScoreSpec* spec);
   // Listpack storing member score pairs
-  std::unique_ptr<containers::Listpack> listpack_;
+  containers::Listpack listpack_;
 };
 }  // namespace redis_simple::data_types
 
