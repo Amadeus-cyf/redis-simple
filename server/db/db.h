@@ -138,9 +138,11 @@ class RedisDb {
   using Keyspace = containers::Dict<std::string, RedisObjectPtr>;
   using KeyRef = Keyspace::EntryRef;
   // The TTL table's keys refer to keyspace entries rather than copying their
-  // names. Its hash is the keyspace's stored hash, so a HashedKey finds both.
+  // names. It hashes them as the keyspace does, so a HashedKey finds both.
   struct KeyRefHash {
-    size_t operator()(const KeyRef& key) const { return key.StoredHash(); }
+    size_t operator()(const KeyRef& key) const {
+      return containers::DictHash<std::string>{}(key.Key());
+    }
     size_t operator()(const containers::HashedKey& key) const {
       return key.hash;
     }
