@@ -4,7 +4,7 @@
 #include <cstdint>
 
 namespace redis_simple::utils {
-// Get number of digits in the number.
+// How many decimal digits `value` has: 1 for 0 to 9, up to 20.
 uint32_t Digits10(uint64_t value);
 }  // namespace redis_simple::utils
 

@@ -1,17 +1,14 @@
 #include "utils/strings.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "utils/integers.h"
 
@@ -25,24 +22,6 @@ struct GlobToken {
 char FoldAsciiCase(char value) {
   return value >= 'A' && value <= 'Z' ? static_cast<char>(value + ('a' - 'A'))
                                       : value;
-}
-
-size_t SplitTokenCount(std::string_view text, std::string_view delimiter) {
-  if (delimiter.empty()) {
-    return 1;
-  }
-
-  size_t count = 0;
-  size_t start = 0;
-  size_t end = std::string_view::npos;
-  while ((end = text.find(delimiter, start)) != std::string_view::npos) {
-    ++count;
-    start = end + delimiter.size();
-  }
-  if (start < text.length()) {
-    ++count;
-  }
-  return count;
 }
 
 GlobToken MatchCharacterClass(std::string_view pattern, size_t offset,
@@ -95,61 +74,6 @@ GlobToken MatchGlobToken(std::string_view pattern, size_t offset, char value) {
   return GlobToken{offset + 1, pattern[offset] == value};
 }
 }  // namespace
-
-std::vector<std::string> Split(const std::string& text,
-                               const std::string& delimiter) {
-  if (delimiter.empty()) {
-    return {text};
-  }
-  std::vector<std::string> result;
-  result.reserve(SplitTokenCount(text, delimiter));
-  size_t start = 0;
-  size_t end = std::string::npos;
-  while ((end = text.find(delimiter, start)) != std::string::npos) {
-    result.emplace_back(text.substr(start, end - start));
-    start = end + delimiter.size();
-  }
-  if (start < text.length()) {
-    result.emplace_back(text.substr(start));
-  }
-  return result;
-}
-
-std::vector<std::string_view> SplitView(std::string_view text,
-                                        std::string_view delimiter) {
-  if (delimiter.empty()) {
-    return {text};
-  }
-  std::vector<std::string_view> result;
-  result.reserve(SplitTokenCount(text, delimiter));
-  size_t start = 0;
-  size_t end = std::string_view::npos;
-  while ((end = text.find(delimiter, start)) != std::string_view::npos) {
-    result.emplace_back(text.substr(start, end - start));
-    start = end + delimiter.size();
-  }
-  if (start < text.length()) {
-    result.emplace_back(text.substr(start));
-  }
-  return result;
-}
-
-void ShiftCString(char* s, size_t length, size_t offset) {
-  if ((s == nullptr) || offset == 0) {
-    return;
-  }
-  if (offset >= length) {
-    std::memset(s, '\0', length);
-    return;
-  }
-  std::memmove(s, s + offset, length - offset);
-}
-
-void ToUppercase(std::string& text) {
-  std::ranges::transform(text, text.begin(), [](unsigned char c) -> char {
-    return static_cast<char>(std::toupper(c));
-  });
-}
 
 bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
   if (left.size() != right.size()) {
@@ -228,40 +152,34 @@ std::optional<std::string_view> GlobLiteralPrefix(std::string_view pattern) {
 }
 
 std::optional<int64_t> ToInt64(std::string_view text) {
-  // Redis' string2ll: an optional '-', no "-0", no '+'.
-  if (text.empty() || text.size() > 20 || text.front() == '+' || text == "-0") {
+  // Redis' string2ll: an optional '-', then digits with no leading zero,
+  // so "0" parses and "-0", "01", "+1", and "" do not.
+  const bool negative = text.starts_with('-');
+  const std::string_view digits = text.substr(negative ? 1 : 0);
+  // Up to 19 digits fit in a uint64 without overflow; int64 has no more.
+  constexpr size_t kMaxDigits = 19;
+  if (digits.empty() || digits.size() > kMaxDigits) {
     return std::nullopt;
   }
-  const bool has_sign = text[0] == '-';
-  if (has_sign && text.size() == 1) {
-    return std::nullopt;
+  if (digits[0] == '0') {
+    return digits.size() == 1 && !negative ? std::optional<int64_t>(0)
+                                           : std::nullopt;
   }
-  const bool negative = text[0] == '-';
-  const uint64_t max_magnitude =
-      negative ? static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1
-               : static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
   uint64_t magnitude = 0;
-  for (size_t i = has_sign ? 1 : 0; i < text.size(); ++i) {
-    const bool has_redundant_leading_zero =
-        (text[i] == '0') && ((i == 0 && text.size() > 1) ||
-                             (i == 1 && has_sign && text.size() > 2));
-    if (has_redundant_leading_zero) {
-      return std::nullopt;
-    }
-    if (text[i] < '0' || text[i] > '9') {
-      return std::nullopt;
-    }
-    const auto digit = static_cast<uint64_t>(text[i] - '0');
-    if (magnitude > (max_magnitude - digit) / 10) {
+  for (const char character : digits) {
+    const auto digit = static_cast<uint64_t>(character - '0');
+    if (digit > 9) {
       return std::nullopt;
     }
     magnitude = (magnitude * 10) + digit;
   }
-  if (negative && magnitude == max_magnitude) {
-    return std::numeric_limits<int64_t>::min();
+  constexpr auto kMaxPositive =
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+  if (magnitude > kMaxPositive + (negative ? 1 : 0)) {
+    return std::nullopt;
   }
-  const auto positive = static_cast<int64_t>(magnitude);
-  return negative ? -positive : positive;
+  // Negated as unsigned, so the magnitude of INT64_MIN does not overflow.
+  return static_cast<int64_t>(negative ? 0 - magnitude : magnitude);
 }
 
 std::optional<uint64_t> ToUint64(std::string_view text) {

@@ -189,10 +189,15 @@ bool LzfDecompress(std::string_view input, std::span<char> output) {
     if (distance > size || length > capacity - size) {
       return false;
     }
-    // Byte by byte: the source may overlap what is being written.
     const unsigned char* source = out_begin + size - distance;
-    for (size_t i = 0; i < length; ++i) {
-      out_begin[size + i] = source[i];
+    if (distance >= length) {
+      std::memcpy(out_begin + size, source, length);
+    } else {
+      // The source overlaps what is being written (a short pattern
+      // repeated), so each byte must be written before a later one reads it.
+      for (size_t i = 0; i < length; ++i) {
+        out_begin[size + i] = source[i];
+      }
     }
     size += length;
   }
