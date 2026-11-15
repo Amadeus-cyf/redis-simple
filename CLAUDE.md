@@ -206,6 +206,9 @@ Guidance for AI coding agents working in this repository.
   bound and members by a `(score, string_view)` probe; do not reintroduce
   sentinel entries, member copies for lookups, or min/max member tracking.
   Change stored keys through `Skiplist::Update`, which repositions them.
+  A node and its levels are one allocation, the levels following the node
+  as in Redis' `zskiplistNode`; create and free nodes through
+  `Node::Create` and `Node::Destroy`.
 - Sorted-set range commands (`ZRANGE` and its older forms) encode replies
   from `ZSet::ForEachInRankRange`, `ForEachInScoreRange`, and
   `ForEachInLexRange`, which visit members where they are stored. They are

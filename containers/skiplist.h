@@ -11,7 +11,9 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -85,7 +87,7 @@ class Skiplist {
   class Iterator;
 
   explicit Skiplist(size_t level = kInitSkiplistLevel, Compare compare = {})
-      : head_(std::make_unique<Node>(kMaxLevel)),
+      : head_(Node::Create(kMaxLevel)),
         compare_(std::move(compare)),
         level_(ValidateLevel(level)) {}
   Skiplist(const Skiplist&) = delete;
@@ -93,7 +95,7 @@ class Skiplist {
   ~Skiplist() { Clear(); }
 
   size_t Size() const { return size_; }
-  Iterator Begin() const { return Iterator(head_->levels[0].next); }
+  Iterator Begin() const { return Iterator(head_->Levels()[0].next); }
   Iterator End() const { return Iterator(nullptr); }
   // Iterator at the last key, or End() if empty.
   Iterator Last() const {
@@ -107,9 +109,7 @@ class Skiplist {
     if (next != nullptr && compare_(next->key, key) == 0) {
       return next->key;
     }
-    return Link(std::make_unique<Node>(RandomLevel(), std::move(key)).release(),
-                &path)
-        ->key;
+    return Link(Node::Create(RandomLevel(), std::move(key)), &path)->key;
   }
 
   // Each lookup has a `const Key&` overload so that literals and other values
@@ -131,7 +131,7 @@ class Skiplist {
       return false;
     }
     Unlink(node, path);
-    delete node;
+    Node::Destroy(node);
     return true;
   }
 
@@ -151,7 +151,7 @@ class Skiplist {
       return false;
     }
     std::invoke(std::forward<Mutation>(mutation), node->key);
-    const Node* const next = node->levels[0].next;
+    const Node* const next = node->Levels()[0].next;
     const bool in_place =
         (node->prev == nullptr || compare_(node->prev->key, node->key) < 0) &&
         (next == nullptr || compare_(node->key, next->key) < 0);
@@ -186,7 +186,7 @@ class Skiplist {
   std::optional<size_t> FindRankOfKey(const Probe& lookup) const {
     const auto [before, rank] = LastWhere(
         [&](const Key& stored) { return compare_(stored, lookup) < 0; });
-    const Node* const next = before->levels[0].next;
+    const Node* const next = before->Levels()[0].next;
     if (next == nullptr || compare_(next->key, lookup) != 0) {
       return std::nullopt;
     }
@@ -250,13 +250,13 @@ class Skiplist {
   }
 
   void Clear() {
-    const Node* node = head_->levels[0].next;
+    Node* node = head_->Levels()[0].next;
     while (node != nullptr) {
-      const Node* const next = node->levels[0].next;
-      delete node;
+      Node* const next = node->Levels()[0].next;
+      Node::Destroy(node);
       node = next;
     }
-    std::ranges::fill(head_->levels, Level{});
+    std::ranges::fill(head_->Levels(), Level{});
     level_ = kInitSkiplistLevel;
     size_ = 0;
   }
@@ -272,13 +272,43 @@ class Skiplist {
     size_t span{};
   };
 
+  // A node and its levels are one allocation: the levels follow the node,
+  // as in Redis' zskiplistNode, instead of living in a vector of their own.
   struct Node {
-    explicit Node(size_t level, Key key = {})
-        : key(std::move(key)), levels(level) {}
+    static Node* Create(size_t level, Key key = {}) {
+      static_assert(alignof(Node) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+      static_assert(sizeof(Node) % alignof(Level) == 0);
+      void* const memory =
+          ::operator new(sizeof(Node) + (level * sizeof(Level)));
+      Node* const node = new (memory) Node(level, std::move(key));
+      std::uninitialized_value_construct_n(node->LevelsData(), level);
+      return node;
+    }
+    static void Destroy(Node* node) {
+      node->~Node();
+      ::operator delete(node);
+    }
+    std::span<Level> Levels() { return {LevelsData(), level_count}; }
+    std::span<const Level> Levels() const {
+      return {LevelsData(), level_count};
+    }
+
     Key key;
     // Previous node at level 0; null for the first node.
     Node* prev{};
-    std::vector<Level> levels;
+    size_t level_count;
+
+   private:
+    Node(size_t level, Key node_key)
+        : key(std::move(node_key)), level_count(level) {}
+    ~Node() = default;
+    Level* LevelsData() { return reinterpret_cast<Level*>(this + 1); }
+    const Level* LevelsData() const {
+      return reinterpret_cast<const Level*>(this + 1);
+    }
+  };
+  struct NodeDeleter {
+    void operator()(Node* node) const { Node::Destroy(node); }
   };
 
   // The last node before the search key at each level, and its rank.
@@ -321,10 +351,10 @@ class Skiplist {
     const Node* node = head_.get();
     size_t rank = 0;
     for (size_t i = level_; i-- > 0;) {
-      while (node->levels[i].next != nullptr &&
-             before(node->levels[i].next->key)) {
-        rank += node->levels[i].span;
-        node = node->levels[i].next;
+      while (node->Levels()[i].next != nullptr &&
+             before(node->Levels()[i].next->key)) {
+        rank += node->Levels()[i].span;
+        node = node->Levels()[i].next;
       }
     }
     return {.node = node, .rank = rank};
@@ -340,7 +370,7 @@ class Skiplist {
   // The first node not satisfying `before`, or null if every node does.
   template <std::predicate<const Key&> Before>
   const Node* FirstNodeWhereNot(Before&& before) const {
-    return LastWhere(std::forward<Before>(before)).node->levels[0].next;
+    return LastWhere(std::forward<Before>(before)).node->Levels()[0].next;
   }
 
   // Like LastWhere for keys below `probe`, but also records the path for
@@ -350,14 +380,14 @@ class Skiplist {
     Node* node = head_.get();
     for (size_t i = level_; i-- > 0;) {
       path->rank[i] = i + 1 == level_ ? 0 : path->rank[i + 1];
-      while (node->levels[i].next != nullptr &&
-             compare_(node->levels[i].next->key, probe) < 0) {
-        path->rank[i] += node->levels[i].span;
-        node = node->levels[i].next;
+      while (node->Levels()[i].next != nullptr &&
+             compare_(node->Levels()[i].next->key, probe) < 0) {
+        path->rank[i] += node->Levels()[i].span;
+        node = node->Levels()[i].next;
       }
       path->prev[i] = node;
     }
-    return node->levels[0].next;
+    return node->Levels()[0].next;
   }
 
   // The node equal to `lookup` with its path recorded, or null.
@@ -378,28 +408,28 @@ class Skiplist {
   // Links `node`, which the skiplist then owns, after the nodes `path`
   // holds, which FindPath recorded for its key. Returns `node`.
   Node* Link(Node* const node, Path* const path) {
-    const size_t node_level = node->levels.size();
+    const size_t node_level = node->level_count;
     // A level the list has not used yet starts at the head and spans every
     // node.
     for (size_t i = level_; i < node_level; ++i) {
       path->prev[i] = head_.get();
       path->rank[i] = 0;
-      head_->levels[i] = {.next = nullptr, .span = size_};
+      head_->Levels()[i] = {.next = nullptr, .span = size_};
     }
     level_ = std::max(level_, node_level);
     for (size_t i = 0; i < level_; ++i) {
-      Level& prev = path->prev[i]->levels[i];
+      Level& prev = path->prev[i]->Levels()[i];
       if (i >= node_level) {
         ++prev.span;
         continue;
       }
       const size_t distance = path->rank[0] - path->rank[i];
-      node->levels[i] = {.next = prev.next, .span = prev.span - distance};
+      node->Levels()[i] = {.next = prev.next, .span = prev.span - distance};
       prev = {.next = node, .span = distance + 1};
     }
     node->prev = path->prev[0] == head_.get() ? nullptr : path->prev[0];
-    if (node->levels[0].next != nullptr) {
-      node->levels[0].next->prev = node;
+    if (node->Levels()[0].next != nullptr) {
+      node->Levels()[0].next->prev = node;
     }
     ++size_;
     return node;
@@ -408,16 +438,16 @@ class Skiplist {
   // Removes `node` from every level; the caller owns it afterwards.
   void Unlink(Node* node, const Path& path) {
     for (size_t i = 0; i < level_; ++i) {
-      Level& prev = path.prev[i]->levels[i];
+      Level& prev = path.prev[i]->Levels()[i];
       if (prev.next == node) {
-        prev.span += node->levels[i].span - 1;
-        prev.next = node->levels[i].next;
+        prev.span += node->Levels()[i].span - 1;
+        prev.next = node->Levels()[i].next;
       } else {
         --prev.span;
       }
     }
-    if (node->levels[0].next != nullptr) {
-      node->levels[0].next->prev = node->prev;
+    if (node->Levels()[0].next != nullptr) {
+      node->Levels()[0].next->prev = node->prev;
     }
     --size_;
   }
@@ -431,10 +461,10 @@ class Skiplist {
     const Node* node = head_.get();
     size_t traversed = 0;
     for (size_t i = level_; i-- > 0;) {
-      while (node->levels[i].next != nullptr &&
-             traversed + node->levels[i].span <= target) {
-        traversed += node->levels[i].span;
-        node = node->levels[i].next;
+      while (node->Levels()[i].next != nullptr &&
+             traversed + node->Levels()[i].span <= target) {
+        traversed += node->Levels()[i].span;
+        node = node->Levels()[i].next;
       }
       if (traversed == target) {
         return node;
@@ -473,7 +503,7 @@ class Skiplist {
                            ? *limit->count
                            : std::numeric_limits<size_t>::max();
     for (; node != nullptr && remaining > 0 && in_range(node->key);
-         node = reverse ? node->prev : node->levels[0].next) {
+         node = reverse ? node->prev : node->Levels()[0].next) {
       if (skip > 0) {
         --skip;
         continue;
@@ -485,7 +515,7 @@ class Skiplist {
 
   // The head holds no key and has every level, so the list can grow without
   // reallocating it.
-  std::unique_ptr<Node> head_;
+  std::unique_ptr<Node, NodeDeleter> head_;
   Compare compare_;
   size_t level_;
   size_t size_{};
@@ -500,7 +530,7 @@ template <typename Key, SkiplistCompareFor<Key> Compare>
 class Skiplist<Key, Compare>::Iterator {
  public:
   bool Valid() const { return node_ != nullptr; }
-  void Next() { node_ = node_->levels[0].next; }
+  void Next() { node_ = node_->Levels()[0].next; }
   void Prev() { node_ = node_->prev; }
   Iterator& operator++() {
     Next();
