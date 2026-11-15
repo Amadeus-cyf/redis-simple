@@ -86,7 +86,7 @@ class Set {
   enum Encoding encoding_;
   std::unique_ptr<containers::Intset> intset_;
   std::unique_ptr<containers::Listpack> listpack_;
-  std::unique_ptr<containers::Dict<std::string, std::nullptr_t>> dict_;
+  std::unique_ptr<containers::Dict<std::string, containers::NoValue>> dict_;
 };
 
 template <typename Visitor>
@@ -116,8 +116,8 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     return listpack_->ForEach(0, size - 1, visitor);
   }
   if (encoding_ == Encoding::kDict) {
-    auto it =
-        containers::Dict<std::string, std::nullptr_t>::Iterator(dict_.get());
+    auto it = containers::Dict<std::string, containers::NoValue>::Iterator(
+        dict_.get());
     it.SeekToFirst();
     while (it.Valid()) {
       if (!visitor(it.Key())) {
@@ -133,10 +133,10 @@ bool Set::ForEachMember(Visitor&& visitor) const {
 template <typename Visitor>
 size_t Set::ScanDict(size_t cursor, size_t count, Visitor&& visitor) {
   RS_CHECK(encoding_ == Encoding::kDict);
-  return dict_->ScanStep(cursor, count,
-                         [&visitor](std::string_view member, std::nullptr_t) {
-                           visitor(std::string_view(member));
-                         });
+  return dict_->ScanStep(
+      cursor, count, [&visitor](std::string_view member, containers::NoValue) {
+        visitor(std::string_view(member));
+      });
 }
 
 template <typename Visitor>
@@ -148,7 +148,7 @@ bool Set::ForEachMemberWithHash(Visitor&& visitor) const {
     });
   }
   auto it =
-      containers::Dict<std::string, std::nullptr_t>::Iterator(dict_.get());
+      containers::Dict<std::string, containers::NoValue>::Iterator(dict_.get());
   it.SeekToFirst();
   while (it.Valid()) {
     const containers::HashedKey hashed = it.Hashed();
