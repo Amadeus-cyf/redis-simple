@@ -102,6 +102,10 @@ class RedisObject {
     kOther,
   };
 
+  // An empty raw string, the state of a keyspace entry's object before the
+  // database stores a value in it.
+  RedisObject() = default;
+
   // Stores canonical decimal integers (such as "42" but not "042" or "+42")
   // as int64_t so counters avoid parsing and formatting on every update, and
   // other values of at most EmbeddedString::kCapacity bytes inline.
@@ -148,6 +152,9 @@ class RedisObject {
   // choose, reusing the existing buffer when the new value fills a fair share
   // of it so that shrinking a large value releases its memory.
   void AssignString(std::string_view value);
+  // Replaces any value with a copy of `value`, in the encoding
+  // CreateWithStringCopy would choose.
+  void ReplaceWithString(std::string_view value);
   Encoding StringEncoding() const;
   // Collection accessors return nullptr if the object holds another type.
   data_types::Set* Set() { return std::get_if<data_types::Set>(&value_); }

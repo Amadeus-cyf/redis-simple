@@ -46,9 +46,8 @@ bool LookupOrCreateHash(Client* const client, std::string_view key,
   if (object == nullptr) {
     // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
     // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-    auto created = db::RedisObject::CreateWithHash(Hash::Create());
-    object = created.get();
-    client->Db()->SetKey(key, std::move(created), 0);
+    object = client->Db()->StoreKey(
+        key, db::RedisObject::CreateWithHash(Hash::Create()));
   }
   *hash = object->Hash();
   return true;
