@@ -339,4 +339,138 @@ TEST(DictStringTest, ScanStepVisitsCountElementsPerStep) {
     EXPECT_EQ(seen[static_cast<size_t>(i)], 1) << i;
   }
 }
+
+namespace {
+// Sets the process-wide resize policy for one test and restores it.
+class ScopedResizePolicy {
+ public:
+  explicit ScopedResizePolicy(DictResizePolicy policy) {
+    SetDictResizePolicy(policy);
+  }
+  ScopedResizePolicy(const ScopedResizePolicy&) = delete;
+  ScopedResizePolicy& operator=(const ScopedResizePolicy&) = delete;
+  ScopedResizePolicy(ScopedResizePolicy&&) = delete;
+  ScopedResizePolicy& operator=(ScopedResizePolicy&&) = delete;
+  ~ScopedResizePolicy() { SetDictResizePolicy(DictResizePolicy::kEnabled); }
+};
+
+// How many cursor positions a full scan takes: the bucket count, or the
+// smaller table's while a rehash is under way.
+size_t ScanPositions(Dict<int, int>* dict) {
+  size_t positions = 0;
+  std::optional<size_t> cursor = 0;
+  while (cursor.has_value()) {
+    cursor = dict->Scan(cursor.value_or(0), [](const int&, const int&) {});
+    ++positions;
+  }
+  return positions;
+}
+
+void ExpectHolds(Dict<int, int>* dict, int count) {
+  ASSERT_EQ(dict->Size(), static_cast<size_t>(count));
+  for (int key = 0; key < count; ++key) {
+    const int* const value = dict->FindValue(key);
+    ASSERT_NE(value, nullptr) << key;
+    EXPECT_EQ(*value, key);
+  }
+}
+}  // namespace
+
+TEST(DictIntTest, LookupsDuringIterationKeepEveryEntryVisitedOnce) {
+  auto dict = Dict<int, int>::Create();
+  // Enough inserts to leave a rehash under way, which lookups would advance.
+  constexpr int kCount = 1000;
+  for (int i = 0; i < kCount; ++i) {
+    dict->Set(i, i);
+  }
+  std::vector<int> seen(kCount, 0);
+  {
+    auto it = Dict<int, int>::Iterator(dict.get());
+    it.SeekToFirst();
+    while (it.Valid()) {
+      ++seen[it.Key()];
+      for (int i = 0; i < 8; ++i) {
+        ASSERT_NE(dict->FindValue(i), nullptr);
+      }
+      it.Next();
+    }
+  }
+  EXPECT_EQ(std::ranges::count(seen, 1), kCount);
+  // Once the iterator is gone, lookups finish the rehash again.
+  for (int i = 0; i < 4 * kCount; ++i) {
+    ASSERT_NE(dict->FindValue(i % kCount), nullptr);
+  }
+  EXPECT_EQ(ScanPositions(dict.get()), 1024U);
+}
+
+TEST(DictResizePolicyTest, AvoidGrowsOnlyAtFourEntriesPerBucket) {
+  // While a forked child shares memory, as Redis' DICT_RESIZE_AVOID.
+  const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
+  auto dict = Dict<int, int>::Create(16);
+  // 16 entries would grow the table normally; here 64 entries still fit.
+  for (int key = 0; key < 64; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  EXPECT_EQ(ScanPositions(dict.get()), 16);
+  ExpectHolds(dict.get(), 64);
+
+  // The 65th finds four entries per bucket and grows. The new table is at
+  // least four times the old, so the rehash runs despite the policy.
+  ASSERT_TRUE(dict->Insert(64, 64));
+  for (int round = 0; round < 4; ++round) {
+    ExpectHolds(dict.get(), 65);
+  }
+  EXPECT_EQ(ScanPositions(dict.get()), 128);
+}
+
+TEST(DictResizePolicyTest, ForbiddenStopsARehashUnderWay) {
+  auto dict = Dict<int, int>::Create(64);
+  for (int key = 0; key < 65; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  // The 65th insert began a rehash from 64 buckets to 128.
+  {
+    // In a forked child, as Redis' DICT_RESIZE_FORBID: nothing moves, so
+    // the child writes to none of the pages it shares.
+    const ScopedResizePolicy forbidden(DictResizePolicy::kForbidden);
+    for (int round = 0; round < 10; ++round) {
+      ExpectHolds(dict.get(), 65);
+    }
+    EXPECT_EQ(ScanPositions(dict.get()), 64);
+  }
+  {
+    // The parent waits too: 128 buckets are not four times 64.
+    const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
+    for (int round = 0; round < 10; ++round) {
+      ExpectHolds(dict.get(), 65);
+    }
+    EXPECT_EQ(ScanPositions(dict.get()), 64);
+  }
+  // Once the child is gone the rehash finishes.
+  for (int round = 0; round < 10; ++round) {
+    ExpectHolds(dict.get(), 65);
+  }
+  EXPECT_EQ(ScanPositions(dict.get()), 128);
+}
+
+TEST(DictResizePolicyTest, AvoidShrinksOnlyAVeryEmptyTable) {
+  auto dict = Dict<int, int>::Create(256);
+  for (int key = 0; key < 200; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
+  // 32 of 256 buckets used is an eighth, where a shrink normally starts.
+  for (int key = 199; key >= 32; --key) {
+    ASSERT_TRUE(dict->Delete(key));
+  }
+  EXPECT_EQ(ScanPositions(dict.get()), 256);
+  // At a thirty-second it shrinks even now.
+  for (int key = 31; key >= 8; --key) {
+    ASSERT_TRUE(dict->Delete(key));
+  }
+  for (int round = 0; round < 40; ++round) {
+    ExpectHolds(dict.get(), 8);
+  }
+  EXPECT_EQ(ScanPositions(dict.get()), 8);
+}
 }  // namespace redis_simple::containers

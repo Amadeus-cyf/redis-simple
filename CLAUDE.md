@@ -263,6 +263,11 @@ Guidance for AI coding agents working in this repository.
   server's fork hooks, which both share, as the I/O threads and the `UNLINK`
   reclaimer are. `BackgroundJobs` must not allocate, free, or log. Keep the
   children free of locks and logging.
+- `Dict` follows a process-wide resize policy (`SetDictResizePolicy`), as
+  Redis' `dict_can_resize` does, so tables do not move entries across
+  memory a child shares: the fork hooks forbid resizing in the child and set
+  "avoid" in the parent, and the server cron restores it once no child
+  runs. Keep new forks on those hooks.
 - Keep rewrite snapshots visitor-based, and bound snapshot memory and replay
   command sizes together (`Limits`): split large strings into replay-safe
   commands and batch collections by encoded bytes, not only element count.

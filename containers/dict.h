@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <climits>
 #include <concepts>
@@ -20,6 +21,27 @@
 #include "utils/siphash.h"
 
 namespace redis_simple::containers {
+// Whether Dicts may resize and rehash, for the whole process, as Redis'
+// dict_can_resize is. Rehashing writes to every entry it moves, and while a
+// forked child shares the parent's memory each written page is copied. So
+// the parent avoids it while a child lives, resizing only a table that is
+// badly out of size, and the child, which only reads, never does it.
+enum class DictResizePolicy { kEnabled, kAvoid, kForbidden };
+
+namespace dict_internal {
+// Atomic because the thread that frees UNLINKed values destroys Dicts while
+// the main thread sets this.
+inline std::atomic<DictResizePolicy> resize_policy{DictResizePolicy::kEnabled};
+}  // namespace dict_internal
+
+inline void SetDictResizePolicy(DictResizePolicy policy) {
+  dict_internal::resize_policy.store(policy, std::memory_order_relaxed);
+}
+
+inline DictResizePolicy CurrentDictResizePolicy() {
+  return dict_internal::resize_policy.load(std::memory_order_relaxed);
+}
+
 // Default hash and key-equality policies. The std::string specializations
 // accept std::string_view so lookups by borrowed key do not allocate.
 template <typename K>
@@ -151,10 +173,15 @@ class Dict {
     DictEntry* next{nullptr};
   };
 
-  static constexpr int kTableInitExp = 1;
+  // Four buckets, Redis' smallest table (DICT_HT_INITIAL_SIZE).
+  static constexpr int kTableInitExp = 2;
   static constexpr size_t kTableInitSize = size_t{1} << kTableInitExp;
   // Shrink once fewer than 1/kShrinkRatio of the buckets are in use.
   static constexpr size_t kShrinkRatio = 8;
+  // Under DictResizePolicy::kAvoid, a table still grows once it holds this
+  // many entries per bucket, and shrinks once it is this many times emptier
+  // than kShrinkRatio asks (Redis' dict_force_resize_ratio).
+  static constexpr size_t kForceResizeRatio = 4;
 
   Dict();
   template <typename Lookup>
@@ -165,23 +192,34 @@ class Dict {
   std::optional<V> ExtractImpl(const Lookup& key);
   template <typename Lookup>
   DictEntry* FindEntry(const Lookup& key, size_t hash) const;
+  // The entry for `key` among `table`'s buckets, which must not be empty.
+  template <typename Lookup>
+  DictEntry* FindInTable(int table, const Lookup& key, size_t hash) const;
   template <typename Lookup>
   DictEntry* Unlink(const Lookup& key);
   template <typename Lookup>
   DictEntry* InsertNew(const Lookup& key, size_t hash);
+  // What a lookup key is copied from when it becomes a stored key.
+  static std::string_view KeyOf(const HashedKey& key) { return key.key; }
+  template <typename Lookup>
+  static const Lookup& KeyOf(const Lookup& key) {
+    return key;
+  }
+  // Links a new entry for `key`, which must not be present, with a
+  // value-initialized value, and returns it.
+  DictEntry* AddEntry(K&& key, size_t hash);
   template <typename Lookup>
   bool KeyEquals(const Lookup& key, const DictEntry* entry) const;
   template <typename Lookup>
   size_t KeyHash(const Lookup& key) const;
   void InsertEntry(DictEntry* entry, int table);
-  void UnlinkEntry(DictEntry* entry, DictEntry* prev, int table);
   size_t TableSize(int table) const { return tables_[table].size(); }
   size_t TableMask(int table) const {
     return tables_[table].empty() ? 0 : tables_[table].size() - 1;
   }
   bool IsRehashing() const { return rehash_index_.has_value(); }
-  void PauseRehashing() { ++pause_rehash_; }
-  void ResumeRehashing() {
+  void PauseRehashing() const { ++pause_rehash_; }
+  void ResumeRehashing() const {
     if (pause_rehash_ > 0) {
       --pause_rehash_;
     }
@@ -204,20 +242,27 @@ class Dict {
   std::array<std::vector<DictEntry*>, 2> tables_;
   std::array<size_t, 2> table_used_{};
   std::optional<size_t> rehash_index_;
-  size_t pause_rehash_{};
+  // How many scans and iterators need entries to stay in their table.
+  // Mutable so that reading through a const Dict can hold a rehash back.
+  mutable size_t pause_rehash_{};
 };
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
+// Walks every entry once. While an iterator lives the dict moves no entry
+// between its tables (as Redis' safe iterators arrange), so the dict may be
+// looked up, and other keys inserted, during the walk; inserted keys may or
+// may not be visited. Deleting entries or clearing the dict invalidates it.
 class Dict<K, V, Hash, KeyEqual>::Iterator {
  public:
   explicit Iterator(const Dict* dict);
-  Iterator& operator=(const Iterator& it) = default;
-  bool operator==(const Iterator& it) const = default;
+  Iterator(const Iterator& other);
+  Iterator& operator=(const Iterator& other);
+  ~Iterator() { dict_->ResumeRehashing(); }
+  bool operator==(const Iterator& other) const = default;
   bool Valid() const;
   void SeekToFirst();
   void SeekToLast();
   void Next();
-  Iterator& operator++();
   const K& Key() const { return entry_->key; }
   const V& Value() const { return entry_->value; }
   // The current key with the hash stored in its entry, so it can be looked
@@ -238,7 +283,31 @@ class Dict<K, V, Hash, KeyEqual>::Iterator {
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
 Dict<K, V, Hash, KeyEqual>::Iterator::Iterator(const Dict* dict)
-    : dict_(dict), table_(0), index_(std::nullopt), entry_(nullptr) {}
+    : dict_(dict), table_(0), index_(std::nullopt), entry_(nullptr) {
+  dict_->PauseRehashing();
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+Dict<K, V, Hash, KeyEqual>::Iterator::Iterator(const Iterator& other)
+    : dict_(other.dict_),
+      table_(other.table_),
+      index_(other.index_),
+      entry_(other.entry_) {
+  dict_->PauseRehashing();
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+typename Dict<K, V, Hash, KeyEqual>::Iterator&
+Dict<K, V, Hash, KeyEqual>::Iterator::operator=(const Iterator& other) {
+  // Pause the new dict before resuming the old one, in case they are the same.
+  other.dict_->PauseRehashing();
+  dict_->ResumeRehashing();
+  dict_ = other.dict_;
+  table_ = other.table_;
+  index_ = other.index_;
+  entry_ = other.entry_;
+  return *this;
+}
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
 bool Dict<K, V, Hash, KeyEqual>::Iterator::Valid() const {
@@ -273,13 +342,6 @@ void Dict<K, V, Hash, KeyEqual>::Iterator::SeekToLast() {
   }
   table_ = 0;
   index_ = std::nullopt;
-}
-
-template <typename K, typename V, typename Hash, typename KeyEqual>
-typename Dict<K, V, Hash, KeyEqual>::Iterator&
-Dict<K, V, Hash, KeyEqual>::Iterator::operator++() {
-  SeekToNextEntry();
-  return *this;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -388,15 +450,11 @@ void Dict<K, V, Hash, KeyEqual>::Set(K&& key, V&& value) {
   ExpandIfNeeded();
   RehashStepIfNeeded();
   const size_t hash = KeyHash(key);
-  if (DictEntry* const existing = FindEntry(key, hash); existing != nullptr) {
-    existing->value = std::move(value);
-    return;
+  DictEntry* entry = FindEntry(key, hash);
+  if (entry == nullptr) {
+    entry = AddEntry(std::move(key), hash);
   }
-  auto entry = std::make_unique<DictEntry>();
-  entry->key = std::move(key);
   entry->value = std::move(value);
-  entry->hash = hash;
-  InsertEntry(entry.release(), IsRehashing() ? 1 : 0);
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -416,11 +474,7 @@ bool Dict<K, V, Hash, KeyEqual>::Insert(K&& key, V&& value) {
   if (FindEntry(key, hash) != nullptr) {
     return false;
   }
-  auto entry = std::make_unique<DictEntry>();
-  entry->key = std::move(key);
-  entry->value = std::move(value);
-  entry->hash = hash;
-  InsertEntry(entry.release(), IsRehashing() ? 1 : 0);
+  AddEntry(std::move(key), hash)->value = std::move(value);
   return true;
 }
 
@@ -512,7 +566,6 @@ void Dict<K, V, Hash, KeyEqual>::Clear() {
   ClearTable(0);
   ClearTable(1);
   rehash_index_ = std::nullopt;
-  pause_rehash_ = 0;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -532,18 +585,24 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 typename Dict<K, V, Hash, KeyEqual>::DictEntry*
 Dict<K, V, Hash, KeyEqual>::FindEntry(const Lookup& key, size_t hash) const {
-  for (int table = 0; table <= 1; ++table) {
-    if (tables_[table].empty()) {
-      break;
-    }
-    for (DictEntry* entry = tables_[table][hash & TableMask(table)];
-         entry != nullptr; entry = entry->next) {
-      if (entry->hash == hash && KeyEquals(key, entry)) {
-        return entry;
-      }
-    }
-    if (!IsRehashing()) {
-      break;
+  // Callers make sure table 0 has buckets: lookups return early for an
+  // empty dict, and inserts expand first. Table 1 has them while rehashing.
+  if (DictEntry* const entry = FindInTable(0, key, hash); entry != nullptr) {
+    return entry;
+  }
+  return IsRehashing() ? FindInTable(1, key, hash) : nullptr;
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+template <typename Lookup>
+typename Dict<K, V, Hash, KeyEqual>::DictEntry*
+Dict<K, V, Hash, KeyEqual>::FindInTable(int table, const Lookup& key,
+                                        size_t hash) const {
+  const std::vector<DictEntry*>& buckets = tables_[table];
+  for (DictEntry* entry = buckets[hash & (buckets.size() - 1)];
+       entry != nullptr; entry = entry->next) {
+    if (entry->hash == hash && KeyEquals(key, entry)) {
+      return entry;
     }
   }
   return nullptr;
@@ -559,14 +618,15 @@ Dict<K, V, Hash, KeyEqual>::Unlink(const Lookup& key) {
   RehashStepIfNeeded();
   const size_t hash = KeyHash(key);
   for (int table = 0; table <= 1; ++table) {
-    if (tables_[table].empty()) {
-      break;
-    }
-    DictEntry* prev = nullptr;
-    for (DictEntry* entry = tables_[table][hash & TableMask(table)];
-         entry != nullptr; prev = entry, entry = entry->next) {
+    // `link` is whatever points at the current entry: the bucket, or the
+    // entry before it. Unlinking is then one assignment in either case.
+    for (DictEntry** link = &tables_[table][hash & TableMask(table)];
+         *link != nullptr; link = &(*link)->next) {
+      DictEntry* const entry = *link;
       if (entry->hash == hash && KeyEquals(key, entry)) {
-        UnlinkEntry(entry, prev, table);
+        *link = entry->next;
+        entry->next = nullptr;
+        --table_used_[table];
         return entry;
       }
     }
@@ -581,16 +641,18 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 typename Dict<K, V, Hash, KeyEqual>::DictEntry*
 Dict<K, V, Hash, KeyEqual>::InsertNew(const Lookup& key, size_t hash) {
-  auto entry = std::make_unique<DictEntry>();
-  if constexpr (std::same_as<Lookup, HashedKey>) {
-    entry->key = K(key.key);
-  } else {
-    entry->key = K(key);
-  }
-  entry->hash = hash;
-  DictEntry* const raw = entry.release();
-  InsertEntry(raw, IsRehashing() ? 1 : 0);
-  return raw;
+  return AddEntry(K(KeyOf(key)), hash);
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+typename Dict<K, V, Hash, KeyEqual>::DictEntry*
+Dict<K, V, Hash, KeyEqual>::AddEntry(K&& key, size_t hash) {
+  // Built in place: the key is moved once, not default-constructed and then
+  // assigned.
+  DictEntry* const entry =
+      std::make_unique<DictEntry>(std::move(key), V(), hash, nullptr).release();
+  InsertEntry(entry, IsRehashing() ? 1 : 0);
+  return entry;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -602,29 +664,30 @@ void Dict<K, V, Hash, KeyEqual>::InsertEntry(DictEntry* entry, int table) {
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
-void Dict<K, V, Hash, KeyEqual>::UnlinkEntry(DictEntry* entry, DictEntry* prev,
-                                             int table) {
-  if (prev != nullptr) {
-    prev->next = entry->next;
-  } else {
-    tables_[table][entry->hash & TableMask(table)] = entry->next;
-  }
-  entry->next = nullptr;
-  --table_used_[table];
-}
-
-template <typename K, typename V, typename Hash, typename KeyEqual>
 void Dict<K, V, Hash, KeyEqual>::ExpandIfNeeded() {
   // Keep chains short: grow once there is one entry per bucket.
-  if (!IsRehashing() && table_used_[0] >= TableSize(0)) {
+  if (IsRehashing() || table_used_[0] < TableSize(0)) {
+    return;
+  }
+  const DictResizePolicy policy = CurrentDictResizePolicy();
+  // A dict without buckets always gets its first table.
+  if (policy == DictResizePolicy::kEnabled || tables_[0].empty() ||
+      (policy == DictResizePolicy::kAvoid &&
+       table_used_[0] >= kForceResizeRatio * TableSize(0))) {
     Resize(table_used_[0] + 1);
   }
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
 void Dict<K, V, Hash, KeyEqual>::ShrinkIfNeeded() {
-  if (!IsRehashing() && pause_rehash_ == 0 && TableSize(0) > kTableInitSize &&
-      table_used_[0] * kShrinkRatio <= TableSize(0)) {
+  if (IsRehashing() || pause_rehash_ != 0 || TableSize(0) <= kTableInitSize ||
+      table_used_[0] * kShrinkRatio > TableSize(0)) {
+    return;
+  }
+  const DictResizePolicy policy = CurrentDictResizePolicy();
+  if (policy == DictResizePolicy::kEnabled ||
+      (policy == DictResizePolicy::kAvoid &&
+       table_used_[0] * kShrinkRatio * kForceResizeRatio <= TableSize(0))) {
     Resize(table_used_[0]);
   }
 }
@@ -670,8 +733,21 @@ void Dict<K, V, Hash, KeyEqual>::Rehash(int n) {
   if (!IsRehashing()) {
     return;
   }
-  int empty_visits = n * 10;
   const size_t old_size = TableSize(0);
+  if (const DictResizePolicy policy = CurrentDictResizePolicy();
+      policy != DictResizePolicy::kEnabled) {
+    // A rehash already under way waits for the child too, unless the new
+    // table is so far from the old one's size that waiting costs more.
+    const size_t new_size = TableSize(1);
+    const bool far_apart =
+        new_size > old_size
+            ? new_size >= kForceResizeRatio * old_size
+            : old_size >= kShrinkRatio * kForceResizeRatio * new_size;
+    if (policy == DictResizePolicy::kForbidden || !far_apart) {
+      return;
+    }
+  }
+  int empty_visits = n * 10;
   while (n > 0 && *rehash_index_ < old_size && table_used_[0] > 0 &&
          empty_visits > 0) {
     DictEntry* entry = tables_[0][*rehash_index_];
