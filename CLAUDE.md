@@ -176,7 +176,10 @@ Guidance for AI coding agents working in this repository.
   keys, so a key has no allocation or `std::string` of its own. Keys are
   read back as `std::string_view` (`Dict::KeyView`), valid until the entry
   is deleted; take them that way in visitors, and insert by view
-  (`FindOrInsert`) instead of building a `std::string` first.
+  (`FindOrInsert`) instead of building a `std::string` first. Entries keep
+  the low 32 bits of the hash and a 32-bit key length, so every hash a
+  `Dict` computes, and `HashedKey`'s, is truncated to 32 bits; keys stay
+  within 512 MiB (the request parser's and the RDB loader's limit).
 - Dict-encoded hashes store field values as `containers::CompactString`:
   16 bytes, up to 15 bytes inline and longer values in one heap block of
   exactly their length. Read them with `View()` and replace them with
