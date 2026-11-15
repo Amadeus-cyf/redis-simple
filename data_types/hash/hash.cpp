@@ -19,10 +19,7 @@ bool CanStoreInListpack(std::string_view field, std::string_view value) {
 
 }  // namespace
 
-Hash::Hash()
-    : encoding_(Encoding::kListpack),
-      listpack_(std::in_place),
-      dict_(nullptr) {}
+Hash::Hash() : encoding_(Encoding::kListpack), dict_(nullptr) {}
 
 std::unique_ptr<Hash> Hash::CreateForSize(size_t count) {
   std::unique_ptr<Hash> hash(new Hash());
@@ -38,7 +35,7 @@ std::unique_ptr<Hash> Hash::CreateFromListpack(
            listpack->Size() % 2 == 0 &&
            listpack->Size() / 2 <= kListpackMaxEntries);
   std::unique_ptr<Hash> hash(new Hash());
-  hash->listpack_.emplace(std::move(*listpack));
+  hash->listpack_ = std::move(*listpack);
   return hash;
 }
 
@@ -92,7 +89,7 @@ std::string_view Hash::ListpackBytes() const {
 
 size_t Hash::Size() const {
   if (encoding_ == Encoding::kListpack) {
-    return listpack_.has_value() ? listpack_->Size() / 2 : 0;
+    return listpack_.Allocated() ? listpack_.Size() / 2 : 0;
   }
   if (encoding_ == Encoding::kDict) {
     return dict_ == nullptr ? 0 : dict_->Size();
@@ -114,7 +111,7 @@ bool Hash::CanAppendToListpack(std::string_view field,
                                std::string_view value) const {
   return Size() < kListpackMaxEntries && CanStoreInListpack(field, value) &&
          containers::Listpack::SafeToAdd(
-             listpack_.has_value() ? &*listpack_ : nullptr,
+             listpack_.Allocated() ? &listpack_ : nullptr,
              containers::Listpack::EstimateEntryBytes(field) +
                  containers::Listpack::EstimateEntryBytes(value));
 }
@@ -159,14 +156,14 @@ void Hash::ConvertListpackToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kListpack);
   dict_ = containers::Dict<std::string, containers::CompactString>::Create(
       capacity);
-  if (listpack_.has_value()) {
-    listpack_->ForEachPair(
+  if (listpack_.Allocated()) {
+    listpack_.ForEachPair(
         [this](std::string_view field, std::string_view value) {
           dict_->FindOrInsert(field).first->Assign(value);
           return true;
         });
   }
-  listpack_.reset();
+  listpack_.Release();
   encoding_ = Encoding::kDict;
 }
 

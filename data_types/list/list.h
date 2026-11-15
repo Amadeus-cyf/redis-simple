@@ -56,8 +56,8 @@ class List {
   // encoding, one per quicklist node otherwise. Stops when it returns false.
   template <typename Visitor>
   bool ForEachListpack(Visitor&& visitor) const {
-    if (listpack_.has_value()) {
-      return visitor(listpack_->Bytes());
+    if (listpack_.Allocated()) {
+      return visitor(listpack_.Bytes());
     }
     return quicklist_->ForEachNode(
         [&visitor](const containers::Listpack& node) {
@@ -77,33 +77,34 @@ class List {
   // The listpack of a listpack-encoded value. Aborts for another encoding,
   // which callers rule out first.
   containers::Listpack& ListpackStorage() {
-    if (!listpack_.has_value()) {
+    if (!listpack_.Allocated()) {
       utils::Unreachable();
     }
-    return *listpack_;
+    return listpack_;
   }
   const containers::Listpack& ListpackStorage() const {
-    if (!listpack_.has_value()) {
+    if (!listpack_.Allocated()) {
       utils::Unreachable();
     }
-    return *listpack_;
+    return listpack_;
   }
   // Held by value, so a small list is no allocation beyond its bytes.
-  std::optional<containers::Listpack> listpack_;
+  containers::Listpack listpack_;
   std::unique_ptr<containers::Quicklist> quicklist_;
   size_t list_max_listpack_bytes_;
 };
 
 template <typename Visitor>
 bool List::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
-  return listpack_ ? listpack_->ForEach(start, stop, visitor)
-                   : quicklist_->ForEach(start, stop, visitor);
+  return listpack_.Allocated() ? listpack_.ForEach(start, stop, visitor)
+                               : quicklist_->ForEach(start, stop, visitor);
 }
 
 template <typename Visitor>
 bool List::ForEachReverse(size_t start, size_t stop, Visitor&& visitor) const {
-  return listpack_ ? listpack_->ForEachReverse(start, stop, visitor)
-                   : quicklist_->ForEachReverse(start, stop, visitor);
+  return listpack_.Allocated()
+             ? listpack_.ForEachReverse(start, stop, visitor)
+             : quicklist_->ForEachReverse(start, stop, visitor);
 }
 }  // namespace redis_simple::data_types
 

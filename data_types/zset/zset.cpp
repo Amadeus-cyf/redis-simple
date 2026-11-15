@@ -11,15 +11,13 @@
 #include "utils/check.h"
 
 namespace redis_simple::data_types {
-ZSet::ZSet()
-    : encoding_(Encoding::kListpack),
-      storage_(std::make_unique<ZSetListpack>()) {}
+ZSet::ZSet() : skiplist_(nullptr) {}
 
 std::unique_ptr<ZSet> ZSet::CreateForSize(size_t count) {
   std::unique_ptr<ZSet> zset(new ZSet());
   if (count > kListpackMaxEntries) {
-    zset->encoding_ = Encoding::kSkiplist;
-    zset->storage_ = std::make_unique<ZSetSkiplist>(count);
+    zset->listpack_.Release();
+    zset->skiplist_ = std::make_unique<ZSetSkiplist>(count);
   }
   return zset;
 }
@@ -30,7 +28,7 @@ std::unique_ptr<ZSet> ZSet::CreateFromListpack(
            listpack->Size() % 2 == 0 &&
            listpack->Size() / 2 <= kListpackMaxEntries);
   std::unique_ptr<ZSet> zset(new ZSet());
-  zset->storage_ = std::make_unique<ZSetListpack>(std::move(listpack));
+  zset->listpack_ = ZSetListpack(std::move(listpack));
   return zset;
 }
 
@@ -42,50 +40,52 @@ bool ZSet::InsertOrUpdate(std::string_view member, double score,
   if (std::isnan(score)) {
     return false;
   }
-  if (encoding_ == Encoding::kListpack &&
+  if (Encoding() == Encoding::kListpack &&
       member.size() > kListpackMaxElementLength) {
     ConvertAndExpand();
   }
-  const bool inserted = storage_->InsertOrUpdate(member, score, changed);
+  const bool inserted = Storage().InsertOrUpdate(member, score, changed);
   if (ShouldConvertToSkiplist(member, inserted)) {
     ConvertAndExpand();
   }
   return inserted;
 }
 
-bool ZSet::Delete(std::string_view member) { return storage_->Delete(member); }
+bool ZSet::Delete(std::string_view member) { return Storage().Delete(member); }
 
 std::optional<double> ZSet::Score(std::string_view member) const {
-  return storage_->Score(member);
+  return Storage().Score(member);
 }
 
 size_t ZSet::Count(const RangeByScoreSpec* spec) const {
-  return storage_->Count(spec);
+  return Storage().Count(spec);
 }
 
 bool ZSet::ForEachEntry(const ZSetEntryVisitor& visitor) const {
-  return storage_->ForEachEntry(visitor);
+  return Storage().ForEachEntry(visitor);
 }
 
-enum ZSet::Encoding ZSet::Encoding() const { return encoding_; }
+enum ZSet::Encoding ZSet::Encoding() const {
+  return listpack_.Allocated() ? Encoding::kListpack : Encoding::kSkiplist;
+}
 
 bool ZSet::ShouldConvertToSkiplist(std::string_view member,
                                    bool inserted) const {
-  return encoding_ == Encoding::kListpack &&
-         ((inserted && storage_->Size() > kListpackMaxEntries) ||
+  return Encoding() == Encoding::kListpack &&
+         ((inserted && Storage().Size() > kListpackMaxEntries) ||
           member.size() > kListpackMaxElementLength);
 }
 
 void ZSet::ConvertAndExpand() {
-  RS_CHECK(encoding_ == Encoding::kListpack);
+  RS_CHECK(Encoding() == Encoding::kListpack);
   auto zset_skiplist = std::make_unique<ZSetSkiplist>();
-  if (!storage_->ForEachEntry(
+  if (!Storage().ForEachEntry(
           [&zset_skiplist](std::string_view member, double score) {
             return zset_skiplist->InsertOrUpdate(member, score, nullptr);
           })) {
     return;
   }
-  encoding_ = Encoding::kSkiplist;
-  storage_ = std::move(zset_skiplist);
+  skiplist_ = std::move(zset_skiplist);
+  listpack_.Release();
 }
 }  // namespace redis_simple::data_types

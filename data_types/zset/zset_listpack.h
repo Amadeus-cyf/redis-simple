@@ -14,6 +14,12 @@ namespace redis_simple::data_types {
 class ZSetListpack : public ZSetStorage {
  public:
   ZSetListpack();
+  // A ZSetListpack without bytes, for a sorted set held in a skiplist.
+  static ZSetListpack Unallocated() {
+    return ZSetListpack(containers::Listpack::Unallocated());
+  }
+  bool Allocated() const { return listpack_.Allocated(); }
+  void Release() { listpack_.Release(); }
   explicit ZSetListpack(std::unique_ptr<containers::Listpack> listpack)
       : listpack_(std::move(*listpack)) {}
   bool InsertOrUpdate(std::string_view member, double score,
@@ -42,6 +48,8 @@ class ZSetListpack : public ZSetStorage {
   }
 
  private:
+  explicit ZSetListpack(containers::Listpack listpack)
+      : listpack_(std::move(listpack)) {}
   struct EntryView {
     std::string_view member;
     double score;

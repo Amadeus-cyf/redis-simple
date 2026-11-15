@@ -213,7 +213,13 @@ class RedisObject {
 };
 
 // Holding collections did not make the object larger than an embedded string
-// already did.
+// already did. The collections are checked one by one too, so a failure here
+// names the one that grew: std::string, and so EmbeddedString, is smaller
+// with libc++ (macOS) than with libstdc++.
+static_assert(sizeof(data_types::Set) <= sizeof(EmbeddedString));
+static_assert(sizeof(data_types::List) <= sizeof(EmbeddedString));
+static_assert(sizeof(data_types::ZSet) <= sizeof(EmbeddedString));
+static_assert(sizeof(data_types::Hash) <= sizeof(EmbeddedString));
 static_assert(sizeof(RedisObject) == sizeof(EmbeddedString) + 8);
 
 using RedisObjectPtr = std::unique_ptr<RedisObject>;

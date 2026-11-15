@@ -15,7 +15,10 @@
 #include "utils/strings.h"
 
 namespace redis_simple::data_types {
-Set::Set() : intset_(nullptr), dict_(nullptr) {}
+Set::Set()
+    : intset_(nullptr),
+      listpack_(containers::Listpack::Unallocated()),
+      dict_(nullptr) {}
 
 std::unique_ptr<Set> Set::CreateForSize(size_t count) {
   std::unique_ptr<Set> set(new Set());
@@ -30,7 +33,7 @@ std::unique_ptr<Set> Set::CreateFromListpack(
   RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
            listpack->Size() <= kListpackMaxEntries);
   std::unique_ptr<Set> set(new Set());
-  set->listpack_.emplace(std::move(*listpack));
+  set->listpack_ = std::move(*listpack);
   return set;
 }
 
@@ -56,7 +59,7 @@ bool Set::HasMember(std::string_view value) const {
     return integer.has_value() && intset_->Find(*integer);
   }
   if (Encoding() == Encoding::kListpack) {
-    return listpack_->Find(value).has_value();
+    return listpack_.Find(value).has_value();
   }
   if (Encoding() == Encoding::kDict) {
     return dict_->FindValue(value) != nullptr;
@@ -91,11 +94,11 @@ bool Set::Delete(std::string_view value) {
     return integer.has_value() && intset_->Delete(*integer);
   }
   if (Encoding() == Encoding::kListpack) {
-    const std::optional<size_t> offset = listpack_->Find(value);
+    const std::optional<size_t> offset = listpack_.Find(value);
     if (!offset.has_value()) {
       return false;
     }
-    listpack_->Delete(*offset);
+    listpack_.Delete(*offset);
     return true;
   }
   if (Encoding() == Encoding::kDict) {
@@ -119,7 +122,7 @@ size_t Set::Size() const {
     case Encoding::kIntset:
       return intset_ ? intset_->Size() : 0;
     case Encoding::kListpack:
-      return listpack_.has_value() ? listpack_->Size() : 0;
+      return listpack_.Allocated() ? listpack_.Size() : 0;
     case Encoding::kDict:
       return dict_ ? dict_->Size() : 0;
     default:
@@ -223,29 +226,29 @@ bool Set::MaybeConvertIntsetToListpack(std::string_view value) {
 
 void Set::ConvertIntsetToListpack(std::string_view value) {
   RS_CHECK(Encoding() == Encoding::kIntset);
-  listpack_.emplace();
+  listpack_ = containers::Listpack();
   if (intset_) {
     for (uint32_t i = 0; i < intset_->Size(); ++i) {
-      listpack_->Append(intset_->Get(i));
+      listpack_.Append(intset_->Get(i));
     }
   }
-  listpack_->Append(value);
+  listpack_.Append(value);
   intset_.reset();
 }
 
 void Set::ConvertListpackToDict(size_t capacity) {
   RS_CHECK(Encoding() == Encoding::kListpack);
   dict_ = containers::Dict<std::string, containers::NoValue>::Create(capacity);
-  if (!listpack_.has_value()) {
+  if (!listpack_.Allocated()) {
     return;
   }
-  if (const size_t size = listpack_->Size(); size > 0) {
-    listpack_->ForEach(0, size - 1, [this](std::string_view member) {
+  if (const size_t size = listpack_.Size(); size > 0) {
+    listpack_.ForEach(0, size - 1, [this](std::string_view member) {
       dict_->FindOrInsert(member);
       return true;
     });
   }
-  listpack_.reset();
+  listpack_.Release();
 }
 
 }  // namespace redis_simple::data_types

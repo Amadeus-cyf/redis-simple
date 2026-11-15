@@ -73,7 +73,7 @@ class Set {
     if (dict_ != nullptr) {
       return Encoding::kDict;
     }
-    return listpack_.has_value() ? Encoding::kListpack : Encoding::kIntset;
+    return listpack_.Allocated() ? Encoding::kListpack : Encoding::kIntset;
   }
   // The encoded forms RDB files store. A listpack-encoded set's listpack,
   // in Redis' byte format.
@@ -96,19 +96,19 @@ class Set {
   // The listpack of a listpack-encoded value. Aborts for another encoding,
   // which callers rule out first.
   containers::Listpack& ListpackStorage() {
-    if (!listpack_.has_value()) {
+    if (!listpack_.Allocated()) {
       utils::Unreachable();
     }
-    return *listpack_;
+    return listpack_;
   }
   const containers::Listpack& ListpackStorage() const {
-    if (!listpack_.has_value()) {
+    if (!listpack_.Allocated()) {
       utils::Unreachable();
     }
-    return *listpack_;
+    return listpack_;
   }
   // Held by value, so a small set is no allocation beyond its bytes.
-  std::optional<containers::Listpack> listpack_;
+  containers::Listpack listpack_;
   std::unique_ptr<containers::Dict<std::string, containers::NoValue>> dict_;
 };
 
@@ -136,7 +136,7 @@ bool Set::ForEachMember(Visitor&& visitor) const {
     return true;
   }
   if (Encoding() == Encoding::kListpack) {
-    return listpack_->ForEach(0, size - 1, visitor);
+    return listpack_.ForEach(0, size - 1, visitor);
   }
   if (Encoding() == Encoding::kDict) {
     auto it = containers::Dict<std::string, containers::NoValue>::Iterator(
