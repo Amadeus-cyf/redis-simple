@@ -177,6 +177,10 @@ Guidance for AI coding agents working in this repository.
   read back as `std::string_view` (`Dict::KeyView`), valid until the entry
   is deleted; take them that way in visitors, and insert by view
   (`FindOrInsert`) instead of building a `std::string` first.
+- Dict-encoded hashes store field values as `containers::CompactString`:
+  16 bytes, up to 15 bytes inline and longer values in one heap block of
+  exactly their length. Read them with `View()` and replace them with
+  `Assign()`, which accepts a view of the string's own bytes.
 - `RedisDb` operations hash their key once as a `containers::HashedKey` and
   pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
   hash. Keep operations that touch more than one of those dicts on that path
