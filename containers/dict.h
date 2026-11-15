@@ -210,6 +210,15 @@ class Dict {
   // key is new. Hashes the key once and copies it only when inserting.
   template <typename Lookup>
   std::pair<V*, bool> FindOrInsert(const Lookup& key);
+  // FindOrInsert that also returns the stored key, so a caller can keep a
+  // view of a new key's bytes without looking it up again.
+  struct InsertResult {
+    V* value;
+    KeyView key;
+    bool inserted;
+  };
+  template <typename Lookup>
+  InsertResult FindOrInsertWithKey(const Lookup& key);
   // A handle to `key`'s entry, empty (false) when the key is absent.
   template <typename Lookup>
   EntryRef FindEntryRef(const Lookup& key);
@@ -539,13 +548,23 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 std::pair<V*, bool> Dict<K, V, Hash, KeyEqual>::FindOrInsert(
     const Lookup& key) {
+  const InsertResult result = FindOrInsertWithKey(key);
+  return {result.value, result.inserted};
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+template <typename Lookup>
+typename Dict<K, V, Hash, KeyEqual>::InsertResult
+Dict<K, V, Hash, KeyEqual>::FindOrInsertWithKey(const Lookup& key) {
   ExpandIfNeeded();
   RehashStepIfNeeded();
   const size_t hash = KeyHash(key);
   if (DictEntry* const existing = FindEntry(key, hash); existing != nullptr) {
-    return {&existing->value, false};
+    return {
+        .value = &existing->value, .key = existing->Key(), .inserted = false};
   }
-  return {&InsertNew(key, hash)->value, true};
+  DictEntry* const entry = InsertNew(key, hash);
+  return {.value = &entry->value, .key = entry->Key(), .inserted = true};
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
