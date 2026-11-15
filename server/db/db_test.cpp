@@ -141,6 +141,74 @@ TEST(RedisDbTest, ExpireSamplingWorksWhenFewKeysHaveTtl) {
   EXPECT_EQ(redis_db->KeyCount(), 20);
 }
 
+TEST(RedisDbTest, TtlsFollowTheirKeysThroughGrowthRenameAndDelete) {
+  auto redis_db = RedisDb::Create();
+  // Long names, so a TTL read through a freed keyspace entry would show up
+  // under the sanitizer, and enough keys to grow both tables several times.
+  const auto name = [](int index) {
+    return "a key name longer than the inline limit " + std::to_string(index);
+  };
+  constexpr int kKeys = 2000;
+  // Absolute times far in the future, so no key expires during the test.
+  constexpr int64_t kFuture = int64_t{1} << 50;
+  for (int index = 0; index < kKeys; ++index) {
+    ASSERT_EQ(redis_db->SetKey(name(index), RedisObject::CreateWithString("v"),
+                               kFuture + index),
+              DbStatus::kOk);
+  }
+  ASSERT_EQ(redis_db->KeysWithExpirationCount(), kKeys);
+  for (int index = 0; index < kKeys; index += 2) {
+    ASSERT_EQ(redis_db->DeleteKey(name(index)), DbStatus::kOk);
+  }
+  for (int index = 1; index < kKeys; index += 4) {
+    ASSERT_EQ(redis_db->RenameKey(name(index), "renamed " + name(index)),
+              DbStatus::kOk);
+  }
+  ASSERT_EQ(redis_db->UnlinkKey(name(3)), DbStatus::kOk);
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), (kKeys / 2) - 1);
+  for (int index = 1; index < kKeys; index += 4) {
+    EXPECT_EQ(redis_db->Expiration(name(index)), std::nullopt);
+    EXPECT_EQ(redis_db->Expiration("renamed " + name(index)),
+              std::optional<int64_t>(kFuture + index));
+  }
+  for (int index = 7; index < kKeys; index += 4) {
+    EXPECT_EQ(redis_db->Expiration(name(index)),
+              std::optional<int64_t>(kFuture + index));
+  }
+  // Renaming onto a key with a TTL replaces it with the source's TTL.
+  ASSERT_EQ(redis_db->RenameKey(name(7), name(11)), DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration(name(11)),
+            std::optional<int64_t>(kFuture + 7));
+  ASSERT_EQ(redis_db->PersistKey(name(11)), DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration(name(11)), std::nullopt);
+}
+
+TEST(RedisDbTest, ActiveExpirationDeletesManyKeysAndTouchesWatchers) {
+  auto redis_db = RedisDb::Create();
+  KeyWatcher watcher;
+  constexpr int kKeys = 300;
+  // Set in the future so WATCH's lookup does not expire the key first; the
+  // sampling below runs at a later time.
+  constexpr int64_t kExpire = int64_t{1} << 50;
+  for (int index = 0; index < kKeys; ++index) {
+    const std::string key =
+        "an expiring key with a long name " + std::to_string(index);
+    ASSERT_EQ(
+        redis_db->SetKey(key, RedisObject::CreateWithString("value"), kExpire),
+        DbStatus::kOk);
+    if (index == kKeys - 1) {
+      redis_db->WatchKey(key, &watcher);
+    }
+  }
+  size_t expired = 0;
+  while (redis_db->KeyCount() > 0) {
+    expired += redis_db->ExpireSome(64, kExpire + 1).expired;
+  }
+  EXPECT_EQ(expired, static_cast<size_t>(kKeys));
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 0);
+  EXPECT_TRUE(watcher.Dirty());
+}
+
 TEST(RedisDbTest, ExpirePersistAndTtl) {
   auto redis_db = RedisDb::Create();
   const int64_t future = utils::NowInMilliseconds() + 60'000;

@@ -135,6 +135,37 @@ class RedisDb {
   void ResumeBackgroundFrees() { reclaimer_.Resume(); }
 
  private:
+  using Keyspace = containers::Dict<std::string, RedisObjectPtr>;
+  using KeyRef = Keyspace::EntryRef;
+  // The TTL table's keys refer to keyspace entries rather than copying their
+  // names. Its hash is the keyspace's stored hash, so a HashedKey finds both.
+  struct KeyRefHash {
+    size_t operator()(const KeyRef& key) const { return key.StoredHash(); }
+    size_t operator()(const containers::HashedKey& key) const {
+      return key.hash;
+    }
+    size_t operator()(std::string_view key) const {
+      return containers::DictHash<std::string>{}(key);
+    }
+  };
+  struct KeyRefEqual {
+    bool operator()(const KeyRef& left, const KeyRef& right) const {
+      return left == right;
+    }
+    bool operator()(const containers::HashedKey& left,
+                    const KeyRef& right) const {
+      return left.key == right.Key();
+    }
+    bool operator()(std::string_view left, const KeyRef& right) const {
+      return left == right.Key();
+    }
+  };
+  // Records `expire` for `key`, which must be in the keyspace.
+  void SetExpire(const containers::HashedKey& key, int64_t expire);
+  // Deletes a key whose view points into its own keyspace entry, as keys
+  // found by scanning the TTL table do.
+  void DeleteStoredKey(std::string_view key);
+
   friend class aof::Aof;
   friend bool rdb::LoadRdb(int fd, RedisDb* db, const rdb::LoadOptions& options,
                            rdb::LoadStats* stats);
@@ -153,8 +184,11 @@ class RedisDb {
   bool IsKeyExpired(const containers::HashedKey& key) const;
   // Reads the clock, and keeps the time if it is pinned.
   int64_t ReadClock() const;
-  std::unique_ptr<containers::Dict<std::string, RedisObjectPtr>> dict_;
-  std::unique_ptr<containers::Dict<std::string, int64_t>> expires_;
+  std::unique_ptr<Keyspace> dict_;
+  // Every TTL entry reads its key from a keyspace entry, so a key's TTL
+  // must be removed before its keyspace entry is deleted.
+  std::unique_ptr<containers::Dict<KeyRef, int64_t, KeyRefHash, KeyRefEqual>>
+      expires_;
   std::unique_ptr<containers::Dict<std::string, std::vector<KeyWatcher*>>>
       watched_keys_;
   AsyncReclaimer reclaimer_;
