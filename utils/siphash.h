@@ -100,12 +100,7 @@ class State {
   uint64_t v2_;
   uint64_t v3_;
 };
-}  // namespace siphash_internal
 
-// SipHash-c-d keyed with a 128-bit key (Aumasson and Bernstein, 2012).
-// Keyed hashing keeps attackers from precomputing colliding keys that would
-// degrade hash tables into long chains.
-namespace siphash_internal {
 inline State KeyedState(const SipHashKey& key) {
   const std::span<const uint8_t, 16> key_bytes(key);
   return {LoadLittleEndian64(key_bytes.first<8>()),
@@ -119,8 +114,8 @@ uint64_t HashFrom(State state, std::string_view data) {
       reinterpret_cast<const uint8_t*>(data.data()), data.size());
   const size_t full_words = input.size() / 8;
   for (size_t word = 0; word < full_words; ++word) {
-    state.Absorb<kCompressionRounds>(siphash_internal::LoadLittleEndian64(
-        input.subspan(word * 8).first<8>()));
+    state.Absorb<kCompressionRounds>(
+        LoadLittleEndian64(input.subspan(word * 8).first<8>()));
   }
 
   uint64_t last = static_cast<uint64_t>(input.size() & 0xff) << 56;
@@ -131,6 +126,9 @@ uint64_t HashFrom(State state, std::string_view data) {
 }
 }  // namespace siphash_internal
 
+// SipHash-c-d keyed with a 128-bit key (Aumasson and Bernstein, 2012).
+// Keyed hashing keeps attackers from precomputing colliding keys that would
+// degrade hash tables into long chains.
 template <int kCompressionRounds, int kFinalizationRounds>
 uint64_t SipHash(std::string_view data, const SipHashKey& key) {
   return siphash_internal::HashFrom<kCompressionRounds, kFinalizationRounds>(

@@ -21,7 +21,7 @@ std::string_view FormatFloat(double value, FloatBuffer* buffer);
 // 17 significant digits ("1.1000000000000001"), with "inf", "-inf", and
 // "nan" spelled out. Returns a view of the text, empty if formatting fails.
 std::string_view FormatFloatWith17Digits(double value, FloatBuffer* buffer);
-// Convert floating number to string.
+// FormatFloat's text as a string, for callers that keep it.
 std::string FloatToString(double value);
 // Parses `value` as Redis' string2d does, for scores and other number
 // arguments: strtod over the whole text, so "inf" and hex work, but no
