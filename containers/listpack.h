@@ -25,6 +25,10 @@ class Listpack {
   };
   // Header: 32-bit total bytes followed by 16-bit element count.
   static constexpr int kListpackHeaderSize = 6;
+  // Enough space for INT64_MIN plus a null terminator.
+  static constexpr int kListpackIntBufferSize = 21;
+  // Where ElementAt formats an integer element as text.
+  using IntBuffer = std::array<unsigned char, kListpackIntBufferSize>;
   Listpack();
   // A listpack holding a copy of `bytes`, which must be a whole listpack in
   // Redis' byte format whose elements encode as this class encodes them:
@@ -33,7 +37,11 @@ class Listpack {
   static std::unique_ptr<Listpack> CreateFromBytes(std::string_view bytes);
   Listpack(const Listpack&) = delete;
   Listpack& operator=(const Listpack&) = delete;
-  unsigned char* Get(size_t offset, size_t* length) const;
+  // The element at `offset` as text, or nullopt at the terminator. An
+  // integer element is formatted into `buffer`; the view is valid while the
+  // listpack is unchanged and, for an integer, while `buffer` holds it.
+  std::optional<std::string_view> ElementAt(size_t offset,
+                                            IntBuffer* buffer) const;
   std::optional<std::string> Get(size_t offset) const;
   std::optional<int64_t> IntegerAt(size_t offset) const;
   std::optional<size_t> Find(std::string_view value) const;
@@ -79,8 +87,6 @@ class Listpack {
   ~Listpack() = default;
 
  private:
-  // Enough space for INT64_MIN plus a null terminator.
-  static constexpr int kListpackIntBufferSize = 21;
   static constexpr uint16_t kListpackUnknownElementCount = UINT16_MAX;
   static constexpr int kUint7BitIntMax = 127;
   static constexpr int kInt24BitIntMax = (1 << 23) - 1;
@@ -197,11 +203,6 @@ class Listpack {
   std::unique_ptr<unsigned char[]> listpack_;
   // Allocated bytes of listpack_; at least TotalBytes().
   size_t capacity_;
-  // Where Get(offset, length) formats an integer element. The pointer it
-  // returns is valid only until the next such Get on this listpack, and the
-  // buffer makes that Get unsafe to call from two threads at once, although
-  // it is const. The ForEach traversals use buffers of their own.
-  mutable std::array<unsigned char, kListpackIntBufferSize> int_buffer_{};
 };
 
 template <typename Visitor>

@@ -98,18 +98,21 @@ std::unique_ptr<Listpack> Listpack::CreateFromBytes(std::string_view bytes) {
   return listpack;
 }
 
-unsigned char* Listpack::Get(size_t offset, size_t* const length) const {
-  size_t listpack_bytes = TotalBytes();
+std::optional<std::string_view> Listpack::ElementAt(
+    size_t offset, IntBuffer* const buffer) const {
+  const size_t listpack_bytes = TotalBytes();
   RS_CHECK(offset >= kListpackHeaderSize && offset < listpack_bytes);
   if (offset == listpack_bytes - 1) {
-    return nullptr;
+    return std::nullopt;
   }
-  EncodingType encoding_type = EncodingAt(offset);
-  if (IsString(encoding_type)) {
-    return StringAt(offset, length, encoding_type);
-  }
-  return FormatInteger(DecodeInteger(offset, encoding_type), int_buffer_.data(),
-                       length);
+  size_t length = 0;
+  const EncodingType encoding_type = EncodingAt(offset);
+  const unsigned char* const data =
+      IsString(encoding_type)
+          ? StringAt(offset, &length, encoding_type)
+          : FormatInteger(DecodeInteger(offset, encoding_type), buffer->data(),
+                          &length);
+  return std::string_view(reinterpret_cast<const char*>(data), length);
 }
 
 std::optional<std::string> Listpack::Get(size_t offset) const {

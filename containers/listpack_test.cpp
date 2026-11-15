@@ -29,9 +29,8 @@ Listpack::ListpackEntry StringEntry(std::string_view value) {
 Listpack::ListpackEntry IntEntry(int64_t value) { return {"", value, true}; }
 
 std::string StringAt(const Listpack& listpack, size_t offset) {
-  size_t length = 0;
-  const unsigned char* data = listpack.Get(offset, &length);
-  return {reinterpret_cast<const char*>(data), length};
+  Listpack::IntBuffer buffer;
+  return std::string(listpack.ElementAt(offset, &buffer).value_or(""));
 }
 
 void ExpectEntryAt(const Listpack& listpack, size_t offset,
@@ -211,13 +210,14 @@ TEST(ListpackTest, Append) {
   size_t offset = RequireIndex(listpack->First());
   ASSERT_EQ(offset, Listpack::kListpackHeaderSize);
   ASSERT_EQ(listpack->IntegerAt(offset), -1234);
-  size_t l0 = 0;
-  unsigned char* c0 = listpack->Get(offset, &l0);
+  const std::string c0_text = StringAt(*listpack, offset);
+  const char* c0 = c0_text.data();
   ASSERT_TRUE(std::equal(c0, c0 + 5, "-1234"));
 
-  size_t l1 = 0;
   offset = RequireIndex(listpack->Next(offset));
-  unsigned char* c1 = listpack->Get(offset, &l1);
+  const std::string c1_text = StringAt(*listpack, offset);
+  const char* c1 = c1_text.data();
+  const size_t l1 = c1_text.size();
   ASSERT_EQ(l1, s0.size());
   ASSERT_TRUE(std::equal(c1, c1 + l1, s0.c_str()));
 
@@ -250,20 +250,23 @@ TEST(ListpackTest, Append) {
   ASSERT_EQ(listpack->IntegerAt(offset), INT64_MAX);
 
   offset = RequireIndex(listpack->Next(offset));
-  size_t l2 = 0;
-  unsigned char* c2 = listpack->Get(offset, &l2);
+  const std::string c2_text = StringAt(*listpack, offset);
+  const char* c2 = c2_text.data();
+  const size_t l2 = c2_text.size();
   ASSERT_TRUE(std::equal(c2, c2 + l2, "-1234567890"));
   ASSERT_EQ(listpack->IntegerAt(offset), -1234567890);
 
   offset = RequireIndex(listpack->Next(offset));
-  size_t l3 = 0;
-  unsigned char* c3 = listpack->Get(offset, &l3);
+  const std::string c3_text = StringAt(*listpack, offset);
+  const char* c3 = c3_text.data();
+  const size_t l3 = c3_text.size();
   ASSERT_EQ(l3, 4095);
   ASSERT_TRUE(std::equal(c3, c3 + l3, s2.c_str()));
 
   offset = RequireIndex(listpack->Next(offset));
-  size_t l4 = 0;
-  unsigned char* c4 = listpack->Get(offset, &l4);
+  const std::string c4_text = StringAt(*listpack, offset);
+  const char* c4 = c4_text.data();
+  const size_t l4 = c4_text.size();
   ASSERT_EQ(l4, 10000);
   ASSERT_TRUE(std::equal(c4, c4 + l4, s3.c_str()));
 
@@ -302,41 +305,47 @@ TEST(ListpackTest, Prepend) {
 
   size_t offset = RequireIndex(listpack->First());
   ASSERT_EQ(offset, Listpack::kListpackHeaderSize);
-  size_t l0 = 0;
-  unsigned char* c0 = listpack->Get(offset, &l0);
+  const std::string c0_text = StringAt(*listpack, offset);
+  const char* c0 = c0_text.data();
+  const size_t l0 = c0_text.size();
   ASSERT_EQ(l0, s3.size());
   ASSERT_TRUE(std::equal(c0, c0 + l0, "123456789"));
   ASSERT_EQ(listpack->IntegerAt(offset), 123456789);
 
   offset = RequireIndex(listpack->Next(offset));
-  size_t l1 = 0;
-  unsigned char* c1 = listpack->Get(offset, &l1);
+  const std::string c1_text = StringAt(*listpack, offset);
+  const char* c1 = c1_text.data();
+  const size_t l1 = c1_text.size();
   ASSERT_EQ(l1, s2.size());
   ASSERT_TRUE(std::equal(c1, c1 + l1, s2.c_str()));
 
   offset = RequireIndex(listpack->Next(offset));
-  size_t l2 = 0;
-  unsigned char* c2 = listpack->Get(offset, &l2);
+  const std::string c2_text = StringAt(*listpack, offset);
+  const char* c2 = c2_text.data();
+  const size_t l2 = c2_text.size();
   ASSERT_EQ(l2, 6);
   ASSERT_TRUE(std::equal(c2, c2 + l2, "-32765"));
   ASSERT_EQ(listpack->IntegerAt(offset), INT16_MIN + 3);
 
   offset = RequireIndex(listpack->Next(offset));
-  size_t l3 = 0;
-  unsigned char* c3 = listpack->Get(offset, &l3);
+  const std::string c3_text = StringAt(*listpack, offset);
+  const char* c3 = c3_text.data();
+  const size_t l3 = c3_text.size();
   ASSERT_EQ(l3, s1.size());
   ASSERT_TRUE(std::equal(c3, c3 + l3, s1.c_str()));
 
   offset = RequireIndex(listpack->Next(offset));
-  size_t l4 = 0;
-  unsigned char* c4 = listpack->Get(offset, &l4);
+  const std::string c4_text = StringAt(*listpack, offset);
+  const char* c4 = c4_text.data();
+  const size_t l4 = c4_text.size();
   ASSERT_EQ(l4, 19);
   ASSERT_TRUE(std::equal(c4, c4 + l4, "9223372036854775803"));
   ASSERT_EQ(listpack->IntegerAt(offset), INT64_MAX - 4);
 
   offset = RequireIndex(listpack->Next(offset));
-  size_t l5 = 0;
-  unsigned char* c5 = listpack->Get(offset, &l5);
+  const std::string c5_text = StringAt(*listpack, offset);
+  const char* c5 = c5_text.data();
+  const size_t l5 = c5_text.size();
   ASSERT_EQ(l5, s0.size());
   ASSERT_TRUE(std::equal(c5, c5 + l5, s0.c_str()));
 }
@@ -371,30 +380,35 @@ TEST(ListpackTest, Insert) {
 
   ASSERT_EQ(listpack->Size(), 21);
 
-  size_t l0 = 0;
-  unsigned char* c0 = listpack->Get(i0, &l0);
+  const std::string c0_text = StringAt(*listpack, i0);
+  const char* c0 = c0_text.data();
+  const size_t l0 = c0_text.size();
   ASSERT_EQ(l0, s0.size());
   ASSERT_TRUE(std::equal(c0, c0 + l0, s0.c_str()));
 
-  size_t l1 = 0;
-  unsigned char* c1 = listpack->Get(i1, &l1);
+  const std::string c1_text = StringAt(*listpack, i1);
+  const char* c1 = c1_text.data();
+  const size_t l1 = c1_text.size();
   ASSERT_EQ(l1, 19);
   ASSERT_TRUE(std::equal(c1, c1 + l1, "9223372036854775800"));
   ASSERT_EQ(listpack->IntegerAt(i1), INT64_MAX - 7);
 
-  size_t l2 = 0;
-  unsigned char* c2 = listpack->Get(i2, &l2);
+  const std::string c2_text = StringAt(*listpack, i2);
+  const char* c2 = c2_text.data();
+  const size_t l2 = c2_text.size();
   ASSERT_EQ(l2, 11);
   ASSERT_TRUE(std::equal(c2, c2 + l2, "-2147483641"));
   ASSERT_EQ(listpack->IntegerAt(i2), INT32_MIN + 7);
 
-  size_t l3 = 0;
-  unsigned char* c3 = listpack->Get(i3, &l3);
+  const std::string c3_text = StringAt(*listpack, i3);
+  const char* c3 = c3_text.data();
+  const size_t l3 = c3_text.size();
   ASSERT_EQ(l3, 4094);
   ASSERT_TRUE(std::equal(c3, c3 + l3, s1.c_str()));
 
-  size_t l4 = 0;
-  unsigned char* c4 = listpack->Get(i4, &l4);
+  const std::string c4_text = StringAt(*listpack, i4);
+  const char* c4 = c4_text.data();
+  const size_t l4 = c4_text.size();
   ASSERT_EQ(l4, 4097);
   ASSERT_TRUE(std::equal(c4, c4 + l4, s2.c_str()));
 }
@@ -410,21 +424,24 @@ TEST(ListpackTest, Replace) {
   }
   size_t element_count = listpack->Size();
   // Get next element to check if it's not changed after the replace.
-  size_t l0_next = 0;
   size_t next0 = RequireIndex(listpack->Next(offset));
-  unsigned char* c0_next = listpack->Get(next0, &l0_next);
-  std::string s0_next(reinterpret_cast<const char*>(c0_next), l0_next);
+  const std::string c0_next_text = StringAt(*listpack, next0);
+  const char* c0_next = c0_next_text.data();
+  const size_t l0_next = c0_next_text.size();
+  std::string s0_next(c0_next, l0_next);
   // Replace and get the element.
   listpack->Replace(offset, s0);
   ASSERT_EQ(listpack->Size(), element_count);
-  size_t l1 = 0;
-  size_t l1_next = 0;
-  unsigned char* c1 = listpack->Get(offset, &l1);
+  const std::string c1_text = StringAt(*listpack, offset);
+  const char* c1 = c1_text.data();
+  const size_t l1 = c1_text.size();
   ASSERT_EQ(l1, s0.size());
   ASSERT_TRUE(std::equal(c1, c1 + l1, s0.c_str()));
   // Get the next element and check if it is not changed.
   size_t next1 = RequireIndex(listpack->Next(offset));
-  unsigned char* c1_next = listpack->Get(next1, &l1_next);
+  const std::string c1_next_text = StringAt(*listpack, next1);
+  const char* c1_next = c1_next_text.data();
+  const size_t l1_next = c1_next_text.size();
   ASSERT_EQ(l1_next, l0_next);
   ASSERT_TRUE(std::equal(c1_next, c1_next + l1_next, s0_next.c_str()));
 
@@ -433,22 +450,25 @@ TEST(ListpackTest, Replace) {
     offset = RequireIndex(listpack->Next(offset));
   }
   // Get next element to check if it's not changed after the replace.
-  size_t l2_next = 0;
   size_t next2 = RequireIndex(listpack->Next(offset));
-  unsigned char* c2_next = listpack->Get(next2, &l2_next);
-  std::string s2_next(reinterpret_cast<const char*>(c2_next), l2_next);
+  const std::string c2_next_text = StringAt(*listpack, next2);
+  const char* c2_next = c2_next_text.data();
+  const size_t l2_next = c2_next_text.size();
+  std::string s2_next(c2_next, l2_next);
   // Replace and get the element.
   listpack->Replace(offset, 17);
   ASSERT_EQ(listpack->Size(), element_count);
-  size_t l3 = 0;
-  size_t l3_next = 0;
-  unsigned char* c3 = listpack->Get(offset, &l3);
+  const std::string c3_text = StringAt(*listpack, offset);
+  const char* c3 = c3_text.data();
+  const size_t l3 = c3_text.size();
   ASSERT_EQ(l3, 2);
   ASSERT_TRUE(std::equal(c3, c3 + l3, "17"));
   ASSERT_EQ(listpack->IntegerAt(offset), 17);
   // Get the next element and check if it is not changed.
   size_t next3 = RequireIndex(listpack->Next(offset));
-  unsigned char* c3_next = listpack->Get(next3, &l3_next);
+  const std::string c3_next_text = StringAt(*listpack, next3);
+  const char* c3_next = c3_next_text.data();
+  const size_t l3_next = c3_next_text.size();
   ASSERT_EQ(l3_next, l2_next);
   ASSERT_TRUE(std::equal(c3_next, c3_next + l3_next, s2_next.c_str()));
 
@@ -456,21 +476,24 @@ TEST(ListpackTest, Replace) {
   offset = RequireIndex(listpack->First());
   std::string s1("test string update 1");
   // Get next element to check if it's not changed after the replace.
-  size_t l4_next = 0;
   size_t next4 = RequireIndex(listpack->Next(offset));
-  unsigned char* c4_next = listpack->Get(next4, &l4_next);
-  std::string s4_next(reinterpret_cast<const char*>(c4_next), l4_next);
+  const std::string c4_next_text = StringAt(*listpack, next4);
+  const char* c4_next = c4_next_text.data();
+  const size_t l4_next = c4_next_text.size();
+  std::string s4_next(c4_next, l4_next);
   // Replace and get the element.
   listpack->Replace(offset, s1);
   ASSERT_EQ(listpack->Size(), element_count);
-  size_t l5 = 0;
-  size_t l5_next = 0;
-  unsigned char* c5 = listpack->Get(offset, &l5);
+  const std::string c5_text = StringAt(*listpack, offset);
+  const char* c5 = c5_text.data();
+  const size_t l5 = c5_text.size();
   ASSERT_EQ(l5, s1.size());
   ASSERT_TRUE(std::equal(c5, c5 + l5, s1.c_str()));
   // Get the next element and check if it is not changed.
   size_t next5 = RequireIndex(listpack->Next(offset));
-  unsigned char* c5_next = listpack->Get(next5, &l5_next);
+  const std::string c5_next_text = StringAt(*listpack, next5);
+  const char* c5_next = c5_next_text.data();
+  const size_t l5_next = c5_next_text.size();
   ASSERT_EQ(l5_next, l4_next);
   ASSERT_TRUE(std::equal(c5_next, c5_next + l5_next, s4_next.c_str()));
 
@@ -480,9 +503,10 @@ TEST(ListpackTest, Replace) {
   // Replace and get the element.
   listpack->Replace(offset, 217);
   ASSERT_EQ(listpack->Size(), element_count);
-  size_t l7 = 0;
   [[maybe_unused]] size_t l7_next = 0;
-  unsigned char* c7 = listpack->Get(offset, &l7);
+  const std::string c7_text = StringAt(*listpack, offset);
+  const char* c7 = c7_text.data();
+  const size_t l7 = c7_text.size();
   ASSERT_EQ(l7, 3);
   ASSERT_TRUE(std::equal(c7, c7 + l7, "217"));
   ASSERT_EQ(listpack->IntegerAt(offset), 217);
@@ -543,8 +567,10 @@ TEST(ListpackTest, BatchInsert) {
 TEST(ListpackDeathTest, InvalidGetOnEmptyListpack) {
   auto listpack = std::make_unique<Listpack>();
   // Out of bound
-  EXPECT_DEATH(listpack->Get(0, nullptr), "Check failed");
-  EXPECT_DEATH(listpack->Get(listpack->TotalBytes(), nullptr), "Check failed");
+  Listpack::IntBuffer buffer;
+  EXPECT_DEATH(listpack->ElementAt(0, &buffer), "Check failed");
+  EXPECT_DEATH(listpack->ElementAt(listpack->TotalBytes(), &buffer),
+               "Check failed");
   EXPECT_DEATH(listpack->IntegerAt(0), "Check failed");
   EXPECT_DEATH(listpack->IntegerAt(listpack->TotalBytes()), "Check failed");
 }
@@ -741,12 +767,14 @@ TEST(ListpackTest, Delete) {
   size_t offset = RequireIndex(listpack->First());
   size_t next_offset = RequireIndex(listpack->Next(offset));
   size_t element_count = listpack->Size();
-  size_t l0 = 0;
-  unsigned char* c0 = listpack->Get(next_offset, &l0);
+  const std::string c0_text = StringAt(*listpack, next_offset);
+  const char* c0 = c0_text.data();
+  const size_t l0 = c0_text.size();
   listpack->Delete(offset);
   offset = RequireIndex(listpack->First());
-  size_t l1 = 0;
-  unsigned char* c1 = listpack->Get(offset, &l1);
+  const std::string c1_text = StringAt(*listpack, offset);
+  const char* c1 = c1_text.data();
+  const size_t l1 = c1_text.size();
   ASSERT_EQ(listpack->Size(), element_count - 1);
   ASSERT_EQ(l0, l1);
   ASSERT_TRUE(std::equal(c1, c1 + l1, c0));
@@ -756,27 +784,31 @@ TEST(ListpackTest, Delete) {
   const size_t prev_offset = RequireIndex(listpack->Next(offset));
   offset = RequireIndex(listpack->Next(prev_offset));
   next_offset = RequireIndex(listpack->Next(offset));
-  size_t l2 = 0;
-  unsigned char* c2 = listpack->Get(next_offset, &l2);
+  const std::string c2_text = StringAt(*listpack, next_offset);
+  const char* c2 = c2_text.data();
+  const size_t l2 = c2_text.size();
   element_count = listpack->Size();
   listpack->Delete(offset);
   ASSERT_EQ(listpack->Size(), element_count - 1);
   offset = RequireIndex(listpack->Next(prev_offset));
-  size_t l3 = 0;
-  unsigned char* c3 = listpack->Get(offset, &l3);
+  const std::string c3_text = StringAt(*listpack, offset);
+  const char* c3 = c3_text.data();
+  const size_t l3 = c3_text.size();
   ASSERT_EQ(l2, l3);
   ASSERT_TRUE(std::equal(c3, c3 + l3, c2));
 
   // Delete the tail.
   offset = RequireIndex(listpack->Last());
   ASSERT_FALSE(listpack->Next(offset).has_value());
-  size_t l4 = 0;
-  unsigned char* c4 = listpack->Get(next_offset, &l4);
+  const std::string c4_text = StringAt(*listpack, next_offset);
+  const char* c4 = c4_text.data();
+  const size_t l4 = c4_text.size();
   element_count = listpack->Size();
   listpack->Delete(offset);
   ASSERT_EQ(listpack->Size(), element_count - 1);
-  size_t l5 = 0;
-  unsigned char* c5 = listpack->Get(next_offset, &l5);
+  const std::string c5_text = StringAt(*listpack, next_offset);
+  const char* c5 = c5_text.data();
+  const size_t l5 = c5_text.size();
   ASSERT_EQ(l4, l5);
   ASSERT_TRUE(std::equal(c5, c5 + l5, c4));
 }
@@ -913,9 +945,10 @@ TEST(ListpackDeathTest, RejectsOutOfBoundsIndexes) {
   const size_t end = listpack->TotalBytes();
   const auto entries = MakeBatchInsertEntries("a", "b", "c");
 
-  EXPECT_DEATH(listpack->Get(Listpack::kListpackHeaderSize - 1, nullptr),
+  Listpack::IntBuffer buffer;
+  EXPECT_DEATH(listpack->ElementAt(Listpack::kListpackHeaderSize - 1, &buffer),
                "Check failed");
-  EXPECT_DEATH(listpack->Get(end, nullptr), "Check failed");
+  EXPECT_DEATH(listpack->ElementAt(end, &buffer), "Check failed");
   EXPECT_DEATH(listpack->IntegerAt(3), "Check failed");
   EXPECT_DEATH(listpack->IntegerAt(end), "Check failed");
   EXPECT_DEATH(listpack->Insert(0, "value"), "Check failed");

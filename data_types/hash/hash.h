@@ -94,12 +94,13 @@ bool Hash::VisitValue(std::string_view field, Visitor&& visitor) const {
     if (!value_offset.has_value()) {
       return false;
     }
-    size_t length = 0;
-    const unsigned char* data = listpack_->Get(*value_offset, &length);
-    if (data == nullptr) {
+    containers::Listpack::IntBuffer buffer;
+    const std::optional<std::string_view> value =
+        listpack_->ElementAt(*value_offset, &buffer);
+    if (!value.has_value()) {
       return false;
     }
-    visitor(std::string_view(reinterpret_cast<const char*>(data), length));
+    visitor(*value);
     return true;
   }
   if (encoding_ == Encoding::kDict) {
