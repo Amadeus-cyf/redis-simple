@@ -95,6 +95,10 @@ struct DictKeyEqual<std::string> {
   }
 };
 
+// The value type of a Dict used as a set: entries hold no value at all, not
+// even the 8 bytes a std::nullptr_t would take.
+struct NoValue {};
+
 namespace dict_internal {
 // One key and value in a bucket's chain. `KeyView` is how the key is read
 // back: a reference to the stored key.
@@ -113,7 +117,8 @@ struct DictEntry {
   KeyView Key() const { return key; }
 
   K key;
-  V value;
+  // Takes no space when V is empty (NoValue).
+  [[no_unique_address]] V value;
   size_t hash;
   DictEntry* next;
 };
@@ -128,6 +133,9 @@ struct DictEntry<std::string, V> {
   using KeyView = std::string_view;
 
   static DictEntry* Create(std::string_view key, size_t hash) {
+    static_assert(
+        !std::is_empty_v<V> || sizeof(DictEntry) == 3 * sizeof(size_t),
+        "an empty value must take no space");
     static_assert(alignof(DictEntry) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
     void* const memory = ::operator new(sizeof(DictEntry) + key.size());
     auto* const entry = new (memory) DictEntry(hash, key.size());
@@ -142,7 +150,8 @@ struct DictEntry<std::string, V> {
   }
   KeyView Key() const { return {KeyBytes(), key_length}; }
 
-  V value{};
+  // Takes no space when V is empty (NoValue).
+  [[no_unique_address]] V value{};
   size_t hash;
   DictEntry* next{nullptr};
   size_t key_length;

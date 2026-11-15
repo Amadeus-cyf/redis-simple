@@ -165,7 +165,7 @@ std::optional<SetReply> SUnion(db::RedisDb* const redis_db,
 
   // Dedupe through a Dict, which reuses the hashes stored by dict-encoded
   // sources instead of hashing each member again.
-  using MemberDict = containers::Dict<std::string, std::nullptr_t>;
+  using MemberDict = containers::Dict<std::string, containers::NoValue>;
   std::vector<const Set*> sets;
   sets.reserve(keys.size());
   size_t total = 0;
