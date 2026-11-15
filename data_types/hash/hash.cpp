@@ -160,7 +160,7 @@ void Hash::ConvertListpackToDict(size_t capacity) {
   if (listpack_ != nullptr) {
     listpack_->ForEachPair(
         [this](std::string_view field, std::string_view value) {
-          dict_->Set(std::string(field), std::string(value));
+          *dict_->FindOrInsert(field).first = std::string(value);
           return true;
         });
   }

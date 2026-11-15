@@ -137,7 +137,7 @@ TEST(DictStringTest, ShrinksAfterMassDeletes) {
   int visited_buckets = 0;
   size_t cursor = 0;
   while (true) {
-    const auto next = dict->Scan(cursor, [](const std::string&, const int&) {});
+    const auto next = dict->Scan(cursor, [](std::string_view, const int&) {});
     ++visited_buckets;
     if (!next.has_value()) {
       break;
@@ -158,7 +158,7 @@ TEST(DictStringTest, ScanVisitsEveryKeyWhileTheTableResizes) {
   int step = 0;
   while (true) {
     const std::optional<size_t> next =
-        dict->Scan(cursor, [&seen](const std::string&, const int& v) {
+        dict->Scan(cursor, [&seen](std::string_view, const int& v) {
           ++seen[static_cast<size_t>(v)];
         });
     if (!next.has_value()) {
@@ -181,6 +181,48 @@ TEST(DictStringTest, ScanVisitsEveryKeyWhileTheTableResizes) {
   for (int i = 0; i < 1000; ++i) {
     EXPECT_GE(seen[static_cast<size_t>(i)], 1) << i;
   }
+}
+
+TEST(DictStringTest, KeysOfAnyLengthAndBytesAreStoredWithTheirEntries) {
+  auto dict = Dict<std::string, std::string>::Create();
+  const std::vector<std::string> keys = {"",
+                                         "a",
+                                         std::string("nul\0inside", 10),
+                                         std::string(15, 'k'),
+                                         std::string(16, 'k'),
+                                         std::string(4096, 'k')};
+  for (const std::string& key : keys) {
+    dict->Set(key, "value of " + key);
+  }
+  ASSERT_EQ(dict->Size(), keys.size());
+  for (const std::string& key : keys) {
+    const std::string* const value = dict->FindValue(std::string_view(key));
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(*value, "value of " + key);
+  }
+  std::vector<std::string> stored;
+  auto it = Dict<std::string, std::string>::Iterator(dict.get());
+  for (it.SeekToFirst(); it.Valid(); it.Next()) {
+    stored.emplace_back(it.Key());
+    EXPECT_EQ(it.Value(), "value of " + stored.back());
+  }
+  std::vector<std::string> expected = keys;
+  std::ranges::sort(stored);
+  std::ranges::sort(expected);
+  EXPECT_EQ(stored, expected);
+}
+
+TEST(DictStringTest, KeyViewsStayValidWhileTheTableGrows) {
+  auto dict = Dict<std::string, int>::Create();
+  dict->Set("first key, long enough to matter", 0);
+  auto it = Dict<std::string, int>::Iterator(dict.get());
+  it.SeekToFirst();
+  ASSERT_TRUE(it.Valid());
+  const std::string_view first = it.Key();
+  for (int i = 1; i < 1000; ++i) {
+    dict->Set("key" + std::to_string(i), i);
+  }
+  EXPECT_EQ(first, "first key, long enough to matter");
 }
 
 TEST(DictStringTest, Insert) {
@@ -314,7 +356,7 @@ TEST(DictIntTest, Clear) {
 
 TEST(DictStringTest, ScanStepVisitsCountElementsPerStep) {
   auto dict = Dict<std::string, int>::Create();
-  EXPECT_EQ(dict->ScanStep(0, 10, [](const std::string&, const int&) {}), 0);
+  EXPECT_EQ(dict->ScanStep(0, 10, [](std::string_view, const int&) {}), 0);
   for (int i = 0; i < 1000; ++i) {
     dict->Insert(std::to_string(i), i);
   }
@@ -322,11 +364,11 @@ TEST(DictStringTest, ScanStepVisitsCountElementsPerStep) {
   size_t cursor = 0;
   while (true) {
     size_t visited = 0;
-    cursor = dict->ScanStep(
-        cursor, 10, [&seen, &visited](const std::string&, const int& v) {
-          ++seen[static_cast<size_t>(v)];
-          ++visited;
-        });
+    cursor = dict->ScanStep(cursor, 10,
+                            [&seen, &visited](std::string_view, const int& v) {
+                              ++seen[static_cast<size_t>(v)];
+                              ++visited;
+                            });
     if (cursor == 0) {
       break;
     }

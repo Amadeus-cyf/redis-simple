@@ -125,7 +125,7 @@ bool ZSetSkiplist::ForEachEntry(const ZSetEntryVisitor& visitor) const {
 size_t ZSetSkiplist::Scan(size_t cursor, size_t count,
                           const ZSetMemberVisitor& visitor) {
   return dict_->ScanStep(cursor, count,
-                         [&visitor](const std::string& member, double score) {
+                         [&visitor](std::string_view member, double score) {
                            visitor(member, score);
                          });
 }

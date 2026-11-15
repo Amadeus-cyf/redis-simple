@@ -8,9 +8,11 @@
 #include <climits>
 #include <concepts>
 #include <cstddef>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -93,6 +95,69 @@ struct DictKeyEqual<std::string> {
   }
 };
 
+namespace dict_internal {
+// One key and value in a bucket's chain. `KeyView` is how the key is read
+// back: a reference to the stored key.
+template <typename K, typename V>
+struct DictEntry {
+  using KeyView = const K&;
+
+  template <typename Source>
+  static DictEntry* Create(Source&& key, size_t hash) {
+    return new DictEntry{.key = K(std::forward<Source>(key)),
+                         .value = V(),
+                         .hash = hash,
+                         .next = nullptr};
+  }
+  static void Destroy(DictEntry* entry) { delete entry; }
+  KeyView Key() const { return key; }
+
+  K key;
+  V value;
+  size_t hash;
+  DictEntry* next;
+};
+
+// A string key's bytes follow its entry in the same allocation, as Redis
+// embeds keys in its entries, so a key costs no allocation of its own and no
+// std::string header. The key is read back as a std::string_view, which
+// stays valid until the entry is deleted: rehashing relinks entries without
+// moving them.
+template <typename V>
+struct DictEntry<std::string, V> {
+  using KeyView = std::string_view;
+
+  static DictEntry* Create(std::string_view key, size_t hash) {
+    static_assert(alignof(DictEntry) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+    void* const memory = ::operator new(sizeof(DictEntry) + key.size());
+    auto* const entry = new (memory) DictEntry(hash, key.size());
+    if (!key.empty()) {
+      std::memcpy(entry->KeyBytes(), key.data(), key.size());
+    }
+    return entry;
+  }
+  static void Destroy(DictEntry* entry) {
+    entry->~DictEntry();
+    ::operator delete(entry);
+  }
+  KeyView Key() const { return {KeyBytes(), key_length}; }
+
+  V value{};
+  size_t hash;
+  DictEntry* next{nullptr};
+  size_t key_length;
+
+ private:
+  DictEntry(size_t key_hash, size_t length)
+      : hash(key_hash), key_length(length) {}
+  ~DictEntry() = default;
+  char* KeyBytes() { return reinterpret_cast<char*>(this + 1); }
+  const char* KeyBytes() const {
+    return reinterpret_cast<const char*>(this + 1);
+  }
+};
+}  // namespace dict_internal
+
 // A Dict hash policy maps a key to a bucket hash.
 template <typename Hash, typename K>
 concept DictHashFor =
@@ -119,6 +184,9 @@ class Dict {
 
  public:
   class Iterator;
+  // How a stored key is read back: a std::string_view of a string key, whose
+  // bytes live in its entry, and a const K& of any other.
+  using KeyView = typename dict_internal::DictEntry<K, V>::KeyView;
   static std::unique_ptr<Dict> Create();
   static std::unique_ptr<Dict> Create(size_t capacity);
   Dict(const Dict&) = delete;
@@ -166,12 +234,11 @@ class Dict {
   ~Dict();
 
  private:
-  struct DictEntry {
-    K key;
-    V value;
-    size_t hash{};
-    DictEntry* next{nullptr};
+  using DictEntry = dict_internal::DictEntry<K, V>;
+  struct EntryDeleter {
+    void operator()(DictEntry* entry) const { DictEntry::Destroy(entry); }
   };
+  using EntryPtr = std::unique_ptr<DictEntry, EntryDeleter>;
 
   // Four buckets, Redis' smallest table (DICT_HT_INITIAL_SIZE).
   static constexpr int kTableInitExp = 2;
@@ -207,7 +274,8 @@ class Dict {
   }
   // Links a new entry for `key`, which must not be present, with a
   // value-initialized value, and returns it.
-  DictEntry* AddEntry(K&& key, size_t hash);
+  template <typename Source>
+  DictEntry* AddEntry(Source&& key, size_t hash);
   template <typename Lookup>
   bool KeyEquals(const Lookup& key, const DictEntry* entry) const;
   template <typename Lookup>
@@ -263,14 +331,14 @@ class Dict<K, V, Hash, KeyEqual>::Iterator {
   void SeekToFirst();
   void SeekToLast();
   void Next();
-  const K& Key() const { return entry_->key; }
+  KeyView Key() const { return entry_->Key(); }
   const V& Value() const { return entry_->value; }
   // The current key with the hash stored in its entry, so it can be looked
   // up in other Dicts that share the seeded string hash without rehashing.
   HashedKey Hashed() const
     requires std::same_as<Hash, DictHash<std::string>>
   {
-    return HashedKey(entry_->key, entry_->hash);
+    return HashedKey(entry_->Key(), entry_->hash);
   }
 
  private:
@@ -481,7 +549,7 @@ bool Dict<K, V, Hash, KeyEqual>::Insert(K&& key, V&& value) {
 template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 bool Dict<K, V, Hash, KeyEqual>::DeleteImpl(const Lookup& key) {
-  std::unique_ptr<DictEntry> entry(Unlink(key));
+  EntryPtr entry(Unlink(key));
   if (entry == nullptr) {
     return false;
   }
@@ -493,7 +561,7 @@ bool Dict<K, V, Hash, KeyEqual>::DeleteImpl(const Lookup& key) {
 template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 std::optional<V> Dict<K, V, Hash, KeyEqual>::ExtractImpl(const Lookup& key) {
-  std::unique_ptr<DictEntry> entry(Unlink(key));
+  EntryPtr entry(Unlink(key));
   if (entry == nullptr) {
     return std::nullopt;
   }
@@ -578,7 +646,7 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 bool Dict<K, V, Hash, KeyEqual>::KeyEquals(const Lookup& key,
                                            const DictEntry* entry) const {
-  return key_equal_(key, entry->key);
+  return key_equal_(key, entry->Key());
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -641,16 +709,14 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 typename Dict<K, V, Hash, KeyEqual>::DictEntry*
 Dict<K, V, Hash, KeyEqual>::InsertNew(const Lookup& key, size_t hash) {
-  return AddEntry(K(KeyOf(key)), hash);
+  return AddEntry(KeyOf(key), hash);
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
+template <typename Source>
 typename Dict<K, V, Hash, KeyEqual>::DictEntry*
-Dict<K, V, Hash, KeyEqual>::AddEntry(K&& key, size_t hash) {
-  // Built in place: the key is moved once, not default-constructed and then
-  // assigned.
-  DictEntry* const entry =
-      std::make_unique<DictEntry>(std::move(key), V(), hash, nullptr).release();
+Dict<K, V, Hash, KeyEqual>::AddEntry(Source&& key, size_t hash) {
+  DictEntry* const entry = DictEntry::Create(std::forward<Source>(key), hash);
   InsertEntry(entry, IsRehashing() ? 1 : 0);
   return entry;
 }
@@ -789,7 +855,7 @@ void Dict<K, V, Hash, KeyEqual>::ClearTable(int table) {
     DictEntry* entry = bucket;
     while (entry != nullptr) {
       DictEntry* const next = entry->next;
-      delete entry;
+      DictEntry::Destroy(entry);
       entry = next;
     }
   }
@@ -804,12 +870,12 @@ void Dict<K, V, Hash, KeyEqual>::VisitBucket(const DictEntry* entry,
                                              Visitor& visitor) {
   while (entry != nullptr) {
     const DictEntry* const next = entry->next;
-    if constexpr (std::invocable<Visitor&, const K&, const V&>) {
-      visitor(entry->key, entry->value);
+    if constexpr (std::invocable<Visitor&, KeyView, const V&>) {
+      visitor(entry->Key(), entry->value);
     } else {
       // A visitor that takes a HashedKey gets the hash stored with the
       // entry, so it can look the key up in another Dict without rehashing.
-      visitor(HashedKey(entry->key, entry->hash), entry->value);
+      visitor(HashedKey(entry->Key(), entry->hash), entry->value);
     }
     entry = next;
   }

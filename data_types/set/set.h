@@ -134,7 +134,7 @@ template <typename Visitor>
 size_t Set::ScanDict(size_t cursor, size_t count, Visitor&& visitor) {
   RS_CHECK(encoding_ == Encoding::kDict);
   return dict_->ScanStep(cursor, count,
-                         [&visitor](const std::string& member, std::nullptr_t) {
+                         [&visitor](std::string_view member, std::nullptr_t) {
                            visitor(std::string_view(member));
                          });
 }

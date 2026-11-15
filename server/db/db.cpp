@@ -256,9 +256,9 @@ void RedisDb::Flush() {
     std::optional<size_t> cursor = 0;
     while (cursor.has_value()) {
       cursor = watched_keys_->Scan(
-          *cursor, [this](const std::string& key,
+          *cursor, [this](std::string_view key,
                           const std::vector<KeyWatcher*>& watchers) {
-            if (dict_->FindValue(std::string_view(key)) != nullptr) {
+            if (dict_->FindValue(key) != nullptr) {
               for (KeyWatcher* const watcher : watchers) {
                 watcher->dirty_ = true;
               }
@@ -283,7 +283,7 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
   while (result.sampled < max_samples && !scan_complete) {
     const std::optional<size_t> next_cursor = expires_->Scan(
         expire_cursor_, [&result, &expired_keys, max_samples, now](
-                            const std::string& key, const int64_t& expire) {
+                            std::string_view key, const int64_t& expire) {
           if (result.sampled >= max_samples) {
             return;
           }
