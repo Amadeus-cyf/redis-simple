@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "containers/compact_string.h"
 #include "containers/dict.h"
 #include "containers/listpack.h"
 #include "utils/check.h"
@@ -80,7 +81,8 @@ class Hash {
 
   enum Encoding encoding_;
   std::unique_ptr<containers::Listpack> listpack_;
-  std::unique_ptr<containers::Dict<std::string, std::string>> dict_;
+  std::unique_ptr<containers::Dict<std::string, containers::CompactString>>
+      dict_;
 };
 
 template <typename Visitor>
@@ -108,7 +110,7 @@ bool Hash::VisitValue(std::string_view field, Visitor&& visitor) const {
     if (value == nullptr) {
       return false;
     }
-    visitor(std::string_view(value->data(), value->size()));
+    visitor(value->View());
     return true;
   }
   utils::Unreachable();
@@ -123,10 +125,12 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
     return listpack_->ForEachPair(visitor);
   }
   if (encoding_ == Encoding::kDict) {
-    auto it = containers::Dict<std::string, std::string>::Iterator(dict_.get());
+    auto it =
+        containers::Dict<std::string, containers::CompactString>::Iterator(
+            dict_.get());
     it.SeekToFirst();
     while (it.Valid()) {
-      if (!visitor(it.Key(), it.Value())) {
+      if (!visitor(it.Key(), it.Value().View())) {
         return false;
       }
       it.Next();
@@ -139,11 +143,11 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
 template <typename Visitor>
 size_t Hash::ScanDict(size_t cursor, size_t count, Visitor&& visitor) {
   RS_CHECK(encoding_ == Encoding::kDict);
-  return dict_->ScanStep(
-      cursor, count,
-      [&visitor](std::string_view field, const std::string& value) {
-        visitor(field, std::string_view(value));
-      });
+  return dict_->ScanStep(cursor, count,
+                         [&visitor](std::string_view field,
+                                    const containers::CompactString& value) {
+                           visitor(field, value.View());
+                         });
 }
 
 template <typename Visitor>
