@@ -14,10 +14,21 @@
 
 namespace redis_simple::data_types {
 namespace zset_skiplist_internal {
-// A skiplist entry, and the probe that finds one. A stored entry's name
-// views the bytes of the member's dict entry, so each name is kept once,
-// as Redis' skiplist and dict share one string. Entries leave the skiplist
-// before their dict entry is deleted; dict entries never move.
+using MemberDict = containers::Dict<std::string, double>;
+
+// A skiplist entry: a score and a handle to the member's dict entry, which
+// holds the name, so each name is kept once, as Redis' skiplist and dict
+// share one string. A handle is 8 bytes where a view would take 16. Entries
+// leave the skiplist before their dict entry is deleted; dict entries never
+// move.
+struct ScoredEntry {
+  std::string_view Member() const { return member.Key(); }
+
+  double score{};
+  MemberDict::EntryRef member;
+};
+
+// The probe that finds an entry by score and name.
 struct ScoredMember {
   double score{};
   std::string_view member;
@@ -27,23 +38,31 @@ struct ScoredMember {
 // insert, so this is a total order. Comparing against a bare score looks at
 // the score only, which lets score ranges search the skiplist directly.
 struct EntryOrder {
-  std::partial_ordering operator()(const ScoredMember& left,
+  std::partial_ordering operator()(const ScoredEntry& left,
                                    const ScoredMember& right) const {
     if (const std::partial_ordering order = left.score <=> right.score;
         order != 0) {
       return order;
     }
-    return left.member <=> right.member;
+    return left.Member() <=> right.member;
   }
-  std::partial_ordering operator()(const ScoredMember& entry,
+  std::partial_ordering operator()(const ScoredEntry& left,
+                                   const ScoredEntry& right) const {
+    if (const std::partial_ordering order = left.score <=> right.score;
+        order != 0) {
+      return order;
+    }
+    return left.Member() <=> right.Member();
+  }
+  std::partial_ordering operator()(const ScoredEntry& entry,
                                    double score) const {
     return entry.score <=> score;
   }
   // Comparing against a lexicographic bound looks at the member only, as
   // Redis' zslFirstInLexRange does while descending the skiplist.
-  std::partial_ordering operator()(const ScoredMember& entry,
+  std::partial_ordering operator()(const ScoredEntry& entry,
                                    const LexBound& bound) const {
-    return CompareLex(entry.member, bound);
+    return CompareLex(entry.Member(), bound);
   }
 };
 }  // namespace zset_skiplist_internal
@@ -87,16 +106,17 @@ class ZSetSkiplist : public ZSetStorage {
   void VisitLexRange(const RangeByLexSpec* spec, Visitor&& visitor) const;
 
  private:
+  using ScoredEntry = zset_skiplist_internal::ScoredEntry;
   using ScoredMember = zset_skiplist_internal::ScoredMember;
   using SkiplistType =
-      containers::Skiplist<ScoredMember, zset_skiplist_internal::EntryOrder>;
+      containers::Skiplist<ScoredEntry, zset_skiplist_internal::EntryOrder>;
 
   bool OverlapsLexRange(const RangeByLexSpec* spec) const;
   static std::optional<SkiplistType::Limit> ToLimit(
       const std::optional<LimitSpec>& limit);
 
   // Maps each member to its score.
-  std::unique_ptr<containers::Dict<std::string, double>> dict_;
+  std::unique_ptr<zset_skiplist_internal::MemberDict> dict_;
   // Entries ordered by score, then member name.
   std::unique_ptr<SkiplistType> skiplist_;
 };
@@ -119,8 +139,8 @@ void ZSetSkiplist::VisitRankRange(const RangeByRankSpec* spec,
       .limit = ToLimit(normalized->limit),
       .reverse = spec->reverse,
   };
-  skiplist_->ForEachInRange(range, [&visitor](const ScoredMember& entry) {
-    visitor(entry.member, entry.score);
+  skiplist_->ForEachInRange(range, [&visitor](const ScoredEntry& entry) {
+    visitor(entry.Member(), entry.score);
   });
 }
 
@@ -138,8 +158,8 @@ void ZSetSkiplist::VisitScoreRange(const RangeByScoreSpec* spec,
       .limit = ToLimit(spec->limit),
       .reverse = spec->reverse,
   };
-  skiplist_->ForEachInRange(range, [&visitor](const ScoredMember& entry) {
-    visitor(entry.member, entry.score);
+  skiplist_->ForEachInRange(range, [&visitor](const ScoredEntry& entry) {
+    visitor(entry.Member(), entry.score);
   });
 }
 
@@ -158,8 +178,8 @@ void ZSetSkiplist::VisitLexRange(const RangeByLexSpec* spec,
           .limit = ToLimit(spec->limit),
           .reverse = spec->reverse,
       },
-      [&visitor](const ScoredMember& entry) {
-        visitor(entry.member, entry.score);
+      [&visitor](const ScoredEntry& entry) {
+        visitor(entry.Member(), entry.score);
       });
 }
 }  // namespace redis_simple::data_types
