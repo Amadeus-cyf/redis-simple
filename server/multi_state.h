@@ -2,6 +2,7 @@
 #define REDIS_SIMPLE_SERVER_MULTI_STATE_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -29,36 +30,46 @@ class MultiState {
   // to its arguments, until `run` returns false.
   template <typename Run>
   void ForEach(commands::CommandArgs* const args, const Run& run) const {
+    size_t first_arg = 0;
+    size_t arg_start = 0;
     for (const QueuedCommand& queued : commands_) {
       args->clear();
-      const size_t first_arg = queued.arg_end - queued.arg_count;
-      size_t arg_start = first_arg == 0 ? 0 : arg_ends_[first_arg - 1];
       for (size_t index = first_arg; index < queued.arg_end; ++index) {
         const size_t arg_end = arg_ends_[index];
         args->emplace_back(args_.data() + arg_start, arg_end - arg_start);
         arg_start = arg_end;
       }
+      first_arg = queued.arg_end;
       if (!run(queued.command)) {
         return;
       }
     }
   }
-  // Ends the transaction and drops the queue.
+  // Ends the transaction and drops the queue. A queue that grew past a small
+  // size is released, so one large transaction does not stay allocated for
+  // the rest of the connection.
   void Reset();
+  // Bytes allocated for the queue, used or not.
+  size_t AllocatedBytes() const {
+    return args_.capacity() + arg_ends_.capacity() * sizeof(ArgEnd) +
+           commands_.capacity() * sizeof(QueuedCommand);
+  }
 
  private:
-  // A queued command's arguments are the `arg_count` entries of `arg_ends_`
-  // before `arg_end`, which index into `args_`.
+  // An offset into `args_`, which the queue limit keeps under 4 GiB.
+  using ArgEnd = uint32_t;
+  // A queued command's arguments are the entries of `arg_ends_` from the
+  // previous command's `arg_end` up to its own; each is where an argument
+  // ends in `args_`, and the next one starts there.
   struct QueuedCommand {
     const commands::Command* command;
     size_t arg_end;
-    size_t arg_count;
   };
 
   bool active_{};
   bool failed_{};
   std::vector<QueuedCommand> commands_;
-  std::vector<size_t> arg_ends_;
+  std::vector<ArgEnd> arg_ends_;
   std::string args_;
 };
 }  // namespace redis_simple
