@@ -32,8 +32,87 @@ class SystemFileOps final : public FileOps {
   int Rename(const char* source, const char* destination) override {
     return std::rename(source, destination);
   }
+
+#ifdef __linux__
+  [[nodiscard]] bool HasRangeSync() const override { return true; }
+
+  int StartWriteback(int fd, off_t offset, off_t size) override {
+    return sync_file_range(fd, offset, size, SYNC_FILE_RANGE_WRITE);
+  }
+
+  int WaitForWriteback(int fd, off_t offset, off_t size) override {
+    return sync_file_range(fd, offset, size,
+                           SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE |
+                               SYNC_FILE_RANGE_WAIT_AFTER);
+  }
+
+  int DropPageCache(int fd) override {
+    // Offset and length 0 mean the whole file. posix_fadvise returns the
+    // error number instead of setting errno.
+    const int error_number = posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    if (error_number != 0) {
+      errno = error_number;
+      return -1;
+    }
+    return 0;
+  }
+#endif
 };
 }  // namespace
+
+int FileOps::StartWriteback(int /*fd*/, off_t /*offset*/, off_t /*size*/) {
+  errno = ENOTSUP;
+  return -1;
+}
+
+int FileOps::WaitForWriteback(int /*fd*/, off_t /*offset*/, off_t /*size*/) {
+  errno = ENOTSUP;
+  return -1;
+}
+
+int FileOps::DropPageCache(int /*fd*/) { return 0; }
+
+bool IncrementalSync::Written(size_t size) {
+  pending_bytes_ += size;
+  if (pending_bytes_ < kIntervalBytes) {
+    return true;
+  }
+  if (!SyncPending()) {
+    return false;
+  }
+  if (!keep_page_cache_) {
+    // The pending interval may still be on its way to the disk, and pages
+    // being written are not dropped, so this asks for the whole file: each
+    // interval's pages get another chance at the next one. A failure only
+    // leaves pages cached.
+    static_cast<void>(file_ops_->DropPageCache(fd_));
+  }
+  return true;
+}
+
+bool IncrementalSync::SyncPending() {
+  const auto pending_size = static_cast<off_t>(pending_bytes_);
+  if (!file_ops_->HasRangeSync()) {
+    if (!SyncFile(file_ops_, fd_)) {
+      return false;
+    }
+  } else {
+    if (file_ops_->StartWriteback(fd_, pending_offset_, pending_size) < 0) {
+      return false;
+    }
+    // Waiting for the interval before keeps the promise of incremental
+    // sync: at most two intervals are ever not yet on disk.
+    const off_t previous_size = pending_offset_ - previous_offset_;
+    if (previous_size > 0 &&
+        file_ops_->WaitForWriteback(fd_, previous_offset_, previous_size) < 0) {
+      return false;
+    }
+  }
+  previous_offset_ = pending_offset_;
+  pending_offset_ += pending_size;
+  pending_bytes_ = 0;
+  return true;
+}
 
 std::shared_ptr<FileOps> DefaultFileOps() {
   // SystemFileOps is stateless, so each Aof can own its own instance.

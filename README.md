@@ -124,8 +124,9 @@ Redis' `#TS:` annotations, which loading skips.
 `BGREWRITEAOF` compacts command history. It first switches appends to a new
 incremental file and lists it in the manifest, then forks a child that writes
 a snapshot of the database, from its copy-on-write view of memory, as
-`temp-rewriteaof-bg-<pid>.aof`, syncing every 4 MiB
-(`--aof-rewrite-incremental-fsync`); the server keeps serving meanwhile. In
+`temp-rewriteaof-bg-<pid>.aof`, pushing every 4 MiB written to the disk
+(`--aof-rewrite-incremental-fsync`; on Linux with `sync_file_range`, as
+Redis does, elsewhere with `fsync`); the server keeps serving meanwhile. In
 the command format, large strings are split into replay-safe commands, and
 collection batches are limited by encoded bytes. When the child finishes, its file becomes the next
 base file, and a new manifest lists it with the incremental file opened at the
