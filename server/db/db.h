@@ -158,16 +158,11 @@ class RedisDb {
   bool HasWatchedKeys() const { return watched_keys_->Size() > 0; }
 
  private:
-  // What a keyspace entry stores for its key. The object and the TTL live
-  // inside the entry, after the key's header and before its name, as Redis 8
+  // A keyspace entry stores its key's object, which also holds the key's
+  // TTL, after the entry's header and before the key's name, as Redis 8
   // keeps a key, its value, and its expiration in one block (kvobj): one
   // allocation per key, and a lookup that finds the key has its TTL too.
-  struct KeyValue {
-    RedisObject object;
-    // Absolute time in milliseconds; 0 when the key has no TTL.
-    int64_t expire{};
-  };
-  using Keyspace = containers::Dict<std::string, KeyValue>;
+  using Keyspace = containers::Dict<std::string, RedisObject>;
   using KeyRef = Keyspace::EntryRef;
   struct KeyRefHash {
     size_t operator()(const KeyRef& key) const { return key.StoredHash(); }
@@ -177,6 +172,12 @@ class RedisDb {
   KeyRef FindLive(const containers::HashedKey& key);
   // Gives the key a TTL, or replaces the one it has.
   void SetExpire(KeyRef entry, int64_t expire);
+  // The expiration time of a key's object, 0 for none.
+  int64_t ExpireOf(const RedisObject& object) const {
+    const int64_t expire = object.Expire();
+    return expire == RedisObject::kMaxExpire ? FarExpireOf(object) : expire;
+  }
+  int64_t FarExpireOf(const RedisObject& object) const;
   // Removes the key's TTL. Returns whether it had one.
   bool RemoveExpire(KeyRef entry);
   // Deletes a key found by its entry, as active expiration finds keys.
@@ -198,8 +199,11 @@ class RedisDb {
   void FinishSet(const KeySlot& slot, int64_t expire, ExistingTtl existing_ttl);
   DbStatus Delete(const containers::HashedKey& key);
   void TouchWatchedKey(const containers::HashedKey& key);
-  bool IsExpired(const KeyValue& value) const {
-    return value.expire != 0 && !loading_ && value.expire <= Now();
+  // Reads the object's own field: a time kept in far_expires_ is stored
+  // there as kMaxExpire, which is later than any clock reading.
+  bool IsExpired(const RedisObject& object) const {
+    const int64_t expire = object.Expire();
+    return expire != 0 && !loading_ && expire <= Now();
   }
   // Reads the clock, and keeps the time if it is pinned.
   int64_t ReadClock() const;
@@ -207,9 +211,13 @@ class RedisDb {
   std::unique_ptr<Keyspace> dict_;
   // The keys that have a TTL, so active expiration samples only those, as
   // Redis' expires dict holds a pointer to each such key's object. A key's
-  // entry is in the set exactly while its `expire` is not 0, and leaves it
-  // before the entry is freed.
+  // entry is in the set exactly while its object's Expire() is not 0, and
+  // leaves it before the entry is freed.
   containers::HandleSet<KeyRef, KeyRefHash> expires_;
+  // The exact expiration times from RedisObject::kMaxExpire on, by object
+  // address. PEXPIREAT accepts any int64_t and the time must read back and
+  // be saved unchanged, but an object has 61 bits for it. Normally empty.
+  std::unique_ptr<containers::Dict<const RedisObject*, int64_t>> far_expires_;
   // Keyspaces a flush detached, waiting to be freed.
   std::deque<std::unique_ptr<Keyspace>> flushed_;
   // Large values UNLINK detached, waiting to be freed.
@@ -231,9 +239,7 @@ class RedisDb {
 // key, and no longer than the key's bytes.
 class RedisDb::KeySlot {
  public:
-  RedisObject* Object() const {
-    return entry_ ? &entry_.Value().object : nullptr;
-  }
+  RedisObject* Object() const { return entry_ ? &entry_.Value() : nullptr; }
   // Whether FindOrCreateKey added the key.
   bool Created() const { return created_; }
 
@@ -257,14 +263,14 @@ bool RedisDb::ForEachObject(Visitor&& visitor) {
   bool keep_visiting = true;
   std::optional<size_t> cursor = 0;
   while (cursor.has_value()) {
-    cursor =
-        dict_->Scan(*cursor, [this, &visitor, &keep_visiting](
-                                 std::string_view key, const KeyValue& value) {
-          if (keep_visiting && !IsExpired(value)) {
-            keep_visiting = visitor(std::string_view(key), value.object,
-                                    value.expire == 0
-                                        ? std::nullopt
-                                        : std::optional<int64_t>(value.expire));
+    cursor = dict_->Scan(
+        *cursor, [this, &visitor, &keep_visiting](std::string_view key,
+                                                  const RedisObject& object) {
+          if (keep_visiting && !IsExpired(object)) {
+            const int64_t expire = ExpireOf(object);
+            keep_visiting = visitor(
+                std::string_view(key), object,
+                expire == 0 ? std::nullopt : std::optional<int64_t>(expire));
           }
         });
     if (!keep_visiting) {
@@ -281,9 +287,9 @@ size_t RedisDb::ScanKeys(size_t cursor, size_t count, Visitor&& visitor) {
   }
   return dict_->ScanStep(
       cursor, count,
-      [this, &visitor](std::string_view key, const KeyValue& value) {
-        if (!IsExpired(value)) {
-          visitor(key, value.object);
+      [this, &visitor](std::string_view key, const RedisObject& object) {
+        if (!IsExpired(object)) {
+          visitor(key, object);
         }
       });
 }

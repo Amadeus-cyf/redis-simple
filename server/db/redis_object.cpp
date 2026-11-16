@@ -6,7 +6,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <variant>
 
 #include "utils/check.h"
 #include "utils/strings.h"
@@ -52,56 +51,54 @@ void RedisObject::EmbedString(std::string_view value) {
   RS_CHECK(value.size() <= EmbeddedString::kCapacity);
   // Copy first: `value` may view the raw buffer that emplacing frees.
   const EmbeddedString embedded(value);
-  value_.emplace<EmbeddedString>(embedded);
+  Emplace<EmbeddedString>(embedded);
 }
 
 StringValue RedisObject::String() const {
-  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
+  if (const auto* integer = GetIf<int64_t>()) {
     return StringValue(*integer);
   }
-  if (const redis_simple::db::EmbeddedString* embedded =
-          std::get_if<EmbeddedString>(&value_)) {
+  if (const auto* embedded = GetIf<EmbeddedString>()) {
     return StringValue(embedded->View());
   }
-  const auto* value = std::get_if<std::string>(&value_);
+  const auto* value = GetIf<std::string>();
   RS_CHECK(value != nullptr);
   return StringValue(std::string_view(*value));
 }
 
 std::optional<int64_t> RedisObject::Int() const {
-  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
+  if (const auto* integer = GetIf<int64_t>()) {
     return *integer;
   }
   return utils::ToInt64(String().View());
 }
 
 std::string* RedisObject::MutableString() {
-  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
-    value_.emplace<std::string>(StringValue(*integer).View());
-  } else if (const redis_simple::db::EmbeddedString* embedded =
-                 std::get_if<EmbeddedString>(&value_)) {
+  if (const auto* integer = GetIf<int64_t>()) {
+    Emplace<std::string>(StringValue(*integer).View());
+  } else if (const auto* embedded = GetIf<EmbeddedString>()) {
     // Copy out first: emplacing destroys the embedded bytes.
     std::string raw(embedded->View());
-    value_.emplace<std::string>(std::move(raw));
+    Emplace<std::string>(std::move(raw));
   }
-  return std::get_if<std::string>(&value_);
+  return GetIf<std::string>();
 }
 
 void RedisObject::SetInt(int64_t value) {
   RS_CHECK(Type() == ObjectType::kString);
-  value_.emplace<int64_t>(value);
+  Emplace<int64_t>(value);
 }
 
 void RedisObject::AssignString(std::string_view value) {
   RS_CHECK(Type() == ObjectType::kString);
   if (const std::optional<int64_t> integer = utils::ToInt64(value);
       integer.has_value()) {
-    value_.emplace<int64_t>(*integer);
+    Emplace<int64_t>(*integer);
     return;
   }
   // An embedded value is overwritten in place. memmove also handles a value
   // that views this object's own bytes.
-  if (auto* const embedded = std::get_if<EmbeddedString>(&value_);
+  if (auto* const embedded = GetIf<EmbeddedString>();
       embedded != nullptr && value.size() <= EmbeddedString::kCapacity) {
     std::memmove(embedded->data.data(), value.data(), value.size());
     embedded->size = static_cast<uint8_t>(value.size());
@@ -109,7 +106,7 @@ void RedisObject::AssignString(std::string_view value) {
   }
   // Short strings live inline, so any buffer up to this size is cheap to keep.
   constexpr size_t kAlwaysReusableBytes = 64;
-  auto* const current = std::get_if<std::string>(&value_);
+  auto* const current = GetIf<std::string>();
   // An existing raw buffer is reused when it is small or well filled, which
   // overwrites without allocating. Otherwise a short value is embedded, which
   // also releases an oversized buffer.
@@ -123,7 +120,7 @@ void RedisObject::AssignString(std::string_view value) {
     return;
   }
   if (current == nullptr) {
-    value_.emplace<std::string>(value);
+    Emplace<std::string>(value);
     return;
   }
   // Assigning, or emplacing the same alternative, would copy into the
@@ -135,7 +132,7 @@ void RedisObject::AssignString(std::string_view value) {
 void RedisObject::ReplaceWithString(std::string_view value) {
   if (const std::optional<int64_t> integer = utils::ToInt64(value);
       integer.has_value()) {
-    value_.emplace<int64_t>(*integer);
+    Emplace<int64_t>(*integer);
     return;
   }
   if (value.size() <= EmbeddedString::kCapacity) {
@@ -144,18 +141,24 @@ void RedisObject::ReplaceWithString(std::string_view value) {
   }
   // Copy first, in case `value` views this object's current bytes.
   std::string raw(value);
-  value_.emplace<std::string>(std::move(raw));
+  Emplace<std::string>(std::move(raw));
 }
 
 RedisObject::Encoding RedisObject::StringEncoding() const {
-  if (std::holds_alternative<int64_t>(value_)) {
-    return Encoding::kInt;
+  switch (CurrentTag()) {
+    case Tag::kInt:
+      return Encoding::kInt;
+    case Tag::kEmbedded:
+      return Encoding::kEmbedded;
+    case Tag::kRaw:
+      return Encoding::kRaw;
+    case Tag::kSet:
+    case Tag::kList:
+    case Tag::kZSet:
+    case Tag::kHash:
+      return Encoding::kOther;
   }
-  if (std::holds_alternative<EmbeddedString>(value_)) {
-    return Encoding::kEmbedded;
-  }
-  return std::holds_alternative<std::string>(value_) ? Encoding::kRaw
-                                                     : Encoding::kOther;
+  utils::Unreachable();
 }
 std::string_view TypeName(RedisObject::ObjectType type) {
   switch (type) {
