@@ -27,10 +27,10 @@ class ActiveExpire {
   ActiveExpire();
   explicit ActiveExpire(Clock clock);
 
-  // Spends at most a quarter of a 100 ms cron tick.
+  // Spends about a quarter of a 100 ms cron tick.
   void RunSlowCycle(db::RedisDb* db);
   // Spends about a millisecond. Does nothing unless the previous cycle ran
-  // out of time or more than a tenth of recently sampled keys were expired,
+  // out of time or at least a tenth of recently sampled keys were expired,
   // and never starts within two milliseconds of the previous fast cycle.
   void RunFastCycle(db::RedisDb* db);
 

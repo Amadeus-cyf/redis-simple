@@ -111,8 +111,8 @@ TEST(ActiveExpireTest, SlowCycleStopsAtTheFirstTimeCheckPastItsBudget) {
 
   active_expire.RunSlowCycle(db.get());
 
-  // Sixteen rounds ran before the check, each deleting about twenty keys
-  // and fewer than forty.
+  // Sixteen rounds ran before the check, each deleting its twenty samples
+  // plus the rest of its last bucket, taken here as fewer than forty.
   EXPECT_TRUE(active_expire.HitTimeLimit());
   EXPECT_GE(db->KeyCount(), 5'000 - 640);
   EXPECT_LT(db->KeyCount(), 5'000);

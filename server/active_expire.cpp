@@ -12,11 +12,11 @@ namespace {
 constexpr size_t kSamplesPerRound = 20;
 // A round is repeated while more than this share of its sample was expired.
 constexpr size_t kAcceptableStalePercent = 10;
-// The cron runs every 100 ms, so this caps the slow cycle at 25% of the loop.
+// The cron runs every 100 ms, so the slow cycle takes about 25% of the loop.
 constexpr int64_t kSlowCycleBudgetMicroseconds = 25'000;
 constexpr int64_t kFastCycleBudgetMicroseconds = 1'000;
-// Reading the clock costs about as much as sampling a key, so the budget is
-// checked once per this many rounds.
+// The budget is checked once per this many rounds, as in Redis, which keeps
+// the clock read out of most rounds. A cycle can overrun by up to that many.
 constexpr size_t kRoundsPerTimeCheck = 16;
 // Weight of the latest cycle in the running stale estimate.
 constexpr double kStaleShareWeight = 0.05;
@@ -60,7 +60,7 @@ void ActiveExpire::RunCycle(db::RedisDb* const db,
   size_t total_sampled = 0;
   size_t total_expired = 0;
   if (db->KeysWithExpirationCount() > 0) {
-    // One reading serves the whole cycle: a cycle lasts at most 25 ms, and a
+    // One reading serves the whole cycle: a cycle lasts about 25 ms, and a
     // key that expires during it is caught by the next one.
     const int64_t now = clock_.wall_milliseconds();
     for (size_t round = 1;; ++round) {

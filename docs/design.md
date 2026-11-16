@@ -65,21 +65,28 @@ depend on a running `Server`.
 
 A key with a TTL is deleted when a command looks it up after it expired, and
 otherwise by `ActiveExpire` (`server/active_expire.h`), which follows Redis'
-`activeExpireCycle`. A round samples 20 keys from the TTL dict and deletes
-the expired ones; the cycle repeats rounds while more than 10% of a round's
-sample was expired. The time budget is checked every 16 rounds, and "now" is
-read once per cycle.
+`activeExpireCycle`. A round samples at least 20 keys from the TTL dict (it
+finishes the bucket it is in) and deletes the expired ones; the cycle repeats
+rounds while more than 10% of a round's sample was expired. The time budget
+is checked every 16 rounds, so a cycle can run up to 16 rounds past it.
 
-- The slow cycle runs from the server cron every 100 ms, for at most 25 ms.
+- The slow cycle runs from the server cron every 100 ms, for about 25 ms.
 - The fast cycle runs from the event loop's before-sleep hook
   (`Loop::SetBeforeSleep`, called once per iteration right before the loop
   waits for events), for about 1 ms. It starts only if the previous cycle
   ran out of time or the running estimate of expired-but-present keys is
-  above 10%, and never within 2 ms of the previous fast cycle. When the slow
+  at least 10%, and never within 2 ms of the previous fast cycle. When the slow
   cycle keeps up, the hook returns without reading a clock.
 
-Unlike Redis, a round has no cap on the buckets it visits: the TTL dict
-shrinks as it empties, so a round stays short.
+Differences from Redis that remain:
+
+- A round has no cap on the buckets it visits (Redis stops after 400): the
+  TTL dict shrinks as it empties, so a round stays short.
+- "Now" is read once per cycle; Redis reads it every round. A key that
+  expires during a cycle is caught by the next one.
+- A cycle does not stop when the scan has gone once around the TTL dict.
+- There is no `active-expire-effort` setting, and a sparsely filled TTL dict
+  is not skipped.
 
 ## Threaded I/O
 
