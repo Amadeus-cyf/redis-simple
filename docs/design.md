@@ -47,10 +47,18 @@ Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
 5. **Propagate.** A handler that changed data calls `MarkModified()`. The
    client then touches WATCHed keys and appends the command to the AOF
    buffer (`Aof::Append`).
-6. **Flush, then reply.** After the batch of requests read from the socket
-   has run, the read handler writes the AOF buffer to the file
-   (`Aof::Flush`), and only then sends the replies, so a client never sees a
-   reply for a write that is not in the file.
+6. **Flush, then reply.** The read handler does not reply. It leaves the
+   client with the server (`Server::HoldReplies`), and when the event loop
+   has run every client that was readable and is about to wait again,
+   `Server::BeforeSleep` writes the AOF buffer to the file once
+   (`Aof::Flush`) and only then sends the held replies, so a client never
+   sees a reply for a write that is not in the file. This is Redis'
+   `beforeSleep`, and it is a group commit: with `appendfsync always`, the
+   clients served in one iteration share one `write` and one `fsync`
+   instead of paying for one each. A write callback left from an earlier,
+   partly sent reply also waits while its client is held. If the flush
+   fails under `always`, the server stops and the held replies are never
+   sent.
 
 ### Idle clients' buffers
 
@@ -108,9 +116,12 @@ With `--io-threads` above 1, I/O works as in Redis 8. Each client belongs to
 the `IoThread` with the fewest clients when it connected. That thread's own
 event loop reads the client's socket and frames its requests
 (`Client::ParseQueries`), then hands the client to the main thread. The main
-thread runs the requests (`Client::RunParsedQueries`), flushes the AOF once
-for every client in the handoff, and hands the clients back, and the I/O
-thread writes their replies and resumes reading. Each direction moves a whole
+thread runs the requests (`Client::RunParsedQueries`) and keeps the clients
+until `Server::BeforeSleep` has flushed the AOF, once for every client that
+ran in that iteration, whichever I/O thread it came from. Then it hands the
+clients back, and the I/O thread writes their replies and resumes reading.
+Without an AOF there is nothing to flush, so each handoff's clients go back
+as soon as their requests have run. Each direction moves a whole
 batch at once: one lock acquisition, and one pipe wakeup only when the
 receiving queue was empty, however many clients the batch holds, as Redis'
 `sendPendingClientsToIOThreads` and `sendPendingClientsToMainThreadIfNeeded`

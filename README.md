@@ -242,7 +242,7 @@ there. For its clients, an I/O thread:
 1. Reads the socket and frames the complete requests, without running them.
 2. Hands the client to the main thread, which runs the commands in order, so
    commands and data structures stay single-threaded, and flushes the AOF
-   once for all the clients handed over together.
+   once for all the clients that ran in the same event-loop iteration.
 3. Gets the client back, writes the replies, and resumes reading.
 
 A client belongs to one side at a time, and mutex-guarded queues with pipe

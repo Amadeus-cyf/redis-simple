@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -60,7 +61,7 @@ bool Server::Run(const ServerOptions& options) {
               .forks = &fork_stats_};
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
-  loop_->SetBeforeSleep([this] { active_expire_.RunFastCycle(db_.get()); });
+  loop_->SetBeforeSleep([this] { BeforeSleep(); });
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
   fd_ = -1;
@@ -163,6 +164,9 @@ void Server::StopIoThreads() {
     thread->Stop();
   }
   idle_client_sweeper_.Clear();
+  held_clients_.clear();
+  returning_clients_.clear();
+  returning_batches_.clear();
   clients_.clear();
   context_ = {};
   aof_.reset();
@@ -193,7 +197,7 @@ void Server::ResumeIoThreads() {
 
 void Server::RunHandedOverClients(
     IoThread* const thread, std::vector<IoThread::Handoff>* const handoffs) {
-  handed_over_.clear();
+  const size_t returning_before = returning_clients_.size();
   for (const IoThread::Handoff& handoff : *handoffs) {
     if (handoff.closed) {
       thread->ClientFreed();
@@ -201,15 +205,64 @@ void Server::RunHandedOverClients(
       continue;
     }
     handoff.client->RunParsedQueries();
-    handed_over_.push_back(handoff.client);
+    returning_clients_.push_back(handoff.client);
   }
-  // Persist these clients' mutations before any of their replies are sent.
-  if (aof_ != nullptr && !handed_over_.empty() && !aof_->Flush()) {
+  if (const size_t size = returning_clients_.size() - returning_before;
+      size > 0) {
+    returning_batches_.push_back({thread, size});
+  }
+  // Without an AOF no flush has to come first, and an I/O thread that gets
+  // its clients back now writes their replies while the main thread runs
+  // the next handoff.
+  if (aof_ == nullptr) {
+    ReturnClientsToIoThreads();
+  }
+}
+
+void Server::HoldReplies(Client* const client) {
+  if (!client->AwaitsFlush()) {
+    client->SetAwaitsFlush(true);
+    held_clients_.push_back(client);
+  }
+}
+
+void Server::BeforeSleep() {
+  active_expire_.RunFastCycle(db_.get());
+  // One write, and one fsync with `always`, persists the commands of every
+  // client that ran in this iteration, as Redis' beforeSleep does. Only then
+  // are their replies sent.
+  if (aof_ != nullptr && !aof_->Flush()) {
+    // The held replies promise writes that are not on disk, so they are
+    // never sent: the clients stay marked, and the server stops.
+    held_clients_.clear();
+    returning_clients_.clear();
+    returning_batches_.clear();
     Stop();
     return;
   }
-  thread->Return(handed_over_);
-  handed_over_.clear();
+  ReleaseHeldReplies();
+}
+
+void Server::ReleaseHeldReplies() {
+  // Replying can remove the client, which edits `held_clients_`.
+  releasing_clients_.swap(held_clients_);
+  for (Client* const client : releasing_clients_) {
+    client->SetAwaitsFlush(false);
+    client_connection::ReplyToQueries(this, client);
+  }
+  releasing_clients_.clear();
+  ReturnClientsToIoThreads();
+}
+
+void Server::ReturnClientsToIoThreads() {
+  size_t first = 0;
+  for (const ReturningBatch& batch : returning_batches_) {
+    batch.thread->Return(
+        std::span(returning_clients_).subspan(first, batch.size));
+    first += batch.size;
+  }
+  returning_clients_.clear();
+  returning_batches_.clear();
 }
 
 void Server::Stop() {
@@ -223,6 +276,9 @@ bool Server::RemoveClient(Client* c) {
     return false;
   }
   idle_client_sweeper_.Remove(c);
+  if (c->AwaitsFlush()) {
+    std::erase(held_clients_, c);
+  }
   c->Free();
   // Destroy the client after the current event, which may still use it.
   loop_->Defer([this, c] { clients_.erase(c); });

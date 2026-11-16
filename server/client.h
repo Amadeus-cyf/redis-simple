@@ -96,6 +96,10 @@ class Client {
   // its commands. Only that I/O thread reads or writes this.
   bool HandedToMain() const { return handed_to_main_; }
   void SetHandedToMain(bool handed) { handed_to_main_ = handed; }
+  // Whether the server holds this client's replies until it has flushed the
+  // AOF for the commands of this event-loop iteration. Main thread only.
+  bool AwaitsFlush() const { return awaits_flush_; }
+  void SetAwaitsFlush(bool awaits) { awaits_flush_ = awaits; }
   bool ShouldCloseAfterReply() const { return close_after_reply_; }
   void CloseAfterReply() { close_after_reply_ = true; }
   reply::ProtocolVersion Protocol() const { return protocol_; }
@@ -206,6 +210,7 @@ class Client {
   bool reads_paused_{};
   bool handed_to_main_{};
   bool freed_{};
+  bool awaits_flush_{};
   bool close_after_reply_{};
   bool modified_{};
   // MarkModified's changes when the server has no RDB counter, as in AOF
