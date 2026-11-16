@@ -531,6 +531,9 @@ Run one group with `--benchmark_filter`, for example
 
 - `Dict*`, `DynamicBuffer*`, `ReplyBuffer*`: core containers and buffers.
 - `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, and ranges.
+- `IntsetInsert*`, `Listpack*`, `ZSetListpackInsert`, `HashListpackSet`:
+  inserts into the compact encodings (and deletes, for
+  `ListpackDeleteFirst`), which reallocate and move the value's bytes.
 - `ListIndex`, `ListRange`: quicklist `LINDEX` and `LRANGE` at the head,
   middle, and tail of a 300,000-element list.
 - `ParseCompleteRequest`, `ParseSplitRequest`, `FindCommand`: request
