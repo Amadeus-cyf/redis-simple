@@ -41,18 +41,21 @@ class MainThread {
         1, loop_.get(),
         [this](IoThread* const thread, std::vector<Handoff>* const handoffs) {
           ++handoff_batches_;
+          std::vector<Client*> ran;
           for (const Handoff& handoff : *handoffs) {
             if (handoff.closed) {
               closed_.push_back(handoff.client);
               continue;
             }
             if (hold_) {
-              held_.emplace_back(thread, handoff.client);
+              held_thread_ = thread;
+              held_.push_back(handoff.client);
               continue;
             }
             handoff.client->RunParsedQueries();
-            thread->Return(handoff.client);
+            ran.push_back(handoff.client);
           }
+          thread->Return(ran);
         });
   }
 
@@ -102,13 +105,16 @@ class MainThread {
   }
 
   // While holding, handed-over clients wait on this thread, as when the main
-  // thread is busy, until ReturnHeld runs their commands and returns them.
+  // thread is busy, until ReturnHeld runs their commands and returns them
+  // together.
   void Hold() { hold_ = true; }
   void ReturnHeld() {
     hold_ = false;
-    for (const auto& [thread, client] : held_) {
+    for (Client* const client : held_) {
       client->RunParsedQueries();
-      thread->Return(client);
+    }
+    if (held_thread_ != nullptr) {
+      held_thread_->Return(held_);
     }
     held_.clear();
   }
@@ -126,7 +132,9 @@ class MainThread {
                         .io_threads = {}};
   std::vector<int> peers_;
   std::vector<Client*> closed_;
-  std::vector<std::pair<IoThread*, Client*>> held_;
+  // Every test holds the clients of one thread.
+  IoThread* held_thread_{nullptr};
+  std::vector<Client*> held_;
   bool hold_{};
   int handoff_batches_{0};
 };
@@ -201,6 +209,47 @@ TEST(IoThreadTest, HandsOverAPipelineAtOnceAndRepliesInOrder) {
   Send(peer, pipeline);
   EXPECT_EQ(Receive(&main, peer, expected.size()), expected);
   EXPECT_EQ(main.HandoffBatches(), 1);
+  thread->Stop();
+}
+
+TEST(IoThreadTest, ReturnsSeveralClientsTogetherAndRepliesToEach) {
+  MainThread main;
+  auto thread = main.StartThread();
+  ASSERT_NE(thread, nullptr);
+  constexpr size_t kClients = 8;
+  std::vector<std::unique_ptr<Client>> clients;
+  std::vector<int> peers;
+  for (size_t i = 0; i < kClients; ++i) {
+    auto [client, peer] = main.Connect(thread.get());
+    clients.push_back(std::move(client));
+    peers.push_back(peer);
+  }
+
+  main.Hold();
+  for (const int peer : peers) {
+    Send(peer, "*2\r\n$4\r\nINCR\r\n$1\r\nn\r\n");
+  }
+  ASSERT_TRUE(main.RunUntil([&main] { return main.HeldCount() == kClients; }));
+  main.ReturnHeld();
+  for (size_t i = 0; i < kClients; ++i) {
+    EXPECT_EQ(Receive(&main, peers[i], 4),
+              ":" + std::to_string(i + 1) + "\r\n");
+  }
+  // Each client reads again after the batch that returned it.
+  Send(peers.back(), "*2\r\n$4\r\nINCR\r\n$1\r\nn\r\n");
+  EXPECT_EQ(Receive(&main, peers.back(), 4), ":9\r\n");
+  thread->Stop();
+}
+
+TEST(IoThreadTest, ReturningNoClientsDoesNothing) {
+  MainThread main;
+  auto thread = main.StartThread();
+  ASSERT_NE(thread, nullptr);
+  auto [client, peer] = main.Connect(thread.get());
+
+  thread->Return({});
+  Send(peer, "*2\r\n$4\r\nINCR\r\n$1\r\nn\r\n");
+  EXPECT_EQ(Receive(&main, peer, 4), ":1\r\n");
   thread->Stop();
 }
 

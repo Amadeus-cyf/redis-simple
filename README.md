@@ -246,7 +246,9 @@ there. For its clients, an I/O thread:
 3. Gets the client back, writes the replies, and resumes reading.
 
 A client belongs to one side at a time, and mutex-guarded queues with pipe
-wakeups carry it between them, so no thread spins waiting for another.
+wakeups carry it between them, so no thread spins waiting for another. Each
+handoff moves its whole batch of clients under one lock acquisition and at
+most one wakeup.
 Closed connections are closed on their I/O thread and freed on the main
 thread. `INFO stats` reports `io_threads_active`,
 `io_threaded_reads_processed`, and `io_threaded_writes_processed`, and

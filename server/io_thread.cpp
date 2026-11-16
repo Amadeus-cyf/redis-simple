@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -154,17 +155,22 @@ IoThread::~IoThread() {
 
 void IoThread::Assign(Client* const client) {
   ++clients_;
-  Send({client, false});
+  Send(std::span<Client* const>(&client, 1), false);
 }
 
-void IoThread::Return(Client* const client) { Send({client, true}); }
+void IoThread::Return(std::span<Client* const> clients) { Send(clients, true); }
 
-void IoThread::Send(Message message) {
+void IoThread::Send(std::span<Client* const> clients, bool returning) {
+  if (clients.empty()) {
+    return;
+  }
   bool was_empty = false;
   {
     const std::scoped_lock lock(mutex_);
     was_empty = inbox_.empty();
-    inbox_.push_back(message);
+    for (Client* const client : clients) {
+      inbox_.push_back({client, returning});
+    }
   }
   // The thread takes the whole inbox per wakeup, so only the first message
   // since then needs to wake it.

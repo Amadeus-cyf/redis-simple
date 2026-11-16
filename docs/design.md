@@ -110,7 +110,11 @@ event loop reads the client's socket and frames its requests
 (`Client::ParseQueries`), then hands the client to the main thread. The main
 thread runs the requests (`Client::RunParsedQueries`), flushes the AOF once
 for every client in the handoff, and hands the clients back, and the I/O
-thread writes their replies and resumes reading.
+thread writes their replies and resumes reading. Each direction moves a whole
+batch at once: one lock acquisition, and one pipe wakeup only when the
+receiving queue was empty, however many clients the batch holds, as Redis'
+`sendPendingClientsToIOThreads` and `sendPendingClientsToMainThreadIfNeeded`
+join whole lists.
 
 So commands, the database, and the AOF stay on the main thread, and an I/O
 thread only touches its clients' sockets, buffers, and parsers. A client is on
