@@ -60,7 +60,7 @@ bool Server::Run(const ServerOptions& options) {
               .forks = &fork_stats_};
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
-  loop_->SetBeforeSleep([this] { active_expire_.RunFastCycle(db_.get()); });
+  loop_->SetBeforeSleep([this] { BeforeSleep(); });
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
   fd_ = -1;
@@ -162,6 +162,8 @@ void Server::StopIoThreads() {
   for (const std::unique_ptr<IoThread>& thread : io_threads_) {
     thread->Stop();
   }
+  held_clients_.clear();
+  returning_clients_.clear();
   clients_.clear();
   context_ = {};
   aof_.reset();
@@ -192,7 +194,6 @@ void Server::ResumeIoThreads() {
 
 void Server::RunHandedOverClients(
     IoThread* const thread, std::vector<IoThread::Handoff>* const handoffs) {
-  handed_over_.clear();
   for (const IoThread::Handoff& handoff : *handoffs) {
     if (handoff.closed) {
       thread->ClientFreed();
@@ -200,17 +201,45 @@ void Server::RunHandedOverClients(
       continue;
     }
     handoff.client->RunParsedQueries();
-    handed_over_.push_back(handoff.client);
+    returning_clients_.push_back({thread, handoff.client});
   }
-  // Persist these clients' mutations before any of their replies are sent.
-  if (aof_ != nullptr && !handed_over_.empty() && !aof_->Flush()) {
+}
+
+void Server::HoldReplies(Client* const client) {
+  if (!client->AwaitsFlush()) {
+    client->SetAwaitsFlush(true);
+    held_clients_.push_back(client);
+  }
+}
+
+void Server::BeforeSleep() {
+  active_expire_.RunFastCycle(db_.get());
+  // One write, and one fsync with `always`, persists the commands of every
+  // client that ran in this iteration, as Redis' beforeSleep does. Only then
+  // are their replies sent.
+  if (aof_ != nullptr && !aof_->Flush()) {
+    // The held replies promise writes that are not on disk, so they are
+    // never sent: the clients stay marked, and the server stops.
+    held_clients_.clear();
+    returning_clients_.clear();
     Stop();
     return;
   }
-  for (Client* const client : handed_over_) {
-    thread->Return(client);
+  ReleaseHeldReplies();
+}
+
+void Server::ReleaseHeldReplies() {
+  // Replying can remove the client, which edits `held_clients_`.
+  releasing_clients_.swap(held_clients_);
+  for (Client* const client : releasing_clients_) {
+    client->SetAwaitsFlush(false);
+    client_connection::ReplyToQueries(this, client);
   }
-  handed_over_.clear();
+  releasing_clients_.clear();
+  for (const ReturningClient& returning : returning_clients_) {
+    returning.thread->Return(returning.client);
+  }
+  returning_clients_.clear();
 }
 
 void Server::Stop() {
@@ -222,6 +251,9 @@ void Server::Stop() {
 bool Server::RemoveClient(Client* c) {
   if (c == nullptr) {
     return false;
+  }
+  if (c->AwaitsFlush()) {
+    std::erase(held_clients_, c);
   }
   c->Free();
   // Destroy the client after the current event, which may still use it.

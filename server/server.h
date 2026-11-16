@@ -42,6 +42,11 @@ class Server {
     clients_.emplace(key, std::move(client));
   }
   bool RemoveClient(Client* c);
+  // Keeps the replies to the commands `client` just ran until the event loop
+  // is about to wait for events again. By then every client that was
+  // readable has run its commands, so one AOF flush covers them all, and the
+  // replies are sent after it.
+  void HoldReplies(Client* client);
   // Threaded I/O, enabled when --io-threads is above 1, as in Redis 8: each
   // client belongs to one I/O thread, which reads and frames its requests and
   // writes its replies, while commands run here on the main thread. Returns
@@ -70,10 +75,21 @@ class Server {
   int64_t ServerCron();
   bool StartIoThreads(size_t thread_count);
   void StopIoThreads();
-  // Runs the commands of the clients an I/O thread handed over, flushes the
-  // AOF once for all of them, and hands them back to write the replies.
+  // A client whose commands ran, and the I/O thread that gets it back to
+  // write the replies.
+  struct ReturningClient {
+    IoThread* thread;
+    Client* client;
+  };
+  // Runs the commands of the clients an I/O thread handed over. They go
+  // back to it, to write the replies, after the AOF flush in BeforeSleep.
   void RunHandedOverClients(IoThread* thread,
                             std::vector<IoThread::Handoff>* handoffs);
+  // Runs each time the event loop is about to wait for events: flushes the
+  // AOF once for every command run since the last time, then lets the
+  // replies to those commands go out.
+  void BeforeSleep();
+  void ReleaseHeldReplies();
   int fd_{-1};
   std::unique_ptr<event_loop::Loop> loop_;
   std::unordered_map<Client*, std::unique_ptr<Client>> clients_;
@@ -88,8 +104,12 @@ class Server {
   bool protected_mode_{true};
   std::vector<std::unique_ptr<IoThread>> io_threads_;
   ServerContext context_;
-  // Clients of the handoff being run, reused between handoffs.
-  std::vector<Client*> handed_over_;
+  // Clients whose replies wait for the AOF flush in BeforeSleep: those the
+  // main thread writes to, and those an I/O thread writes to.
+  std::vector<Client*> held_clients_;
+  std::vector<ReturningClient> returning_clients_;
+  // The held clients being replied to, reused between iterations.
+  std::vector<Client*> releasing_clients_;
 };
 }  // namespace redis_simple
 

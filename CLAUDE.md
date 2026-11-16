@@ -146,14 +146,21 @@ Guidance for AI coding agents working in this repository.
 - Keep AOF propagation at the successful command-mutation boundary. Preserve
   command order, encode relative TTLs as absolute `PEXPIREAT` records, and do
   not copy argument payloads beyond the owned persistence record.
-- `Aof::Append` only encodes into the buffer. The read handler calls
-  `Aof::Flush` once per batch of commands, before any replies are written;
+- `Aof::Append` only encodes into the buffer. `Server::BeforeSleep` calls
+  `Aof::Flush` once per event-loop iteration, for every client that ran
+  commands in it, before any of their replies are written (a group commit,
+  as Redis' `beforeSleep` does). Anything that sends a reply must go through
+  it: the read handler calls `Server::HoldReplies`, handed-over clients
+  return to their I/O thread only after the flush, and a write callback
+  skips a client that `AwaitsFlush()`. When the flush fails under `always`,
+  the held replies are dropped, never sent;
   call `Flush` before arming test failures that depend on file-write order.
   Only `always` stops the server on a write or fsync error, through `Flush`
   returning false. `BGREWRITEAOF` inside `EXEC` is scheduled for `Aof::Cron`,
   so `Flush` never runs inside a transaction.
-- Reply directly after processing a client's input; install a write callback
-  only while output remains unsent. Read once per readable event.
+- Reply from `Server::BeforeSleep` in the iteration that processed the
+  client's input, without waiting for a writable event; install a write
+  callback only while output remains unsent. Read once per readable event.
 - Threaded I/O (`--io-threads` above 1) works like Redis 8; see
   `docs/design.md`. Keep commands, the database, and the AOF on the main
   thread, and I/O threads to the client's socket, buffers, and parser. A
@@ -197,7 +204,8 @@ Guidance for AI coding agents working in this repository.
   `DeleteStoredKey`, which touches watchers before freeing it.
 - Active expiration is `ActiveExpire` (`server/active_expire.h`), owned by
   `Server`: the slow cycle runs from `ServerCron`, the fast one from the
-  loop's before-sleep hook (`Loop::SetBeforeSleep`). Its constants follow
+  loop's before-sleep hook (`Server::BeforeSleep`, before the AOF flush, so
+  the deletions it logs share that flush). Its constants follow
   Redis' `activeExpireCycle`; test it with an injected `ActiveExpire::Clock`,
   not with sleeps. The before-sleep hook runs on every loop iteration, so
   whatever is installed there must return quickly when it has nothing to do.
