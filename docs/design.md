@@ -177,6 +177,14 @@ and continues a rehash already under way only when the two tables differ
 greatly in size. Growing the 4-million-key keyspace table during a `BGSAVE`
 copied about 280 MB before this policy and about 34 MB with it.
 
+Commands move a rehash along, one bucket per operation on the table, so on
+their own an idle server would keep both the old and the new table. The
+server cron therefore calls `RedisDb::RehashIncrementally` every tick while
+no child runs, as Redis' `databasesCron` does: it moves buckets of the
+keyspace and TTL tables for one millisecond (`Dict::RehashSome`), and first
+retries a shrink (`Dict::ShrinkIfNeeded`) that deletes could not start
+while a child ran.
+
 Snapshots are bounded: large strings are split into a `SET` and `APPEND`s,
 and collections are batched by encoded bytes as well as element count, so
 every command fits the replay limit (`Limits`).

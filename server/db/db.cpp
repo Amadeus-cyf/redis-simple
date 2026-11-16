@@ -342,6 +342,26 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
   return !unlinked_.empty() || !flushed_.empty();
 }
 
+bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
+  // As Redis' dictRehashMicroseconds: enough buckets that reading the clock
+  // costs little, few enough to overrun the budget only slightly.
+  constexpr int kBucketsPerStep = 100;
+  dict_->ShrinkIfNeeded();
+  expires_->ShrinkIfNeeded();
+  if (!dict_->IsRehashing() && !expires_->IsRehashing()) {
+    return false;
+  }
+  const int64_t start = utils::MonotonicMicroseconds();
+  // The keyspace table first, then the TTL table.
+  while (dict_->RehashSome(kBucketsPerStep) ||
+         expires_->RehashSome(kBucketsPerStep)) {
+    if (utils::MonotonicMicroseconds() - start >= budget_microseconds) {
+      break;
+    }
+  }
+  return dict_->IsRehashing() || expires_->IsRehashing();
+}
+
 ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
   ExpireSampleResult result;
   if (max_samples == 0 || expires_->Size() == 0) {

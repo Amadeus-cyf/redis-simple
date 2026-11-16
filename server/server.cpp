@@ -271,6 +271,12 @@ int64_t Server::ServerCron() {
   // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
   constexpr int64_t kLazyFreeBudgetMs = 10;
   db_->FreeLazily(kLazyFreeBudgetMs);
+  if (!child_running) {
+    // As in Redis' databasesCron: one millisecond per tick. Skipped while a
+    // child runs, since moving entries writes to memory the child shares.
+    constexpr int64_t kRehashBudgetMicroseconds = 1000;
+    db_->RehashIncrementally(kRehashBudgetMicroseconds);
+  }
   return kCronIntervalMs;
 }
 }  // namespace redis_simple

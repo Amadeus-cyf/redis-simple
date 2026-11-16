@@ -308,6 +308,11 @@ Guidance for AI coding agents working in this repository.
   memory a child shares: the fork hooks forbid resizing in the child and set
   "avoid" in the parent, and the server cron restores it once no child
   runs. Keep new forks on those hooks.
+- Commands advance a rehash one bucket per operation. The server cron
+  finishes it on an idle server: `RedisDb::RehashIncrementally` runs 1 ms
+  per tick (`Dict::RehashSome`), as Redis' `incrementallyRehash` does, and
+  retries a shrink held back by the resize policy. It is skipped while a
+  child runs; keep table upkeep added to the cron behind that check.
 - Keep rewrite snapshots visitor-based, and bound snapshot memory and replay
   command sizes together (`Limits`): split large strings into replay-safe
   commands and batch collections by encoded bytes, not only element count.
