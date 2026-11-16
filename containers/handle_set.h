@@ -11,6 +11,9 @@
 #include <type_traits>
 #include <utility>
 
+#include "containers/dict.h"
+#include "utils/check.h"
+
 namespace redis_simple::containers {
 // A set of handles to objects stored elsewhere, such as Dict::EntryRef. A
 // handle is one pointer wide and its default value means "none"; the set
@@ -22,8 +25,15 @@ namespace redis_simple::containers {
 // `Hash` is called only to place a handle: when it is inserted or erased,
 // and when a table is rebuilt.
 //
-// A table is rebuilt into a new one when it fills up or empties, a few
-// slots per insert or erase, so no single call moves every member.
+// A table is rebuilt into a new one when it fills up or empties. The call
+// that starts a rebuild allocates the new, zeroed table; members then move a
+// few slots per insert or erase, so no single call moves every member. A
+// table kept at most three-quarters full costs a member 11 to 21 bytes, and
+// more while both tables are alive.
+//
+// Like Dict, the set follows the process-wide resize policy: it does not
+// shrink while a forked child shares its pages. It still grows then, since
+// an open-addressed table cannot hold more members than it has slots.
 template <typename Handle, typename Hash>
 class HandleSet {
   static_assert(std::is_trivially_copyable_v<Handle> &&
@@ -132,6 +142,7 @@ void HandleSet<Handle, Hash>::Place(Table* table, uintptr_t bits, size_t hash) {
 template <typename Handle, typename Hash>
 bool HandleSet<Handle, Hash>::Insert(Handle handle) {
   const uintptr_t bits = Bits(handle);
+  RS_CHECK(Holds(bits));
   const size_t hash = hash_(handle);
   MoveSome(kSlotsMovedPerCall);
   if (Find(main_, bits, hash) != nullptr || Find(old_, bits, hash) != nullptr) {
@@ -167,7 +178,8 @@ bool HandleSet<Handle, Hash>::Erase(Handle handle) {
   // Shrink a table left mostly empty, so a scan does not walk long runs of
   // empty slots.
   if (!Rebuilding() && main_.capacity > kInitialCapacity &&
-      Size() * 8 < main_.capacity) {
+      Size() * 8 < main_.capacity &&
+      CurrentDictResizePolicy() == DictResizePolicy::kEnabled) {
     StartRebuild();
   }
   return true;

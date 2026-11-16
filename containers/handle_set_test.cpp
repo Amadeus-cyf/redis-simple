@@ -52,7 +52,41 @@ std::set<ItemRef> Members(const ItemSet& set) {
   }
   return members;
 }
+
+size_t Positions(const ItemSet& set) {
+  size_t positions = 0;
+  for (std::optional<size_t> cursor = 0; cursor.has_value(); ++positions) {
+    cursor = set.Scan(*cursor, [](ItemRef) {});
+  }
+  return positions;
+}
 }  // namespace
+
+TEST(HandleSetTest, DoesNotShrinkWhileResizingIsAvoided) {
+  constexpr size_t kCount = 1000;
+  const auto items = MakeItems(kCount, kCount);
+  ItemSet set;
+  for (const auto& item : items) {
+    ASSERT_TRUE(set.Insert({item.get()}));
+  }
+  const size_t positions = Positions(set);
+
+  SetDictResizePolicy(DictResizePolicy::kAvoid);
+  for (size_t index = 2; index < kCount; ++index) {
+    ASSERT_TRUE(set.Erase({items[index].get()}));
+  }
+  EXPECT_EQ(Positions(set), positions);
+
+  SetDictResizePolicy(DictResizePolicy::kEnabled);
+  // The first erase starts the rebuild and the rest move the old table's
+  // slots, a few per call.
+  for (size_t index = 0; index < positions; ++index) {
+    set.Insert({items[1].get()});
+    set.Erase({items[1].get()});
+  }
+  EXPECT_LT(Positions(set), positions);
+  EXPECT_TRUE(set.Contains({items[0].get()}));
+}
 
 TEST(HandleSetTest, InsertsErasesAndFindsHandles) {
   const auto items = MakeItems(3, 3);

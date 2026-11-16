@@ -35,7 +35,8 @@ TTL, so the database also keeps an index of those entries
 (`containers::HandleSet`): an open-addressed array of 8-byte entry handles,
 which costs a key with a TTL one slot and no allocation, where Redis' expires
 dict costs it a pointer in a bucket. The index is rebuilt a few slots per
-insert or erase when it fills up or empties.
+insert or erase when it fills up or empties, and like `Dict` it does not
+shrink while a snapshot child shares its pages.
 
 ## A request's path
 

@@ -317,6 +317,24 @@ TEST(RedisDbTest, TtlIndexHoldsExactlyTheKeysWithATtl) {
   EXPECT_EQ(redis_db->ExpireSome(20, kFuture + 2).sampled, 0);
 }
 
+TEST(RedisDbTest, ActiveExpirationCarriesOnFromTheStartOfTheIndex) {
+  auto redis_db = RedisDb::Create();
+  constexpr int64_t kExpire = int64_t{1} << 50;
+  for (const std::string_view key : {"first", "second", "third"}) {
+    ASSERT_EQ(
+        redis_db->SetKey(key, RedisObject::CreateWithString("value"), kExpire),
+        DbStatus::kOk);
+  }
+  // Leaves the cursor in the middle of the index.
+  ASSERT_EQ(redis_db->ExpireSome(2, kExpire - 1).sampled, 2);
+
+  const ExpireSampleResult sample = redis_db->ExpireSome(20, kExpire + 1);
+
+  EXPECT_EQ(sample.sampled, 3);
+  EXPECT_EQ(sample.expired, 3);
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+}
+
 TEST(RedisDbTest, ActiveExpirationDeletesManyKeysAndTouchesWatchers) {
   auto redis_db = RedisDb::Create();
   KeyWatcher watcher;

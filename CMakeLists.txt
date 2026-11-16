@@ -587,6 +587,7 @@ if(REDIS_SIMPLE_BUILD_FUZZERS)
     dict_fuzzer
     skiplist_fuzzer
     intset_fuzzer
+    handle_set_fuzzer
     dynamic_buffer_fuzzer
     reply_buffer_fuzzer
     db_expiration_fuzzer

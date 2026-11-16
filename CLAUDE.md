@@ -193,13 +193,14 @@ Guidance for AI coding agents working in this repository.
   kvobj, so finding a key also finds its TTL. Do not add a second lookup for
   it. `RedisDb::expires_` is only an index of the entries that have a TTL,
   for active expiration to sample: a `containers::HandleSet` of
-  `Dict::EntryRef`s, 8 bytes per member in one array and no allocation per
-  key. An entry is in it exactly while its `expire` is not 0, so change a
-  TTL only through `RedisDb::SetExpire` and `RemoveExpire`, and take an
-  entry out of the index before it is deleted or extracted
-  (`Dict::DeleteWith` hands the entry over just before freeing it). A key
-  found through the index is deleted through `DeleteStoredKey`, which
-  touches watchers before freeing the entry that holds its name.
+  `Dict::EntryRef`s, one 8-byte slot per member in a table kept at most
+  three-quarters full, and no allocation per key. An entry is in it exactly
+  while its `expire` is not 0, so change a TTL only through
+  `RedisDb::SetExpire` and `RemoveExpire`, and take an entry out of the
+  index before it is deleted or extracted (`Dict::DeleteWith` hands the
+  entry over just before freeing it). A key found through the index is
+  deleted through `DeleteStoredKey`, which touches watchers before freeing
+  the entry that holds its name.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-2
   (`utils/siphash.h`), as Redis does, to resist hash flooding. Do not depend
   on iteration or `SCAN` order in tests; it changes between runs.

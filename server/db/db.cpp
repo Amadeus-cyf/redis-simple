@@ -157,8 +157,8 @@ void RedisDb::SetExpire(KeyRef entry, int64_t expire) {
   if (value.expire == 0) {
     expires_.Insert(entry);
   }
-  // 0 means no TTL, so a time at or before the epoch, which only a loaded
-  // file can ask for, is kept as the earliest time there is.
+  // 0 means no TTL, so a time at or before the epoch, which only a replayed
+  // append-only file can ask for, is kept as the earliest time there is.
   value.expire = std::max<int64_t>(expire, 1);
 }
 
@@ -376,8 +376,11 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
 
   std::vector<KeyRef> expired_keys;
   expired_keys.reserve(max_samples);
-  bool scan_complete = false;
-  while (result.sampled < max_samples && !scan_complete) {
+  // One call scans each position at most once: it carries on from the start
+  // of the index when it reaches the end, and stops where it began.
+  const size_t first_cursor = expire_cursor_;
+  bool wrapped = false;
+  while (result.sampled < max_samples) {
     const std::optional<size_t> next_cursor =
         expires_.Scan(expire_cursor_,
                       [&result, &expired_keys, max_samples, now](KeyRef entry) {
@@ -389,8 +392,16 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
                           expired_keys.push_back(entry);
                         }
                       });
-    scan_complete = !next_cursor.has_value();
     expire_cursor_ = next_cursor.value_or(0);
+    if (!next_cursor.has_value()) {
+      if (wrapped) {
+        break;
+      }
+      wrapped = true;
+    }
+    if (wrapped && expire_cursor_ >= first_cursor) {
+      break;
+    }
   }
   // Deleting a key frees only its own entry; the others stay valid, since
   // entries never move.
