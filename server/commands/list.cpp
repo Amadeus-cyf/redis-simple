@@ -137,7 +137,7 @@ void HandlePush(Client* const client, Side side) {
     }
   }
   client->MarkModified(static_cast<int64_t>(args.size() - 1));
-  client->AddReply(reply::FromInt64(static_cast<int64_t>(list->Size())));
+  client->AddIntegerReply(static_cast<int64_t>(list->Size()));
 }
 
 // Redis' popGenericCommand: with a count, pops up to that many elements
@@ -161,6 +161,7 @@ void HandlePopCount(Client* const client, Side side) {
   const size_t size = list->Size();
   const size_t popped = std::min(static_cast<size_t>(*count), size);
   std::string encoded = reply::FromArrayHeader(popped);
+  reply::ReserveBulkStrings(popped, &encoded);
   if (popped == 0) {
     client->AddReply(std::move(encoded));
     return;
@@ -225,7 +226,7 @@ void HandleLLen(Client* const client) {
     return;
   }
   const size_t size = list == nullptr ? 0 : list->Size();
-  client->AddReply(reply::FromInt64(static_cast<int64_t>(size)));
+  client->AddIntegerReply(static_cast<int64_t>(size));
 }
 
 void HandleLRange(Client* const client) {
@@ -247,8 +248,9 @@ void HandleLRange(Client* const client) {
     client->AddReply(reply::FromArrayHeader(0));
     return;
   }
-  std::string encoded =
-      reply::FromArrayHeader(range->second - range->first + 1);
+  const size_t count = range->second - range->first + 1;
+  std::string encoded = reply::FromArrayHeader(count);
+  reply::ReserveBulkStrings(count, &encoded);
   list->ForEach(range->first, range->second,
                 [&encoded](std::string_view value) {
                   reply::AppendBulkString(value, &encoded);
@@ -331,7 +333,7 @@ void HandleLRem(Client* const client) {
   if (removed > 0) {
     client->MarkModified(static_cast<int64_t>(removed));
   }
-  client->AddReply(reply::FromInt64(static_cast<int64_t>(removed)));
+  client->AddIntegerReply(static_cast<int64_t>(removed));
 }
 
 void HandleLTrim(Client* const client) {
