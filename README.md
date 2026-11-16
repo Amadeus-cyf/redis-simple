@@ -641,6 +641,31 @@ other script does. strace slows the server, so compare binaries rather than
 reading the counts as absolute. `measure_snapshot_io.py` must write to a
 disk, not a tmpfs; pass `--dir` if the temporary directory is one.
 
+Two more scripts time the server itself, and run on macOS as well as
+Linux:
+
+```sh
+# Markdown tables for a pull request: requests per second, p50 and p99
+# latency, and server CPU for ten workloads, then memory for strings,
+# collections, and idle connections
+scripts/compare_builds.py path/to/baseline/redis_simple build/release/redis_simple
+# Server CPU seconds for one redis-benchmark workload of your choice
+scripts/measure_server_cpu.sh 7460 7 build/release/redis_simple path/to/baseline/redis_simple -- -t set,get -n 2000000 -P 16
+```
+
+Both start a fresh server per measurement and alternate between the two
+builds. `compare_builds.py` reports the median of `--runs` runs for
+throughput and latency and the minimum for CPU; `--only latency` or
+`--only memory` prints one table, and `--case TEXT` only the rows whose
+label contains the text. Throughput and latency vary by a few percent
+between runs, so trust the CPU column for small differences, and prefer
+instruction counts where callgrind runs. Its memory is resident memory on
+Linux and the physical footprint on macOS, where resident memory keeps
+counting pages the allocator has returned. `measure_server_cpu.sh` takes
+extra server arguments in `SERVER_ARGS`, and data to load first in
+`PRELOAD` (`redis-benchmark` arguments) or `PRELOAD_CLI` (a `redis-cli`
+command).
+
 These scripts need `redis-benchmark` and `redis-cli`, which ship with
 Redis (`brew install redis` or `apt install redis-tools`). Like the
 benchmarks, they are not part of CTest or CI.
