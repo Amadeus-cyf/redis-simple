@@ -4,12 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "containers/dict.h"
+#include "data_types/set/set_algebra.h"
 #include "server/client.h"
 #include "server/commands/handlers.h"
 #include "server/commands/lookup.h"
@@ -127,25 +129,13 @@ std::optional<SetReply> SInter(db::RedisDb* const redis_db,
     return SetReply{};
   }
 
-  auto smallest = std::ranges::min_element(sets, {}, &Set::Size);
   std::string body;
   size_t count = 0;
-  (*smallest)->ForEachMemberWithHash(
-      [&sets, &body, &count, smallest](std::string_view member,
-                                       const containers::HashedKey* hashed) {
-        bool present = true;
-        for (const auto* set : sets) {
-          if (set != *smallest && !set->HasMember(member, hashed)) {
-            present = false;
-            break;
-          }
-        }
-        if (present) {
-          reply::AppendBulkString(member, &body);
-          ++count;
-        }
-        return true;
-      });
+  data_types::ForEachCommonMember(std::span(sets),
+                                  [&body, &count](std::string_view member) {
+                                    reply::AppendBulkString(member, &body);
+                                    ++count;
+                                  });
   return SetReply{count, std::move(body)};
 }
 
@@ -228,22 +218,11 @@ std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
 
   std::string body;
   size_t count = 0;
-  first.set->ForEachMemberWithHash(
-      [&subtract_sets, &body, &count](std::string_view member,
-                                      const containers::HashedKey* hashed) {
-        bool removed = false;
-        for (const auto* set : subtract_sets) {
-          if (set->HasMember(member, hashed)) {
-            removed = true;
-            break;
-          }
-        }
-        if (!removed) {
-          reply::AppendBulkString(member, &body);
-          ++count;
-        }
-        return true;
-      });
+  data_types::ForEachDifferenceMember(*first.set, std::span(subtract_sets),
+                                      [&body, &count](std::string_view member) {
+                                        reply::AppendBulkString(member, &body);
+                                        ++count;
+                                      });
   return SetReply{count, std::move(body)};
 }
 
