@@ -268,12 +268,32 @@ class Dict {
   template <typename Visitor>
   size_t ScanStep(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const { return table_used_[0] + table_used_[1]; }
+  // Grows the table for `count` entries at once, as Redis' dictExpand does,
+  // so inserting up to that many never stops to grow it. An empty dict gets
+  // the table directly. One with entries moves them to it step by step, and
+  // shrinks again if it is still mostly empty when they have moved, so
+  // reserve before filling. Does nothing if the table is already that large
+  // or is being rehashed.
+  void Reserve(size_t count);
   void Clear();
   // Frees about `max_entries` entries, whole buckets at a time, so a large
   // Dict being discarded can be freed in steps between other work. Returns
   // true once it is empty. Between the first call and the one that returns
   // true, use the Dict only through this, Size(), and destruction.
   bool ClearSome(size_t max_entries);
+  // Whether entries are still moving to a resized table. Both tables stay
+  // allocated until the last one has moved.
+  bool IsRehashing() const { return rehash_index_.has_value(); }
+  // Moves up to `max_buckets` buckets of a rehash under way to the new
+  // table. Operations on the Dict each move one bucket; this lets an idle
+  // owner finish the rehash and release the old table. Returns whether more
+  // can be moved now: false once the rehash is done, and while a scan, an
+  // iterator, or the resize policy holds it back.
+  bool RehashSome(int max_buckets);
+  // Starts shrinking a table with fewer than an eighth of its buckets in
+  // use. Deletes call this themselves; an owner calls it to retry a shrink
+  // the resize policy held back when the entries were deleted.
+  void ShrinkIfNeeded();
   ~Dict();
 
  private:
@@ -328,7 +348,6 @@ class Dict {
   size_t TableMask(int table) const {
     return tables_[table].empty() ? 0 : tables_[table].size() - 1;
   }
-  bool IsRehashing() const { return rehash_index_.has_value(); }
   void PauseRehashing() const { ++pause_rehash_; }
   void ResumeRehashing() const {
     if (pause_rehash_ > 0) {
@@ -336,10 +355,9 @@ class Dict {
     }
   }
   void ExpandIfNeeded();
-  void ShrinkIfNeeded();
   bool Resize(size_t size);
   void RehashStepIfNeeded();
-  void Rehash(int n);
+  bool Rehash(int n);
   void MigrateRehashedTable();
   void ClearTable(int table);
   template <typename Visitor>
@@ -898,18 +916,41 @@ bool Dict<K, V, Hash, KeyEqual>::Resize(size_t size) {
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
+void Dict<K, V, Hash, KeyEqual>::Reserve(size_t count) {
+  if (IsRehashing() || count <= TableSize(0)) {
+    return;
+  }
+  if (Size() > 0) {
+    Resize(count);
+    return;
+  }
+  // Nothing to move: replace the table instead of rehashing into a second.
+  const size_t old_size = TableSize(0);
+  tables_[0].clear();
+  if (!Resize(count)) {
+    Resize(old_size);
+  }
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
 void Dict<K, V, Hash, KeyEqual>::RehashStepIfNeeded() {
   if (pause_rehash_ == 0) {
     Rehash(1);
   }
 }
 
+template <typename K, typename V, typename Hash, typename KeyEqual>
+bool Dict<K, V, Hash, KeyEqual>::RehashSome(int max_buckets) {
+  return pause_rehash_ == 0 && Rehash(max_buckets);
+}
+
 // Performs at most n non-empty bucket migrations. Empty buckets are skipped
 // with a bounded visit count so sparse tables cannot stall one operation.
+// Returns whether the rehash is still under way and free to continue.
 template <typename K, typename V, typename Hash, typename KeyEqual>
-void Dict<K, V, Hash, KeyEqual>::Rehash(int n) {
+bool Dict<K, V, Hash, KeyEqual>::Rehash(int n) {
   if (!IsRehashing()) {
-    return;
+    return false;
   }
   const size_t old_size = TableSize(0);
   if (const DictResizePolicy policy = CurrentDictResizePolicy();
@@ -922,7 +963,7 @@ void Dict<K, V, Hash, KeyEqual>::Rehash(int n) {
             ? new_size >= kForceResizeRatio * old_size
             : old_size >= kShrinkRatio * kForceResizeRatio * new_size;
     if (policy == DictResizePolicy::kForbidden || !far_apart) {
-      return;
+      return false;
     }
   }
   int empty_visits = n * 10;
@@ -946,7 +987,9 @@ void Dict<K, V, Hash, KeyEqual>::Rehash(int n) {
   }
   if (table_used_[0] == 0) {
     MigrateRehashedTable();
+    return false;
   }
+  return true;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>

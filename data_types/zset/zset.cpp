@@ -32,23 +32,34 @@ std::unique_ptr<ZSet> ZSet::CreateFromListpack(
   return zset;
 }
 
-bool ZSet::InsertOrUpdate(std::string_view member, double score,
-                          bool* const changed) {
-  if (changed != nullptr) {
-    *changed = false;
-  }
+ZSetAddResult ZSet::Add(std::string_view member, double score,
+                        const ZSetAddRules& rules) {
   if (std::isnan(score)) {
-    return false;
+    return {.status = ZSetAddStatus::kNotANumber, .score = score};
   }
   if (Encoding() == Encoding::kListpack &&
       member.size() > kListpackMaxElementLength) {
+    // A listpack holds no member this long, so XX has nothing to update.
+    if (rules.xx) {
+      return {.status = ZSetAddStatus::kSkipped, .score = score};
+    }
     ConvertAndExpand();
   }
-  const bool inserted = Storage().InsertOrUpdate(member, score, changed);
-  if (ShouldConvertToSkiplist(member, inserted)) {
+  const ZSetAddResult result = Storage().Add(member, score, rules);
+  if (ShouldConvertToSkiplist(member, result.status == ZSetAddStatus::kAdded)) {
     ConvertAndExpand();
   }
-  return inserted;
+  return result;
+}
+
+bool ZSet::InsertOrUpdate(std::string_view member, double score,
+                          bool* const changed) {
+  const ZSetAddStatus status = Add(member, score, ZSetAddRules{}).status;
+  if (changed != nullptr) {
+    *changed =
+        status == ZSetAddStatus::kAdded || status == ZSetAddStatus::kUpdated;
+  }
+  return status == ZSetAddStatus::kAdded;
 }
 
 bool ZSet::Delete(std::string_view member) { return Storage().Delete(member); }
@@ -63,6 +74,12 @@ size_t ZSet::Count(const RangeByScoreSpec* spec) const {
 
 bool ZSet::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   return Storage().ForEachEntry(visitor);
+}
+
+bool ZSet::ForEachSkiplistEntryDescending(
+    const ZSetEntryVisitor& visitor) const {
+  RS_CHECK(Encoding() == Encoding::kSkiplist);
+  return Skiplist()->ForEachEntryDescending(visitor);
 }
 
 enum ZSet::Encoding ZSet::Encoding() const {

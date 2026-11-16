@@ -9,10 +9,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+
+#include "utils/strings.h"
 
 namespace redis_simple::utils {
 namespace {
@@ -255,6 +258,19 @@ std::optional<double> ParsePlainDecimal(std::string_view value) {
   return negative ? -parsed : parsed;
 }
 
+// "inf", "+inf", or "-inf" in any letter case, the way strtod reads them.
+std::optional<double> ParseInfinity(std::string_view value) {
+  const bool negative = value.starts_with('-');
+  if (negative || value.starts_with('+')) {
+    value.remove_prefix(1);
+  }
+  if (!EqualsIgnoreCase(value, "inf")) {
+    return std::nullopt;
+  }
+  constexpr double kInfinity = std::numeric_limits<double>::infinity();
+  return negative ? -kInfinity : kInfinity;
+}
+
 struct StrtodResult {
   // Whether strtod consumed every byte of the text.
   bool complete{};
@@ -309,7 +325,18 @@ std::optional<double> ToDouble(std::string_view value) {
 std::optional<double> ToRangeDouble(std::string_view value) {
   // Redis' zslParseRange: strtod over the whole text, NaN rejected. Unlike
   // ToDouble, it takes leading spaces, an empty text as 0, and overflow as
-  // an infinity.
+  // an infinity. Like Redis' fast_float_strtod, the usual bounds are read in
+  // place, and strtod, which needs a NUL-terminated copy, takes the rest.
+  if (!value.empty()) {
+    if (const std::optional<double> plain = ParsePlainDecimal(value);
+        plain.has_value()) {
+      return plain;
+    }
+    if (const std::optional<double> infinity = ParseInfinity(value);
+        infinity.has_value()) {
+      return infinity;
+    }
+  }
   const StrtodResult parsed = ParseWithStrtod(value);
   if (!parsed.complete || std::isnan(parsed.value)) {
     return std::nullopt;

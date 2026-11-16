@@ -71,8 +71,8 @@ class ZSetSkiplist : public ZSetStorage {
  public:
   // `capacity` sizes the member dict for that many members.
   explicit ZSetSkiplist(size_t capacity = 0);
-  bool InsertOrUpdate(std::string_view member, double score,
-                      bool* changed) override;
+  ZSetAddResult Add(std::string_view member, double score,
+                    const ZSetAddRules& rules) override;
   bool Delete(std::string_view member) override;
   std::optional<double> Score(std::string_view member) const override {
     const double* score = dict_->FindValue(member);
@@ -88,6 +88,7 @@ class ZSetSkiplist : public ZSetStorage {
                          const ZSetMemberVisitor& visitor) const override;
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
+  bool ForEachEntryDescending(const ZSetEntryVisitor& visitor) const;
   size_t Scan(size_t cursor, size_t count,
               const ZSetMemberVisitor& visitor) override;
   std::optional<std::string_view> ListpackBytes() const override {
@@ -115,6 +116,9 @@ class ZSetSkiplist : public ZSetStorage {
   using SkiplistType =
       containers::Skiplist<ScoredEntry, zset_skiplist_internal::EntryOrder>;
 
+  // Applies `rules` to a member whose score in the dict is `*current`.
+  ZSetAddResult UpdateExisting(std::string_view member, double* current,
+                               double score, const ZSetAddRules& rules);
   bool OverlapsLexRange(const RangeByLexSpec* spec) const;
   static std::optional<SkiplistType::Limit> ToLimit(
       const std::optional<LimitSpec>& limit);

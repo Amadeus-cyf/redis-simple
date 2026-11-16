@@ -153,10 +153,11 @@ class Rdb {
 
   // Writes `temporary`, renames it over the file, and syncs the directory,
   // without logging, so the child can run it.
-  SaveStatus WriteAndRename(db::RedisDb* db,
-                            const std::string& temporary) const;
-  // rdbSave: Save without counting a SAVE command.
-  bool SaveNow(db::RedisDb* db);
+  SaveStatus WriteAndRename(db::RedisDb* db, const std::string& temporary,
+                            bool keep_page_cache) const;
+  // rdbSave: Save without counting a SAVE command. `keep_page_cache` leaves
+  // the written file in the kernel's page cache.
+  bool SaveNow(db::RedisDb* db, bool keep_page_cache);
   [[noreturn]] void RunChild(db::RedisDb* db) const;
   void CheckBackgroundSave();
   void FinishBackgroundSave(int wait_status);

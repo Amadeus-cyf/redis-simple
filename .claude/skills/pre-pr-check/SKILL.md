@@ -45,6 +45,7 @@ check that could not run, with the reason.
 | Threaded I/O (`server/io_thread*`, client handoff, `Client::ParseQueries`/`RunParsedQueries`) | the `*_io_threads` integration variants, and the `thread-sanitizer` preset: `cmake --preset thread-sanitizer`, build, then `ctest --preset thread-sanitizer` (serially; integration tests share a port) |
 | Behavior shared with Redis, when a reference server is available | the `redis-differential-check` skill: `scripts/run_redis_compatibility_check.sh` and ad hoc comparisons |
 | Server performance or memory, or a hot path | the `benchmark-against-baseline` skill: profile against a baseline build and report instruction counts, not throughput |
+| Freeing, expiry, forking, connections, the event loop, or snapshot writing | the matching tool from the `benchmark-against-baseline` skill (`measure_pauses.py`, `count_syscalls.py`, `measure_snapshot_io.py`), against the baseline and `redis-server` |
 
 ## 3. Renames
 

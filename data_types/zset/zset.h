@@ -43,6 +43,11 @@ class ZSet {
   // that are not NaN, in ascending (score, member) order.
   static std::unique_ptr<ZSet> CreateFromListpack(
       std::unique_ptr<containers::Listpack> listpack);
+  // Redis' zsetAdd: adds `member`, or changes its score, as `rules` allow,
+  // looking the member up once. Converts to the skiplist encoding when the
+  // member is too long for a listpack or the set has too many members for one.
+  ZSetAddResult Add(std::string_view member, double score,
+                    const ZSetAddRules& rules);
   // Returns true if `member` is new. `*changed`, when given, reports whether it
   // was inserted or its score changed.
   bool InsertOrUpdate(std::string_view member, double score,
@@ -102,6 +107,9 @@ class ZSet {
     return Storage().LexCount(spec);
   }
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const;
+  // ForEachEntry from the greatest score down. Only for the skiplist
+  // encoding, whose order an RDB file saves this way.
+  bool ForEachSkiplistEntryDescending(const ZSetEntryVisitor& visitor) const;
   // One ZSCAN step, as Redis runs it: calls `visitor(member, score)` for
   // each member it visits and returns the next cursor, 0 when done. A
   // skiplist-encoded set steps through its member dict

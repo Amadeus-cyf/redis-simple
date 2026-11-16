@@ -397,6 +397,61 @@ TEST_F(RdbTest, RejectsUnsupportedTypesAndDatabases) {
   EXPECT_FALSE(Load(db.get()));
 }
 
+// The RESIZEDB hint sizes the keyspace, but only as far as the rest of the
+// file could fill it: these hints would otherwise ask for terabytes.
+TEST_F(RdbTest, CapsTheKeyCountHintByTheFileSize) {
+  const std::string header = "REDIS0011";
+  const std::string zero_checksum(8, '\0');
+  // 2^40 keys, 2^40 of them with a TTL, as 64-bit lengths.
+  const std::string huge("\x81\x00\x00\x01\x00\x00\x00\x00\x00", 9);
+  WriteFile(header + std::string("\xfe\x00\xfb", 3) + huge + huge +
+            std::string("\x00\x01k\x01v\xff", 6) + zero_checksum);
+  auto db = db::RedisDb::Create();
+  ASSERT_TRUE(Load(db.get()));
+  EXPECT_EQ(db->KeyCount(), 1);
+
+  // The largest length the format can state.
+  const std::string largest = "\x81" + std::string(8, '\xff');
+  WriteFile(header + std::string("\xfe\x00\xfb", 3) + largest + largest +
+            std::string("\x00\x01j\x01v\xff", 6) + zero_checksum);
+  ASSERT_TRUE(Load(db.get()));
+  EXPECT_EQ(db->KeyCount(), 2);
+
+  // A hint smaller than the keys that follow is only a hint.
+  WriteFile(header + std::string("\xfe\x00\xfb\x00\x00", 5) +
+            std::string("\x00\x01x\x01v\x00\x01y\x01v\xff", 11) +
+            zero_checksum);
+  auto other = db::RedisDb::Create();
+  ASSERT_TRUE(Load(other.get()));
+  EXPECT_EQ(other->KeyCount(), 2);
+}
+
+// Redis saves a skiplist sorted set from its greatest member down, so that
+// loading puts each member at the head of the skiplist.
+TEST_F(RdbTest, WritesSkiplistSortedSetsFromTheGreatestMemberDown) {
+  auto db = db::RedisDb::Create();
+  auto zset = data_types::ZSet::Create();
+  for (int i = 0; i < 300; ++i) {
+    zset->InsertOrUpdate("member-" + std::to_string(1000 + i), i);
+  }
+  ASSERT_EQ(zset->Encoding(), data_types::ZSet::Encoding::kSkiplist);
+  db->SetKey("zset", RedisObject::CreateWithZSet(std::move(zset)), 0);
+  ASSERT_EQ(Write(db.get(), {.compression = false}), WriteStatus::kWritten);
+
+  const std::string file = ReadFile();
+  size_t previous = 0;
+  for (int i = 299; i >= 0; --i) {
+    const size_t position = file.find("member-" + std::to_string(1000 + i));
+    ASSERT_NE(position, std::string::npos);
+    ASSERT_GT(position, previous);
+    previous = position;
+  }
+
+  auto loaded = db::RedisDb::Create();
+  ASSERT_TRUE(Load(loaded.get()));
+  EXPECT_EQ(DescribeAll(loaded.get()), DescribeAll(db.get()));
+}
+
 // A listpack element as Redis encodes it, for listpacks that differ from
 // what Listpack writes: a 7-bit unsigned integer, or a string of up to 63
 // bytes even when its text is an integer.
