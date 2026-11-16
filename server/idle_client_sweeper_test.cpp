@@ -35,9 +35,7 @@ class SweptClients {
   }
 
   IdleClientSweeper* Sweeper() { return &sweeper_; }
-  [[nodiscard]] Client* At(size_t index) const {
-    return clients_[index].get();
-  }
+  [[nodiscard]] Client* At(size_t index) const { return clients_[index].get(); }
 
   void AddActiveClients(size_t count) {
     for (size_t i = 0; i < count; ++i) {
