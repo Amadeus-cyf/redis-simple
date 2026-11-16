@@ -208,9 +208,8 @@ void HandleZAdd(Client* const client) {
   if (object == nullptr && !options.xx) {
     // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
     // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-    auto created = db::RedisObject::CreateWithZSet(data_types::ZSet::Create());
-    object = created.get();
-    client->Db()->SetKey(args[0], std::move(created), 0);
+    object = client->Db()->StoreKey(
+        args[0], db::RedisObject::CreateWithZSet(data_types::ZSet::Create()));
   }
   AddTotals totals;
   if (object != nullptr && !AddPairs(client, object->ZSet(), args, first_score,

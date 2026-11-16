@@ -22,7 +22,7 @@ std::unique_ptr<RedisDb> RedisDb::Create() {
 }
 
 RedisDb::RedisDb()
-    : dict_(containers::Dict<std::string, RedisObjectPtr>::Create()),
+    : dict_(Keyspace::Create()),
       expires_(ExpireTable::Create()),
       watched_keys_(
           containers::Dict<std::string, std::vector<KeyWatcher*>>::Create()) {}
@@ -45,7 +45,7 @@ RedisObject* RedisDb::Lookup(const HashedKey& key) {
     Delete(key);
     return nullptr;
   }
-  return result->get();
+  return result;
 }
 
 DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
@@ -55,9 +55,18 @@ DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
   }
   // FindOrInsert copies the key only for a new entry.
   const HashedKey hashed(key);
-  *dict_->FindOrInsert(hashed).first = std::move(object);
+  *dict_->FindOrInsert(hashed).first = std::move(*object);
   FinishSet(hashed, expire, existing_ttl);
   return DbStatus::kOk;
+}
+
+RedisObject* RedisDb::StoreKey(std::string_view key, RedisObjectPtr object) {
+  RS_CHECK(object != nullptr);
+  const HashedKey hashed(key);
+  RedisObject* const stored = dict_->FindOrInsert(hashed).first;
+  *stored = std::move(*object);
+  FinishSet(hashed, 0, ExistingTtl::kClear);
+  return stored;
 }
 
 bool RedisDb::AddKey(std::string_view key, RedisObjectPtr object,
@@ -67,7 +76,7 @@ bool RedisDb::AddKey(std::string_view key, RedisObjectPtr object,
   if (!inserted) {
     return false;
   }
-  *slot = std::move(object);
+  *slot = std::move(*object);
   TouchWatchedKey(hashed);
   // A new key has no TTL to clear.
   if (expire > 0) {
@@ -79,11 +88,11 @@ bool RedisDb::AddKey(std::string_view key, RedisObjectPtr object,
 DbStatus RedisDb::SetStringKey(std::string_view key, std::string_view value,
                                int64_t expire, ExistingTtl existing_ttl) {
   const HashedKey hashed(key);
-  RedisObjectPtr& slot = *dict_->FindOrInsert(hashed).first;
-  if (slot != nullptr && slot->Type() == RedisObject::ObjectType::kString) {
+  const auto [slot, inserted] = dict_->FindOrInsert(hashed);
+  if (!inserted && slot->Type() == RedisObject::ObjectType::kString) {
     slot->AssignString(value);
   } else {
-    slot = RedisObject::CreateWithStringCopy(value);
+    slot->ReplaceWithString(value);
   }
   FinishSet(hashed, expire, existing_ttl);
   return DbStatus::kOk;
@@ -152,7 +161,7 @@ DbStatus RedisDb::UnlinkKey(std::string_view key) {
   // Free a small value now, as Redis frees values with at most 64 elements
   // (LAZYFREE_THRESHOLD) at once; queue a larger one for FreeLazily.
   constexpr size_t kFreeAtOnceElements = 64;
-  if (!(*object)->ReleaseSome(kFreeAtOnceElements)) {
+  if (!object->ReleaseSome(kFreeAtOnceElements)) {
     unlinked_.push_back(std::move(*object));
   }
   return DbStatus::kOk;
@@ -239,7 +248,7 @@ DbStatus RedisDb::RenameKey(std::string_view old_key,
   // The TTL comes out first: its entry reads the key from the keyspace entry.
   const std::optional<int64_t> expire =
       expires_->Size() > 0 ? expires_->Extract(old_hashed) : std::nullopt;
-  std::optional<RedisObjectPtr> object = dict_->Extract(old_hashed);
+  std::optional<RedisObject> object = dict_->Extract(old_hashed);
   if (!object.has_value()) {
     return DbStatus::kError;
   }
@@ -316,7 +325,7 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
   const int64_t start = utils::MonotonicMilliseconds();
   while (!unlinked_.empty() || !flushed_.empty()) {
     if (!unlinked_.empty()) {
-      if (unlinked_.front()->ReleaseSome(kEntriesPerStep)) {
+      if (unlinked_.front().ReleaseSome(kEntriesPerStep)) {
         unlinked_.pop_front();
       }
     } else {

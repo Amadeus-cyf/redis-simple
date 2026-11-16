@@ -132,6 +132,21 @@ void RedisObject::AssignString(std::string_view value) {
   current->swap(fresh);
 }
 
+void RedisObject::ReplaceWithString(std::string_view value) {
+  if (const std::optional<int64_t> integer = utils::ToInt64(value);
+      integer.has_value()) {
+    value_.emplace<int64_t>(*integer);
+    return;
+  }
+  if (value.size() <= EmbeddedString::kCapacity) {
+    EmbedString(value);
+    return;
+  }
+  // Copy first, in case `value` views this object's current bytes.
+  std::string raw(value);
+  value_.emplace<std::string>(std::move(raw));
+}
+
 RedisObject::Encoding RedisObject::StringEncoding() const {
   if (std::holds_alternative<int64_t>(value_)) {
     return Encoding::kInt;

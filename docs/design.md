@@ -73,10 +73,14 @@ thread writes their replies and resumes reading.
 
 So commands, the database, and the AOF stay on the main thread, and an I/O
 thread only touches its clients' sockets, buffers, and parsers. A client is on
-one side at a time: the I/O thread unregisters its socket events before
-handing it over, and hands clients over only after the current loop
-iteration, since connection callbacks still use the connection after they
-return. Connections close on their I/O thread; the main thread only frees the
+one side at a time. Before handing a client over, the I/O thread marks it
+(`Client::HandedToMain`) and removes its write callback, but keeps the read
+callback registered, as Redis 8 keeps its read handler, so a request costs no
+`epoll_ctl` calls. If the socket becomes readable while the main thread holds
+the client, the read callback unregisters itself, and the thread registers it
+again when the client comes back. It hands clients over only after the
+current loop iteration, since connection callbacks still use the connection
+after they return. Connections close on their I/O thread; the main thread only frees the
 `Client`.
 
 ## The append-only file

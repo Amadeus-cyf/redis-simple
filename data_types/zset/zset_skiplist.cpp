@@ -9,7 +9,7 @@
 
 namespace redis_simple::data_types {
 ZSetSkiplist::ZSetSkiplist(size_t capacity)
-    : dict_(containers::Dict<std::string, double>::Create(capacity)),
+    : dict_(zset_skiplist_internal::MemberDict::Create(capacity)),
       skiplist_(std::make_unique<SkiplistType>()) {}
 
 bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,
@@ -21,7 +21,7 @@ bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,
     return false;
   }
   const auto [current_score, stored_member, inserted] =
-      dict_->FindOrInsertWithKey(member);
+      dict_->FindOrInsertEntry(member);
   if (!inserted) {
     if (*current_score == score) {
       return false;
@@ -29,9 +29,9 @@ bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,
     // Change the score in place; the skiplist repositions the entry if its
     // order changed.
     skiplist_->Update(ScoredMember{.score = *current_score, .member = member},
-                      [score](ScoredMember& entry) { entry.score = score; });
+                      [score](ScoredEntry& entry) { entry.score = score; });
   } else {
-    skiplist_->Insert(ScoredMember{.score = score, .member = stored_member});
+    skiplist_->Insert(ScoredEntry{.score = score, .member = stored_member});
   }
   *current_score = score;
   if (changed != nullptr) {
@@ -92,8 +92,8 @@ bool ZSetSkiplist::OverlapsLexRange(const RangeByLexSpec* spec) const {
   // Redis' zslIsInLexRange: the last member reaches the minimum and the
   // first member the maximum.
   return spec != nullptr && !spec->Empty() && skiplist_->Size() > 0 &&
-         spec->AboveMin((*skiplist_->Last()).member) &&
-         spec->BelowMax((*skiplist_->Begin()).member);
+         spec->AboveMin((*skiplist_->Last()).Member()) &&
+         spec->BelowMax((*skiplist_->Begin()).Member());
 }
 
 void ZSetSkiplist::ForEachInLexRange(const RangeByLexSpec* spec,
@@ -117,7 +117,7 @@ size_t ZSetSkiplist::LexCount(const RangeByLexSpec* spec) const {
 
 bool ZSetSkiplist::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   for (auto entry = skiplist_->Begin(); entry != skiplist_->End(); ++entry) {
-    if (!visitor((*entry).member, (*entry).score)) {
+    if (!visitor((*entry).Member(), (*entry).score)) {
       return false;
     }
   }

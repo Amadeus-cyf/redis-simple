@@ -46,6 +46,10 @@ class MainThread {
               closed_.push_back(handoff.client);
               continue;
             }
+            if (hold_) {
+              held_.emplace_back(thread, handoff.client);
+              continue;
+            }
             handoff.client->RunParsedQueries();
             thread->Return(handoff.client);
           }
@@ -97,6 +101,19 @@ class MainThread {
     }
   }
 
+  // While holding, handed-over clients wait on this thread, as when the main
+  // thread is busy, until ReturnHeld runs their commands and returns them.
+  void Hold() { hold_ = true; }
+  void ReturnHeld() {
+    hold_ = false;
+    for (const auto& [thread, client] : held_) {
+      client->RunParsedQueries();
+      thread->Return(client);
+    }
+    held_.clear();
+  }
+  [[nodiscard]] size_t HeldCount() const { return held_.size(); }
+
   [[nodiscard]] int HandoffBatches() const { return handoff_batches_; }
   [[nodiscard]] const std::vector<Client*>& Closed() const { return closed_; }
 
@@ -109,6 +126,8 @@ class MainThread {
                         .io_threads = {}};
   std::vector<int> peers_;
   std::vector<Client*> closed_;
+  std::vector<std::pair<IoThread*, Client*>> held_;
+  bool hold_{};
   int handoff_batches_{0};
 };
 
@@ -182,6 +201,42 @@ TEST(IoThreadTest, HandsOverAPipelineAtOnceAndRepliesInOrder) {
   Send(peer, pipeline);
   EXPECT_EQ(Receive(&main, peer, expected.size()), expected);
   EXPECT_EQ(main.HandoffBatches(), 1);
+  thread->Stop();
+}
+
+TEST(IoThreadTest, ReadsInputThatArrivedWhileTheMainThreadHeldTheClient) {
+  MainThread main;
+  auto thread = main.StartThread();
+  ASSERT_NE(thread, nullptr);
+  auto [client, peer] = main.Connect(thread.get());
+
+  main.Hold();
+  Send(peer, "*2\r\n$4\r\nINCR\r\n$1\r\nn\r\n");
+  ASSERT_TRUE(main.RunUntil([&main] { return main.HeldCount() == 1; }));
+  // The socket turns readable while the client is away: the thread must
+  // leave it alone, then read it once the client is back.
+  Send(peer, "*2\r\n$4\r\nINCR\r\n$1\r\nn\r\n");
+  main.RunFor(std::chrono::milliseconds(20));
+  main.ReturnHeld();
+  EXPECT_EQ(Receive(&main, peer, 8), ":1\r\n:2\r\n");
+  thread->Stop();
+}
+
+TEST(IoThreadTest, ClosesAClientWhosePeerLeftWhileItWasHeld) {
+  MainThread main;
+  auto thread = main.StartThread();
+  ASSERT_NE(thread, nullptr);
+  auto [client, peer] = main.Connect(thread.get());
+
+  main.Hold();
+  Send(peer, "*1\r\n$4\r\nPING\r\n");
+  ASSERT_TRUE(main.RunUntil([&main] { return main.HeldCount() == 1; }));
+  shutdown(peer, SHUT_WR);
+  main.RunFor(std::chrono::milliseconds(20));
+  EXPECT_TRUE(main.Closed().empty());
+  main.ReturnHeld();
+  EXPECT_EQ(Receive(&main, peer, 7), "+PONG\r\n");
+  ASSERT_TRUE(main.RunUntil([&main] { return main.Closed().size() == 1; }));
   thread->Stop();
 }
 

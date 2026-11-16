@@ -37,6 +37,19 @@ class Listpack {
   static std::unique_ptr<Listpack> CreateFromBytes(std::string_view bytes);
   Listpack(const Listpack&) = delete;
   Listpack& operator=(const Listpack&) = delete;
+  // A moved-from Listpack is unallocated (see Unallocated).
+  Listpack(Listpack&&) noexcept = default;
+  Listpack& operator=(Listpack&&) noexcept = default;
+  // A Listpack that owns no bytes, for a container that holds its elements
+  // in another encoding: it costs no allocation and no flag beside it.
+  // Only Allocated, Release, assignment and destruction are valid on one.
+  static Listpack Unallocated() { return Listpack(nullptr, 0); }
+  bool Allocated() const { return listpack_ != nullptr; }
+  // Frees the bytes, leaving the Listpack unallocated.
+  void Release() {
+    listpack_.reset();
+    capacity_ = 0;
+  }
   // The element at `offset` as text, or nullopt at the terminator. An
   // integer element is formatted into `buffer`; the view is valid while the
   // listpack is unchanged and, for an integer, while `buffer` holds it.

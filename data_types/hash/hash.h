@@ -85,7 +85,22 @@ class Hash {
   std::optional<size_t> FindListpackField(std::string_view field) const;
 
   enum Encoding encoding_;
-  std::unique_ptr<containers::Listpack> listpack_;
+  // The listpack of a listpack-encoded value. Aborts for another encoding,
+  // which callers rule out first.
+  containers::Listpack& ListpackStorage() {
+    if (!listpack_.Allocated()) {
+      utils::Unreachable();
+    }
+    return listpack_;
+  }
+  const containers::Listpack& ListpackStorage() const {
+    if (!listpack_.Allocated()) {
+      utils::Unreachable();
+    }
+    return listpack_;
+  }
+  // Held by value, so a small hash is no allocation beyond its bytes.
+  containers::Listpack listpack_;
   std::unique_ptr<containers::Dict<std::string, containers::CompactString>>
       dict_;
 };
@@ -97,13 +112,13 @@ bool Hash::VisitValue(std::string_view field, Visitor&& visitor) const {
     if (!field_offset.has_value()) {
       return false;
     }
-    const std::optional<size_t> value_offset = listpack_->Next(*field_offset);
+    const std::optional<size_t> value_offset = listpack_.Next(*field_offset);
     if (!value_offset.has_value()) {
       return false;
     }
     containers::Listpack::IntBuffer buffer;
     const std::optional<std::string_view> value =
-        listpack_->ElementAt(*value_offset, &buffer);
+        listpack_.ElementAt(*value_offset, &buffer);
     if (!value.has_value()) {
       return false;
     }
@@ -127,7 +142,7 @@ bool Hash::ForEachEntry(Visitor&& visitor) const {
     return true;
   }
   if (encoding_ == Encoding::kListpack) {
-    return listpack_->ForEachPair(visitor);
+    return listpack_.ForEachPair(visitor);
   }
   if (encoding_ == Encoding::kDict) {
     auto it =
