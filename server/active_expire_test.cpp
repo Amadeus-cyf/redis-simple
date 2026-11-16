@@ -60,8 +60,8 @@ TEST(ActiveExpireTest, SlowCyclesDeleteExpiredKeysAndKeepLiveOnes) {
   // The clock stands still, so a cycle ends only once few of the keys it
   // sampled last were expired.
   constexpr int kMaxCycles = 50;
-  for (int cycle = 0;
-       cycle < kMaxCycles && db->KeysWithExpirationCount() > 200; ++cycle) {
+  for (int cycle = 0; cycle < kMaxCycles && db->KeysWithExpirationCount() > 200;
+       ++cycle) {
     active_expire.RunSlowCycle(db.get());
     EXPECT_FALSE(active_expire.HitTimeLimit());
   }
