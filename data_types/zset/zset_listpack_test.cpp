@@ -14,6 +14,18 @@
 namespace redis_simple::data_types {
 TEST(ZSetListpackTest, Add) { zset_storage_test::TestAdd<ZSetListpack>(); }
 
+TEST(ZSetListpackTest, AddRulesForNewMember) {
+  zset_storage_test::TestAddRulesForNewMember<ZSetListpack>();
+}
+
+TEST(ZSetListpackTest, AddRulesForExistingMember) {
+  zset_storage_test::TestAddRulesForExistingMember<ZSetListpack>();
+}
+
+TEST(ZSetListpackTest, AddIncrementToNotANumber) {
+  zset_storage_test::TestAddIncrementToNotANumber<ZSetListpack>();
+}
+
 TEST(ZSetListpackTest, Rank) { zset_storage_test::TestRank<ZSetListpack>(); }
 
 TEST(ZSetListpackTest, Update) {

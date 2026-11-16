@@ -353,6 +353,90 @@ TEST(FloatsTest, ParsesRangeBoundsLikeZslParseRange) {
   EXPECT_FALSE(ToRangeDouble("abc").has_value());
 }
 
+TEST(FloatsTest, RangeBoundsParseLikeStrtod) {
+  // The paths that read a bound in place must return exactly what strtod
+  // over the whole text does, with only NaN rejected.
+  const auto reference = [](const std::string& text) -> std::optional<double> {
+    char* end = nullptr;
+    const double value = std::strtod(text.c_str(), &end);
+    if (end != text.c_str() + text.size() || std::isnan(value)) {
+      return std::nullopt;
+    }
+    return value;
+  };
+  std::vector<std::string> inputs = {"0",
+                                     "-0",
+                                     "+0",
+                                     "1",
+                                     "-1.5",
+                                     "+12.25",
+                                     "007.50",
+                                     "5.",
+                                     ".5",
+                                     "1e3",
+                                     "0x10",
+                                     "1e400",
+                                     "-1e400",
+                                     "1e-400",
+                                     "inf",
+                                     "+inf",
+                                     "-inf",
+                                     "INF",
+                                     "-Inf",
+                                     "+iNf",
+                                     "infinity",
+                                     "-INFINITY",
+                                     "in",
+                                     "infx",
+                                     "inf ",
+                                     " inf",
+                                     "+",
+                                     "-",
+                                     "",
+                                     " ",
+                                     " 2.5",
+                                     "2.5 ",
+                                     "1,5",
+                                     "1.2.3",
+                                     "abc",
+                                     "nan",
+                                     "-nan",
+                                     "NAN",
+                                     "++1",
+                                     "+-inf",
+                                     "(1",
+                                     "123456789012345",
+                                     "1234567890123456",
+                                     "0.000001",
+                                     "99999999.9999999",
+                                     std::string(200, '9'),
+                                     std::string(1, '\0')};
+  uint64_t state = 0x9E3779B97F4A7C15U;
+  const auto next = [&state] {
+    state = (state * 6364136223846793005U) + 1442695040888963407U;
+    return state >> 11;
+  };
+  for (int i = 0; i < 50'000; ++i) {
+    std::string text = next() % 4 == 0 ? "-" : "";
+    text += std::to_string(next() % 1'000'000);
+    if (next() % 2 == 0) {
+      text += "." + std::to_string(next() % 100'000);
+    }
+    inputs.push_back(std::move(text));
+  }
+  for (const std::string& input : inputs) {
+    const std::optional<double> expected = reference(input);
+    const std::optional<double> actual = ToRangeDouble(input);
+    ASSERT_EQ(actual.has_value(), expected.has_value()) << input;
+    if (expected.has_value()) {
+      EXPECT_EQ(actual.value_or(0), expected.value_or(0)) << input;
+      EXPECT_EQ(std::signbit(actual.value_or(0)),
+                std::signbit(expected.value_or(0)))
+          << input;
+    }
+  }
+}
+
 TEST(FloatsTest, FormatsWith17DigitsLikeRedisLd2string) {
   const auto format = [](double value) {
     FloatBuffer buffer;
