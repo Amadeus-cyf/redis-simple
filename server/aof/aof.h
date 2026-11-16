@@ -57,8 +57,8 @@ struct Options {
   // Redis' aof-timestamp-enabled: a "#TS:<unix time>" annotation precedes
   // the first command appended in each second.
   bool timestamp_enabled{false};
-  // Redis' aof-rewrite-incremental-fsync: the rewrite child syncs every
-  // 4 MiB it writes, instead of only at the end.
+  // Redis' aof-rewrite-incremental-fsync: the rewrite child pushes every
+  // 4 MiB it writes towards the disk, instead of only at the end.
   bool rewrite_incremental_fsync{true};
   // Redis' no-appendfsync-on-rewrite: no fsync while a rewrite or a
   // background save runs.

@@ -124,6 +124,15 @@ Guidance for AI coding agents working in this repository.
   interoperability with `scripts/check_rdb_interop.py`. Keep `BGSAVE`, save
   points, the save at shutdown, `stop-writes-on-bgsave-error`, and the `rdb_`
   `INFO` fields aligned with it too.
+- Both snapshot writers (the RDB writer and the AOF's command snapshot)
+  sync as they go through `aof::IncrementalSync`, which follows Redis'
+  `rioFileWrite`: on Linux `sync_file_range` starts each 4 MiB on its way
+  and waits only for the 4 MiB before it, elsewhere it is an `fsync`, and
+  on Linux the file's written pages are dropped from the page cache (not for the
+  save at shutdown, which the next start reads). Those calls are optional
+  members of `aof::FileOps` that default to "not available" (the page
+  cache drop to doing nothing), so a test's
+  file operations keep the `fsync` path unless they override them.
 - Only one child runs at a time, as in Redis: `Aof::Cron` and `Rdb::Cron`
   take `may_fork`, false while the other side's child runs, and
   `BGREWRITEAOF` and `BGSAVE` schedule or refuse as Redis' commands do.
