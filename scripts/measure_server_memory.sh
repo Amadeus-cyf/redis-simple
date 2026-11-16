@@ -45,12 +45,16 @@ requests="${MEMORY_REQUESTS:-2000000}"
 key_range="${MEMORY_KEY_RANGE:-1000000}"
 port="${MEMORY_PORT:-8500}"
 server_pid=""
+# Each server runs in this empty directory, so none loads an RDB file or AOF
+# left in the working directory.
+data_dir="$(mktemp -d)"
 
 cleanup() {
   if [[ -n "${server_pid}" ]] && kill -0 "${server_pid}" 2>/dev/null; then
     kill -TERM "${server_pid}" 2>/dev/null || true
     wait "${server_pid}" 2>/dev/null || true
   fi
+  rm -rf "${data_dir}"
 }
 trap cleanup EXIT INT TERM
 
@@ -69,7 +73,11 @@ measure() {
   if "${binary}" --help 2>&1 | grep -q -- "--save"; then
     no_save=(--save "")
   fi
-  "${binary}" --port "${port}" "${no_save[@]}" >/dev/null 2>&1 &
+  local -a dir=()
+  if "${binary}" --help 2>&1 | grep -q -- "--dir"; then
+    dir=(--dir "${data_dir}")
+  fi
+  "${binary}" --port "${port}" "${dir[@]}" "${no_save[@]}" >/dev/null 2>&1 &
   server_pid=$!
   for _ in $(seq 1 100); do
     if redis-cli -p "${port}" PING >/dev/null 2>&1; then
