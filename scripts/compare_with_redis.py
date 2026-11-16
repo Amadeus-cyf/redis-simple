@@ -402,6 +402,18 @@ def edge_cases():
         "-inf",
         "(-inf",
         "nan",
+        "INF",
+        "-Inf",
+        "(+inf",
+        "infinity",
+        "infx",
+        " 1",
+        "1 ",
+        "-0",
+        "5.",
+        ".5",
+        "0x2",
+        "1e400",
     ]
     for a, b in itertools.product(bounds, repeat=2):
         add(f'ZRANGEBYSCORE z "{a}" "{b}"', f'ZCOUNT z "{a}" "{b}"')

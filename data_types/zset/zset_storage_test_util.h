@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -104,6 +105,79 @@ void TestAdd() {
 
   ASSERT_TRUE(zset->InsertOrUpdate("key4", 1.0, nullptr));
   ASSERT_EQ(zset->Size(), 4);
+}
+
+// Adds under `rules` and checks the status and the member's stored score
+// afterwards (none when the member must stay absent).
+template <typename Storage>
+void ExpectAdd(Storage* zset, std::string_view member, double score,
+               const ZSetAddRules& rules, ZSetAddStatus expected_status,
+               std::optional<double> expected_score) {
+  const ZSetAddResult result = zset->Add(member, score, rules);
+  EXPECT_EQ(result.status, expected_status) << member;
+  EXPECT_EQ(zset->Score(member), expected_score) << member;
+  if (expected_status == ZSetAddStatus::kAdded ||
+      expected_status == ZSetAddStatus::kUpdated ||
+      expected_status == ZSetAddStatus::kUnchanged) {
+    EXPECT_EQ(result.score, expected_score) << member;
+  }
+}
+
+template <typename Storage>
+void TestAddRulesForNewMember() {
+  using enum ZSetAddStatus;
+  auto zset = MakeBaseStorage<Storage>();
+  ExpectAdd(zset.get(), "new_xx", 5, {.xx = true}, kSkipped, std::nullopt);
+  ExpectAdd(zset.get(), "new_nx", 5, {.nx = true}, kAdded, 5);
+  // GT and LT only restrict updates.
+  ExpectAdd(zset.get(), "new_gt", 0.5, {.gt = true}, kAdded, 0.5);
+  ExpectAdd(zset.get(), "new_lt", 9, {.lt = true}, kAdded, 9);
+  ExpectAdd(zset.get(), "new_incr", 7, {.incr = true}, kAdded, 7);
+  ExpectAdd(zset.get(), "new_nan", std::numeric_limits<double>::quiet_NaN(), {},
+            kNotANumber, std::nullopt);
+  ExpectRangeByRank(*zset, 0, 7, false, false, 0, std::nullopt, false,
+                    {{"new_gt", 0.5},
+                     {"key3", 1},
+                     {"key4", 1},
+                     {"key2", 2},
+                     {"key1", 3},
+                     {"new_nx", 5},
+                     {"new_incr", 7},
+                     {"new_lt", 9}});
+}
+
+template <typename Storage>
+void TestAddRulesForExistingMember() {
+  using enum ZSetAddStatus;
+  auto zset = MakeBaseStorage<Storage>();
+  ExpectAdd(zset.get(), "key1", 9, {.nx = true}, kSkipped, 3);
+  ExpectAdd(zset.get(), "key1", 9, {.xx = true}, kUpdated, 9);
+  ExpectAdd(zset.get(), "key1", 9, {}, kUnchanged, 9);
+  ExpectAdd(zset.get(), "key1", 8, {.gt = true}, kSkipped, 9);
+  ExpectAdd(zset.get(), "key1", 9, {.gt = true}, kSkipped, 9);
+  ExpectAdd(zset.get(), "key1", 10, {.gt = true}, kUpdated, 10);
+  ExpectAdd(zset.get(), "key1", 11, {.lt = true}, kSkipped, 10);
+  ExpectAdd(zset.get(), "key1", 10, {.lt = true}, kSkipped, 10);
+  ExpectAdd(zset.get(), "key1", 0, {.lt = true}, kUpdated, 0);
+  ExpectAdd(zset.get(), "key1", 2.5, {.incr = true}, kUpdated, 2.5);
+  ExpectAdd(zset.get(), "key1", 0, {.incr = true}, kUnchanged, 2.5);
+  // GT and LT compare the incremented score.
+  ExpectAdd(zset.get(), "key1", -1, {.gt = true, .incr = true}, kSkipped, 2.5);
+  ExpectAdd(zset.get(), "key1", -1, {.xx = true, .lt = true, .incr = true},
+            kUpdated, 1.5);
+  ExpectRangeByRank(*zset, 0, 3, false, false, 0, std::nullopt, false,
+                    {{"key3", 1}, {"key4", 1}, {"key1", 1.5}, {"key2", 2}});
+}
+
+template <typename Storage>
+void TestAddIncrementToNotANumber() {
+  constexpr double kInfinity = std::numeric_limits<double>::infinity();
+  auto zset = MakeBaseStorage<Storage>();
+  ExpectAdd(zset.get(), "key2", kInfinity, {}, ZSetAddStatus::kUpdated,
+            kInfinity);
+  ExpectAdd(zset.get(), "key2", -kInfinity, {.incr = true},
+            ZSetAddStatus::kNotANumber, kInfinity);
+  ExpectRank(*zset, "key2", 3);
 }
 
 template <typename Storage>

@@ -32,6 +32,10 @@ cmake --preset release
 cmake --build --preset release
 ```
 
+The release preset builds with link-time optimization, as Redis' own release
+build does (`-O3 -flto`), so the compiler can inline calls between source
+files.
+
 The server allocates its objects with the bundled
 [mimalloc](https://github.com/microsoft/mimalloc) (`third_party/mimalloc`,
 v2.5.2). It replaces global `operator new` and `delete` in the server
@@ -528,6 +532,9 @@ Run one group with `--benchmark_filter`, for example
 
 - `Dict*`, `DynamicBuffer*`, `ReplyBuffer*`: core containers and buffers.
 - `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, and ranges.
+- `IntsetInsert*`, `Listpack*`, `ZSetListpackInsert`, `HashListpackSet`:
+  inserts into the compact encodings (and deletes, for
+  `ListpackDeleteFirst`), which reallocate and move the value's bytes.
 - `ListIndex`, `ListRange`: quicklist `LINDEX` and `LRANGE` at the head,
   middle, and tail of a 300,000-element list.
 - `ParseCompleteRequest`, `ParseSplitRequest`, `FindCommand`: request
@@ -540,6 +547,11 @@ Run one group with `--benchmark_filter`, for example
 - `DbSetString`: `SET` of 3-, 36-, and 100-byte values, as new keys and as
   overwrites. The sizes fall inside `std::string`'s inline buffer, inside the
   embedded-string range, and beyond both.
+- `DbSetCommand`: the `SET` command's keyspace work, a lookup followed by
+  the store, on new and existing keys, with and without a TTL in the table.
+- `ActiveExpireSlowCycleNothingExpired`, `ActiveExpireReclaimExpiredKeys`:
+  one active-expiration cycle over 100,000 keys none of which has expired,
+  and back-to-back cycles until 100,000 expired keys are gone.
 
 Benchmarks that take a 0 or 1 argument compare two ways of doing the same
 work in one run. They are not part of CTest or CI, because timings vary

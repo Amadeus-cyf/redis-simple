@@ -1,6 +1,5 @@
 #include "server/commands/scan_options.h"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -19,12 +18,6 @@
 #include "utils/strings.h"
 
 namespace redis_simple::commands {
-namespace {
-// Encoded bytes per element reserved up front, for at most this many.
-constexpr size_t kReservedElementBytes = 24;
-constexpr size_t kMaxReservedElements = 1024;
-}  // namespace
-
 bool ParseScanCursor(Client* const client, std::string_view text,
                      size_t* const cursor) {
   const std::optional<uint64_t> value = utils::ToUint64(text);
@@ -121,8 +114,7 @@ db::RedisObject* StartCollectionScan(Client* const client, ScanTarget target,
 }
 
 ScanReply::ScanReply(size_t expected) {
-  elements_.reserve(std::min(expected, kMaxReservedElements) *
-                    kReservedElementBytes);
+  reply::ReserveBulkStrings(expected, &elements_);
 }
 
 void ScanReply::Send(Client* const client, size_t cursor) && {

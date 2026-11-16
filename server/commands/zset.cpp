@@ -1,7 +1,6 @@
 #include "data_types/zset/zset.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -23,12 +22,9 @@
 namespace redis_simple::commands::zset {
 namespace {
 struct AddOptions {
-  bool nx{};
-  bool xx{};
-  bool gt{};
-  bool lt{};
+  data_types::ZSetAddRules rules;
+  // Reply with the number of members added or updated, not only added.
   bool ch{};
-  bool incr{};
 };
 
 // Parses ZADD's leading options, as Redis does: they end at the first
@@ -39,65 +35,22 @@ size_t ParseOptions(const commands::CommandArgs& args,
   for (; index < args.size(); ++index) {
     const std::string_view option = args[index];
     if (utils::EqualsIgnoreCase(option, "NX")) {
-      options->nx = true;
+      options->rules.nx = true;
     } else if (utils::EqualsIgnoreCase(option, "XX")) {
-      options->xx = true;
+      options->rules.xx = true;
     } else if (utils::EqualsIgnoreCase(option, "CH")) {
       options->ch = true;
     } else if (utils::EqualsIgnoreCase(option, "INCR")) {
-      options->incr = true;
+      options->rules.incr = true;
     } else if (utils::EqualsIgnoreCase(option, "GT")) {
-      options->gt = true;
+      options->rules.gt = true;
     } else if (utils::EqualsIgnoreCase(option, "LT")) {
-      options->lt = true;
+      options->rules.lt = true;
     } else {
       break;
     }
   }
   return index;
-}
-
-enum class AddResult : std::uint8_t {
-  kAdded,
-  kUpdated,
-  // Processed without a change: the score was already that value.
-  kUnchanged,
-  // Skipped by NX, XX, GT, or LT.
-  kSkipped,
-  // INCR produced NaN.
-  kNotANumber,
-};
-
-// Redis' zsetAdd: applies one score-member pair under the options, and
-// stores the member's resulting score in `*score`.
-AddResult Add(data_types::ZSet* const zset, std::string_view member,
-              const AddOptions& options, double* const score) {
-  const std::optional<double> current = zset->Score(member);
-  if (!current.has_value()) {
-    if (options.xx) {
-      return AddResult::kSkipped;
-    }
-    zset->InsertOrUpdate(member, *score);
-    return AddResult::kAdded;
-  }
-  if (options.nx) {
-    return AddResult::kSkipped;
-  }
-  if (options.incr) {
-    *score += *current;
-    if (std::isnan(*score)) {
-      return AddResult::kNotANumber;
-    }
-  }
-  if ((options.lt && *score >= *current) ||
-      (options.gt && *score <= *current)) {
-    return AddResult::kSkipped;
-  }
-  if (*score == *current) {
-    return AddResult::kUnchanged;
-  }
-  zset->InsertOrUpdate(member, *score);
-  return AddResult::kUpdated;
 }
 
 // Checks the option combinations and the argument count, in Redis' order,
@@ -108,18 +61,19 @@ bool ValidateOptions(Client* const client, const AddOptions& options,
     client->AddReply(reply::kSyntaxError);
     return false;
   }
-  if (options.nx && options.xx) {
+  const data_types::ZSetAddRules& rules = options.rules;
+  if (rules.nx && rules.xx) {
     client->AddReply(reply::FromError(
         "ERR XX and NX options at the same time are not compatible"));
     return false;
   }
-  if ((options.gt && options.nx) || (options.lt && options.nx) ||
-      (options.gt && options.lt)) {
+  if ((rules.gt && rules.nx) || (rules.lt && rules.nx) ||
+      (rules.gt && rules.lt)) {
     client->AddReply(reply::FromError(
         "ERR GT, LT, and/or NX options at the same time are not compatible"));
     return false;
   }
-  if (options.incr && remaining > 2) {
+  if (rules.incr && remaining > 2) {
     client->AddReply(reply::FromError(
         "ERR INCR option supports a single increment-element pair"));
     return false;
@@ -137,45 +91,48 @@ struct AddTotals {
   double last_score{};
 };
 
-// Applies every score-member pair. Returns false after replying with an error
-// if INCR produced NaN.
+// Applies every score-member pair, each with one lookup of its member.
+// Returns false after replying with an error if INCR produced NaN.
 bool AddPairs(Client* const client, data_types::ZSet* const zset,
               const commands::CommandArgs& args, size_t first_score,
-              const std::vector<double>& scores, const AddOptions& options,
-              AddTotals* const totals) {
-  const bool plain =
-      !options.nx && !options.xx && !options.gt && !options.lt && !options.incr;
+              const std::vector<double>& scores,
+              const data_types::ZSetAddRules& rules, AddTotals* const totals) {
   for (size_t i = 0; i < scores.size(); ++i) {
     const std::string_view member = args[first_score + (2 * i) + 1];
-    double score = scores[i];
-    if (plain) {
-      // One lookup: insert or update, learning which happened.
-      bool changed = false;
-      const bool inserted = zset->InsertOrUpdate(member, score, &changed);
-      totals->added += inserted ? 1 : 0;
-      totals->updated += changed && !inserted ? 1 : 0;
-      continue;
-    }
-    switch (Add(zset, member, options, &score)) {
-      case AddResult::kAdded:
+    const data_types::ZSetAddResult result =
+        zset->Add(member, scores[i], rules);
+    switch (result.status) {
+      case data_types::ZSetAddStatus::kAdded:
         ++totals->added;
         break;
-      case AddResult::kUpdated:
+      case data_types::ZSetAddStatus::kUpdated:
         ++totals->updated;
         break;
-      case AddResult::kUnchanged:
+      case data_types::ZSetAddStatus::kUnchanged:
         break;
-      case AddResult::kSkipped:
+      case data_types::ZSetAddStatus::kSkipped:
         continue;
-      case AddResult::kNotANumber:
+      case data_types::ZSetAddStatus::kNotANumber:
         client->AddReply(
             reply::FromError("ERR resulting score is not a number (NaN)"));
         return false;
     }
     totals->processed = true;
-    totals->last_score = score;
+    totals->last_score = result.score;
   }
   return true;
+}
+
+// Finds the sorted set ZADD writes to. XX only updates members, so it leaves
+// a missing key missing; every other form creates it.
+CreatingLookup LookupForAdd(db::RedisDb* const db, std::string_view key,
+                            bool only_existing) {
+  constexpr auto kZSet = db::RedisObject::ObjectType::kZSet;
+  if (!only_existing) {
+    return LookupOrCreateTyped(db, key, kZSet);
+  }
+  const auto [object, wrong_type] = MutableLookupTyped(db, key, kZSet);
+  return {.object = object, .wrong_type = wrong_type};
 }
 }  // namespace
 
@@ -199,37 +156,35 @@ void HandleZAdd(Client* const client) {
     scores[i] = *score;
   }
 
-  auto [object, wrong_type] = MutableLookupTyped(
-      client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  const auto [object, created, wrong_type] =
+      LookupForAdd(client->Db(), args[0], options.rules.xx);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
-  if (object == nullptr && !options.xx) {
-    // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
-    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-    object = client->Db()->StoreKey(
-        args[0], db::RedisObject::CreateWithZSet(data_types::ZSet::Create()));
+  if (created) {
+    *object =
+        std::move(*db::RedisObject::CreateWithZSet(data_types::ZSet::Create()));
   }
   AddTotals totals;
   if (object != nullptr && !AddPairs(client, object->ZSet(), args, first_score,
-                                     scores, options, &totals)) {
+                                     scores, options.rules, &totals)) {
     return;
   }
   // Like Redis, only a change touches watchers and reaches the AOF.
   if (totals.added > 0 || totals.updated > 0) {
     client->MarkModified(totals.added + totals.updated);
   }
-  if (options.incr) {
+  if (options.rules.incr) {
     if (totals.processed) {
-      client->AddReply(reply::FromFloat(totals.last_score, client->Protocol()));
+      client->AddFloatReply(totals.last_score);
     } else {
       client->AddReply(reply::NullView(client->Protocol()));
     }
     return;
   }
-  client->AddReply(reply::FromInt64(options.ch ? totals.added + totals.updated
-                                               : totals.added));
+  client->AddIntegerReply(options.ch ? totals.added + totals.updated
+                                     : totals.added);
 }
 
 void HandleZCard(Client* const client) {
@@ -240,7 +195,7 @@ void HandleZCard(Client* const client) {
     return;
   }
   const size_t size = object == nullptr ? 0 : object->ZSet()->Size();
-  client->AddReply(reply::FromInt64(static_cast<int64_t>(size)));
+  client->AddIntegerReply(static_cast<int64_t>(size));
 }
 
 namespace {
@@ -590,11 +545,12 @@ void AddRangeReply(Client* const client, RangeType type, Direction direction) {
   std::move(reply).Send(client);
 }
 
-std::optional<int64_t> ToReplyInteger(size_t value) {
-  if (value > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
-    return std::nullopt;
+void AddCountReply(Client* const client, size_t count) {
+  if (count > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+    client->AddReply(reply::FromError("ERR zset count out of range"));
+    return;
   }
-  return static_cast<int64_t>(value);
+  client->AddIntegerReply(static_cast<int64_t>(count));
 }
 }  // namespace
 
@@ -638,11 +594,8 @@ void HandleZLexCount(Client* const client) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
-  const size_t count = object == nullptr ? 0 : object->ZSet()->LexCount(&spec);
-  const std::optional<int64_t> reply_count = ToReplyInteger(count);
-  client->AddReply(reply_count.has_value()
-                       ? reply::FromInt64(*reply_count)
-                       : reply::FromError("ERR zset count out of range"));
+  AddCountReply(client,
+                object == nullptr ? 0 : object->ZSet()->LexCount(&spec));
 }
 
 void HandleZCount(Client* const client) {
@@ -659,15 +612,7 @@ void HandleZCount(Client* const client) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
-  if (object == nullptr) {
-    client->AddReply(reply::FromInt64(0));
-    return;
-  }
-  const std::optional<int64_t> count =
-      ToReplyInteger(object->ZSet()->Count(&spec));
-  client->AddReply(count.has_value()
-                       ? reply::FromInt64(*count)
-                       : reply::FromError("ERR zset count out of range"));
+  AddCountReply(client, object == nullptr ? 0 : object->ZSet()->Count(&spec));
 }
 
 namespace {
@@ -699,7 +644,7 @@ void AddRankReply(Client* const client, bool reverse) {
   if (with_score) {
     reply::AppendArrayHeader(2, &encoded);
   }
-  encoded.append(reply::FromInt64(static_cast<int64_t>(rank)));
+  reply::AppendInt64(static_cast<int64_t>(rank), &encoded);
   if (with_score) {
     reply::AppendFloat(found->score, client->Protocol(), &encoded);
   }
@@ -733,7 +678,7 @@ void HandleZRem(Client* const client) {
   if (removed > 0) {
     client->MarkModified(removed);
   }
-  client->AddReply(reply::FromInt64(removed));
+  client->AddIntegerReply(removed);
 }
 
 void HandleZScan(Client* const client) {
@@ -777,7 +722,7 @@ void HandleZScore(Client* const client) {
   const std::optional<double> score =
       object == nullptr ? std::nullopt : object->ZSet()->Score(args[1]);
   if (score.has_value()) {
-    client->AddReply(reply::FromFloat(*score, client->Protocol()));
+    client->AddFloatReply(*score);
   } else {
     client->AddReply(reply::NullView(client->Protocol()));
   }
