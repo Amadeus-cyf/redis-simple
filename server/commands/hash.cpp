@@ -38,16 +38,14 @@ bool LookupHash(Client* const client, std::string_view key,
 // Like LookupHash, but creates an empty hash when the key is missing.
 bool LookupOrCreateHash(Client* const client, std::string_view key,
                         Hash** const hash) {
-  auto [object, wrong_type] = MutableLookupTyped(client->Db(), key, kHash);
+  const auto [object, created, wrong_type] =
+      LookupOrCreateTyped(client->Db(), key, kHash);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
     return false;
   }
-  if (object == nullptr) {
-    // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
-    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-    object = client->Db()->StoreKey(
-        key, db::RedisObject::CreateWithHash(Hash::Create()));
+  if (created) {
+    *object = std::move(*db::RedisObject::CreateWithHash(Hash::Create()));
   }
   *hash = object->Hash();
   return true;

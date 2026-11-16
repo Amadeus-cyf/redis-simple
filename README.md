@@ -539,6 +539,8 @@ Run one group with `--benchmark_filter`, for example
 - `DbSetString`: `SET` of 3-, 36-, and 100-byte values, as new keys and as
   overwrites. The sizes fall inside `std::string`'s inline buffer, inside the
   embedded-string range, and beyond both.
+- `DbSetCommand`: the `SET` command's keyspace work, a lookup followed by
+  the store, on new and existing keys, with and without a TTL in the table.
 
 Benchmarks that take a 0 or 1 argument compare two ways of doing the same
 work in one run. They are not part of CTest or CI, because timings vary

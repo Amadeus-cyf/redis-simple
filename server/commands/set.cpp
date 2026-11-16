@@ -21,17 +21,15 @@
 namespace redis_simple::commands::set {
 void HandleSAdd(Client* const client) {
   const commands::CommandArgs& args = client->Args();
-  auto [object, wrong_type] = MutableLookupTyped(
+  const auto [object, created, wrong_type] = LookupOrCreateTyped(
       client->Db(), args[0], db::RedisObject::ObjectType::kSet);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
-  if (object == nullptr) {
-    // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
-    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-    object = client->Db()->StoreKey(
-        args[0], db::RedisObject::CreateWithSet(data_types::Set::Create()));
+  if (created) {
+    *object =
+        std::move(*db::RedisObject::CreateWithSet(data_types::Set::Create()));
   }
   data_types::Set* const set = object->Set();
   int64_t added = 0;

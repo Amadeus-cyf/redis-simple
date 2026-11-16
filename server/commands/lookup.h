@@ -40,6 +40,30 @@ inline TypedLookup<db::RedisObject> MutableLookupTyped(
   }
   return {object, false};
 }
+
+// Result of LookupOrCreateTyped. `object` is null only when the key holds
+// another type.
+struct CreatingLookup {
+  db::RedisObject* object{nullptr};
+  bool created{false};
+  bool wrong_type{false};
+};
+
+// MutableLookupTyped that adds a missing key, hashing the key and probing
+// the keyspace once for both (RedisDb::FindOrCreateKey). A created key holds
+// an empty string: the caller stores its value of `type` before returning.
+inline CreatingLookup LookupOrCreateTyped(db::RedisDb* const db,
+                                          std::string_view key,
+                                          db::RedisObject::ObjectType type) {
+  const db::RedisDb::KeySlot slot = db->FindOrCreateKey(key);
+  if (slot.Created()) {
+    return {.object = slot.Object(), .created = true};
+  }
+  if (slot.Object()->Type() != type) {
+    return {.wrong_type = true};
+  }
+  return {.object = slot.Object()};
+}
 }  // namespace redis_simple::commands
 
 #endif  // REDIS_SIMPLE_SERVER_COMMANDS_LOOKUP_H_

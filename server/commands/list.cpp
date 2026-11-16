@@ -116,16 +116,14 @@ std::pair<size_t, List::RemoveDirection> NormalizeRemoveCount(int64_t count) {
 
 void HandlePush(Client* const client, Side side) {
   const commands::CommandArgs& args = client->Args();
-  auto [object, wrong_type] = MutableLookupTyped(client->Db(), args[0], kList);
+  const auto [object, created, wrong_type] =
+      LookupOrCreateTyped(client->Db(), args[0], kList);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
-  if (object == nullptr) {
-    // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
-    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-    object = client->Db()->StoreKey(
-        args[0], db::RedisObject::CreateWithList(List::Create()));
+  if (created) {
+    *object = std::move(*db::RedisObject::CreateWithList(List::Create()));
   }
   List* const list = object->List();
   for (size_t i = 1; i < args.size(); ++i) {

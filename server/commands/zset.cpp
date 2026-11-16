@@ -122,6 +122,18 @@ bool AddPairs(Client* const client, data_types::ZSet* const zset,
   }
   return true;
 }
+
+// Finds the sorted set ZADD writes to. XX only updates members, so it leaves
+// a missing key missing; every other form creates it.
+CreatingLookup LookupForAdd(db::RedisDb* const db, std::string_view key,
+                            bool only_existing) {
+  constexpr auto kZSet = db::RedisObject::ObjectType::kZSet;
+  if (!only_existing) {
+    return LookupOrCreateTyped(db, key, kZSet);
+  }
+  const auto [object, wrong_type] = MutableLookupTyped(db, key, kZSet);
+  return {.object = object, .wrong_type = wrong_type};
+}
 }  // namespace
 
 void HandleZAdd(Client* const client) {
@@ -144,17 +156,15 @@ void HandleZAdd(Client* const client) {
     scores[i] = *score;
   }
 
-  auto [object, wrong_type] = MutableLookupTyped(
-      client->Db(), args[0], db::RedisObject::ObjectType::kZSet);
+  const auto [object, created, wrong_type] =
+      LookupForAdd(client->Db(), args[0], options.rules.xx);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
-  if (object == nullptr && !options.rules.xx) {
-    // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
-    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-    object = client->Db()->StoreKey(
-        args[0], db::RedisObject::CreateWithZSet(data_types::ZSet::Create()));
+  if (created) {
+    *object =
+        std::move(*db::RedisObject::CreateWithZSet(data_types::ZSet::Create()));
   }
   AddTotals totals;
   if (object != nullptr && !AddPairs(client, object->ZSet(), args, first_score,

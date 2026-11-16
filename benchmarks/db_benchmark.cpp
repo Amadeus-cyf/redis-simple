@@ -10,8 +10,9 @@
 #include "server/db/redis_object.h"
 #include "utils/time.h"
 
-// Keyspace benchmarks: lookups that also consult the TTL table, and string
-// SETs by value size, as new keys and as overwrites.
+// Keyspace benchmarks: lookups that also consult the TTL table, string SETs
+// by value size, as new keys and as overwrites, and the SET command's lookup
+// followed by its store.
 namespace redis_simple {
 namespace {
 constexpr size_t kKeyCount = 100'000;
@@ -97,6 +98,43 @@ void DbSetString(benchmark::State& state) {
   }
   state.SetItemsProcessed(state.iterations());
 }
+
+// What the SET command does to the keyspace: look the key up, then store the
+// value through the slot the lookup found. Argument `overwrite` 0 sets new
+// keys and 1 existing ones; `with_ttl` 1 gives one other key a TTL, so each
+// SET also consults the TTL table.
+void DbSetCommand(benchmark::State& state) {
+  const bool overwrite = state.range(0) != 0;
+  const bool with_ttl = state.range(1) != 0;
+  const std::vector<std::string> keys = Keys();
+  auto db = db::RedisDb::Create();
+  const auto fill = [&] {
+    if (overwrite) {
+      for (const std::string& key : keys) {
+        db->SetStringKey(key, "initial-value", 0);
+      }
+    }
+    if (with_ttl) {
+      db->SetStringKey("volatile", "value",
+                       utils::NowInMilliseconds() + 3'600'000);
+    }
+  };
+  fill();
+  size_t next = 0;
+  for (auto _ : state) {
+    (void)_;
+    db->SetStringAt(db->FindOrCreateKey(keys[next]), "updated-value", 0);
+    next = (next + 1) % keys.size();
+    if (next == 0 && !overwrite) {
+      // Start the next pass from an empty keyspace so every SET inserts.
+      state.PauseTiming();
+      db->Flush();
+      fill();
+      state.ResumeTiming();
+    }
+  }
+  state.SetItemsProcessed(state.iterations());
+}
 }  // namespace
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
@@ -105,5 +143,8 @@ BENCHMARK(DbOverwriteString)->Arg(0)->Arg(1)->ArgName("in_place");
 BENCHMARK(DbSetString)
     ->ArgsProduct({{3, 36, 100}, {0, 1}})
     ->ArgNames({"value_bytes", "overwrite"});
+BENCHMARK(DbSetCommand)
+    ->ArgsProduct({{0, 1}, {0, 1}})
+    ->ArgNames({"overwrite", "with_ttl"});
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple
