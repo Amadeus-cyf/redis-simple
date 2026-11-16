@@ -68,6 +68,11 @@ ssize_t WritePendingReplies(Client* const client) {
 connection::ConnectionCallback CreateWriteReplyCallback(Server* const server,
                                                         Client* const client) {
   return [server, client](connection::Connection* /*connection*/) {
+    if (client->AwaitsFlush()) {
+      // The output may now include replies to commands that are not in the
+      // AOF yet. The server sends it after the flush.
+      return;
+    }
     WriteToClient(server, client);
   };
 }

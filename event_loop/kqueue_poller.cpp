@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -49,8 +50,11 @@ std::unique_ptr<KqueuePoller> KqueuePoller::Create(int nevents) {
 
 int KqueuePoller::AddEvent(int fd, int mask) {
   RS_LOG_DEBUG("add api event for fd = %d, mask = %d\n", fd, mask);
-  const auto existing = masks_.find(fd);
-  const int existing_mask = existing == masks_.end() ? 0 : existing->second;
+  if (fd < 0) {
+    return -1;
+  }
+  const auto index = static_cast<size_t>(fd);
+  const int existing_mask = index < masks_.size() ? masks_[index] : 0;
   const int added_mask = mask & ~existing_mask;
   if ((added_mask & EventFlag::kReadable) != 0) {
     RS_LOG_DEBUG("kqueue add read event\n");
@@ -70,17 +74,19 @@ int KqueuePoller::AddEvent(int fd, int mask) {
       return -1;
     }
   }
-  masks_[fd] = existing_mask | mask;
+  if (index >= masks_.size()) {
+    masks_.resize(index + 1);
+  }
+  masks_[index] = existing_mask | mask;
   RS_LOG_DEBUG("add event success\n");
   return 0;
 }
 
 int KqueuePoller::DeleteEvent(int fd, int mask) {
-  const auto existing = masks_.find(fd);
-  if (existing == masks_.end()) {
+  if (fd < 0 || static_cast<size_t>(fd) >= masks_.size() || masks_[fd] == 0) {
     return -1;
   }
-  const int removed_mask = existing->second & mask;
+  const int removed_mask = masks_[fd] & mask;
   if ((removed_mask & EventFlag::kReadable) != 0) {
     if (UpdateFilter(kqueue_fd_, fd, EVFILT_READ, EV_DELETE) < 0) {
       RS_LOG_DEBUG("kevent delete read event failed: %s\n",
@@ -99,12 +105,7 @@ int KqueuePoller::DeleteEvent(int fd, int mask) {
       return -1;
     }
   }
-  const int remaining_mask = existing->second & ~removed_mask;
-  if (remaining_mask == 0) {
-    masks_.erase(existing);
-  } else {
-    existing->second = remaining_mask;
-  }
+  masks_[fd] &= ~removed_mask;
   return 0;
 }
 
@@ -120,6 +121,7 @@ const std::vector<ReadyEvent>& KqueuePoller::Poll(
     return ready_events_;
   }
   RS_LOG_DEBUG("kqueue: poll %d fds from kqueue\n", numevents);
+  int seen_mask = 0;
   for (int i = 0; i < numevents; i++) {
     if (events_[i].ident >
         static_cast<uintptr_t>(std::numeric_limits<int>::max())) {
@@ -137,12 +139,19 @@ const std::vector<ReadyEvent>& KqueuePoller::Poll(
     }
     if (mask != 0) {
       ready_events_.push_back({fd, mask});
+      seen_mask |= mask;
     }
   }
-  std::sort(ready_events_.begin(), ready_events_.end(),
-            [](const ReadyEvent& left, const ReadyEvent& right) {
-              return left.fd < right.fd;
-            });
+  // kqueue reports a descriptor's read and write readiness as two events,
+  // and the loop expects one entry per descriptor. Only a poll that returned
+  // both kinds can hold such a pair, which is rare, as a write filter exists
+  // only while a reply is waiting for the socket; every other poll skips
+  // the sort.
+  if (seen_mask !=
+      (ToInt(EventFlag::kReadable) | ToInt(EventFlag::kWritable))) {
+    return ready_events_;
+  }
+  std::ranges::sort(ready_events_, {}, &ReadyEvent::fd);
   size_t output = 0;
   for (const auto& event : ready_events_) {
     if (output > 0 && ready_events_[output - 1].fd == event.fd) {

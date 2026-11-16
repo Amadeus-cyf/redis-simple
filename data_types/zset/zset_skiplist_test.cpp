@@ -11,6 +11,18 @@ using zset_storage_test::MemberScorePair;
 
 TEST(ZSetSkiplistTest, Add) { zset_storage_test::TestAdd<ZSetSkiplist>(); }
 
+TEST(ZSetSkiplistTest, AddRulesForNewMember) {
+  zset_storage_test::TestAddRulesForNewMember<ZSetSkiplist>();
+}
+
+TEST(ZSetSkiplistTest, AddRulesForExistingMember) {
+  zset_storage_test::TestAddRulesForExistingMember<ZSetSkiplist>();
+}
+
+TEST(ZSetSkiplistTest, AddIncrementToNotANumber) {
+  zset_storage_test::TestAddIncrementToNotANumber<ZSetSkiplist>();
+}
+
 TEST(ZSetSkiplistTest, Rank) { zset_storage_test::TestRank<ZSetSkiplist>(); }
 
 TEST(ZSetSkiplistTest, Update) {

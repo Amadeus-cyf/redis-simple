@@ -533,4 +533,85 @@ TEST(DictResizePolicyTest, AvoidShrinksOnlyAVeryEmptyTable) {
   }
   EXPECT_EQ(ScanPositions(dict.get()), 8);
 }
+
+TEST(DictRehashSomeTest, FinishesARehashWithoutOtherOperations) {
+  auto dict = Dict<int, int>::Create(64);
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_FALSE(dict->RehashSome(100));
+  for (int key = 0; key < 65; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  // The 65th insert began a rehash from 64 buckets to 128.
+  ASSERT_TRUE(dict->IsRehashing());
+  EXPECT_TRUE(dict->RehashSome(8));
+  EXPECT_TRUE(dict->IsRehashing());
+  int steps = 1;
+  while (dict->RehashSome(8)) {
+    ++steps;
+    ASSERT_LE(steps, 64);
+  }
+  EXPECT_GT(steps, 1);
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(ScanPositions(dict.get()), 128);
+  ExpectHolds(dict.get(), 65);
+}
+
+TEST(DictRehashSomeTest, WaitsForIteratorsAndTheResizePolicy) {
+  auto dict = Dict<int, int>::Create(64);
+  for (int key = 0; key < 65; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  ASSERT_TRUE(dict->IsRehashing());
+  {
+    // An iterator needs every entry to stay in its table.
+    auto it = Dict<int, int>::Iterator(dict.get());
+    it.SeekToFirst();
+    EXPECT_FALSE(dict->RehashSome(100));
+  }
+  {
+    const ScopedResizePolicy forbidden(DictResizePolicy::kForbidden);
+    EXPECT_FALSE(dict->RehashSome(100));
+  }
+  {
+    // 128 buckets are not four times 64, so this rehash waits for the child.
+    const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
+    EXPECT_FALSE(dict->RehashSome(100));
+  }
+  EXPECT_TRUE(dict->IsRehashing());
+  EXPECT_EQ(ScanPositions(dict.get()), 64);
+  EXPECT_FALSE(dict->RehashSome(100));
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(ScanPositions(dict.get()), 128);
+  ExpectHolds(dict.get(), 65);
+}
+
+TEST(DictRehashSomeTest, ShrinkIfNeededRetriesAShrinkThePolicyHeldBack) {
+  auto dict = Dict<int, int>::Create(256);
+  for (int key = 0; key < 200; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  {
+    const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
+    for (int key = 199; key >= 16; --key) {
+      ASSERT_TRUE(dict->Delete(key));
+    }
+    // A sixteenth of the buckets used: sparse, but not enough to shrink
+    // while a child runs.
+    dict->ShrinkIfNeeded();
+    EXPECT_FALSE(dict->IsRehashing());
+  }
+  // Nothing has been deleted since, so only a retry starts the shrink.
+  ExpectHolds(dict.get(), 16);
+  EXPECT_EQ(ScanPositions(dict.get()), 256);
+  dict->ShrinkIfNeeded();
+  EXPECT_TRUE(dict->IsRehashing());
+  while (dict->RehashSome(100)) {
+  }
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(ScanPositions(dict.get()), 16);
+  ExpectHolds(dict.get(), 16);
+  // A table that is full enough is left alone.
+  dict->ShrinkIfNeeded();
+  EXPECT_FALSE(dict->IsRehashing());
+}
 }  // namespace redis_simple::containers

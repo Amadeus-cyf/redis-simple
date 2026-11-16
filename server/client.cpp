@@ -27,6 +27,12 @@ constexpr std::string_view kQueued = "+QUEUED\r\n";
 constexpr std::string_view kExecAbort =
     "-EXECABORT Transaction discarded because of previous errors.\r\n";
 
+// Frees a vector's storage, which clear() keeps.
+template <typename T>
+void ReleaseStorage(std::vector<T>* const values) {
+  std::vector<T>().swap(*values);
+}
+
 // Pins the database clock for one command.
 class CommandTimeScope {
  public:
@@ -76,6 +82,24 @@ size_t Client::AddReply(std::string_view reply_text) {
     return 0;
   }
   return reply_buffer_.Append(reply_text.data(), reply_text.size());
+}
+
+// Like Redis' addReplyLongLong, sends the shared reply for 0 and 1, the
+// results of most commands that report a count or a yes or no.
+size_t Client::AddIntegerReply(int64_t value) {
+  if (value == 0) {
+    return AddReply(reply::kZero);
+  }
+  if (value == 1) {
+    return AddReply(reply::kOne);
+  }
+  reply::IntegerBuffer buffer;
+  return AddReply(reply::EncodeInt64(value, &buffer));
+}
+
+size_t Client::AddFloatReply(double value) {
+  reply::FloatReplyBuffer buffer;
+  return AddReply(reply::EncodeFloat(value, protocol_, &buffer));
 }
 
 size_t Client::AddReply(std::string&& reply_text) {
@@ -165,6 +189,7 @@ ssize_t Client::ReadQuery() {
     return connection_->State() == connection::ConnectionState::kConnected ? 0
                                                                            : -1;
   }
+  read_since_sweep_ = true;
   query_buffer_.Commit(static_cast<size_t>(nread));
   if (query_buffer_.View().size() > kMaxQueryBufferSize) {
     RS_LOG_DEBUG("query buffer limit exceeded\n");
@@ -172,6 +197,23 @@ ssize_t Client::ReadQuery() {
     return -1;
   }
   return nread;
+}
+
+void Client::ReleaseIdleBuffers() {
+  if (std::exchange(read_since_sweep_, false)) {
+    return;
+  }
+  // An empty query buffer holds no partial request, so nothing views it.
+  if (query_buffer_.Empty()) {
+    query_buffer_.Release();
+    ReleaseStorage(&args_);
+    ReleaseStorage(&parsed_args_);
+    ReleaseStorage(&parsed_requests_);
+  }
+  if (reply_buffer_.Empty()) {
+    reply_buffer_.ReleaseBuffer();
+    ReleaseStorage(&reply_blocks_);
+  }
 }
 
 ssize_t Client::SendReply() {
