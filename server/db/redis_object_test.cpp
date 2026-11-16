@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace redis_simple::db {
 TEST(RedisObjectTest, StringObjectExposesStringValue) {
@@ -45,8 +46,9 @@ TEST(RedisObjectTest, NonCanonicalIntegersAreNotIntEncoded) {
 }
 
 TEST(RedisObjectTest, ShortStringsAreEmbeddedAndLongerOnesRaw) {
-  // Embedding adds one word to every object, no more.
-  EXPECT_LE(sizeof(RedisObject), sizeof(std::string) + 16);
+  // One word beyond the embedded string holds the tag and the expiration
+  // time.
+  EXPECT_EQ(sizeof(RedisObject), sizeof(EmbeddedString) + sizeof(uint64_t));
   for (size_t length = 0; length <= EmbeddedString::kCapacity + 2; ++length) {
     std::string text(length, 'x');
     if (!text.empty()) {
@@ -294,6 +296,66 @@ TEST(RedisObjectDeathTest, StringAccessorsRequireAStringObject) {
   EXPECT_DEATH(object->Int(), "Check failed");
   EXPECT_DEATH(object->SetInt(1), "Check failed");
   EXPECT_DEATH(object->AssignString("value"), "Check failed");
+}
+
+TEST(RedisObjectTest, ExpireIsIndependentOfTheValue) {
+  RedisObject object;
+  EXPECT_EQ(object.Type(), RedisObject::ObjectType::kString);
+  EXPECT_EQ(object.String(), "");
+  EXPECT_EQ(object.Expire(), 0);
+
+  const std::string long_text(EmbeddedString::kCapacity + 10, 'x');
+  for (const int64_t expire :
+       {int64_t{1}, int64_t{1'700'000'000'000}, RedisObject::kMaxExpire}) {
+    object.SetExpire(expire);
+    // Every encoding in turn: the tag shares a word with the time.
+    object.ReplaceWithString("short");
+    EXPECT_EQ(object.StringEncoding(), RedisObject::Encoding::kEmbedded);
+    EXPECT_EQ(object.Expire(), expire);
+    object.SetInt(-5);
+    EXPECT_EQ(object.StringEncoding(), RedisObject::Encoding::kInt);
+    EXPECT_EQ(object.Expire(), expire);
+    object.AssignString(long_text);
+    EXPECT_EQ(object.StringEncoding(), RedisObject::Encoding::kRaw);
+    EXPECT_EQ(object.Expire(), expire);
+    object.AssignString("7");
+    ASSERT_NE(object.MutableString(), nullptr);
+    EXPECT_EQ(object.String(), "7");
+    EXPECT_EQ(object.Expire(), expire);
+
+    object.SetExpire(0);
+    EXPECT_EQ(object.Expire(), 0);
+    EXPECT_EQ(object.String(), "7");
+    EXPECT_EQ(object.StringEncoding(), RedisObject::Encoding::kRaw);
+  }
+}
+
+TEST(RedisObjectTest, MoveAssignmentReplacesTheValueAndKeepsTheExpire) {
+  const std::string long_text(EmbeddedString::kCapacity + 10, 'y');
+  RedisObject object;
+  object.SetExpire(1234);
+
+  object = std::move(*RedisObject::CreateWithString(long_text));
+  EXPECT_EQ(object.String(), long_text);
+  EXPECT_EQ(object.Expire(), 1234);
+
+  auto set = data_types::Set::Create();
+  set->Add("member");
+  object = std::move(*RedisObject::CreateWithSet(std::move(set)));
+  ASSERT_EQ(object.Type(), RedisObject::ObjectType::kSet);
+  EXPECT_TRUE(object.Set()->HasMember("member"));
+  EXPECT_EQ(object.Expire(), 1234);
+
+  auto incoming = RedisObject::CreateWithInt(42);
+  incoming->SetExpire(99);
+  object = std::move(*incoming);
+  EXPECT_EQ(object.Int(), std::optional<int64_t>(42));
+  EXPECT_EQ(object.Expire(), 1234);
+
+  // Move construction takes the expiration time along with the value.
+  const RedisObject moved(std::move(object));
+  EXPECT_EQ(moved.Int(), std::optional<int64_t>(42));
+  EXPECT_EQ(moved.Expire(), 1234);
 }
 
 TEST(RedisObjectTest, TypeNamesRoundTrip) {

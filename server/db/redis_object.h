@@ -6,13 +6,13 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
-#include <variant>
 
 #include "data_types/hash/hash.h"
 #include "data_types/list/list.h"
@@ -76,17 +76,18 @@ struct EmbeddedString {
 static_assert(EmbeddedString::kCapacity <= UINT8_MAX);
 static_assert(sizeof(EmbeddedString) == sizeof(std::string) + 8);
 
+// A key's value and, for a key in the keyspace, its expiration time.
+//
+// The value is one of eight encodings held in the same bytes: a raw, shared,
+// integer or embedded string, or a collection. Collections are held by value,
+// inside the object, so a small one is not a separate allocation: each fits in
+// the space an embedded string takes. Which encoding is live is a 3-bit tag in
+// the header word, where Redis' robj packs its type and encoding into bit
+// fields; a std::variant would spend a whole word on it.
+//
+// The rest of the header word is the expiration time, as Redis 8's kvobj
+// keeps a key's TTL in the object. Only the keyspace uses it.
 class RedisObject {
- private:
-  // Collections are held by value, inside the object, so a small one is not
-  // a separate allocation: each fits in the space an embedded string takes.
-  // The other encodings of a string are last so the alternatives before
-  // them keep indices that map directly onto ObjectType.
-  using SharedString = std::shared_ptr<std::string>;
-  using Value = std::variant<std::string, data_types::Set, data_types::List,
-                             data_types::ZSet, data_types::Hash, int64_t,
-                             EmbeddedString, SharedString>;
-
  public:
   enum class ObjectType {
     kString = 1,
@@ -107,10 +108,32 @@ class RedisObject {
   // is stored behind a shared pointer, so a reply can hold the bytes instead
   // of copying them.
   static constexpr size_t kMinSharedStringBytes = size_t{16} * 1024;
+  // The largest expiration time the header word holds, about 73 million
+  // years after the epoch in milliseconds.
+  static constexpr int64_t kMaxExpire = (int64_t{1} << 61) - 1;
 
   // An empty raw string, the state of a keyspace entry's object before the
   // database stores a value in it.
-  RedisObject() = default;
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+  RedisObject() { Construct<std::string>(); }
+  // Moves the value and copies the expiration time.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+  RedisObject(RedisObject&& other) noexcept : header_(other.header_) {
+    MoveValueFrom(&other);
+  }
+  // Replaces the value and keeps this object's expiration time, so storing
+  // a new value in a key leaves the key's TTL to the database.
+  RedisObject& operator=(RedisObject&& other) noexcept {
+    if (this != &other) {
+      DestroyValue();
+      SetTag(other.CurrentTag());
+      MoveValueFrom(&other);
+    }
+    return *this;
+  }
+  RedisObject(const RedisObject&) = delete;
+  RedisObject& operator=(const RedisObject&) = delete;
+  ~RedisObject() { DestroyValue(); }
 
   // Stores canonical decimal integers (such as "42" but not "042" or "+42")
   // as int64_t so counters avoid parsing and formatting on every update, and
@@ -169,45 +192,92 @@ class RedisObject {
   void ReplaceWithString(std::string_view value);
   Encoding StringEncoding() const;
   // Collection accessors return nullptr if the object holds another type.
-  data_types::Set* Set() { return std::get_if<data_types::Set>(&value_); }
-  const data_types::Set* Set() const {
-    return std::get_if<data_types::Set>(&value_);
-  }
-  data_types::List* List() { return std::get_if<data_types::List>(&value_); }
-  const data_types::List* List() const {
-    return std::get_if<data_types::List>(&value_);
-  }
-  data_types::ZSet* ZSet() { return std::get_if<data_types::ZSet>(&value_); }
-  const data_types::ZSet* ZSet() const {
-    return std::get_if<data_types::ZSet>(&value_);
-  }
-  data_types::Hash* Hash() { return std::get_if<data_types::Hash>(&value_); }
-  const data_types::Hash* Hash() const {
-    return std::get_if<data_types::Hash>(&value_);
-  }
-  // ObjectType values follow the variant's alternative order, offset by one.
+  data_types::Set* Set() { return GetIf<data_types::Set>(); }
+  const data_types::Set* Set() const { return GetIf<data_types::Set>(); }
+  data_types::List* List() { return GetIf<data_types::List>(); }
+  const data_types::List* List() const { return GetIf<data_types::List>(); }
+  data_types::ZSet* ZSet() { return GetIf<data_types::ZSet>(); }
+  const data_types::ZSet* ZSet() const { return GetIf<data_types::ZSet>(); }
+  data_types::Hash* Hash() { return GetIf<data_types::Hash>(); }
+  const data_types::Hash* Hash() const { return GetIf<data_types::Hash>(); }
   // Frees up to about `max_elements` elements of a large collection, so a
   // discarded value can be freed in steps. Returns true once the rest is
   // cheap to free at once; until then, only destroy the object.
   bool ReleaseSome(size_t max_elements);
   ObjectType Type() const {
-    if (value_.index() >= kFirstStringEncodingIndex) {
-      return ObjectType::kString;
-    }
-    return static_cast<ObjectType>(value_.index() + 1);
+    const Tag tag = CurrentTag();
+    // The tags from kInt on are other encodings of a string; the ones before
+    // follow ObjectType's order, offset by one.
+    return tag >= Tag::kInt
+               ? ObjectType::kString
+               : static_cast<ObjectType>(static_cast<uint8_t>(tag) + 1);
+  }
+  // The expiration time the database stored: an absolute time in
+  // milliseconds from 1 to kMaxExpire, or 0 for none.
+  int64_t Expire() const { return static_cast<int64_t>(header_ >> kTagBits); }
+  void SetExpire(int64_t expire) {
+    header_ =
+        (static_cast<uint64_t>(expire) << kTagBits) | (header_ & kTagMask);
   }
 
  private:
-  // Builds the alternative directly inside the variant, so no temporary Value
-  // is constructed and then moved.
+  enum class Tag : uint8_t {
+    kRaw,
+    kSet,
+    kList,
+    kZSet,
+    kHash,
+    kInt,
+    kEmbedded,
+    kShared,
+  };
+  using SharedString = std::shared_ptr<std::string>;
+  static constexpr int kTagBits = 3;
+  static constexpr uint64_t kTagMask = (uint64_t{1} << kTagBits) - 1;
+  static_assert(static_cast<uint64_t>(Tag::kShared) <= kTagMask);
+  static_assert(static_cast<int>(Tag::kRaw) + 1 ==
+                static_cast<int>(ObjectType::kString));
+  static_assert(static_cast<int>(Tag::kSet) + 1 ==
+                static_cast<int>(ObjectType::kSet));
+  static_assert(static_cast<int>(Tag::kList) + 1 ==
+                static_cast<int>(ObjectType::kList));
+  static_assert(static_cast<int>(Tag::kZSet) + 1 ==
+                static_cast<int>(ObjectType::kZSet));
+  static_assert(static_cast<int>(Tag::kHash) + 1 ==
+                static_cast<int>(ObjectType::kHash));
+
+  template <typename T>
+  static constexpr Tag TagOf() {
+    if constexpr (std::is_same_v<T, std::string>) {
+      return Tag::kRaw;
+    } else if constexpr (std::is_same_v<T, data_types::Set>) {
+      return Tag::kSet;
+    } else if constexpr (std::is_same_v<T, data_types::List>) {
+      return Tag::kList;
+    } else if constexpr (std::is_same_v<T, data_types::ZSet>) {
+      return Tag::kZSet;
+    } else if constexpr (std::is_same_v<T, data_types::Hash>) {
+      return Tag::kHash;
+    } else if constexpr (std::is_same_v<T, int64_t>) {
+      return Tag::kInt;
+    } else if constexpr (std::is_same_v<T, SharedString>) {
+      return Tag::kShared;
+    } else {
+      static_assert(std::is_same_v<T, EmbeddedString>);
+      return Tag::kEmbedded;
+    }
+  }
+
   template <typename T, typename... Args>
   static std::unique_ptr<RedisObject> Create(Args&&... args) {
     return std::unique_ptr<RedisObject>(
         new RedisObject(std::in_place_type<T>, std::forward<Args>(args)...));
   }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
   template <typename T, typename... Args>
-  explicit RedisObject(std::in_place_type_t<T> type, Args&&... args)
-      : value_(type, std::forward<Args>(args)...) {}
+  explicit RedisObject(std::in_place_type_t<T> /*type*/, Args&&... args) {
+    Construct<T>(std::forward<Args>(args)...);
+  }
 
   static std::unique_ptr<RedisObject> CreateEmbedded(std::string_view value);
   // The string the object may change in place: its raw string, or its shared
@@ -219,29 +289,91 @@ class RedisObject {
   // may view this object's current bytes.
   void EmbedString(std::string_view value);
 
-  template <ObjectType kType>
-  using Alternative =
-      std::variant_alternative_t<static_cast<size_t>(kType) - 1, Value>;
-  static_assert(std::is_same_v<Alternative<ObjectType::kString>, std::string>);
-  static_assert(std::is_same_v<Alternative<ObjectType::kSet>, data_types::Set>);
-  static_assert(
-      std::is_same_v<Alternative<ObjectType::kList>, data_types::List>);
-  static_assert(
-      std::is_same_v<Alternative<ObjectType::kZSet>, data_types::ZSet>);
-  static_assert(
-      std::is_same_v<Alternative<ObjectType::kHash>, data_types::Hash>);
-  // The alternatives from here on are other encodings of a string.
-  static constexpr size_t kFirstStringEncodingIndex = 5;
-  static_assert(std::is_same_v<
-                std::variant_alternative_t<kFirstStringEncodingIndex, Value>,
-                int64_t>);
-  static_assert(std::variant_size_v<Value> == kFirstStringEncodingIndex + 3);
+  // The tag bits always hold a Tag: SetTag is all that writes them.
+  Tag CurrentTag() const {
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    return static_cast<Tag>(header_ & kTagMask);
+  }
+  void SetTag(Tag tag) {
+    header_ = (header_ & ~kTagMask) | static_cast<uint64_t>(tag);
+  }
+  // The value as a T, which must be the live encoding.
+  template <typename T>
+  T* As() {
+    return std::launder(reinterpret_cast<T*>(value_.data()));
+  }
+  template <typename T>
+  const T* As() const {
+    return std::launder(reinterpret_cast<const T*>(value_.data()));
+  }
+  // The value if its encoding is T, else nullptr.
+  template <typename T>
+  T* GetIf() {
+    return CurrentTag() == TagOf<T>() ? As<T>() : nullptr;
+  }
+  template <typename T>
+  const T* GetIf() const {
+    return CurrentTag() == TagOf<T>() ? As<T>() : nullptr;
+  }
+  // Builds a T in the value's bytes, which must hold no live value.
+  template <typename T, typename... Args>
+  void Construct(Args&&... args) {
+    static_assert(sizeof(T) <= kValueBytes && alignof(T) <= kValueAlignment);
+    ::new (static_cast<void*>(value_.data())) T(std::forward<Args>(args)...);
+    SetTag(TagOf<T>());
+  }
+  // Replaces the value. The arguments must not refer to the current value,
+  // which is destroyed first.
+  template <typename T, typename... Args>
+  void Emplace(Args&&... args) {
+    DestroyValue();
+    Construct<T>(std::forward<Args>(args)...);
+  }
+  // Calls `visitor` with the live value, as its own type.
+  template <typename Visitor>
+  void VisitValue(Visitor&& visitor) {
+    switch (CurrentTag()) {
+      case Tag::kRaw:
+        return visitor(*As<std::string>());
+      case Tag::kSet:
+        return visitor(*As<data_types::Set>());
+      case Tag::kList:
+        return visitor(*As<data_types::List>());
+      case Tag::kZSet:
+        return visitor(*As<data_types::ZSet>());
+      case Tag::kHash:
+        return visitor(*As<data_types::Hash>());
+      case Tag::kInt:
+        return visitor(*As<int64_t>());
+      case Tag::kEmbedded:
+        return visitor(*As<EmbeddedString>());
+      case Tag::kShared:
+        return visitor(*As<SharedString>());
+    }
+  }
+  void DestroyValue() {
+    VisitValue([](auto& value) { std::destroy_at(&value); });
+  }
+  // Builds this object's value from `other`'s, whose tag this object already
+  // has. `other` keeps a moved-from value of the same encoding.
+  void MoveValueFrom(RedisObject* other) {
+    other->VisitValue([this](auto& value) {
+      Construct<std::remove_reference_t<decltype(value)>>(std::move(value));
+    });
+  }
 
-  Value value_;
+  // An embedded string is the largest encoding; the static_asserts after
+  // the class check the collections against it.
+  static constexpr size_t kValueBytes = sizeof(EmbeddedString);
+  static constexpr size_t kValueAlignment = alignof(uint64_t);
+
+  alignas(kValueAlignment) std::array<std::byte, kValueBytes> value_;
+  // The tag in the low kTagBits bits, the expiration time above them.
+  uint64_t header_{};
 };
 
 // Holding collections did not make the object larger than an embedded string
-// already did. The collections are checked one by one too, so a failure here
+// already did. The collections are checked one by one, so a failure here
 // names the one that grew: std::string, and so EmbeddedString, is smaller
 // with libc++ (macOS) than with libstdc++.
 static_assert(sizeof(data_types::Set) <= sizeof(EmbeddedString));

@@ -23,6 +23,7 @@ std::unique_ptr<RedisDb> RedisDb::Create() {
 
 RedisDb::RedisDb()
     : dict_(Keyspace::Create()),
+      far_expires_(containers::Dict<const RedisObject*, int64_t>::Create()),
       watched_keys_(
           containers::Dict<std::string, std::vector<KeyWatcher*>>::Create()) {}
 
@@ -36,7 +37,7 @@ RedisObject* RedisDb::MutableLookupKey(std::string_view key) {
 
 RedisObject* RedisDb::Lookup(const HashedKey& key) {
   const KeyRef entry = FindLive(key);
-  return entry ? &entry.Value().object : nullptr;
+  return entry ? &entry.Value() : nullptr;
 }
 
 RedisDb::KeyRef RedisDb::FindLive(const HashedKey& key) {
@@ -135,11 +136,8 @@ DbStatus RedisDb::DeleteKey(std::string_view key) {
 }
 
 DbStatus RedisDb::Delete(const HashedKey& key) {
-  const bool deleted = dict_->DeleteWith(key, [this](KeyRef entry) {
-    if (entry.Value().expire != 0) {
-      expires_.Erase(entry);
-    }
-  });
+  const bool deleted =
+      dict_->DeleteWith(key, [this](KeyRef entry) { RemoveExpire(entry); });
   if (!deleted) {
     return DbStatus::kError;
   }
@@ -158,22 +156,37 @@ void RedisDb::DeleteStoredKey(KeyRef entry) {
 
 void RedisDb::SetExpire(KeyRef entry, int64_t expire) {
   RS_CHECK(entry);
-  KeyValue& value = entry.Value();
-  if (value.expire == 0) {
+  RedisObject& object = entry.Value();
+  if (object.Expire() == 0) {
     expires_.Insert(entry);
+  } else if (object.Expire() == RedisObject::kMaxExpire) {
+    far_expires_->Delete(&object);
+  }
+  if (expire >= RedisObject::kMaxExpire) {
+    far_expires_->Set(&object, expire);
+    expire = RedisObject::kMaxExpire;
   }
   // 0 means no TTL, so a time at or before the epoch, which only a replayed
   // append-only file can ask for, is kept as the earliest time there is.
-  value.expire = std::max<int64_t>(expire, 1);
+  object.SetExpire(std::max<int64_t>(expire, 1));
+}
+
+int64_t RedisDb::FarExpireOf(const RedisObject& object) const {
+  const int64_t* const expire = far_expires_->FindValue(&object);
+  RS_CHECK(expire != nullptr);
+  return *expire;
 }
 
 bool RedisDb::RemoveExpire(KeyRef entry) {
-  KeyValue& value = entry.Value();
-  if (value.expire == 0) {
+  RedisObject& object = entry.Value();
+  if (object.Expire() == 0) {
     return false;
   }
+  if (object.Expire() == RedisObject::kMaxExpire) {
+    far_expires_->Delete(&object);
+  }
   expires_.Erase(entry);
-  value.expire = 0;
+  object.SetExpire(0);
   return true;
 }
 
@@ -184,16 +197,16 @@ DbStatus RedisDb::UnlinkKey(std::string_view key) {
     return DbStatus::kError;
   }
   RemoveExpire(entry);
-  std::optional<KeyValue> value = dict_->Extract(hashed);
-  if (!value.has_value()) {
+  std::optional<RedisObject> object = dict_->Extract(hashed);
+  if (!object.has_value()) {
     return DbStatus::kError;
   }
   TouchWatchedKey(hashed);
   // Free a small value now, as Redis frees values with at most 64 elements
   // (LAZYFREE_THRESHOLD) at once; queue a larger one for FreeLazily.
   constexpr size_t kFreeAtOnceElements = 64;
-  if (!value->object.ReleaseSome(kFreeAtOnceElements)) {
-    unlinked_.push_back(std::move(value->object));
+  if (!object->ReleaseSome(kFreeAtOnceElements)) {
+    unlinked_.push_back(std::move(*object));
   }
   return DbStatus::kOk;
 }
@@ -205,7 +218,7 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
   if (!entry) {
     return DbStatus::kError;
   }
-  const int64_t existing = entry.Value().expire;
+  const int64_t existing = ExpireOf(entry.Value());
   const std::optional<int64_t> current_expire =
       existing == 0 ? std::nullopt : std::optional<int64_t>(existing);
   const bool condition_met = [&] {
@@ -238,20 +251,20 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
 
 std::optional<int64_t> RedisDb::Expiration(std::string_view key) {
   const KeyRef entry = dict_->FindEntryRef(key);
-  if (!entry || entry.Value().expire == 0) {
+  if (!entry || entry.Value().Expire() == 0) {
     return std::nullopt;
   }
-  return entry.Value().expire;
+  return ExpireOf(entry.Value());
 }
 
 RedisDb::KeyWithExpiration RedisDb::LookupKeyWithExpiration(
     std::string_view key) {
   KeyWithExpiration result;
   if (const KeyRef entry = FindLive(HashedKey(key))) {
-    const KeyValue& value = entry.Value();
-    result.object = &value.object;
-    if (value.expire != 0) {
-      result.expire = value.expire;
+    const RedisObject& object = entry.Value();
+    result.object = &object;
+    if (object.Expire() != 0) {
+      result.expire = ExpireOf(object);
     }
   }
   return result;
@@ -278,18 +291,18 @@ DbStatus RedisDb::RenameKey(std::string_view old_key,
     return DbStatus::kOk;
   }
 
-  const int64_t expire = source.Value().expire;
+  const int64_t expire = ExpireOf(source.Value());
   RemoveExpire(source);
   // Extract moves the value out with one bucket walk, instead of finding and
   // then deleting it.
-  std::optional<KeyValue> value = dict_->Extract(old_hashed);
+  std::optional<RedisObject> value = dict_->Extract(old_hashed);
   if (!value.has_value()) {
     return DbStatus::kError;
   }
   const HashedKey new_hashed(new_key);
   // An existing key under the new name keeps its entry; its TTL is replaced.
   const Keyspace::InsertResult target = dict_->FindOrInsertEntry(new_hashed);
-  target.value->object = std::move(value->object);
+  *target.value = std::move(*value);
   if (expire != 0) {
     SetExpire(target.entry, expire);
   } else {
@@ -305,7 +318,7 @@ int64_t RedisDb::TimeToLive(std::string_view key, TtlResolution resolution) {
   if (!entry) {
     return -2;
   }
-  const int64_t expire = entry.Value().expire;
+  const int64_t expire = ExpireOf(entry.Value());
   if (expire == 0) {
     return -1;
   }
@@ -343,6 +356,7 @@ void RedisDb::Flush() {
   constexpr size_t kFlushInPlaceKeys = 4096;
   // The TTL index is one array, freed at once whatever its size.
   expires_.Clear();
+  far_expires_->Clear();
   if (dict_->Size() <= kFlushInPlaceKeys) {
     dict_->Clear();
     return;
@@ -413,7 +427,7 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
                           return;
                         }
                         ++result.sampled;
-                        if (entry.Value().expire <= now) {
+                        if (entry.Value().Expire() <= now) {
                           expired_keys.push_back(entry);
                         }
                       });

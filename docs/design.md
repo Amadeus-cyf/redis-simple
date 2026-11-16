@@ -28,15 +28,25 @@ Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
 ## The keyspace
 
 `RedisDb` keeps one hash table entry per key, a single allocation that holds
-the key's name, its `RedisObject`, and its expiration time, as Redis 8's
-kvobj does. A lookup that finds the key therefore has its TTL without
-another probe. Active expiration must still sample only keys that have a
-TTL, so the database also keeps an index of those entries
-(`containers::HandleSet`): an open-addressed array of 8-byte entry handles,
-which costs a key with a TTL one slot and no allocation, where Redis' expires
-dict costs it a pointer in a bucket. The index is rebuilt a few slots per
-insert or erase when it fills up or empties, and like `Dict` it does not
-shrink while a snapshot child shares its pages.
+the key's name and its `RedisObject`, as Redis 8's kvobj does. The object is
+the value's bytes (a collection, or a string of up to 31 bytes with libc++
+and 39 with libstdc++, is stored in them) and one header word: a 3-bit tag
+for the encoding and, in the other 61 bits, the key's expiration time. A
+lookup that finds the key therefore has its TTL without another probe, and
+a TTL adds nothing to the entry. With libc++ the entry is 56 bytes plus the
+key's name, so a name of up to 8 bytes fits mimalloc's 64-byte size class
+and one of up to 24 bytes the 80-byte class. Redis 8's entry is smaller for
+a short key and a short value, because its object header is 16 bytes and
+holds collections by pointer; here a collection of any size and a value of
+up to 31 bytes need no second allocation. An expiration time too late for
+61 bits, which only `PEXPIREAT` with a time millions of years away
+produces, is kept exactly in a side table. Active expiration must still
+sample only keys that have a TTL, so the database also keeps an index of
+those entries (`containers::HandleSet`): an open-addressed array of 8-byte
+entry handles, which costs a key with a TTL one slot and no allocation,
+where Redis' expires dict costs it a pointer in a bucket. The index is
+rebuilt a few slots per insert or erase when it fills up or empties, and
+like `Dict` it does not shrink while a snapshot child shares its pages.
 
 ## A request's path
 

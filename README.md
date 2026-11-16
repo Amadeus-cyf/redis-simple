@@ -609,6 +609,9 @@ whose instruction counts changed most between two such files, which shows
 where a regression comes from.
 
 `measure_server_memory.sh` reports idle and loaded RSS and bytes per key.
+Its keys are 16 bytes long; a key's entry is 56 bytes plus its name (64 plus
+its name with libstdc++), rounded up to the allocator's size class, and the
+same with or without a TTL.
 `MEMORY_VALUE_SIZES`, `MEMORY_REQUESTS`, and `MEMORY_KEY_RANGE` change the
 load.
 

@@ -230,19 +230,22 @@ Guidance for AI coding agents working in this repository.
   pass it to the keyspace and WATCH dicts, which share the seeded string
   hash. Keep operations that touch both on that path instead of looking the
   key up by `std::string_view` in each.
-- A key's expiration time is stored in its keyspace entry
-  (`RedisDb::KeyValue::expire`, 0 for none), as Redis 8 keeps it in the
+- A key's expiration time is stored in its object's header word
+  (`RedisObject::Expire()`, 0 for none), as Redis 8 keeps it in the
   kvobj, so finding a key also finds its TTL. Do not add a second lookup for
   it. `RedisDb::expires_` is only an index of the entries that have a TTL,
   for active expiration to sample: a `containers::HandleSet` of
   `Dict::EntryRef`s, one 8-byte slot per member in a table kept at most
   three-quarters full, and no allocation per key. An entry is in it exactly
-  while its `expire` is not 0, so change a TTL only through
-  `RedisDb::SetExpire` and `RemoveExpire`, and take an entry out of the
-  index before it is deleted or extracted (`Dict::DeleteWith` hands the
-  entry over just before freeing it). A key found through the index is
-  deleted through `DeleteStoredKey`, which touches watchers before freeing
-  the entry that holds its name.
+  while its object's `Expire()` is not 0, so change a TTL only through
+  `RedisDb::SetExpire` and `RemoveExpire`, and read one to report it
+  through `RedisDb::ExpireOf`: the header has 61 bits for the time, and a
+  later one (`PEXPIREAT` accepts any `int64_t`) is held as
+  `RedisObject::kMaxExpire` with the exact value in `RedisDb::far_expires_`.
+  Take an entry out of the index before it is deleted or extracted
+  (`Dict::DeleteWith` hands the entry over just before freeing it). A key
+  found through the index is deleted through `DeleteStoredKey`, which
+  touches watchers before freeing the entry that holds its name.
 - Active expiration is `ActiveExpire` (`server/active_expire.h`), owned by
   `Server`: the slow cycle runs from `ServerCron`, the fast one from the
   loop's before-sleep hook (`Server::BeforeSleep`, before the AOF flush, so
@@ -313,17 +316,24 @@ Guidance for AI coding agents working in this repository.
   or `Int()`, and call `MutableString()` only to edit bytes in place, since it
   converts the value back to raw form. Create objects from borrowed bytes with
   `CreateWithStringCopy`, which embeds without a temporary `std::string`.
+- `RedisObject` is a hand-written tagged union, not a `std::variant`: the
+  value's bytes, then one header word with a 3-bit encoding tag and the
+  key's expiration time, where a variant spent a whole word on its index.
+  It must stay `sizeof(EmbeddedString) + 8`; a new encoding gets a `Tag`
+  and a case in `VisitValue`, and has to fit in the value's bytes. The eight
+  encodings use every value of the tag, so one more also needs a fourth tag
+  bit, taken from the expiration time.
 - Each key's `RedisObject` lives inside its keyspace entry
-  (`Dict<std::string, RedisDb::KeyValue>`), next to its expiration time, as
+  (`Dict<std::string, RedisObject>`) and holds the key's expiration time, as
   Redis 8 keeps a key, its value, and its TTL in one block, so a key is one
-  allocation. Storing a value moves the object
-  into the entry, so never keep a pointer into the object handed to a
-  setter. A command that looks a key up and then creates or overwrites it
-  uses `RedisDb::FindOrCreateKey` (or `LookupOrCreateTyped` in
-  `server/commands/lookup.h`), which hashes the key and probes the keyspace
-  once for both. `FindOrCreateKey` returns a `KeySlot`; store a string
-  through it with `SetStringAt`. A created key holds an empty string until
-  the command stores its value, so nothing may return in between. Use
+  allocation. Storing a value move-assigns the object into the entry, which
+  replaces the value and keeps the entry's expiration time, so never keep a
+  pointer into the object handed to a setter. A command that looks a key up
+  and then creates or overwrites it uses `RedisDb::FindOrCreateKey` (or
+  `LookupOrCreateTyped` in `server/commands/lookup.h`), which hashes the key
+  and probes the keyspace once for both, and stores a string through the
+  returned `KeySlot` with `SetStringAt`. A created key holds an empty string
+  until the command stores its value, so nothing may return in between. Use
   `FindKeyForWrite` when a missing key must stay missing (`SET ... XX`).
   `RENAME` moves the object into the new key's entry.
 - Store whole string values through `RedisDb::SetStringKey`, which overwrites

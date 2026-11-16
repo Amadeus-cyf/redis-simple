@@ -6,7 +6,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <variant>
 
 #include "utils/check.h"
 #include "utils/strings.h"
@@ -59,39 +58,38 @@ void RedisObject::EmbedString(std::string_view value) {
   RS_CHECK(value.size() <= EmbeddedString::kCapacity);
   // Copy first: `value` may view the raw buffer that emplacing frees.
   const EmbeddedString embedded(value);
-  value_.emplace<EmbeddedString>(embedded);
+  Emplace<EmbeddedString>(embedded);
 }
 
 StringValue RedisObject::String() const {
-  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
+  if (const auto* integer = GetIf<int64_t>()) {
     return StringValue(*integer);
   }
-  if (const redis_simple::db::EmbeddedString* embedded =
-          std::get_if<EmbeddedString>(&value_)) {
+  if (const auto* embedded = GetIf<EmbeddedString>()) {
     return StringValue(embedded->View());
   }
-  if (const SharedString* shared = std::get_if<SharedString>(&value_)) {
+  if (const auto* shared = GetIf<SharedString>()) {
     return StringValue(std::string_view(**shared));
   }
-  const auto* value = std::get_if<std::string>(&value_);
+  const auto* value = GetIf<std::string>();
   RS_CHECK(value != nullptr);
   return StringValue(std::string_view(*value));
 }
 
 std::shared_ptr<const std::string> RedisObject::SharedStringBytes() const {
-  const SharedString* shared = std::get_if<SharedString>(&value_);
+  const auto* shared = GetIf<SharedString>();
   return shared == nullptr ? nullptr : *shared;
 }
 
 std::string* RedisObject::ExclusiveString() {
-  if (auto* const raw = std::get_if<std::string>(&value_)) {
+  if (auto* const raw = GetIf<std::string>()) {
     return raw;
   }
   // Only the main thread takes new references, so a count of one cannot
   // grow while this thread works on the string. A reply that drops its
   // reference on an I/O thread meanwhile only makes the count read late,
   // which costs a copy.
-  if (const SharedString* shared = std::get_if<SharedString>(&value_);
+  if (const auto* shared = GetIf<SharedString>();
       shared != nullptr && shared->use_count() == 1) {
     return shared->get();
   }
@@ -100,53 +98,51 @@ std::string* RedisObject::ExclusiveString() {
 
 void RedisObject::EmplaceLongString(std::string value) {
   if (value.size() >= kMinSharedStringBytes) {
-    value_.emplace<SharedString>(
-        std::make_shared<std::string>(std::move(value)));
+    Emplace<SharedString>(std::make_shared<std::string>(std::move(value)));
     return;
   }
-  value_.emplace<std::string>(std::move(value));
+  Emplace<std::string>(std::move(value));
 }
 
 std::optional<int64_t> RedisObject::Int() const {
-  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
+  if (const auto* integer = GetIf<int64_t>()) {
     return *integer;
   }
   return utils::ToInt64(String().View());
 }
 
 std::string* RedisObject::MutableString() {
-  if (const int64_t* integer = std::get_if<int64_t>(&value_)) {
-    value_.emplace<std::string>(StringValue(*integer).View());
-  } else if (const redis_simple::db::EmbeddedString* embedded =
-                 std::get_if<EmbeddedString>(&value_)) {
+  if (const auto* integer = GetIf<int64_t>()) {
+    Emplace<std::string>(StringValue(*integer).View());
+  } else if (const auto* embedded = GetIf<EmbeddedString>()) {
     // Copy out first: emplacing destroys the embedded bytes.
     std::string raw(embedded->View());
-    value_.emplace<std::string>(std::move(raw));
-  } else if (const SharedString* shared = std::get_if<SharedString>(&value_)) {
+    Emplace<std::string>(std::move(raw));
+  } else if (const auto* shared = GetIf<SharedString>()) {
     // The caller edits in place, which a reply holding the bytes must not
     // see: take the buffer when nothing else holds it, and copy otherwise.
     std::string raw = ExclusiveString() != nullptr ? std::move(**shared)
                                                    : std::string(**shared);
-    value_.emplace<std::string>(std::move(raw));
+    Emplace<std::string>(std::move(raw));
   }
-  return std::get_if<std::string>(&value_);
+  return GetIf<std::string>();
 }
 
 void RedisObject::SetInt(int64_t value) {
   RS_CHECK(Type() == ObjectType::kString);
-  value_.emplace<int64_t>(value);
+  Emplace<int64_t>(value);
 }
 
 void RedisObject::AssignString(std::string_view value) {
   RS_CHECK(Type() == ObjectType::kString);
   if (const std::optional<int64_t> integer = utils::ToInt64(value);
       integer.has_value()) {
-    value_.emplace<int64_t>(*integer);
+    Emplace<int64_t>(*integer);
     return;
   }
   // An embedded value is overwritten in place. memmove also handles a value
   // that views this object's own bytes.
-  if (auto* const embedded = std::get_if<EmbeddedString>(&value_);
+  if (auto* const embedded = GetIf<EmbeddedString>();
       embedded != nullptr && value.size() <= EmbeddedString::kCapacity) {
     std::memmove(embedded->data.data(), value.data(), value.size());
     embedded->size = static_cast<uint8_t>(value.size());
@@ -161,7 +157,7 @@ void RedisObject::AssignString(std::string_view value) {
   if (current != nullptr && (current->capacity() <= kAlwaysReusableBytes ||
                              current->capacity() / 2 <= value.size())) {
     current->assign(value);
-    if (std::holds_alternative<std::string>(value_) &&
+    if (GetIf<std::string>() != nullptr &&
         current->size() >= kMinSharedStringBytes) {
       EmplaceLongString(std::move(*current));
     }
@@ -179,7 +175,7 @@ void RedisObject::AssignString(std::string_view value) {
 void RedisObject::ReplaceWithString(std::string_view value) {
   if (const std::optional<int64_t> integer = utils::ToInt64(value);
       integer.has_value()) {
-    value_.emplace<int64_t>(*integer);
+    Emplace<int64_t>(*integer);
     return;
   }
   if (value.size() <= EmbeddedString::kCapacity) {
@@ -191,16 +187,21 @@ void RedisObject::ReplaceWithString(std::string_view value) {
 }
 
 RedisObject::Encoding RedisObject::StringEncoding() const {
-  if (std::holds_alternative<int64_t>(value_)) {
-    return Encoding::kInt;
+  switch (CurrentTag()) {
+    case Tag::kInt:
+      return Encoding::kInt;
+    case Tag::kEmbedded:
+      return Encoding::kEmbedded;
+    case Tag::kRaw:
+    case Tag::kShared:
+      return Encoding::kRaw;
+    case Tag::kSet:
+    case Tag::kList:
+    case Tag::kZSet:
+    case Tag::kHash:
+      return Encoding::kOther;
   }
-  if (std::holds_alternative<EmbeddedString>(value_)) {
-    return Encoding::kEmbedded;
-  }
-  return std::holds_alternative<std::string>(value_) ||
-                 std::holds_alternative<SharedString>(value_)
-             ? Encoding::kRaw
-             : Encoding::kOther;
+  utils::Unreachable();
 }
 std::string_view TypeName(RedisObject::ObjectType type) {
   switch (type) {

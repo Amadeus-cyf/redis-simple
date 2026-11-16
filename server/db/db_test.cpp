@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -292,6 +293,84 @@ TEST(RedisDbTest, TtlsFollowTheirKeysThroughGrowthRenameAndDelete) {
             std::optional<int64_t>(kFuture + 7));
   ASSERT_EQ(redis_db->PersistKey(name(11)), DbStatus::kOk);
   EXPECT_EQ(redis_db->Expiration(name(11)), std::nullopt);
+}
+
+TEST(RedisDbTest, ExpirationTimesBeyondTheObjectFieldAreKeptExactly) {
+  auto redis_db = RedisDb::Create();
+  constexpr int64_t kLatest = std::numeric_limits<int64_t>::max();
+  const auto expirations = [&redis_db] {
+    std::map<std::string, int64_t> found;
+    redis_db->ForEachObject([&found](std::string_view key, const RedisObject&,
+                                     std::optional<int64_t> expire) {
+      found.emplace(key, expire.value_or(0));
+      return true;
+    });
+    return found;
+  };
+  ASSERT_EQ(
+      redis_db->SetKey("far", RedisObject::CreateWithString("v"), kLatest),
+      DbStatus::kOk);
+  ASSERT_EQ(redis_db->SetKey("edge", RedisObject::CreateWithString("v"),
+                             RedisObject::kMaxExpire),
+            DbStatus::kOk);
+  ASSERT_EQ(redis_db->SetKey("near", RedisObject::CreateWithString("v"),
+                             RedisObject::kMaxExpire - 1),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("far"), std::optional<int64_t>(kLatest));
+  EXPECT_EQ(redis_db->LookupKeyWithExpiration("far").expire,
+            std::optional<int64_t>(kLatest));
+  EXPECT_EQ(redis_db->TimeToLive("far", TtlResolution::kMilliseconds),
+            kLatest - redis_db->Now());
+  EXPECT_EQ(expirations(), (std::map<std::string, int64_t>{
+                               {"far", kLatest},
+                               {"edge", RedisObject::kMaxExpire},
+                               {"near", RedisObject::kMaxExpire - 1}}));
+
+  // The value changes; the time stays.
+  ASSERT_EQ(redis_db->SetKey("far", RedisObject::CreateWithString("w"), 0,
+                             ExistingTtl::kKeep),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("far"), std::optional<int64_t>(kLatest));
+  // GT compares against the exact time, not the one the object holds.
+  EXPECT_EQ(
+      redis_db->ExpireKeyAt("far", kLatest - 1, ExpireCondition::kGreaterThan),
+      DbStatus::kError);
+  EXPECT_EQ(
+      redis_db->ExpireKeyAt("edge", kLatest - 1, ExpireCondition::kGreaterThan),
+      DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("edge"), std::optional<int64_t>(kLatest - 1));
+
+  ASSERT_EQ(redis_db->RenameKey("far", "moved"), DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("moved"), std::optional<int64_t>(kLatest));
+  ASSERT_EQ(redis_db->RenameKey("moved", "near"), DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("near"), std::optional<int64_t>(kLatest));
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 2);
+
+  // Active expiration leaves them alone.
+  const ExpireSampleResult sampled =
+      redis_db->ExpireSome(10, utils::NowInMilliseconds());
+  EXPECT_EQ(sampled.expired, 0);
+
+  ASSERT_EQ(redis_db->ExpireKeyAt("near", RedisObject::kMaxExpire - 2),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("near"),
+            std::optional<int64_t>(RedisObject::kMaxExpire - 2));
+  ASSERT_EQ(redis_db->PersistKey("edge"), DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("edge"), std::nullopt);
+  ASSERT_EQ(redis_db->ExpireKeyAt("edge", kLatest), DbStatus::kOk);
+  ASSERT_EQ(redis_db->DeleteKey("edge"), DbStatus::kOk);
+  // A new key that reuses the freed entry's memory starts without a TTL.
+  ASSERT_EQ(redis_db->SetKey("edge", RedisObject::CreateWithString("v"), 0),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("edge"), std::nullopt);
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 1);
+
+  ASSERT_EQ(redis_db->ExpireKeyAt("edge", kLatest), DbStatus::kOk);
+  redis_db->Flush();
+  ASSERT_EQ(
+      redis_db->SetKey("edge", RedisObject::CreateWithString("v"), kLatest - 5),
+      DbStatus::kOk);
+  EXPECT_EQ(redis_db->Expiration("edge"), std::optional<int64_t>(kLatest - 5));
 }
 
 TEST(RedisDbTest, TtlIndexHoldsExactlyTheKeysWithATtl) {
