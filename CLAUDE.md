@@ -217,9 +217,15 @@ Guidance for AI coding agents working in this repository.
   (`FindOrInsertEntry` returns it), so remove a member from the skiplist
   before the dict.
   Change stored keys through `Skiplist::Update`, which repositions them.
-  A node and its levels are one allocation, the levels following the node
-  as in Redis' `zskiplistNode`; create and free nodes through
-  `Node::Create` and `Node::Destroy`.
+  A node and its levels are one allocation, the levels above the first
+  following the node as in Redis' `zskiplistNode`; create and free nodes
+  through `Node::Create` and `Node::Destroy`. Level 0 is the node's `next`
+  pointer and stores no span, since a step there always spans one node; read
+  links through `Node::Next` and `Node::Span`, which cover every level. A
+  node does not store its level count: `Link` is passed it and `Unlink`
+  returns it. Both savings matter because mimalloc's small size classes are
+  16 bytes apart, so a sorted-set node is 32 bytes plus 16 per extra level;
+  do not add a field to `Node` without measuring.
 - Sorted-set range commands (`ZRANGE` and its older forms) encode replies
   from `ZSet::ForEachInRankRange`, `ForEachInScoreRange`, and
   `ForEachInLexRange`, which visit members where they are stored. They are
