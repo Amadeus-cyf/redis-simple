@@ -91,15 +91,15 @@ std::string Describe(const RedisObject& object) {
 
 std::map<std::string, std::string> Snapshot(db::RedisDb* db) {
   std::map<std::string, std::string> keys;
-  db->ForEachObject(
-      [db, &keys](std::string_view key, const RedisObject& object) {
-        std::string description = Describe(object);
-        if (const std::optional<int64_t> expire = db->Expiration(key)) {
-          description += " @" + std::to_string(*expire);
-        }
-        keys.emplace(key, std::move(description));
-        return true;
-      });
+  db->ForEachObject([&keys](std::string_view key, const RedisObject& object,
+                            std::optional<int64_t> expire) {
+    std::string description = Describe(object);
+    if (expire.has_value()) {
+      description += " @" + std::to_string(*expire);
+    }
+    keys.emplace(key, std::move(description));
+    return true;
+  });
   return keys;
 }
 

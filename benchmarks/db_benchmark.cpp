@@ -1,5 +1,6 @@
 #include <benchmark/benchmark.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -10,7 +11,7 @@
 #include "server/db/redis_object.h"
 #include "utils/time.h"
 
-// Keyspace benchmarks: lookups that also consult the TTL table, string SETs
+// Keyspace benchmarks: lookups of keys with and without a TTL, string SETs
 // by value size, as new keys and as overwrites, and the SET command's lookup
 // followed by its store.
 namespace redis_simple {
@@ -26,16 +27,18 @@ std::vector<std::string> Keys() {
   return keys;
 }
 
-// GET-style lookups. Argument 1 gives one key a TTL, so every lookup also
-// checks the TTL table, which reuses the key's hash.
+// GET-style lookups. Argument 1 gives one key a TTL and 2 gives every key
+// one, so each lookup compares the key's expiration time with the clock.
 void DbLookup(benchmark::State& state) {
   const std::vector<std::string> keys = Keys();
   auto db = db::RedisDb::Create();
   for (const std::string& key : keys) {
     db->SetKey(key, db::RedisObject::CreateWithString("value"), 0);
   }
-  if (state.range(0) != 0) {
-    db->ExpireKeyAt(keys.front(), utils::NowInMilliseconds() + 3'600'000);
+  const std::array<size_t, 3> ttl_counts = {0, 1, keys.size()};
+  const size_t keys_with_ttl = ttl_counts[static_cast<size_t>(state.range(0))];
+  for (size_t i = 0; i < keys_with_ttl; ++i) {
+    db->ExpireKeyAt(keys[i], utils::NowInMilliseconds() + 3'600'000);
   }
   size_t next = 0;
   for (auto _ : state) {
@@ -101,8 +104,8 @@ void DbSetString(benchmark::State& state) {
 
 // What the SET command does to the keyspace: look the key up, then store the
 // value through the slot the lookup found. Argument `overwrite` 0 sets new
-// keys and 1 existing ones; `with_ttl` 1 gives one other key a TTL, so each
-// SET of an existing key also consults the TTL table; a created key does not.
+// keys and 1 existing ones; `with_ttl` 1 gives one other key a TTL, so the
+// database has a TTL index while the SETs run.
 void DbSetCommand(benchmark::State& state) {
   const bool overwrite = state.range(0) != 0;
   const bool with_ttl = state.range(1) != 0;
@@ -138,7 +141,7 @@ void DbSetCommand(benchmark::State& state) {
 }  // namespace
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
-BENCHMARK(DbLookup)->Arg(0)->Arg(1)->ArgName("with_ttl");
+BENCHMARK(DbLookup)->Arg(0)->Arg(1)->Arg(2)->ArgName("with_ttl");
 BENCHMARK(DbOverwriteString)->Arg(0)->Arg(1)->ArgName("in_place");
 BENCHMARK(DbSetString)
     ->ArgsProduct({{3, 36, 100}, {0, 1}})

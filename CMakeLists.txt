@@ -180,6 +180,7 @@ redis_simple_add_gtest_suite(DictStringTest)
 redis_simple_add_gtest_suite(DictIntTest)
 redis_simple_add_gtest_suite(DictResizePolicyTest)
 redis_simple_add_gtest_suite(DictRehashSomeTest)
+redis_simple_add_gtest_suite(HandleSetTest)
 redis_simple_add_gtest_suite(CompactStringTest)
 redis_simple_add_gtest_suite(DynamicBufferTest)
 redis_simple_add_gtest_suite(DynamicBufferDeathTest)
@@ -596,6 +597,7 @@ if(REDIS_SIMPLE_BUILD_FUZZERS)
     dict_fuzzer
     skiplist_fuzzer
     intset_fuzzer
+    handle_set_fuzzer
     dynamic_buffer_fuzzer
     reply_buffer_fuzzer
     db_expiration_fuzzer

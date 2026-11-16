@@ -8,8 +8,8 @@ be compared.
 ## Layers
 
 ```text
-containers/    listpack, quicklist, dict, skiplist, intset: containers that
-               know nothing about Redis types
+containers/    listpack, quicklist, dict, skiplist, intset, handle set:
+               containers that know nothing about Redis types
 data_types/    set, list, sorted set, hash: Redis types built on those, each
                switching encodings as Redis does
 server/db/     the keyspace (RedisDb), TTLs, WATCH, and RedisObject, which
@@ -24,6 +24,19 @@ server/commands/  the command table, and one file of handlers per command
 ```
 
 Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
+
+## The keyspace
+
+`RedisDb` keeps one hash table entry per key, a single allocation that holds
+the key's name, its `RedisObject`, and its expiration time, as Redis 8's
+kvobj does. A lookup that finds the key therefore has its TTL without
+another probe. Active expiration must still sample only keys that have a
+TTL, so the database also keeps an index of those entries
+(`containers::HandleSet`): an open-addressed array of 8-byte entry handles,
+which costs a key with a TTL one slot and no allocation, where Redis' expires
+dict costs it a pointer in a bucket. The index is rebuilt a few slots per
+insert or erase when it fills up or empties, and like `Dict` it does not
+shrink while a snapshot child shares its pages.
 
 ## A request's path
 
@@ -87,8 +100,8 @@ depend on a running `Server`.
 
 A key with a TTL is deleted when a command looks it up after it expired, and
 otherwise by `ActiveExpire` (`server/active_expire.h`), which follows Redis'
-`activeExpireCycle`. A round samples at least 20 keys from the TTL dict (it
-finishes the bucket it is in) and deletes the expired ones; the cycle repeats
+`activeExpireCycle`. A round samples up to 20 keys from the TTL index,
+going around it at most once, and deletes the expired ones; the cycle repeats
 rounds while more than 10% of a round's sample was expired. The time budget
 is checked every 16 rounds, so a cycle can run up to 16 rounds past it.
 
@@ -102,13 +115,13 @@ is checked every 16 rounds, so a cycle can run up to 16 rounds past it.
 
 Differences from Redis that remain:
 
-- A round has no cap on the buckets it visits (Redis stops after 400): the
-  TTL dict shrinks as it empties, so a round stays short.
+- A round has no cap on the slots it visits (Redis stops after 400
+  buckets): the TTL index shrinks as it empties, so a round stays short.
 - "Now" is read once per cycle; Redis reads it every round. A key that
   expires during a cycle is caught by the next one.
-- A cycle does not stop when the scan has gone once around the TTL dict.
-- There is no `active-expire-effort` setting, and a sparsely filled TTL dict
-  is not skipped.
+- A cycle does not stop when the scan has gone once around the TTL index.
+- There is no `active-expire-effort` setting, and a sparsely filled TTL
+  index is not skipped.
 
 ## Threaded I/O
 
@@ -249,9 +262,9 @@ Commands move a rehash along, one bucket per operation on the table, so on
 their own an idle server would keep both the old and the new table. The
 server cron therefore calls `RedisDb::RehashIncrementally` every tick while
 no child runs, as Redis' `databasesCron` does: it moves buckets of the
-keyspace and TTL tables for one millisecond (`Dict::RehashSome`), and first
-retries a shrink (`Dict::ShrinkIfNeeded`) that deletes could not start
-while a child ran.
+keyspace table and slots of the TTL index for one millisecond
+(`Dict::RehashSome`, `HandleSet::RebuildSome`), and first retries a shrink
+(`ShrinkIfNeeded`) that deletes could not start while a child ran.
 
 Snapshots are bounded: large strings are split into a `SET` and `APPEND`s,
 and collections are batched by encoded bytes as well as element count, so

@@ -116,11 +116,11 @@ std::string Describe(db::RedisDb* db, std::string_view key,
 
 std::map<std::string, std::string> DescribeAll(db::RedisDb* db) {
   std::map<std::string, std::string> keys;
-  db->ForEachObject(
-      [db, &keys](std::string_view key, const RedisObject& object) {
-        keys.emplace(key, Describe(db, key, object));
-        return true;
-      });
+  db->ForEachObject([db, &keys](std::string_view key, const RedisObject& object,
+                                std::optional<int64_t> /*expire*/) {
+    keys.emplace(key, Describe(db, key, object));
+    return true;
+  });
   return keys;
 }
 

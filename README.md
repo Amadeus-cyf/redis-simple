@@ -549,13 +549,15 @@ Run one group with `--benchmark_filter`, for example
 - `SetIntersectThree`, `SetDifference`: `SINTER` with the large set named
   before or after the one that rules members out, and `SDIFF` by probing,
   by subtracting, and by the algorithm its estimate picks.
-- `DbLookup`, `DbOverwriteString`: keyspace lookups with and without a TTL,
-  and `SET` overwrites in place or with a new object.
+- `DbLookup`, `DbOverwriteString`: keyspace lookups with no TTL, with a TTL
+  on one key, and with a TTL on every key, and `SET` overwrites in place or
+  with a new object.
 - `DbSetString`: `SET` of 3-, 36-, and 100-byte values, as new keys and as
   overwrites. The sizes fall inside `std::string`'s inline buffer, inside the
   embedded-string range, and beyond both.
 - `DbSetCommand`: the `SET` command's keyspace work, a lookup followed by
-  the store, on new and existing keys, with and without a TTL in the table.
+  the store, on new and existing keys, with and without a TTL in the
+  database.
 - `ActiveExpireSlowCycleNothingExpired`, `ActiveExpireReclaimExpiredKeys`:
   one active-expiration cycle over 100,000 keys none of which has expired,
   and back-to-back cycles until 100,000 expired keys are gone.

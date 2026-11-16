@@ -5,6 +5,7 @@
 
 #include "server/db/db.h"
 #include "server/db/redis_object.h"
+#include "utils/check.h"
 
 namespace redis_simple::commands {
 // Result of looking up a key that must hold one object type. `object` is null
@@ -56,13 +57,15 @@ inline CreatingLookup LookupOrCreateTyped(db::RedisDb* const db,
                                           std::string_view key,
                                           db::RedisObject::ObjectType type) {
   const db::RedisDb::KeySlot slot = db->FindOrCreateKey(key);
+  db::RedisObject* const object = slot.Object();
+  RS_CHECK(object != nullptr);
   if (slot.Created()) {
-    return {.object = slot.Object(), .created = true};
+    return {.object = object, .created = true};
   }
-  if (slot.Object()->Type() != type) {
+  if (object->Type() != type) {
     return {.wrong_type = true};
   }
-  return {.object = slot.Object()};
+  return {.object = object};
 }
 }  // namespace redis_simple::commands
 
