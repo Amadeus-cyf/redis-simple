@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "containers/dict.h"
-#include "server/db/async_reclaimer.h"
 #include "server/db/key_watcher.h"
 #include "server/db/redis_object.h"
 
@@ -82,6 +81,8 @@ class RedisDb {
                         int64_t expire,
                         ExistingTtl existing_ttl = ExistingTtl::kClear);
   DbStatus DeleteKey(std::string_view key);
+  // DeleteKey, but a value of more than 64 elements is freed in steps by
+  // FreeLazily, so other clients are not held up.
   DbStatus UnlinkKey(std::string_view key);
   DbStatus ExpireKeyAt(std::string_view key, int64_t expire,
                        ExpireCondition condition = ExpireCondition::kNone);
@@ -108,11 +109,11 @@ class RedisDb {
   template <typename Visitor>
   size_t ScanKeys(size_t cursor, size_t count, Visitor&& visitor);
   // Empties the database. A large keyspace is detached and freed in steps by
-  // FreeFlushedTables, so the flush does not hold up other clients.
+  // FreeLazily, so the flush does not hold up other clients.
   void Flush();
-  // Frees tables Flush detached, for about `budget_milliseconds`; the server
-  // cron calls it every tick. Returns whether any remain.
-  bool FreeFlushedTables(int64_t budget_milliseconds);
+  // Frees what UNLINK and Flush detached, for about `budget_milliseconds`;
+  // the server cron calls it every tick. Returns whether any remains.
+  bool FreeLazily(int64_t budget_milliseconds);
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
   // Pins the clock while one command (or one EXEC) runs, so expiration
   // checks and relative TTLs all see a single time, as Redis'
@@ -140,9 +141,6 @@ class RedisDb {
   void UnwatchKeys(KeyWatcher* watcher);
   void TouchWatchedKey(std::string_view key);
   bool HasWatchedKeys() const { return watched_keys_->Size() > 0; }
-  // Holds the thread that frees UNLINKed values idle, for fork().
-  void PauseBackgroundFrees() { reclaimer_.Pause(); }
-  void ResumeBackgroundFrees() { reclaimer_.Resume(); }
 
  private:
   // Objects live inside their keyspace entries, after the key's header and
@@ -211,9 +209,10 @@ class RedisDb {
   // must be removed before its keyspace entry is deleted.
   std::unique_ptr<ExpireTable> expires_;
   std::deque<FlushedTables> flushed_;
+  // Large values UNLINK detached, waiting to be freed.
+  std::deque<RedisObject> unlinked_;
   std::unique_ptr<containers::Dict<std::string, std::vector<KeyWatcher*>>>
       watched_keys_;
-  AsyncReclaimer reclaimer_;
   size_t expire_cursor_{};
   // Set on first use while the time is pinned.
   mutable std::optional<int64_t> command_time_;

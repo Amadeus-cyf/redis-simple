@@ -111,6 +111,13 @@ class ZSet {
     return Storage().Scan(cursor, count, visitor);
   }
   size_t Size() const { return Storage().Size(); }
+  // Frees up to about `max_elements` members of a large encoding, so a
+  // discarded value can be freed in steps (as RedisDb does for UNLINK).
+  // Returns true once the rest is cheap to free at once. Between the first
+  // call and the one that returns true, only destroy the value.
+  bool ReleaseSome(size_t max_elements) {
+    return Storage().ReleaseSome(max_elements);
+  }
   // A listpack-encoded set's listpack, in Redis' byte format, as RDB files
   // store it; nullopt for a skiplist.
   std::optional<std::string_view> ListpackBytes() const {

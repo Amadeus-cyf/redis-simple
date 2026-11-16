@@ -16,6 +16,19 @@ bool EntryLess(const Hash::Entry& lhs, const Hash::Entry& rhs) {
 }
 }  // namespace
 
+TEST(HashTest, ReleasesALargeHashInSteps) {
+  auto hash = Hash::Create();
+  for (int i = 0; i < 1000; ++i) {
+    ASSERT_TRUE(hash->Set("field:" + std::to_string(i), "value"));
+  }
+  int steps = 0;
+  while (!hash->ReleaseSome(100)) {
+    ++steps;
+  }
+  EXPECT_GE(steps, 4);
+  EXPECT_EQ(hash->Size(), 0);
+}
+
 TEST(HashTest, SetGetDeleteWithListpackEncoding) {
   auto hash = Hash::Create();
 

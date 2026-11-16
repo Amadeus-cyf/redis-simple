@@ -12,6 +12,19 @@
 #include <vector>
 
 namespace redis_simple::data_types {
+TEST(ZSetTest, ReleasesALargeSortedSetInSteps) {
+  auto zset = ZSet::Create();
+  for (int i = 0; i < 1000; ++i) {
+    zset->InsertOrUpdate("member:" + std::to_string(i), i);
+  }
+  int steps = 0;
+  while (!zset->ReleaseSome(100)) {
+    ++steps;
+  }
+  EXPECT_GE(steps, 4);
+  EXPECT_EQ(zset->Size(), 0);
+}
+
 TEST(ZSetTest, InsertAndConvert) {
   auto zset = ZSet::Create();
   for (int i = 0; i < 256; ++i) {

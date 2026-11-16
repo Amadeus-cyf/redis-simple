@@ -159,8 +159,9 @@ files become history and are deleted once that manifest is durable.
 
 `fork` copies only the calling thread, so if another thread held a lock (such
 as the allocator's) at that moment, the child would inherit it locked
-forever. The server's fork hooks pause the I/O threads and the database's
-thread that frees `UNLINK`ed values. The background job thread never
+forever. The server's fork hooks pause the I/O threads. (Values `UNLINK` and
+`FLUSHDB` detach are freed on the main thread, in steps from the cron, not
+on a thread of their own.) The background job thread never
 allocates, frees, or logs, so it can keep running: its jobs hold paths in
 fixed-size buffers, and its queues keep their memory when cleared. The child
 itself takes no locks and does not log.

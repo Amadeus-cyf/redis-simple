@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "data_types/set/set.h"
 #include "server/db/key_watcher.h"
 #include "server/db/redis_object.h"
 #include "utils/time.h"
@@ -294,6 +295,38 @@ TEST(RedisDbTest, RenameAndFlush) {
   EXPECT_EQ(redis_db->LookupKey("target"), nullptr);
 }
 
+TEST(RedisDbTest, UnlinkFreesSmallValuesAtOnceAndLargeOnesInSteps) {
+  auto redis_db = RedisDb::Create();
+  auto small = data_types::Set::Create();
+  ASSERT_TRUE(small->Add("member"));
+  // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
+  // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
+  EXPECT_EQ(redis_db->SetKey("small",
+                             RedisObject::CreateWithSet(std::move(small)), 0),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->UnlinkKey("small"), DbStatus::kOk);
+  EXPECT_FALSE(redis_db->FreeLazily(0));
+
+  for (const std::string key : {"first", "second"}) {
+    auto set = data_types::Set::Create();
+    for (int i = 0; i < 5000; ++i) {
+      ASSERT_TRUE(set->Add("member:" + std::to_string(i)));
+    }
+    ASSERT_EQ(
+        redis_db->SetKey(key, RedisObject::CreateWithSet(std::move(set)), 0),
+        DbStatus::kOk);
+    EXPECT_EQ(redis_db->UnlinkKey(key), DbStatus::kOk);
+    EXPECT_EQ(redis_db->LookupKey(key), nullptr);
+  }
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+  int steps = 0;
+  while (redis_db->FreeLazily(0)) {
+    ++steps;
+  }
+  EXPECT_GE(steps, 8);
+  EXPECT_EQ(redis_db->UnlinkKey("first"), DbStatus::kError);
+}
+
 TEST(RedisDbTest, FlushStartsEmptyTablesThatKeepWorking) {
   auto redis_db = RedisDb::Create();
   const int64_t future = utils::NowInMilliseconds() + 60'000;
@@ -325,11 +358,11 @@ TEST(RedisDbTest, FlushStartsEmptyTablesThatKeepWorking) {
   }
   redis_db->Flush();
   int steps = 0;
-  while (redis_db->FreeFlushedTables(0)) {
+  while (redis_db->FreeLazily(0)) {
     ++steps;
   }
   EXPECT_GT(steps, 2);
-  EXPECT_FALSE(redis_db->FreeFlushedTables(0));
+  EXPECT_FALSE(redis_db->FreeLazily(0));
   EXPECT_EQ(redis_db->KeyCount(), 0);
 }
 

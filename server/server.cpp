@@ -82,19 +82,16 @@ bool Server::LoadData(const ServerOptions& options) {
     return false;
   }
   // Threads that allocate or free memory wait out a child's fork: the I/O
-  // threads, as they read and parse, and the database's thread that frees
-  // UNLINKed values.
+  // threads, as they read and parse.
   // The hash tables follow Redis' updateDictResizePolicy: the child, which
   // inherits the setting made before the fork, never rehashes, and the
   // parent avoids it until the cron sees the child gone.
   const auto before_fork = [this] {
     PauseIoThreads();
-    db_->PauseBackgroundFrees();
     containers::SetDictResizePolicy(containers::DictResizePolicy::kForbidden);
   };
   const auto after_fork = [this] {
     containers::SetDictResizePolicy(containers::DictResizePolicy::kAvoid);
-    db_->ResumeBackgroundFrees();
     ResumeIoThreads();
   };
   rdb_->SetForkHooks(before_fork, after_fork);
@@ -262,9 +259,9 @@ int64_t Server::ServerCron() {
                                       ? containers::DictResizePolicy::kAvoid
                                       : containers::DictResizePolicy::kEnabled);
   ActiveExpireCycle(db_.get());
-  // A tenth of each tick, as the flush has already replied.
-  constexpr int64_t kFlushFreeBudgetMs = 10;
-  db_->FreeFlushedTables(kFlushFreeBudgetMs);
+  // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
+  constexpr int64_t kLazyFreeBudgetMs = 10;
+  db_->FreeLazily(kLazyFreeBudgetMs);
   return kCronIntervalMs;
 }
 }  // namespace redis_simple

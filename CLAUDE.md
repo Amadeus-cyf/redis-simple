@@ -271,12 +271,14 @@ Guidance for AI coding agents working in this repository.
   Queued arguments are copied once into the client's `MultiState`, the
   ownership boundary for arguments that outlive a read. `EXEC` runs the queue
   under the `EXEC` command's pinned clock.
-- `FLUSHDB` detaches a keyspace of more than 4,096 keys and frees it on the
-  main thread in steps (`RedisDb::FreeFlushedTables`, 10 ms per cron tick,
-  through `Dict::ClearSome`). Do not move that to the `UNLINK` reclaimer's
-  thread: mimalloc keeps memory another thread frees until the thread that
-  allocated it collects, and collecting costs about as much as freeing, so
-  the server either keeps the memory or stalls anyway.
+- `UNLINK` frees a value of more than 64 elements, and `FLUSHDB` a keyspace
+  of more than 4,096 keys, on the main thread in steps:
+  `RedisDb::FreeLazily` runs 10 ms per cron tick through `Dict::ClearSome`,
+  `Skiplist::ClearSome`, and the collections' `ReleaseSome`. Do not move
+  that to a background thread, as Redis' lazyfree does: mimalloc keeps
+  memory another thread frees until the thread that allocated it collects,
+  and collecting costs about as much as freeing, so the server either keeps
+  the memory or stalls anyway.
 - Read the time in commands through `RedisDb::Now()`, never the system clock
   directly: it is pinned per command (and per `EXEC`), as Redis'
   `commandTimeSnapshot` is, and read lazily, so commands that touch no TTL
@@ -298,8 +300,8 @@ Guidance for AI coding agents working in this repository.
   disabling a still-healthy AOF.
 - No thread may allocate or free memory during a `fork` (the AOF rewrite's
   or `BGSAVE`'s). Pause any new thread that touches the heap through the
-  server's fork hooks, which both share, as the I/O threads and the `UNLINK`
-  reclaimer are. `BackgroundJobs` must not allocate, free, or log. Keep the
+  server's fork hooks, which both share, as the I/O threads are.
+  `BackgroundJobs` must not allocate, free, or log. Keep the
   children free of locks and logging.
 - `Dict` follows a process-wide resize policy (`SetDictResizePolicy`), as
   Redis' `dict_can_resize` does, so tables do not move entries across

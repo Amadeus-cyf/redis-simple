@@ -158,9 +158,13 @@ DbStatus RedisDb::UnlinkKey(std::string_view key) {
     return DbStatus::kError;
   }
   TouchWatchedKey(hashed);
-  return reclaimer_.Reclaim(std::make_unique<RedisObject>(std::move(*object)))
-             ? DbStatus::kOk
-             : DbStatus::kError;
+  // Free a small value now, as Redis frees values with at most 64 elements
+  // (LAZYFREE_THRESHOLD) at once; queue a larger one for FreeLazily.
+  constexpr size_t kFreeAtOnceElements = 64;
+  if (!object->ReleaseSome(kFreeAtOnceElements)) {
+    unlinked_.push_back(std::move(*object));
+  }
+  return DbStatus::kOk;
 }
 
 DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
@@ -311,25 +315,31 @@ void RedisDb::Flush() {
                       .keyspace = std::exchange(dict_, Keyspace::Create())});
 }
 
-bool RedisDb::FreeFlushedTables(int64_t budget_milliseconds) {
+bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
   // Enough entries that reading the clock costs little, few enough that the
   // budget is kept to within a fraction of a millisecond.
   constexpr size_t kEntriesPerStep = 1024;
-  if (flushed_.empty()) {
+  if (unlinked_.empty() && flushed_.empty()) {
     return false;
   }
   const int64_t start = utils::MonotonicMilliseconds();
-  while (!flushed_.empty()) {
-    FlushedTables& tables = flushed_.front();
-    if (tables.expires->ClearSome(kEntriesPerStep) &&
-        tables.keyspace->ClearSome(kEntriesPerStep)) {
-      flushed_.pop_front();
+  while (!unlinked_.empty() || !flushed_.empty()) {
+    if (!unlinked_.empty()) {
+      if (unlinked_.front().ReleaseSome(kEntriesPerStep)) {
+        unlinked_.pop_front();
+      }
+    } else {
+      FlushedTables& tables = flushed_.front();
+      if (tables.expires->ClearSome(kEntriesPerStep) &&
+          tables.keyspace->ClearSome(kEntriesPerStep)) {
+        flushed_.pop_front();
+      }
     }
     if (utils::MonotonicMilliseconds() - start >= budget_milliseconds) {
       break;
     }
   }
-  return !flushed_.empty();
+  return !unlinked_.empty() || !flushed_.empty();
 }
 
 ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
