@@ -55,13 +55,22 @@ int TcpGenericCreateSocket(int domain, int type, int protocol, bool non_block) {
   return socket_fd;
 }
 
+#ifdef __linux__
+// accept4 makes the socket nonblocking and close-on-exec in the accepting
+// system call, which saves the four fcntl calls that would set those flags
+// afterwards on every connection, as Redis' anetGenericAccept does.
+constexpr bool kAcceptSetsSocketFlags = true;
+
 int TcpGenericAccept(int socket_fd, sockaddr* address, socklen_t* length) {
-  int accepted_fd = accept(socket_fd, address, length);
-  if (accepted_fd == -1) {
-    return ToInt(TcpStatusCode::kError);
-  }
-  return accepted_fd;
+  return accept4(socket_fd, address, length, SOCK_NONBLOCK | SOCK_CLOEXEC);
 }
+#else
+constexpr bool kAcceptSetsSocketFlags = false;
+
+int TcpGenericAccept(int socket_fd, sockaddr* address, socklen_t* length) {
+  return accept(socket_fd, address, length);
+}
+#endif
 
 int SetBlock(int fd, bool block) {
   int flags = fcntl(fd, F_GETFL);
@@ -192,8 +201,9 @@ int TcpAccept(int socket_fd, TcpAddress* const address) {
   if (remote_fd < 0) {
     return ToInt(TcpStatusCode::kError);
   }
-  if (NonBlock(remote_fd) == TcpStatusCode::kError ||
-      SetCloseOnExec(remote_fd) == TcpStatusCode::kError) {
+  if (!kAcceptSetsSocketFlags &&
+      (NonBlock(remote_fd) == TcpStatusCode::kError ||
+       SetCloseOnExec(remote_fd) == TcpStatusCode::kError)) {
     close(remote_fd);
     return ToInt(TcpStatusCode::kError);
   }

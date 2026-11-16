@@ -19,9 +19,12 @@ struct WriteOptions {
   bool compression{true};
   // Redis' rdbchecksum: end the file with a CRC64 of its contents, or zero.
   bool checksum{true};
-  // Redis' rdb-save-incremental-fsync: sync every 4 MiB written, instead of
-  // only at the end.
+  // Redis' rdb-save-incremental-fsync: push every 4 MiB written towards the
+  // disk (aof::IncrementalSync), instead of syncing only at the end.
   bool incremental_fsync{true};
+  // Redis' RDBFLAGS_KEEP_CACHE: leave the written file in the kernel's page
+  // cache instead of dropping it, for a file that is about to be read.
+  bool keep_page_cache{false};
   // Set the "aof-base" aux field, for an AOF's base file.
   bool aof_base{false};
   // The "ctime" aux field: the creation time in Unix seconds.

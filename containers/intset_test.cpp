@@ -2,8 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <memory>
+#include <set>
 #include <string>
 
 namespace redis_simple::containers {
@@ -116,6 +119,44 @@ TEST(IntsetTest, Iterator) {
   it.SeekToLast();
   ASSERT_EQ(it.Value(), INT32_MAX);
 }
+// Grows and shrinks a set through many allocation sizes, adding in a
+// scattered order and deleting from two thirds of the way in, and compares
+// it with std::set.
+TEST(IntsetTest, MatchesModelWhileGrowingAndShrinking) {
+  constexpr int64_t kCount = 600;
+  for (const int64_t scale : {int64_t{1}, int64_t{100000}, int64_t{1} << 40}) {
+    Intset intset;
+    std::set<int64_t> model;
+    const auto expect_matches_model = [&intset, &model] {
+      ASSERT_EQ(intset.Size(), model.size());
+      uint32_t index = 0;
+      for (const int64_t value : model) {
+        ASSERT_EQ(intset.Get(index), value) << "index " << index;
+        ++index;
+      }
+    };
+    // Multiplying by 7 modulo 601, a prime, visits every value once in a
+    // scattered order.
+    for (int64_t i = 1; i <= kCount; ++i) {
+      const int64_t value = (((i * 7) % (kCount + 1)) - (kCount / 2)) * scale;
+      ASSERT_TRUE(intset.Add(value));
+      ASSERT_FALSE(intset.Add(value));
+      model.insert(value);
+      expect_matches_model();
+    }
+    while (!model.empty()) {
+      const auto victim = std::next(
+          model.begin(), static_cast<std::ptrdiff_t>(model.size() * 2 / 3));
+      ASSERT_TRUE(intset.Delete(*victim));
+      ASSERT_FALSE(intset.Delete(*victim));
+      model.erase(victim);
+      expect_matches_model();
+    }
+    ASSERT_TRUE(intset.Add(scale));
+    EXPECT_EQ(intset.Get(0), scale);
+  }
+}
+
 TEST(IntsetDeathTest, RejectsOutOfRangeIndex) {
   auto intset = MakeFullIntset();
   EXPECT_DEATH(intset->Get(-1), "Check failed");
