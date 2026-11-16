@@ -203,6 +203,12 @@ void Server::RunHandedOverClients(
     handoff.client->RunParsedQueries();
     returning_clients_.push_back({thread, handoff.client});
   }
+  // Without an AOF no flush has to come first, and an I/O thread that gets
+  // its clients back now writes their replies while the main thread runs
+  // the next handoff.
+  if (aof_ == nullptr) {
+    ReturnClientsToIoThreads();
+  }
 }
 
 void Server::HoldReplies(Client* const client) {
@@ -236,6 +242,10 @@ void Server::ReleaseHeldReplies() {
     client_connection::ReplyToQueries(this, client);
   }
   releasing_clients_.clear();
+  ReturnClientsToIoThreads();
+}
+
+void Server::ReturnClientsToIoThreads() {
   for (const ReturningClient& returning : returning_clients_) {
     returning.thread->Return(returning.client);
   }

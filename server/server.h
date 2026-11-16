@@ -82,7 +82,8 @@ class Server {
     Client* client;
   };
   // Runs the commands of the clients an I/O thread handed over. They go
-  // back to it, to write the replies, after the AOF flush in BeforeSleep.
+  // back to it, to write the replies, after the AOF flush in BeforeSleep,
+  // or at once when there is no AOF.
   void RunHandedOverClients(IoThread* thread,
                             std::vector<IoThread::Handoff>* handoffs);
   // Runs each time the event loop is about to wait for events: flushes the
@@ -90,6 +91,7 @@ class Server {
   // replies to those commands go out.
   void BeforeSleep();
   void ReleaseHeldReplies();
+  void ReturnClientsToIoThreads();
   int fd_{-1};
   std::unique_ptr<event_loop::Loop> loop_;
   std::unordered_map<Client*, std::unique_ptr<Client>> clients_;

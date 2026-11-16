@@ -106,6 +106,8 @@ thread runs the requests (`Client::RunParsedQueries`) and keeps the clients
 until `Server::BeforeSleep` has flushed the AOF, once for every client that
 ran in that iteration, whichever I/O thread it came from. Then it hands the
 clients back, and the I/O thread writes their replies and resumes reading.
+Without an AOF there is nothing to flush, so each handoff's clients go back
+as soon as their requests have run.
 
 So commands, the database, and the AOF stay on the main thread, and an I/O
 thread only touches its clients' sockets, buffers, and parsers. A client is on
