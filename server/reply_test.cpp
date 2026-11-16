@@ -10,6 +10,18 @@
 #include <vector>
 
 namespace redis_simple::reply {
+namespace {
+std::string EncodedInt64(int64_t value) {
+  IntegerBuffer buffer;
+  return std::string(EncodeInt64(value, &buffer));
+}
+
+std::string EncodedFloat(double value, ProtocolVersion protocol) {
+  FloatReplyBuffer buffer;
+  return std::string(EncodeFloat(value, protocol, &buffer));
+}
+}  // namespace
+
 TEST(ReplyTest, FromSimpleString) {
   ASSERT_EQ(FromString("OK"), "+OK\r\n");
   ASSERT_EQ(FromString(""), "+\r\n");
@@ -86,7 +98,40 @@ TEST(ReplyTest, AppendsFloatsForEachProtocol) {
   AppendFloat(2.5, ProtocolVersion::kResp3, &encoded);
   AppendFloat(1e21, ProtocolVersion::kResp3, &encoded);
   EXPECT_EQ(encoded, ",2.5\r\n,1e+21\r\n");
-  EXPECT_EQ(FromFloat(7, ProtocolVersion::kResp2), "$1\r\n7\r\n");
+}
+
+TEST(ReplyTest, EncodesFloatsAsItAppendsThem) {
+  EXPECT_EQ(EncodedFloat(7, ProtocolVersion::kResp2), "$1\r\n7\r\n");
+  // The longest texts are the smallest and largest magnitudes.
+  for (const double value : {0.0, -0.0, 1.5, -3.0, 1e21, 0.1, 1.0 / 3.0,
+                             std::numeric_limits<double>::max(),
+                             std::numeric_limits<double>::lowest(),
+                             -std::numeric_limits<double>::denorm_min(),
+                             std::numeric_limits<double>::infinity(),
+                             -std::numeric_limits<double>::infinity()}) {
+    for (const ProtocolVersion protocol :
+         {ProtocolVersion::kResp2, ProtocolVersion::kResp3}) {
+      std::string appended;
+      AppendFloat(value, protocol, &appended);
+      EXPECT_EQ(EncodedFloat(value, protocol), appended) << value;
+    }
+  }
+}
+
+TEST(ReplyTest, ReservesRoomForBulkStrings) {
+  std::string encoded = FromArrayHeader(100);
+  ReserveBulkStrings(100, &encoded);
+  EXPECT_EQ(encoded, "*100\r\n");
+  const size_t reserved = encoded.capacity();
+  for (int index = 0; index < 100; ++index) {
+    AppendBulkString("member:" + std::to_string(index), &encoded);
+  }
+  EXPECT_EQ(encoded.capacity(), reserved);
+
+  // A huge count reserves for the first elements only.
+  std::string capped;
+  ReserveBulkStrings(std::numeric_limits<size_t>::max(), &capped);
+  EXPECT_LT(capped.capacity(), size_t{64} * 1024);
 }
 
 TEST(ReplyTest, AppendsArrayHeader) {
@@ -95,21 +140,32 @@ TEST(ReplyTest, AppendsArrayHeader) {
   EXPECT_EQ(encoded, "+OK\r\n*3\r\n");
 }
 
-TEST(ReplyTest, From64BitsInt) {
-  ASSERT_EQ(FromInt64(1234567), ":1234567\r\n");
+TEST(ReplyTest, EncodesAndAppends64BitsInt) {
+  const auto expect_encoded = [](int64_t value, const std::string& expected) {
+    EXPECT_EQ(EncodedInt64(value), expected);
+    std::string appended = "+OK\r\n";
+    AppendInt64(value, &appended);
+    EXPECT_EQ(appended, "+OK\r\n" + expected);
+  };
+  expect_encoded(0, ":0\r\n");
+  expect_encoded(1234567, ":1234567\r\n");
   // Every digit count, both signs, and the extremes.
   int64_t value = 1;
   for (int digits = 1; digits <= 18; ++digits, value *= 10) {
     for (const int64_t candidate : {value - 1, value, value + 1}) {
-      EXPECT_EQ(FromInt64(candidate), ":" + std::to_string(candidate) + "\r\n");
-      EXPECT_EQ(FromInt64(-candidate),
-                ":" + std::to_string(-candidate) + "\r\n");
+      expect_encoded(candidate, ":" + std::to_string(candidate) + "\r\n");
+      expect_encoded(-candidate, ":" + std::to_string(-candidate) + "\r\n");
     }
   }
-  EXPECT_EQ(FromInt64(std::numeric_limits<int64_t>::max()),
-            ":9223372036854775807\r\n");
-  EXPECT_EQ(FromInt64(std::numeric_limits<int64_t>::min()),
-            ":-9223372036854775808\r\n");
+  expect_encoded(std::numeric_limits<int64_t>::max(),
+                 ":9223372036854775807\r\n");
+  expect_encoded(std::numeric_limits<int64_t>::min(),
+                 ":-9223372036854775808\r\n");
+  EXPECT_EQ(EncodedInt64(0), kZero);
+  EXPECT_EQ(EncodedInt64(1), kOne);
+}
+
+TEST(ReplyTest, EncodesLargestHeaders) {
   EXPECT_EQ(FromArrayHeader(std::numeric_limits<size_t>::max()),
             "*18446744073709551615\r\n");
   EXPECT_EQ(FromMapHeader(12, ProtocolVersion::kResp3), "%12\r\n");
@@ -119,8 +175,8 @@ TEST(ReplyTest, From64BitsInt) {
 TEST(ReplyTest, EncodesVersionSpecificTypes) {
   EXPECT_EQ(Null(ProtocolVersion::kResp2), "$-1\r\n");
   EXPECT_EQ(Null(ProtocolVersion::kResp3), "_\r\n");
-  EXPECT_EQ(FromFloat(1.5, ProtocolVersion::kResp2), "$3\r\n1.5\r\n");
-  EXPECT_EQ(FromFloat(1.5, ProtocolVersion::kResp3), ",1.5\r\n");
+  EXPECT_EQ(EncodedFloat(1.5, ProtocolVersion::kResp2), "$3\r\n1.5\r\n");
+  EXPECT_EQ(EncodedFloat(1.5, ProtocolVersion::kResp3), ",1.5\r\n");
   EXPECT_EQ(FromMapHeader(2, ProtocolVersion::kResp2), "*4\r\n");
   EXPECT_EQ(FromMapHeader(2, ProtocolVersion::kResp3), "%2\r\n");
   EXPECT_EQ(FromSetHeader(2, ProtocolVersion::kResp2), "*2\r\n");

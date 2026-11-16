@@ -31,7 +31,7 @@ void AddDeleteReply(Client* const client, DeleteOperation operation) {
   if (deleted > 0) {
     client->MarkModified(deleted);
   }
-  client->AddReply(reply::FromInt64(deleted));
+  client->AddIntegerReply(deleted);
 }
 }  // namespace
 
@@ -50,7 +50,7 @@ void HandleExists(Client* const client) {
       ++existing;
     }
   }
-  client->AddReply(reply::FromInt64(existing));
+  client->AddIntegerReply(existing);
 }
 
 namespace {
@@ -179,12 +179,12 @@ void AddExpireReply(Client* const client, int64_t multiplier, bool absolute,
   if (status == db::DbStatus::kOk) {
     client->MarkModified();
   }
-  client->AddReply(reply::FromInt64(status == db::DbStatus::kOk ? 1 : 0));
+  client->AddIntegerReply(status == db::DbStatus::kOk ? 1 : 0);
 }
 
 void AddTtlReply(Client* const client, db::TtlResolution resolution) {
-  client->AddReply(reply::FromInt64(
-      client->Db()->TimeToLive(client->Args()[0], resolution)));
+  client->AddIntegerReply(
+      client->Db()->TimeToLive(client->Args()[0], resolution));
 }
 }  // namespace
 
@@ -217,7 +217,7 @@ void HandlePersist(Client* const client) {
   if (status == db::DbStatus::kOk) {
     client->MarkModified();
   }
-  client->AddReply(reply::FromInt64(status == db::DbStatus::kOk ? 1 : 0));
+  client->AddIntegerReply(status == db::DbStatus::kOk ? 1 : 0);
 }
 
 void HandleRename(Client* const client) {
@@ -234,8 +234,7 @@ void HandleRename(Client* const client) {
 }
 
 void HandleDbSize(Client* const client) {
-  client->AddReply(
-      reply::FromInt64(static_cast<int64_t>(client->Db()->KeyCount())));
+  client->AddIntegerReply(static_cast<int64_t>(client->Db()->KeyCount()));
 }
 
 void HandleFlushDb(Client* const client) {

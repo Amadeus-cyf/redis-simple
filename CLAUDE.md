@@ -69,7 +69,10 @@ Guidance for AI coding agents working in this repository.
   version. Connections default to RESP2 and may switch through `HELLO`.
 - Pass `CommandArgs` by const reference instead of copying its view vector.
   Move completed `std::string` replies into `Client::AddReply`; use the
-  `std::string_view` overload only for borrowed reply data.
+  `std::string_view` overload only for borrowed reply data. Send a lone
+  integer or score with `Client::AddIntegerReply` or `AddFloatReply`, which
+  encode on the stack, and call `reply::ReserveBulkStrings` before encoding
+  a collection whose element count, or a bound on it, is known.
 - Add comments only when they clarify non-obvious behavior. When a comment
   names the Redis function or field the code follows, also say in plain
   words what it does, for readers who do not know Redis.
