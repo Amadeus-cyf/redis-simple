@@ -158,11 +158,9 @@ Guidance for AI coding agents working in this repository.
   Only `always` stops the server on a write or fsync error, through `Flush`
   returning false. `BGREWRITEAOF` inside `EXEC` is scheduled for `Aof::Cron`,
   so `Flush` never runs inside a transaction.
-- Reply in the iteration that processed the client's input, without
-  waiting for a writable event: from `Server::BeforeSleep` after the AOF
-  flush, or straight from the read handler when there is no AOF. Install a
-  write callback only while output remains unsent. Read once per readable
-  event.
+- Reply from `Server::BeforeSleep` in the iteration that processed the
+  client's input, without waiting for a writable event; install a write
+  callback only while output remains unsent. Read once per readable event.
 - Threaded I/O (`--io-threads` above 1) works like Redis 8; see
   `docs/design.md`. Keep commands, the database, and the AOF on the main
   thread, and I/O threads to the client's socket, buffers, and parser. A
