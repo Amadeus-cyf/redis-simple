@@ -4,7 +4,6 @@
 #include <sys/event.h>
 
 #include <memory>
-#include <unordered_map>
 #include <vector>
 
 #include "event_loop/event_poller.h"
@@ -24,7 +23,9 @@ class KqueuePoller final : public EventPoller {
   int nevents_;
   std::vector<struct kevent> events_;
   std::vector<ReadyEvent> ready_events_;
-  std::unordered_map<int, int> masks_;
+  // The registered mask of each descriptor, indexed by descriptor; 0 when
+  // none. Descriptors are small and dense, so this needs no hashing.
+  std::vector<int> masks_;
 };
 }  // namespace redis_simple::event_loop
 
