@@ -13,8 +13,8 @@
 #include "utils/strings.h"
 
 // INFO, with the sections this server reports, in Redis' field names and
-// order: persistence (RDB snapshots and the AOF), stats (threaded I/O
-// totals), and threads.
+// order: persistence (RDB snapshots and the AOF), stats (fork statistics and
+// threaded I/O totals), and threads.
 namespace redis_simple::commands::info {
 namespace {
 void AppendField(std::string_view name, std::string_view value,
@@ -96,8 +96,10 @@ void AppendPersistenceSection(const rdb::Rdb* const snapshots,
 
 using IoThreadList = std::span<const std::unique_ptr<IoThread>>;
 
-// Threaded I/O fields of Redis' stats section: totals over the I/O threads.
-void AppendStatsSection(IoThreadList threads, std::string* const info) {
+// Redis' stats section, with the fields this server keeps: the fork
+// statistics, and threaded I/O totals over the I/O threads.
+void AppendStatsSection(const ForkStats* const forks, IoThreadList threads,
+                        std::string* const info) {
   uint64_t reads = 0;
   uint64_t writes = 0;
   for (const std::unique_ptr<IoThread>& thread : threads) {
@@ -106,7 +108,10 @@ void AppendStatsSection(IoThreadList threads, std::string* const info) {
     writes += thread_info.writes_processed;
   }
   const bool active = !threads.empty();
+  const ForkStats fork_stats = forks != nullptr ? *forks : ForkStats{};
   info->append("# Stats\r\n");
+  AppendField("latest_fork_usec", fork_stats.latest_fork_usec, info);
+  AppendField("total_forks", fork_stats.total_forks, info);
   AppendField("io_threads_active", active ? "1" : "0", info);
   AppendField("io_threaded_reads_processed", static_cast<size_t>(reads), info);
   AppendField("io_threaded_writes_processed", static_cast<size_t>(writes),
@@ -158,7 +163,8 @@ void HandleInfo(Client* const client) {
     if (!info.empty()) {
       info.append("\r\n");
     }
-    AppendStatsSection(client->Server().io_threads, &info);
+    AppendStatsSection(client->Server().forks, client->Server().io_threads,
+                       &info);
   }
   if (threads) {
     if (!info.empty()) {

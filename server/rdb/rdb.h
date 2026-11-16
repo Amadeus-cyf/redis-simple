@@ -98,8 +98,9 @@ class Rdb {
   // save once no child does.
   void ScheduleBackgroundSave() { background_save_scheduled_ = true; }
   bool BackgroundSaveInProgress() const { return child_ > 0; }
+  // `after_fork` runs in the parent, told whether the fork succeeded.
   void SetForkHooks(std::function<void()> before_fork,
-                    std::function<void()> after_fork) {
+                    std::function<void(bool forked)> after_fork) {
     before_fork_ = std::move(before_fork);
     after_fork_ = std::move(after_fork);
   }
@@ -163,7 +164,7 @@ class Rdb {
 
   Options options_;
   std::function<void()> before_fork_;
-  std::function<void()> after_fork_;
+  std::function<void(bool forked)> after_fork_;
   pid_t child_{-1};
   bool background_save_scheduled_{};
   int64_t changes_{};

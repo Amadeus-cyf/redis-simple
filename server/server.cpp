@@ -21,6 +21,7 @@
 #include "server/client_connection/write_reply.h"
 #include "server/db/db.h"
 #include "server/shutdown.h"
+#include "utils/time.h"
 
 namespace redis_simple {
 Server::Server()
@@ -55,7 +56,8 @@ bool Server::Run(const ServerOptions& options) {
               .rdb = rdb_.get(),
               .changes = rdb_->ChangeCounter(),
               .required_password = require_pass_,
-              .io_threads = io_threads_};
+              .io_threads = io_threads_,
+              .forks = &fork_stats_};
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
   loop_->Run();
@@ -91,8 +93,15 @@ bool Server::LoadData(const ServerOptions& options) {
     PauseIoThreads();
     db_->PauseBackgroundFrees();
     containers::SetDictResizePolicy(containers::DictResizePolicy::kForbidden);
+    // Timed from here, right before fork(), as Redis' redisFork times it.
+    fork_start_us_ = utils::MonotonicMicroseconds();
   };
-  const auto after_fork = [this] {
+  const auto after_fork = [this](bool forked) {
+    if (forked) {
+      ++fork_stats_.total_forks;
+      fork_stats_.latest_fork_usec =
+          utils::MonotonicMicroseconds() - fork_start_us_;
+    }
     containers::SetDictResizePolicy(containers::DictResizePolicy::kAvoid);
     db_->ResumeBackgroundFrees();
     ResumeIoThreads();

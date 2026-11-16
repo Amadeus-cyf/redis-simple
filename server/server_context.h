@@ -21,6 +21,13 @@ class IoThread;
 // The server-wide state commands reach through their client. The server owns
 // one and every client points to it, so it must outlive them; tests and AOF
 // replay build their own.
+// Redis' fork statistics (INFO stats).
+struct ForkStats {
+  // How long the last successful fork took (Redis' stat_fork_time).
+  int64_t latest_fork_usec{};
+  int64_t total_forks{};
+};
+
 struct ServerContext {
   // Never null.
   db::RedisDb* db{nullptr};
@@ -36,6 +43,8 @@ struct ServerContext {
   std::string_view required_password;
   // Empty when I/O is single-threaded.
   std::span<const std::unique_ptr<IoThread>> io_threads;
+  // Null only for contexts tests and AOF replay build.
+  const ForkStats* forks{nullptr};
 };
 }  // namespace redis_simple
 

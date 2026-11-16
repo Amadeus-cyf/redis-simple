@@ -21,6 +21,12 @@ inline int64_t MonotonicMilliseconds() {
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
+
+inline int64_t MonotonicMicroseconds() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
 }  // namespace redis_simple::utils
 
 #endif  // REDIS_SIMPLE_UTILS_TIME_H_
