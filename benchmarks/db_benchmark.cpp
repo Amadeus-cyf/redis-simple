@@ -102,7 +102,7 @@ void DbSetString(benchmark::State& state) {
 // What the SET command does to the keyspace: look the key up, then store the
 // value through the slot the lookup found. Argument `overwrite` 0 sets new
 // keys and 1 existing ones; `with_ttl` 1 gives one other key a TTL, so each
-// SET also consults the TTL table.
+// SET of an existing key also consults the TTL table; a created key does not.
 void DbSetCommand(benchmark::State& state) {
   const bool overwrite = state.range(0) != 0;
   const bool with_ttl = state.range(1) != 0;

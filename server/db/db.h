@@ -235,10 +235,11 @@ class RedisDb {
 };
 
 // Carries a key's hash and keyspace entry from the lookup to the write that
-// follows, so the write neither hashes the key nor probes the keyspace
-// again, as Redis passes a dictEntryLink from lookupKeyWriteWithLink to
-// setKeyByLink. Valid until the database is next changed through another
-// key, and no longer than the key's bytes.
+// follows, as Redis passes a dictEntryLink from lookupKeyWriteWithLink to
+// setKeyByLink. The write does not hash the key again and, when
+// FindOrCreateKey located it, does not probe the keyspace again. Valid until
+// the key is deleted or the database is flushed, and no longer than the
+// key's bytes.
 class RedisDb::KeySlot {
  public:
   RedisObject* Object() const { return object_; }
