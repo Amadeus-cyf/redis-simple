@@ -34,6 +34,16 @@ Pick the tools the change calls for:
 | Anything on the request path (parsing, command dispatch, replies, the database, the AOF), and RDB saving or loading | `scripts/profile_server.sh build/release/redis_simple "${base}/build/release/redis_simple"` |
 | Object layout, encodings, or anything that changes memory per key | `scripts/measure_server_memory.sh build/release/redis_simple "${base}/build/release/redis_simple"` |
 | One component (a container, the parser, reply encoding) | `redis_simple_benchmarks`, below |
+| Freeing, `FLUSHDB`, `UNLINK`, expiry, the server cron, or anything that forks | `scripts/measure_pauses.py build/release/redis_simple "${base}/build/release/redis_simple" redis-server` |
+| Accepting or closing connections, the event loop, socket reads and writes, I/O threads | `scripts/count_syscalls.py build/release/redis_simple "${base}/build/release/redis_simple" redis-server` |
+| The RDB writer, `BGSAVE`, AOF rewrites | `scripts/measure_snapshot_io.py build/release/redis_simple "${base}/build/release/redis_simple" redis-server --trace` |
+
+Instruction counts and memory per key only see the request path of
+long-lived connections. The last three tools cover what they miss, and each
+takes `redis-server` as one of its binaries, so the change is compared with
+Redis as well as with the baseline. When looking for improvements rather
+than checking a change, run all of them: a flat callgrind profile does not
+mean nothing is left.
 
 `profile_server.sh` runs eleven workloads under callgrind; `-w` picks some
 (`-w pipelined-get,aof-writes`). `rdb-save-load` covers `SAVE` and loading
@@ -53,6 +63,17 @@ python3 third_party/benchmark/tools/compare.py benchmarks \
   "${base}/build/release/redis_simple_benchmarks" build/release/redis_simple_benchmarks \
   --benchmark_filter=<Group> --benchmark_repetitions=5
 ```
+
+`measure_pauses.py` reports, per scenario, how long the command took, the
+longest and 99th-percentile PING round trip of another client, and PINGs
+answered per second; for `expire`, how long the last expired key stayed
+after its deadline. Its timings vary between runs: trust differences of
+several times or tens of milliseconds, and repeat a run before reporting a
+smaller one. `count_syscalls.py` prints system calls per connection
+(`connect`) and per operation (`unpipelined`, `pipelined`, `io-threads`); a
+call Redis does not make is worth explaining. `measure_snapshot_io.py`
+reports how much of the finished file stays in the page cache, the growth of
+dirty pages during the save, and, with `--trace`, the child's sync calls.
 
 `compare.py` needs `pip install scipy`; without it, run the same filter in
 both binaries and compare the reported times by hand. Treat differences under

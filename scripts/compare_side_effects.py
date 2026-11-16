@@ -7,7 +7,10 @@ compares:
 
   * the change count, from INFO's rdb_changes_since_last_save, which decides
     whether a command is written to the AOF and counted toward save points;
-  * whether a WATCH on the keys, held by a second client, is failed.
+  * whether a WATCH on the keys, held by a second client, is failed;
+  * the keyspace left behind: each key's type, contents, and whether it has
+    a TTL. A failed command must leave nothing behind, not even an empty key,
+    which no reply shows.
 
 Each case starts from the same small keyspace. Exits nonzero and prints the
 cases that differ.
@@ -134,6 +137,38 @@ GET s
 MULTI;SET s 1;INCR s;LPUSH s x;EXEC
 MULTI;GET s;EXEC
 MULTI;SET s 1;DISCARD
+DECR s
+DECRBY missing -9223372036854775808
+INCRBY missing notanumber
+INCRBY n 9223372036854775807
+HINCRBY h g 9223372036854775807
+HINCRBY missing f 9223372036854775807;HINCRBY missing f 1
+HSET missing f v g
+HMSET missing f v g
+ZADD missing nan m
+ZADD missing 1 m 2
+ZADD missing NX XX 1 m
+ZADD missing GT LT 1 m
+ZADD missing INCR 1 m 2 n
+ZADD missing GT 1 m
+SET missing v EX 0
+SET missing v EX -5
+SET missing v PX 9223372036854775807
+SET missing v KEEPTTL EX 10
+SET missing v NX XX
+LPUSH s x
+RPUSH s x
+SADD s x
+ZADD s 1 a
+HSET s f v
+HINCRBY s f 1
+INCR l
+APPEND l x
+LSET missing 0 x
+EXPIRE missing abc
+EXPIRE s abc
+EXPIRE s 100 NX XX
+MSET a 1 b
 """.strip().splitlines()
 
 
@@ -146,8 +181,39 @@ def changes(connection):
     sys.exit("compare_side_effects.py: no rdb_changes_since_last_save")
 
 
+def keyspace(connection):
+    """Returns every key with its type, contents, and whether it has a TTL."""
+    keys, cursor = [], "0"
+    while True:
+        cursor, batch = connection.call(["SCAN", cursor, "COUNT", "1000"])
+        cursor = cursor.decode()
+        keys += batch
+        if cursor == "0":
+            break
+    state = []
+    for key in sorted(set(keys)):
+        name = key.decode(errors="replace")
+        kind = connection.call(["TYPE", name])
+        if kind == "+string":
+            contents = connection.call(["GET", name])
+        elif kind == "+list":
+            contents = connection.call(["LRANGE", name, "0", "-1"])
+        elif kind == "+set":
+            contents = sorted(connection.call(["SMEMBERS", name]))
+        elif kind == "+zset":
+            contents = connection.call(["ZRANGE", name, "0", "-1", "WITHSCORES"])
+        elif kind == "+hash":
+            flat = connection.call(["HGETALL", name])
+            contents = sorted(zip(flat[::2], flat[1::2]))
+        else:
+            contents = None
+        ttl = connection.call(["PTTL", name]) != ":-1"
+        state.append((name, kind, contents, "ttl" if ttl else "no ttl"))
+    return state
+
+
 def run_case(port, case):
-    """Returns (replies, change count, whether the WATCH was failed)."""
+    """Returns (replies, change count, whether the WATCH was failed, keys)."""
     client, watcher = Connection(port), Connection(port)
     for line in SETUP:
         client.call(shlex.split(line))
@@ -158,13 +224,13 @@ def run_case(port, case):
     watcher.call(["MULTI"])
     watcher.call(["PING"])
     failed = watcher.call(["EXEC"]) is None
-    return replies, after - before, failed
+    return replies, after - before, failed, keyspace(client)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare redis_simple's change counts and WATCH "
-        "behavior with a reference redis-server."
+        description="Compare redis_simple's change counts, WATCH behavior, "
+        "and keyspace after each command with a reference redis-server."
     )
     parser.add_argument("binary", help="the redis_simple binary")
     parser.add_argument("--redis-server", default="redis-server")
@@ -193,7 +259,7 @@ def main():
                     print(f"  redis:  {reference}")
                     print(f"  simple: {test}")
             print(f"{len(CASES)} cases, {differences} differences")
-            print("columns: replies, change count, WATCH failed")
+            print("columns: replies, change count, WATCH failed, keyspace")
         finally:
             for server in servers:
                 server.terminate()

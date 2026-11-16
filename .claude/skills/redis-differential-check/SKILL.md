@@ -39,8 +39,10 @@ scripts/run_redis_compatibility_check.sh build/debug/redis_simple
 redis-cli -p 6379 shutdown nosave
 ```
 
-Profiling (`scripts/profile_server.sh`, ports from 8200) and the memory
-script (8500) use other ports and can run at the same time.
+Profiling (`scripts/profile_server.sh`, ports from 8200), the memory
+script (8500), `measure_pauses.py` (8600), `count_syscalls.py` (8700), and
+`measure_snapshot_io.py` (8800) use other ports and can run at the same
+time, though timings are steadier one at a time.
 
 ## 2. Every command, edge cases and random operations
 
@@ -85,7 +87,7 @@ usually means the other server wrote a command this one does not implement:
 Redis' rewrite writes `SET`, `RPUSH`, `SADD`, `ZADD`, `HMSET`, and
 `PEXPIREAT`.
 
-## 4. Change counts and WATCH
+## 4. Change counts, WATCH, and the keyspace
 
 Replies do not show everything a command does. After changing a write
 command, compare its side effects too:
@@ -96,11 +98,15 @@ scripts/compare_side_effects.py build/debug/redis_simple
 
 For each case it compares the replies, the change count (`INFO`'s
 `rdb_changes_since_last_save`, which is what `Client::MarkModified` adds),
-and whether a `WATCH` held by a second client is failed. The cases are
+whether a `WATCH` held by a second client is failed, and the keyspace left
+behind (every key's type, contents, and whether it has a TTL). The cases are
 mostly commands that change nothing, such as `LTRIM` of a missing key or
 `SADD` of an existing member, because that is where Redis' rules are easy to
 miss: some signal the key without counting a change, and some do neither.
-Add a case for every new write command and option.
+Commands that fail on a missing or wrong-type key are there too: a command
+that creates its key before checking its arguments can leave an empty key,
+which Redis never has, and only the keyspace shows it. Add a case for every
+new write command and option, and one for each way it can fail.
 
 ## 5. RDB interoperability
 
