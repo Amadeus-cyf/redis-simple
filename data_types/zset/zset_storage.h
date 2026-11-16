@@ -1,7 +1,9 @@
 #ifndef REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_H_
 #define REDIS_SIMPLE_DATA_TYPES_ZSET_ZSET_STORAGE_H_
 
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -28,13 +30,78 @@ using ZSetEntryVisitor =
 using ZSetMemberVisitor =
     std::function<void(std::string_view member, double score)>;
 
+// ZADD's rules for one score-member pair. With none set, the member is added
+// or its score replaced.
+struct ZSetAddRules {
+  // Leave an existing member alone.
+  bool nx{};
+  // Do not add a new member.
+  bool xx{};
+  // Change an existing member's score only to a greater (GT) or a smaller
+  // (LT) one. Neither stops a new member from being added.
+  bool gt{};
+  bool lt{};
+  // Add the score to the member's current score instead of replacing it.
+  bool incr{};
+};
+
+enum class ZSetAddStatus : uint8_t {
+  kAdded,
+  kUpdated,
+  // Processed without a change: the score was already that value.
+  kUnchanged,
+  // Left alone because of NX, XX, GT, or LT.
+  kSkipped,
+  // The score, or INCR's sum, is NaN. Nothing changed.
+  kNotANumber,
+};
+
+struct ZSetAddResult {
+  ZSetAddStatus status{};
+  // The member's score after the call, when it was added, updated, or
+  // unchanged.
+  double score{};
+};
+
+// The part of Redis' zsetAdd for a member that exists with score `current`:
+// applies NX, INCR, and GT/LT in that order, and reports the score the member
+// should have. The caller stores it when the status is kUpdated.
+inline ZSetAddResult ApplyAddRulesToExisting(double current, double score,
+                                             const ZSetAddRules& rules) {
+  if (rules.nx) {
+    return {.status = ZSetAddStatus::kSkipped, .score = current};
+  }
+  if (rules.incr) {
+    score += current;
+    if (std::isnan(score)) {
+      return {.status = ZSetAddStatus::kNotANumber, .score = score};
+    }
+  }
+  if ((rules.lt && score >= current) || (rules.gt && score <= current)) {
+    return {.status = ZSetAddStatus::kSkipped, .score = current};
+  }
+  return {.status = score == current ? ZSetAddStatus::kUnchanged
+                                     : ZSetAddStatus::kUpdated,
+          .score = score};
+}
+
 class ZSetStorage {
  public:
+  // Redis' zsetAdd: adds `member`, or changes its score, as `rules` allow,
+  // looking the member up once.
+  virtual ZSetAddResult Add(std::string_view member, double score,
+                            const ZSetAddRules& rules) = 0;
   // Insert or update a member with the given score. Return true if the member
   // is newly inserted. `*changed`, when given, reports whether the member was
   // inserted or its score changed.
-  virtual bool InsertOrUpdate(std::string_view member, double score,
-                              bool* changed) = 0;
+  bool InsertOrUpdate(std::string_view member, double score, bool* changed) {
+    const ZSetAddStatus status = Add(member, score, ZSetAddRules{}).status;
+    if (changed != nullptr) {
+      *changed =
+          status == ZSetAddStatus::kAdded || status == ZSetAddStatus::kUpdated;
+    }
+    return status == ZSetAddStatus::kAdded;
+  }
   // Return true if the member is deleted.
   virtual bool Delete(std::string_view member) = 0;
   // Return the score of the given member.

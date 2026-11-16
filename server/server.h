@@ -13,6 +13,7 @@
 
 #include "connection/connection.h"
 #include "event_loop/loop.h"
+#include "server/active_expire.h"
 #include "server/aof/aof.h"
 #include "server/client.h"
 #include "server/io_thread.h"
@@ -80,6 +81,7 @@ class Server {
   std::unique_ptr<aof::Aof> aof_;
   std::unique_ptr<rdb::Rdb> rdb_;
   ForkStats fork_stats_;
+  ActiveExpire active_expire_;
   // When the fork hooks last let a fork start.
   int64_t fork_start_us_{};
   std::string require_pass_;
