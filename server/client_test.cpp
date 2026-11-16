@@ -232,6 +232,74 @@ TEST(ClientTest, RespRequestsPreserveSpacesAndBinaryData) {
   client->Db()->DeleteKey(key);
 }
 
+TEST(ClientTest, LargeGetReplySurvivesOverwriteAndDeleteBeforeFlush) {
+  auto [client, peer] = CreateClient();
+  const std::string first(100'000, 'a');
+  const std::string second(100'000, 'b');
+  db::RedisDb* const redis_db = client->Db();
+  const std::string get = EncodeRequest({"GET", "shared-get-key"});
+  const auto run_get = [&] {
+    ASSERT_EQ(write(peer.Get(), get.data(), get.size()),
+              static_cast<ssize_t>(get.size()));
+    ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(get.size()));
+    ASSERT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  };
+
+  redis_db->SetStringKey("shared-get-key", first, 0);
+  const std::shared_ptr<const std::string> stored =
+      redis_db->LookupKey("shared-get-key")->SharedStringBytes();
+  ASSERT_NE(stored, nullptr);
+  ASSERT_EQ(stored.use_count(), 2);
+  run_get();
+  // The reply holds the value instead of a copy of it.
+  EXPECT_EQ(stored.use_count(), 3);
+
+  // Nothing was sent yet: overwrite the value, read it again, delete it.
+  redis_db->SetStringKey("shared-get-key", second, 0);
+  run_get();
+  redis_db->DeleteKey("shared-get-key");
+  run_get();
+
+  std::string expected = "$100000\r\n" + first + "\r\n$100000\r\n";
+  expected.append(second).append("\r\n$-1\r\n");
+  std::string response;
+  std::array<char, 4096> buffer{};
+  while (response.size() < expected.size()) {
+    if (client->HasPendingReplies()) {
+      // A full socket buffer makes this a would-block, not an error.
+      client->SendReply();
+      ASSERT_EQ(client->Connection()->State(),
+                connection::ConnectionState::kConnected);
+    }
+    const ssize_t bytes_read = read(peer.Get(), buffer.data(), buffer.size());
+    ASSERT_GT(bytes_read, 0);
+    response.append(buffer.data(), static_cast<size_t>(bytes_read));
+  }
+  EXPECT_EQ(response, expected);
+  EXPECT_FALSE(client->HasPendingReplies());
+  EXPECT_EQ(stored.use_count(), 1);
+}
+
+TEST(ClientTest, LargeGetReplyObeysOutputLimitsAndDiscardedReplies) {
+  const std::string value(100'000, 'a');
+  auto [client, peer] = CreateClient(
+      {.resume_bytes = 1024, .soft_bytes = 2048, .hard_bytes = 50'000});
+  (void)peer;
+  const auto shared = std::make_shared<const std::string>(value);
+  EXPECT_EQ(client->AddBulkReply(shared), 0);
+  EXPECT_TRUE(client->ShouldCloseAfterReply());
+  EXPECT_FALSE(client->HasPendingReplies());
+  EXPECT_EQ(shared.use_count(), 1);
+
+  auto [unlimited_client, unlimited_peer] = CreateClient();
+  (void)unlimited_peer;
+  EXPECT_EQ(unlimited_client->AddBulkReply(shared), value.size() + 11);
+  EXPECT_EQ(unlimited_client->PendingReplyBytes(), value.size() + 11);
+  EXPECT_EQ(shared.use_count(), 2);
+  unlimited_client.reset();
+  EXPECT_EQ(shared.use_count(), 1);
+}
+
 TEST(ClientTest, HelloNegotiatesResp3) {
   auto [client, peer] = CreateClient();
   const std::string request = EncodeRequest({"HELLO", "3"}) +

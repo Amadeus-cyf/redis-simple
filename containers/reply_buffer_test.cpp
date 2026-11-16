@@ -188,6 +188,66 @@ TEST(ReplyBufferTest, MovesLargeReplyIntoOutputList) {
   EXPECT_EQ(BlockString(blocks[0]), std::string(4096, 'x'));
 }
 
+TEST(ReplyBufferTest, HoldsLargeSharedReplyUntilItIsSent) {
+  ReplyBuffer buffer;
+  auto reply = std::make_shared<const std::string>(8192, 'x');
+  buffer.Append("head", 4);
+
+  EXPECT_EQ(buffer.Append(reply), 8192);
+  buffer.Append("tail", 4);
+  EXPECT_EQ(reply.use_count(), 2);
+  EXPECT_EQ(buffer.PendingBytes(), 8200);
+
+  std::vector<iovec> blocks;
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 3);
+  EXPECT_EQ(BlockString(blocks[0]), "head");
+  EXPECT_EQ(static_cast<const char*>(blocks[1].iov_base), reply->data());
+  EXPECT_EQ(blocks[1].iov_len, 8192);
+  EXPECT_EQ(BlockString(blocks[2]), "tail");
+
+  buffer.Consume(4 + 4096);
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 2);
+  EXPECT_EQ(static_cast<const char*>(blocks[0].iov_base), reply->data() + 4096);
+  EXPECT_EQ(blocks[0].iov_len, 4096);
+  EXPECT_EQ(reply.use_count(), 2);
+
+  buffer.Consume(4096);
+  EXPECT_EQ(reply.use_count(), 1);
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 1);
+  EXPECT_EQ(BlockString(blocks[0]), "tail");
+  buffer.Consume(4);
+  EXPECT_TRUE(buffer.Empty());
+  EXPECT_EQ(buffer.ReplyBytes(), 0);
+}
+
+TEST(ReplyBufferTest, CopiesSmallSharedReply) {
+  ReplyBuffer buffer;
+  auto reply = std::make_shared<const std::string>(
+      ReplyBuffer::kMinMovedReplySize - 1, 'x');
+
+  EXPECT_EQ(buffer.Append(reply), reply->size());
+  EXPECT_EQ(reply.use_count(), 1);
+  std::vector<iovec> blocks;
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 1);
+  EXPECT_NE(static_cast<const char*>(blocks[0].iov_base), reply->data());
+  EXPECT_EQ(BlockString(blocks[0]), *reply);
+}
+
+TEST(ReplyBufferTest, ReleasesSharedRepliesItNeverSent) {
+  auto reply = std::make_shared<const std::string>(8192, 'x');
+  {
+    ReplyBuffer buffer;
+    buffer.Append(reply);
+    buffer.Append(reply);
+    EXPECT_EQ(reply.use_count(), 3);
+  }
+  EXPECT_EQ(reply.use_count(), 1);
+}
+
 TEST(ReplyBufferTest, CopiesSmallMovedRepliesIntoSharedChunks) {
   ReplyBuffer buffer(16, 1024);
   for (int i = 0; i < 100; ++i) {
