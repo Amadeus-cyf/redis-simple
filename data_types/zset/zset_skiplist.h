@@ -88,6 +88,7 @@ class ZSetSkiplist : public ZSetStorage {
                          const ZSetMemberVisitor& visitor) const override;
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
+  bool ForEachEntryDescending(const ZSetEntryVisitor& visitor) const;
   size_t Scan(size_t cursor, size_t count,
               const ZSetMemberVisitor& visitor) override;
   std::optional<std::string_view> ListpackBytes() const override {

@@ -165,7 +165,12 @@ Guidance for AI coding agents working in this repository.
   element as `Listpack` would; anything else is rebuilt through the data
   types. Values over the listpack limits start in their large encoding,
   sized for their count (`CreateForSize`), as Redis' rdbLoad does. Keep new
-  types on that path.
+  types on that path. A count used only to pre-size (`RESIZEDB`) is capped
+  by the bytes left too (`Loader::ReserveKeys`); cap any new pre-size hint
+  the same way.
+- Write skiplist sorted sets to RDB from the greatest member down
+  (`ForEachSkiplistEntryDescending`), as Redis does, so loading inserts at
+  the skiplist's head.
 - Keep AOF propagation at the successful command-mutation boundary. Preserve
   command order, encode relative TTLs as absolute `PEXPIREAT` records, and do
   not copy argument payloads beyond the owned persistence record.

@@ -268,6 +268,13 @@ class Dict {
   template <typename Visitor>
   size_t ScanStep(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const { return table_used_[0] + table_used_[1]; }
+  // Grows the table for `count` entries at once, as Redis' dictExpand does,
+  // so inserting up to that many never stops to grow it. An empty dict gets
+  // the table directly. One with entries moves them to it step by step, and
+  // shrinks again if it is still mostly empty when they have moved, so
+  // reserve before filling. Does nothing if the table is already that large
+  // or is being rehashed.
+  void Reserve(size_t count);
   void Clear();
   // Frees about `max_entries` entries, whole buckets at a time, so a large
   // Dict being discarded can be freed in steps between other work. Returns
@@ -906,6 +913,23 @@ bool Dict<K, V, Hash, KeyEqual>::Resize(size_t size) {
   table_used_[1] = 0;
   rehash_index_ = size_t{0};
   return true;
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+void Dict<K, V, Hash, KeyEqual>::Reserve(size_t count) {
+  if (IsRehashing() || count <= TableSize(0)) {
+    return;
+  }
+  if (Size() > 0) {
+    Resize(count);
+    return;
+  }
+  // Nothing to move: replace the table instead of rehashing into a second.
+  const size_t old_size = TableSize(0);
+  tables_[0].clear();
+  if (!Resize(count)) {
+    Resize(old_size);
+  }
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>

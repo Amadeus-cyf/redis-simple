@@ -278,7 +278,10 @@ database 0, `SELECTDB` and `RESIZEDB` and each key with its expiration time,
 then `EOF` and the CRC64 of everything before it. Each value is written in
 the encoding Redis writes for the same in-memory encoding: an intset or a
 listpack as one blob, a quicklist as its nodes' listpacks, and hash tables
-and skiplists as counted elements. Blobs are copied as they are, which works
+and skiplists as counted elements. A skiplist sorted set is written from its
+greatest member down, as Redis' `rdbSaveObject` does, so that a loader
+inserting in file order always inserts at the head of its skiplist, without
+searching past smaller members. Blobs are copied as they are, which works
 because `Listpack` and `Intset` keep Redis' byte format in memory: little-endian
 headers, lengths, and integers, and Redis' backlen layout (unit tests check
 the bytes against vectors Redis produced). Strings are encoded as Redis'
@@ -325,7 +328,12 @@ one, which lookups rely on. Any other value, including lists and intsets, is
 rebuilt through the data types, so no corrupt structure enters memory. A
 hash, set, or sorted set stored as a hash table and counting more entries
 than a listpack holds starts in that encoding, sized for the count, instead of
-filling a listpack and converting it. Duplicate members, fields, or keys, NaN
+filling a listpack and converting it. The keyspace and expiration tables are
+sized once from the `RESIZEDB` counts (Redis' `dbExpand`), so they do not
+rehash while the keys arrive; each count is first cut down to the keys the
+bytes left in the file could hold (three bytes a key at the least), so a
+false count cannot make the server allocate more than a few times the file's
+size. Duplicate members, fields, or keys, NaN
 scores, and types this server does not have stop the load with a message
 naming the offset; empty collections are skipped, and keys whose expiration
 time has passed are dropped, as Redis does.
