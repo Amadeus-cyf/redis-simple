@@ -45,7 +45,7 @@ class Server {
   // Keeps the replies to the commands `client` just ran until the event loop
   // is about to wait for events again. By then every client that was
   // readable has run its commands, so one AOF flush covers them all, and the
-  // replies are sent after it.
+  // replies are sent after it. Only needed when there is an AOF.
   void HoldReplies(Client* client);
   // Threaded I/O, enabled when --io-threads is above 1, as in Redis 8: each
   // client belongs to one I/O thread, which reads and frames its requests and

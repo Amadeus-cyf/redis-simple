@@ -58,7 +58,8 @@ Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
    instead of paying for one each. A write callback left from an earlier,
    partly sent reply also waits while its client is held. If the flush
    fails under `always`, the server stops and the held replies are never
-   sent.
+   sent. Without an AOF there is nothing to flush, and the read handler
+   sends the replies itself.
 
 ### What a command can reach
 

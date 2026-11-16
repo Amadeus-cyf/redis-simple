@@ -22,7 +22,13 @@ void ReadQuery(Server* const server, Client* const client) {
   if (client->ProcessInputBuffer() == ClientStatus::kError) {
     RS_LOG_DEBUG("process query buffer failed\n");
   }
-  server->HoldReplies(client);
+  if (server->Aof() != nullptr) {
+    server->HoldReplies(client);
+    return;
+  }
+  // Nothing has to reach a file first, so the replies leave while the
+  // client's buffers are still in the cache.
+  ReplyToQueries(server, client);
 }
 }  // namespace
 
