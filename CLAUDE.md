@@ -281,9 +281,15 @@ Guidance for AI coding agents working in this repository.
 - Each key's `RedisObject` lives inside its keyspace entry
   (`Dict<std::string, RedisObject>`), as Redis 8 keeps a key and its value
   in one block, so a key is one allocation. Storing a value moves the object
-  into the entry: take a new key's object from `RedisDb::StoreKey`, never
-  from a pointer into the object handed to it. `RENAME` moves the object
-  into the new key's entry.
+  into the entry, so never keep a pointer into the object handed to a
+  setter. A command that looks a key up and then creates or overwrites it
+  uses `RedisDb::FindOrCreateKey` (or `LookupOrCreateTyped` in
+  `server/commands/lookup.h`), which hashes the key and probes the keyspace
+  once for both. `FindOrCreateKey` returns a `KeySlot`; store a string
+  through it with `SetStringAt`. A created key holds an empty string until
+  the command stores its value, so nothing may return in between. Use
+  `FindKeyForWrite` when a missing key must stay missing (`SET ... XX`).
+  `RENAME` moves the object into the new key's entry.
 - Store whole string values through `RedisDb::SetStringKey`, which overwrites
   an existing string object in place with `RedisObject::AssignString` instead
   of allocating a new object. `AssignString` applies the same encoding rules

@@ -546,6 +546,8 @@ Run one group with `--benchmark_filter`, for example
 - `DbSetString`: `SET` of 3-, 36-, and 100-byte values, as new keys and as
   overwrites. The sizes fall inside `std::string`'s inline buffer, inside the
   embedded-string range, and beyond both.
+- `DbSetCommand`: the `SET` command's keyspace work, a lookup followed by
+  the store, on new and existing keys, with and without a TTL in the table.
 - `ActiveExpireSlowCycleNothingExpired`, `ActiveExpireReclaimExpiredKeys`:
   one active-expiration cycle over 100,000 keys none of which has expired,
   and back-to-back cycles until 100,000 expired keys are gone.
