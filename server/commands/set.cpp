@@ -91,7 +91,9 @@ SetLookup FindSet(db::RedisDb* const redis_db, std::string_view key) {
   if (object == nullptr) {
     return {nullptr, SetLookupStatus::kMissing};
   }
-  return {object->Set(), SetLookupStatus::kOk};
+  const Set* const set = object->Set();
+  RS_CHECK(set != nullptr);
+  return {set, SetLookupStatus::kOk};
 }
 
 SetReply EncodeMembers(const Set& set) {
