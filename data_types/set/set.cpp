@@ -16,9 +16,8 @@
 
 namespace redis_simple::data_types {
 Set::Set()
-    : encoding_(Encoding::kIntset),
-      intset_(nullptr),
-      listpack_(nullptr),
+    : intset_(nullptr),
+      listpack_(containers::Listpack::Unallocated()),
       dict_(nullptr) {}
 
 std::unique_ptr<Set> Set::CreateForSize(size_t count) {
@@ -34,19 +33,18 @@ std::unique_ptr<Set> Set::CreateFromListpack(
   RS_CHECK(listpack != nullptr && listpack->Size() > 0 &&
            listpack->Size() <= kListpackMaxEntries);
   std::unique_ptr<Set> set(new Set());
-  set->encoding_ = Encoding::kListpack;
-  set->listpack_ = std::move(listpack);
+  set->listpack_ = std::move(*listpack);
   return set;
 }
 
 bool Set::Add(std::string_view value) {
-  if (encoding_ == Encoding::kIntset) {
+  if (Encoding() == Encoding::kIntset) {
     return IntsetAddAndMaybeConvert(value);
   }
-  if (encoding_ == Encoding::kListpack) {
+  if (Encoding() == Encoding::kListpack) {
     return ListpackAddAndMaybeConvert(value);
   }
-  if (encoding_ == Encoding::kDict) {
+  if (Encoding() == Encoding::kDict) {
     return DictAdd(value);
   }
   utils::Unreachable();
@@ -56,14 +54,14 @@ bool Set::HasMember(std::string_view value) const {
   if (Size() == 0) {
     return false;
   }
-  if (encoding_ == Encoding::kIntset) {
+  if (Encoding() == Encoding::kIntset) {
     const std::optional<int64_t> integer = utils::ToInt64(value);
     return integer.has_value() && intset_->Find(*integer);
   }
-  if (encoding_ == Encoding::kListpack) {
-    return listpack_->Find(value).has_value();
+  if (Encoding() == Encoding::kListpack) {
+    return listpack_.Find(value).has_value();
   }
-  if (encoding_ == Encoding::kDict) {
+  if (Encoding() == Encoding::kDict) {
     return dict_->FindValue(value) != nullptr;
   }
   utils::Unreachable();
@@ -71,7 +69,7 @@ bool Set::HasMember(std::string_view value) const {
 
 bool Set::HasMember(std::string_view value,
                     const containers::HashedKey* const hashed) const {
-  if (hashed != nullptr && encoding_ == Encoding::kDict) {
+  if (hashed != nullptr && Encoding() == Encoding::kDict) {
     return dict_->FindValue(*hashed) != nullptr;
   }
   return HasMember(value);
@@ -91,40 +89,40 @@ bool Set::Delete(std::string_view value) {
   if (Size() == 0) {
     return false;
   }
-  if (encoding_ == Encoding::kIntset) {
+  if (Encoding() == Encoding::kIntset) {
     const std::optional<int64_t> integer = utils::ToInt64(value);
     return integer.has_value() && intset_->Delete(*integer);
   }
-  if (encoding_ == Encoding::kListpack) {
-    const std::optional<size_t> offset = listpack_->Find(value);
+  if (Encoding() == Encoding::kListpack) {
+    const std::optional<size_t> offset = listpack_.Find(value);
     if (!offset.has_value()) {
       return false;
     }
-    listpack_->Delete(*offset);
+    listpack_.Delete(*offset);
     return true;
   }
-  if (encoding_ == Encoding::kDict) {
+  if (Encoding() == Encoding::kDict) {
     return dict_->Delete(value);
   }
   utils::Unreachable();
 }
 
 std::string_view Set::ListpackBytes() const {
-  RS_CHECK(encoding_ == Encoding::kListpack);
-  return listpack_->Bytes();
+  RS_CHECK(Encoding() == Encoding::kListpack);
+  return ListpackStorage().Bytes();
 }
 
 void Set::AppendIntsetBlob(std::string* const out) const {
-  RS_CHECK(encoding_ == Encoding::kIntset);
+  RS_CHECK(Encoding() == Encoding::kIntset);
   intset_->AppendRedisBlob(out);
 }
 
 size_t Set::Size() const {
-  switch (encoding_) {
+  switch (Encoding()) {
     case Encoding::kIntset:
       return intset_ ? intset_->Size() : 0;
     case Encoding::kListpack:
-      return listpack_ ? listpack_->Size() : 0;
+      return listpack_.Allocated() ? listpack_.Size() : 0;
     case Encoding::kDict:
       return dict_ ? dict_->Size() : 0;
     default:
@@ -153,16 +151,17 @@ bool Set::IntsetAddAndMaybeConvert(std::string_view value) {
 
 bool Set::ListpackAddAndMaybeConvert(std::string_view value) {
   const size_t length = value.size();
-  if (listpack_->Find(value).has_value()) {
+  if (ListpackStorage().Find(value).has_value()) {
     return false;
   }
-  if (listpack_->Size() < kListpackMaxEntries &&
+  if (ListpackStorage().Size() < kListpackMaxEntries &&
       length <= kListpackMaxElementLength &&
       containers::Listpack::SafeToAdd(
-          listpack_.get(), containers::Listpack::EstimateEntryBytes(value))) {
-    return listpack_->Append(value);
+          &ListpackStorage(),
+          containers::Listpack::EstimateEntryBytes(value))) {
+    return ListpackStorage().Append(value);
   }
-  ConvertListpackToDict(listpack_->Size() + 1);
+  ConvertListpackToDict(ListpackStorage().Size() + 1);
   return dict_->FindOrInsert(value).second;
 }
 
@@ -174,15 +173,14 @@ bool Set::DictAdd(std::string_view value) {
 }
 
 void Set::MaybeConvertIntsetToDict() {
-  RS_CHECK(encoding_ == Encoding::kIntset);
+  RS_CHECK(Encoding() == Encoding::kIntset);
   if (intset_ && intset_->Size() > kIntsetMaxEntries) {
     ConvertIntsetToDict(intset_->Size());
   }
 }
 
 void Set::ConvertIntsetToDict(size_t capacity) {
-  RS_CHECK(encoding_ == Encoding::kIntset);
-  encoding_ = Encoding::kDict;
+  RS_CHECK(Encoding() == Encoding::kIntset);
   dict_ = containers::Dict<std::string, containers::NoValue>::Create(capacity);
   if (!intset_) {
     return;
@@ -195,7 +193,7 @@ void Set::ConvertIntsetToDict(size_t capacity) {
 }
 
 bool Set::MaybeConvertIntsetToListpack(std::string_view value) {
-  if (encoding_ != Encoding::kIntset) {
+  if (Encoding() != Encoding::kIntset) {
     return false;
   }
   size_t length = value.size();
@@ -227,32 +225,30 @@ bool Set::MaybeConvertIntsetToListpack(std::string_view value) {
 }
 
 void Set::ConvertIntsetToListpack(std::string_view value) {
-  RS_CHECK(encoding_ == Encoding::kIntset);
-  encoding_ = Encoding::kListpack;
-  listpack_ = std::make_unique<containers::Listpack>();
+  RS_CHECK(Encoding() == Encoding::kIntset);
+  listpack_ = containers::Listpack();
   if (intset_) {
     for (uint32_t i = 0; i < intset_->Size(); ++i) {
-      listpack_->Append(intset_->Get(i));
+      listpack_.Append(intset_->Get(i));
     }
   }
-  listpack_->Append(value);
+  listpack_.Append(value);
   intset_.reset();
 }
 
 void Set::ConvertListpackToDict(size_t capacity) {
-  RS_CHECK(encoding_ == Encoding::kListpack);
-  encoding_ = Encoding::kDict;
+  RS_CHECK(Encoding() == Encoding::kListpack);
   dict_ = containers::Dict<std::string, containers::NoValue>::Create(capacity);
-  if (!listpack_) {
+  if (!listpack_.Allocated()) {
     return;
   }
-  if (const size_t size = listpack_->Size(); size > 0) {
-    listpack_->ForEach(0, size - 1, [this](std::string_view member) {
+  if (const size_t size = listpack_.Size(); size > 0) {
+    listpack_.ForEach(0, size - 1, [this](std::string_view member) {
       dict_->FindOrInsert(member);
       return true;
     });
   }
-  listpack_.reset();
+  listpack_.Release();
 }
 
 }  // namespace redis_simple::data_types

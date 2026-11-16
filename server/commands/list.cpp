@@ -124,9 +124,8 @@ void HandlePush(Client* const client, Side side) {
   if (object == nullptr) {
     // LLVM 18 cannot trace unique_ptr ownership through Dict::FindOrInsert.
     // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-    auto created = db::RedisObject::CreateWithList(List::Create());
-    object = created.get();
-    client->Db()->SetKey(args[0], std::move(created), 0);
+    object = client->Db()->StoreKey(
+        args[0], db::RedisObject::CreateWithList(List::Create()));
   }
   List* const list = object->List();
   for (size_t i = 1; i < args.size(); ++i) {

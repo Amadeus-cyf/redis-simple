@@ -13,8 +13,7 @@
 #include "utils/floats.h"
 
 namespace redis_simple::data_types {
-ZSetListpack::ZSetListpack()
-    : listpack_(std::make_unique<containers::Listpack>()) {}
+ZSetListpack::ZSetListpack() = default;
 
 bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
                                   bool* const changed) {
@@ -25,7 +24,7 @@ bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
   if (std::isnan(score)) {
     return false;
   }
-  const std::optional<size_t> member_offset = listpack_->FindAndSkip(member, 1);
+  const std::optional<size_t> member_offset = listpack_.FindAndSkip(member, 1);
   const bool inserted = !member_offset.has_value();
   if (member_offset.has_value()) {
     const std::optional<EntryView> entry =
@@ -41,7 +40,7 @@ bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
   // Like Redis, the listpack encoding stores a whole-number score as an
   // integer, which drops the sign of negative zero. The skiplist keeps it.
   const std::string score_text = utils::FloatToString(score == 0 ? 0.0 : score);
-  std::optional<size_t> offset = listpack_->First();
+  std::optional<size_t> offset = listpack_.First();
   while (offset.has_value()) {
     const std::optional<EntryView> entry = EntryAt(*offset, &member_buffer);
     if (!entry.has_value()) {
@@ -49,13 +48,13 @@ bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
     }
     if (score < entry->score ||
         (score == entry->score && member < entry->member)) {
-      if (!listpack_->Insert(*offset, member)) {
+      if (!listpack_.Insert(*offset, member)) {
         return false;
       }
-      const std::optional<size_t> score_offset = listpack_->Next(*offset);
+      const std::optional<size_t> score_offset = listpack_.Next(*offset);
       if (!score_offset.has_value() ||
-          !listpack_->Insert(*score_offset, score_text)) {
-        listpack_->Delete(*offset);
+          !listpack_.Insert(*score_offset, score_text)) {
+        listpack_.Delete(*offset);
         return false;
       }
       if (changed != nullptr) {
@@ -65,13 +64,13 @@ bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
     }
     offset = NextMemberAfterScore(entry->score_index);
   }
-  if (!listpack_->Append(member)) {
+  if (!listpack_.Append(member)) {
     return false;
   }
-  const std::optional<size_t> appended_member = listpack_->Last();
-  if (!listpack_->Append(score_text)) {
+  const std::optional<size_t> appended_member = listpack_.Last();
+  if (!listpack_.Append(score_text)) {
     if (appended_member.has_value()) {
-      listpack_->Delete(*appended_member);
+      listpack_.Delete(*appended_member);
     }
     return false;
   }
@@ -82,7 +81,7 @@ bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
 }
 
 bool ZSetListpack::Delete(std::string_view member) {
-  const std::optional<size_t> offset = listpack_->FindAndSkip(member, 1);
+  const std::optional<size_t> offset = listpack_.FindAndSkip(member, 1);
   if (!offset.has_value()) {
     return false;
   }
@@ -92,7 +91,7 @@ bool ZSetListpack::Delete(std::string_view member) {
 
 std::optional<double> ZSetListpack::Score(std::string_view member) const {
   containers::Listpack::IntBuffer member_buffer;
-  const std::optional<size_t> offset = listpack_->FindAndSkip(member, 1);
+  const std::optional<size_t> offset = listpack_.FindAndSkip(member, 1);
   if (!offset.has_value()) {
     return std::nullopt;
   }
@@ -105,14 +104,14 @@ std::optional<ZSetRank> ZSetListpack::RankAndScore(
   containers::Listpack::IntBuffer member_buffer;
   // Find the member first, comparing bytes without decoding scores, then
   // count the pairs in front of it; its score is read once at the end.
-  const std::optional<size_t> member_offset = listpack_->FindAndSkip(member, 1);
+  const std::optional<size_t> member_offset = listpack_.FindAndSkip(member, 1);
   if (!member_offset.has_value()) {
     return std::nullopt;
   }
   size_t rank = 0;
-  std::optional<size_t> offset = listpack_->First();
+  std::optional<size_t> offset = listpack_.First();
   while (offset.has_value() && offset != member_offset) {
-    const std::optional<size_t> score_offset = listpack_->Next(*offset);
+    const std::optional<size_t> score_offset = listpack_.Next(*offset);
     if (!score_offset.has_value()) {
       return std::nullopt;
     }
@@ -164,7 +163,7 @@ size_t ZSetListpack::Count(const RangeByScoreSpec* spec) const {
   if (!ValidateRangeScoreSpec(spec)) {
     return 0;
   }
-  std::optional<size_t> offset = listpack_->First();
+  std::optional<size_t> offset = listpack_.First();
   size_t count = 0;
   while (offset.has_value()) {
     const std::optional<EntryView> entry = EntryAt(*offset, &member_buffer);
@@ -187,12 +186,12 @@ bool ZSetListpack::OverlapsLexRange(const RangeByLexSpec* spec) const {
   if (spec == nullptr || spec->Empty()) {
     return false;
   }
-  const std::optional<size_t> first = listpack_->First();
-  const std::optional<size_t> last_score = listpack_->Last();
+  const std::optional<size_t> first = listpack_.First();
+  const std::optional<size_t> last_score = listpack_.Last();
   if (!first.has_value() || !last_score.has_value()) {
     return false;
   }
-  const std::optional<size_t> last = listpack_->Prev(*last_score);
+  const std::optional<size_t> last = listpack_.Prev(*last_score);
   containers::Listpack::IntBuffer last_buffer;
   const std::optional<std::string_view> last_member =
       last.has_value() ? ValueAt(*last, &last_buffer) : std::nullopt;
@@ -232,7 +231,7 @@ void ZSetListpack::ForEachInLexRange(const RangeByLexSpec* spec,
   };
   if (!spec->reverse) {
     bool started = false;
-    std::optional<size_t> member_offset = listpack_->First();
+    std::optional<size_t> member_offset = listpack_.First();
     while (member_offset.has_value()) {
       const std::optional<EntryView> entry =
           EntryAt(*member_offset, &member_buffer);
@@ -247,9 +246,9 @@ void ZSetListpack::ForEachInLexRange(const RangeByLexSpec* spec,
     }
     return;
   }
-  const std::optional<size_t> last_score = listpack_->Last();
+  const std::optional<size_t> last_score = listpack_.Last();
   std::optional<size_t> member_offset =
-      last_score.has_value() ? listpack_->Prev(*last_score) : std::nullopt;
+      last_score.has_value() ? listpack_.Prev(*last_score) : std::nullopt;
   bool started = false;
   while (member_offset.has_value()) {
     const std::optional<EntryView> entry =
@@ -272,7 +271,7 @@ size_t ZSetListpack::LexCount(const RangeByLexSpec* spec) const {
   }
   size_t count = 0;
   bool started = false;
-  std::optional<size_t> member_offset = listpack_->First();
+  std::optional<size_t> member_offset = listpack_.First();
   while (member_offset.has_value()) {
     const std::optional<EntryView> entry =
         EntryAt(*member_offset, &member_buffer);
@@ -302,7 +301,7 @@ size_t ZSetListpack::Scan(size_t /*cursor*/, size_t /*count*/,
 
 bool ZSetListpack::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   containers::Listpack::IntBuffer member_buffer;
-  std::optional<size_t> member_offset = listpack_->First();
+  std::optional<size_t> member_offset = listpack_.First();
   while (member_offset.has_value()) {
     const std::optional<EntryView> entry =
         EntryAt(*member_offset, &member_buffer);
@@ -318,18 +317,18 @@ bool ZSetListpack::ForEachEntry(const ZSetEntryVisitor& visitor) const {
 }
 
 void ZSetListpack::DeleteMemberScorePair(size_t offset) {
-  listpack_->DeleteRange(offset, 2);
+  listpack_.DeleteRange(offset, 2);
 }
 
 std::optional<std::string_view> ZSetListpack::ValueAt(
     size_t offset, containers::Listpack::IntBuffer* buffer) const {
-  return listpack_->ElementAt(offset, buffer);
+  return listpack_.ElementAt(offset, buffer);
 }
 
 std::optional<ZSetListpack::EntryView> ZSetListpack::EntryAt(
     size_t member_offset,
     containers::Listpack::IntBuffer* member_buffer) const {
-  const std::optional<size_t> score_offset = listpack_->Next(member_offset);
+  const std::optional<size_t> score_offset = listpack_.Next(member_offset);
   if (!score_offset.has_value()) {
     return std::nullopt;
   }
@@ -349,7 +348,7 @@ std::optional<double> ZSetListpack::ScoreAt(size_t offset) const {
   // Integral scores are stored with integer encodings. Convert them directly
   // instead of rendering them as text and parsing that text back; the text
   // was formatted from a double, so both paths give the same score.
-  if (const std::optional<int64_t> integer = listpack_->IntegerAt(offset);
+  if (const std::optional<int64_t> integer = listpack_.IntegerAt(offset);
       integer.has_value()) {
     return static_cast<double>(*integer);
   }
@@ -366,7 +365,7 @@ void ZSetListpack::VisitRankRange(const RangeByRankSpec* spec,
   if (count.has_value() && *count == 0) {
     return;
   }
-  std::optional<size_t> offset = listpack_->First();
+  std::optional<size_t> offset = listpack_.First();
   size_t visited = 0;
   size_t rank = 0;
   const size_t size = Size();
@@ -411,7 +410,7 @@ void ZSetListpack::VisitRankRangeReversed(
   if (count.has_value() && *count == 0) {
     return;
   }
-  std::optional<size_t> offset = listpack_->Last();
+  std::optional<size_t> offset = listpack_.Last();
   size_t visited = 0;
   size_t rank = 0;
   const size_t size = Size();
@@ -430,7 +429,7 @@ void ZSetListpack::VisitRankRangeReversed(
     return;
   }
   while (offset.has_value() && rank < end) {
-    const std::optional<size_t> member_offset = listpack_->Prev(*offset);
+    const std::optional<size_t> member_offset = listpack_.Prev(*offset);
     if (!member_offset.has_value()) {
       break;
     }
@@ -521,26 +520,26 @@ void ZSetListpack::VisitScoreRangeReversed(
 
 std::optional<size_t> ZSetListpack::NextMemberAfterScore(
     size_t score_offset) const {
-  return listpack_->Next(score_offset);
+  return listpack_.Next(score_offset);
 }
 
 std::optional<size_t> ZSetListpack::PrevScoreBeforeMember(
     size_t member_offset) const {
-  return listpack_->Prev(member_offset);
+  return listpack_.Prev(member_offset);
 }
 
 std::optional<size_t> ZSetListpack::PrevMemberBeforeMember(
     size_t member_offset) const {
   const std::optional<size_t> score_offset =
       PrevScoreBeforeMember(member_offset);
-  return score_offset.has_value() ? listpack_->Prev(*score_offset)
+  return score_offset.has_value() ? listpack_.Prev(*score_offset)
                                   : std::nullopt;
 }
 
 std::optional<size_t> ZSetListpack::FindKeyGreaterOrEqual(
     const RangeByScoreSpec* spec) const {
   containers::Listpack::IntBuffer member_buffer;
-  std::optional<size_t> member_offset = listpack_->First();
+  std::optional<size_t> member_offset = listpack_.First();
   while (member_offset.has_value()) {
     const std::optional<EntryView> entry =
         EntryAt(*member_offset, &member_buffer);
@@ -558,11 +557,11 @@ std::optional<size_t> ZSetListpack::FindKeyGreaterOrEqual(
 std::optional<size_t> ZSetListpack::FindKeyLessOrEqual(
     const RangeByScoreSpec* spec) const {
   containers::Listpack::IntBuffer member_buffer;
-  const std::optional<size_t> score_offset = listpack_->Last();
+  const std::optional<size_t> score_offset = listpack_.Last();
   if (!score_offset.has_value()) {
     return std::nullopt;
   }
-  std::optional<size_t> member_offset = listpack_->Prev(*score_offset);
+  std::optional<size_t> member_offset = listpack_.Prev(*score_offset);
   while (member_offset.has_value()) {
     const std::optional<EntryView> entry =
         EntryAt(*member_offset, &member_buffer);

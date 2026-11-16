@@ -316,6 +316,11 @@ class Loader {
       return false;
     }
     if (!encoded) {
+      // Dict entries store a key's length in 32 bits, so this bound also
+      // keeps every key and member loaded from a file within it.
+      if (length > kMaxStringBytes) {
+        return Corrupt("a string longer than the largest string allowed");
+      }
       return ReadBytes(length, out);
     }
     switch (length) {

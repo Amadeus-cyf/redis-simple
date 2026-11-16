@@ -68,6 +68,10 @@ class RedisDb {
   // `expire` is an absolute time in milliseconds, or 0 for none.
   DbStatus SetKey(std::string_view key, RedisObjectPtr object, int64_t expire,
                   ExistingTtl existing_ttl = ExistingTtl::kClear);
+  // SetKey with no TTL, returning the stored object. The object moves into
+  // the keyspace entry, so pointers into `object` do not stay valid; use the
+  // returned one.
+  RedisObject* StoreKey(std::string_view key, RedisObjectPtr object);
   // Adds a key that should not exist yet, hashing it once, as loading a
   // file does (Redis' dbAddRDBLoad). Returns false, changing nothing, if the
   // key exists. `expire` is as for SetKey.
@@ -141,7 +145,10 @@ class RedisDb {
   void ResumeBackgroundFrees() { reclaimer_.Resume(); }
 
  private:
-  using Keyspace = containers::Dict<std::string, RedisObjectPtr>;
+  // Objects live inside their keyspace entries, after the key's header and
+  // before its name, as Redis 8 keeps a key and its value in one block
+  // (kvobj): one allocation per key, and no pointer from entry to object.
+  using Keyspace = containers::Dict<std::string, RedisObject>;
   using KeyRef = Keyspace::EntryRef;
   // The TTL table's keys refer to keyspace entries rather than copying their
   // names. Its hash is the keyspace's stored hash, so a HashedKey finds both.
@@ -225,10 +232,10 @@ bool RedisDb::ForEachObject(Visitor&& visitor) {
   std::optional<size_t> cursor = 0;
   while (cursor.has_value()) {
     cursor = dict_->Scan(
-        *cursor, [this, &visitor, &keep_visiting](
-                     std::string_view key, const RedisObjectPtr& object) {
+        *cursor, [this, &visitor, &keep_visiting](std::string_view key,
+                                                  const RedisObject& object) {
           if (keep_visiting && !IsKeyExpired(key)) {
-            keep_visiting = visitor(std::string_view(key), *object);
+            keep_visiting = visitor(std::string_view(key), object);
           }
         });
     if (!keep_visiting) {
@@ -247,9 +254,9 @@ size_t RedisDb::ScanKeys(size_t cursor, size_t count, Visitor&& visitor) {
                          // Take each key with its stored hash, so the TTL
                          // lookup does not hash it again.
                          [this, &visitor](const containers::HashedKey& key,
-                                          const RedisObjectPtr& object) {
+                                          const RedisObject& object) {
                            if (!IsKeyExpired(key)) {
-                             visitor(key.key, *object);
+                             visitor(key.key, object);
                            }
                          });
 }

@@ -176,7 +176,10 @@ Guidance for AI coding agents working in this repository.
   keys, so a key has no allocation or `std::string` of its own. Keys are
   read back as `std::string_view` (`Dict::KeyView`), valid until the entry
   is deleted; take them that way in visitors, and insert by view
-  (`FindOrInsert`) instead of building a `std::string` first.
+  (`FindOrInsert`) instead of building a `std::string` first. Entries keep
+  the low 32 bits of the hash and a 32-bit key length, so every hash a
+  `Dict` computes, and `HashedKey`'s, is truncated to 32 bits; keys stay
+  within 512 MiB (the request parser's and the RDB loader's limit).
 - Dict-encoded hashes store field values as `containers::CompactString`:
   16 bytes, up to 15 bytes inline and longer values in one heap block of
   exactly their length. Read them with `View()` and replace them with
@@ -210,8 +213,9 @@ Guidance for AI coding agents working in this repository.
   bound and members by a `(score, string_view)` probe; do not reintroduce
   sentinel entries, member copies for lookups, or min/max member tracking.
   Each member's name is stored once, in the member dict's entry: skiplist
-  entries hold a `string_view` of it (`FindOrInsertWithKey` returns the
-  stored key), so remove a member from the skiplist before the dict.
+  entries hold a score and an 8-byte `Dict::EntryRef` to that entry
+  (`FindOrInsertEntry` returns it), so remove a member from the skiplist
+  before the dict.
   Change stored keys through `Skiplist::Update`, which repositions them.
   A node and its levels are one allocation, the levels following the node
   as in Redis' `zskiplistNode`; create and free nodes through
@@ -247,6 +251,12 @@ Guidance for AI coding agents working in this repository.
   or `Int()`, and call `MutableString()` only to edit bytes in place, since it
   converts the value back to raw form. Create objects from borrowed bytes with
   `CreateWithStringCopy`, which embeds without a temporary `std::string`.
+- Each key's `RedisObject` lives inside its keyspace entry
+  (`Dict<std::string, RedisObject>`), as Redis 8 keeps a key and its value
+  in one block, so a key is one allocation. Storing a value moves the object
+  into the entry: take a new key's object from `RedisDb::StoreKey`, never
+  from a pointer into the object handed to it. `RENAME` moves the object
+  into the new key's entry.
 - Store whole string values through `RedisDb::SetStringKey`, which overwrites
   an existing string object in place with `RedisObject::AssignString` instead
   of allocating a new object. `AssignString` applies the same encoding rules
@@ -476,6 +486,9 @@ Before committing, run the relevant build and tests.
   default allocator, and keep `REDIS_SIMPLE_USE_MIMALLOC=OFF` building. Allocate
   with `new` (containers, `std::make_unique`), never `malloc`, so allocations go
   through mimalloc.
+  `main` sets mimalloc's purge delay to 0 (unless `MIMALLOC_PURGE_DELAY` is
+  set), so freed memory returns to the OS when it is freed, as with Redis'
+  allocator; with the default delay an idle server kept it indefinitely.
 - Measure performance changes to the server with `scripts/profile_server.sh`
   (callgrind instruction counts per workload) and memory changes with
   `scripts/measure_server_memory.sh` (RSS per key), passing the previous build

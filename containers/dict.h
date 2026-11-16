@@ -8,6 +8,7 @@
 #include <climits>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -51,23 +52,35 @@ struct DictHash {
   size_t operator()(const K& key) const { return std::hash<K>{}(key); }
 };
 
+namespace dict_internal {
+// Entries keep the low 32 bits of their key's hash: enough to pick a bucket
+// in any table this server builds and to skip most unequal keys without
+// comparing them, and with a 32-bit length it saves 8 bytes per string-keyed
+// entry. Dict truncates every hash it computes, so a hash read back from an
+// entry finds the same key in another Dict.
+using EntryHash = uint32_t;
+}  // namespace dict_internal
+
 // A string key with its DictHash<std::string> hash. Every Dict using that
 // policy shares one process-wide seed, so a caller can hash a key once and
 // look it up in several such Dicts. Other hash policies reject it at compile
 // time instead of mixing incompatible hashes.
 struct HashedKey {
   explicit HashedKey(std::string_view key_view)
-      : key(key_view), hash(static_cast<size_t>(utils::SeededHash(key_view))) {}
+      : key(key_view),
+        hash(static_cast<dict_internal::EntryHash>(
+            utils::SeededHash(key_view))) {}
 
   std::string_view key;
-  size_t hash;
+  dict_internal::EntryHash hash;
 
  private:
   // Dict iterators rebuild a key from the hash stored with its entry.
   template <typename, typename, typename, typename>
   friend class Dict;
   HashedKey(std::string_view key_view, size_t stored_hash)
-      : key(key_view), hash(stored_hash) {}
+      : key(key_view),
+        hash(static_cast<dict_internal::EntryHash>(stored_hash)) {}
 };
 
 // String keys usually come from clients, so they use the process-seeded
@@ -75,7 +88,7 @@ struct HashedKey {
 template <>
 struct DictHash<std::string> {
   size_t operator()(std::string_view key) const {
-    return static_cast<size_t>(utils::SeededHash(key));
+    return static_cast<dict_internal::EntryHash>(utils::SeededHash(key));
   }
   size_t operator()(const HashedKey& key) const { return key.hash; }
 };
@@ -134,11 +147,14 @@ struct DictEntry<std::string, V> {
 
   static DictEntry* Create(std::string_view key, size_t hash) {
     static_assert(
-        !std::is_empty_v<V> || sizeof(DictEntry) == 3 * sizeof(size_t),
+        !std::is_empty_v<V> || sizeof(DictEntry) == 2 * sizeof(size_t),
         "an empty value must take no space");
     static_assert(alignof(DictEntry) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+    // Keys are at most 512 MiB (proto-max-bulk-len, which the RDB loader
+    // also applies), so their length fits the 32-bit field.
     void* const memory = ::operator new(sizeof(DictEntry) + key.size());
-    auto* const entry = new (memory) DictEntry(hash, key.size());
+    auto* const entry = new (memory) DictEntry(
+        static_cast<EntryHash>(hash), static_cast<uint32_t>(key.size()));
     if (!key.empty()) {
       std::memcpy(entry->KeyBytes(), key.data(), key.size());
     }
@@ -152,12 +168,12 @@ struct DictEntry<std::string, V> {
 
   // Takes no space when V is empty (NoValue).
   [[no_unique_address]] V value{};
-  size_t hash;
   DictEntry* next{nullptr};
-  size_t key_length;
+  EntryHash hash;
+  uint32_t key_length;
 
  private:
-  DictEntry(size_t key_hash, size_t length)
+  DictEntry(EntryHash key_hash, uint32_t length)
       : hash(key_hash), key_length(length) {}
   ~DictEntry() = default;
   char* KeyBytes() { return reinterpret_cast<char*>(this + 1); }
@@ -210,15 +226,15 @@ class Dict {
   // key is new. Hashes the key once and copies it only when inserting.
   template <typename Lookup>
   std::pair<V*, bool> FindOrInsert(const Lookup& key);
-  // FindOrInsert that also returns the stored key, so a caller can keep a
-  // view of a new key's bytes without looking it up again.
+  // FindOrInsert that also returns a handle to the entry, so a caller can
+  // refer to the stored key without looking it up again.
   struct InsertResult {
     V* value;
-    KeyView key;
+    EntryRef entry;
     bool inserted;
   };
   template <typename Lookup>
-  InsertResult FindOrInsertWithKey(const Lookup& key);
+  InsertResult FindOrInsertEntry(const Lookup& key);
   // A handle to `key`'s entry, empty (false) when the key is absent.
   template <typename Lookup>
   EntryRef FindEntryRef(const Lookup& key);
@@ -350,6 +366,8 @@ class Dict {
 template <typename K, typename V, typename Hash, typename KeyEqual>
 class Dict<K, V, Hash, KeyEqual>::EntryRef {
  public:
+  // An empty handle.
+  EntryRef() = default;
   // Whether this refers to an entry; FindEntryRef returns an empty handle
   // for a missing key. Key() and StoredHash() need a non-empty one.
   explicit operator bool() const { return entry_ != nullptr; }
@@ -360,7 +378,7 @@ class Dict<K, V, Hash, KeyEqual>::EntryRef {
  private:
   friend class Dict;
   explicit EntryRef(const DictEntry* entry) : entry_(entry) {}
-  const DictEntry* entry_;
+  const DictEntry* entry_{};
 };
 
 // Walks every entry once. While an iterator lives the dict moves no entry
@@ -553,23 +571,24 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 std::pair<V*, bool> Dict<K, V, Hash, KeyEqual>::FindOrInsert(
     const Lookup& key) {
-  const InsertResult result = FindOrInsertWithKey(key);
+  const InsertResult result = FindOrInsertEntry(key);
   return {result.value, result.inserted};
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 typename Dict<K, V, Hash, KeyEqual>::InsertResult
-Dict<K, V, Hash, KeyEqual>::FindOrInsertWithKey(const Lookup& key) {
+Dict<K, V, Hash, KeyEqual>::FindOrInsertEntry(const Lookup& key) {
   ExpandIfNeeded();
   RehashStepIfNeeded();
   const size_t hash = KeyHash(key);
   if (DictEntry* const existing = FindEntry(key, hash); existing != nullptr) {
-    return {
-        .value = &existing->value, .key = existing->Key(), .inserted = false};
+    return {.value = &existing->value,
+            .entry = EntryRef(existing),
+            .inserted = false};
   }
   DictEntry* const entry = InsertNew(key, hash);
-  return {.value = &entry->value, .key = entry->Key(), .inserted = true};
+  return {.value = &entry->value, .entry = EntryRef(entry), .inserted = true};
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -732,7 +751,7 @@ bool Dict<K, V, Hash, KeyEqual>::ClearSome(size_t max_entries) {
 template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 size_t Dict<K, V, Hash, KeyEqual>::KeyHash(const Lookup& key) const {
-  return hash_(key);
+  return static_cast<dict_internal::EntryHash>(hash_(key));
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
