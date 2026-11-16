@@ -483,6 +483,10 @@ Before committing, run the relevant build and tests.
 - Keep CMake target-based. Source files are discovered by scoped directory
   globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
   explicitly when they do not belong in a library target.
+- The `release` preset builds with link-time optimization
+  (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`), as Redis' release build does. Keep
+  it on for that preset only, so debug, sanitizer, and fuzz builds stay fast
+  to link.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
