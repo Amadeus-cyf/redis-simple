@@ -296,11 +296,12 @@ class Skiplist {
   };
 
   // A node and its levels are one allocation: the levels above level 0
-  // follow the node, as in Redis' zskiplistNode, instead of living in a
+  // follow the node in the same allocation, as the level array of Redis'
+  // zskiplistNode does (Redis keeps level 0 there too), instead of living in a
   // vector of their own. Level 0 is the plain `next` pointer: a step there
   // always spans one node, so it stores no span. A node does not store its
   // level count either: Link is told it, and Unlink counts the levels the
-  // node is linked at. Together that is 16 bytes less per node, one of the
+  // node is linked at. Together that is 16 bytes less per node, one step of the
   // allocator's size classes.
   struct Node {
     static Node* Create(size_t level, Key key = {}) {
