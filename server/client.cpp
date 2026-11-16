@@ -27,6 +27,12 @@ constexpr std::string_view kQueued = "+QUEUED\r\n";
 constexpr std::string_view kExecAbort =
     "-EXECABORT Transaction discarded because of previous errors.\r\n";
 
+// Frees a vector's storage, which clear() keeps.
+template <typename T>
+void ReleaseStorage(std::vector<T>* const values) {
+  std::vector<T>().swap(*values);
+}
+
 // Pins the database clock for one command.
 class CommandTimeScope {
  public:
@@ -78,6 +84,24 @@ size_t Client::AddReply(std::string_view reply_text) {
   return reply_buffer_.Append(reply_text.data(), reply_text.size());
 }
 
+// Like Redis' addReplyLongLong, sends the shared reply for 0 and 1, the
+// results of most commands that report a count or a yes or no.
+size_t Client::AddIntegerReply(int64_t value) {
+  if (value == 0) {
+    return AddReply(reply::kZero);
+  }
+  if (value == 1) {
+    return AddReply(reply::kOne);
+  }
+  reply::IntegerBuffer buffer;
+  return AddReply(reply::EncodeInt64(value, &buffer));
+}
+
+size_t Client::AddFloatReply(double value) {
+  reply::FloatReplyBuffer buffer;
+  return AddReply(reply::EncodeFloat(value, protocol_, &buffer));
+}
+
 size_t Client::AddReply(std::string&& reply_text) {
   if (discard_replies_) {
     reply_error_ =
@@ -125,6 +149,26 @@ size_t Client::AddBulkReply(std::string_view value) {
   return total_size;
 }
 
+size_t Client::AddBulkReply(std::shared_ptr<const std::string> value) {
+  RS_CHECK(value != nullptr);
+  if (discard_replies_ ||
+      value->size() < containers::ReplyBuffer::kMinMovedReplySize) {
+    return AddBulkReply(std::string_view(*value));
+  }
+  constexpr std::string_view kCrlf = "\r\n";
+  std::array<char, reply::kBulkStringHeaderCapacity> header{};
+  const size_t header_size = reply::EncodeBulkStringHeader(
+      value->size(), header.data(), header.size());
+  const size_t total_size = header_size + value->size() + kCrlf.size();
+  if (!CanQueueReply(total_size)) {
+    return 0;
+  }
+  reply_buffer_.Append(header.data(), header_size);
+  reply_buffer_.Append(std::move(value));
+  reply_buffer_.Append(kCrlf.data(), kCrlf.size());
+  return total_size;
+}
+
 bool Client::ShouldPauseReads() const {
   return !reads_paused_ && (close_after_reply_ ||
                             (output_limits_.soft_bytes > 0 &&
@@ -165,6 +209,7 @@ ssize_t Client::ReadQuery() {
     return connection_->State() == connection::ConnectionState::kConnected ? 0
                                                                            : -1;
   }
+  read_since_sweep_ = true;
   query_buffer_.Commit(static_cast<size_t>(nread));
   if (query_buffer_.View().size() > kMaxQueryBufferSize) {
     RS_LOG_DEBUG("query buffer limit exceeded\n");
@@ -172,6 +217,23 @@ ssize_t Client::ReadQuery() {
     return -1;
   }
   return nread;
+}
+
+void Client::ReleaseIdleBuffers() {
+  if (std::exchange(read_since_sweep_, false)) {
+    return;
+  }
+  // An empty query buffer holds no partial request, so nothing views it.
+  if (query_buffer_.Empty()) {
+    query_buffer_.Release();
+    ReleaseStorage(&args_);
+    ReleaseStorage(&parsed_args_);
+    ReleaseStorage(&parsed_requests_);
+  }
+  if (reply_buffer_.Empty()) {
+    reply_buffer_.ReleaseBuffer();
+    ReleaseStorage(&reply_blocks_);
+  }
 }
 
 ssize_t Client::SendReply() {

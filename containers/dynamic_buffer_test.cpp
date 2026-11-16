@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -173,6 +174,42 @@ TEST(DynamicBufferTest, CompactReleasesALargeBufferOnceItIsEmpty) {
   // It still grows again as needed.
   buffer.Append(large.data(), large.size());
   EXPECT_EQ(buffer.View(), large);
+}
+
+TEST(DynamicBufferTest, ReleaseFreesAnEmptyBufferUntilTheNextWrite) {
+  DynamicBuffer buffer;
+  buffer.Append("PING\r\n", 6);
+  ASSERT_EQ(buffer.ReadLineView(), "PING");
+  ASSERT_TRUE(buffer.Empty());
+
+  buffer.Release();
+  EXPECT_EQ(buffer.Capacity(), 0);
+  EXPECT_TRUE(buffer.Empty());
+  EXPECT_EQ(buffer.View(), "");
+  EXPECT_EQ(buffer.ReadLineView(), std::nullopt);
+  buffer.Compact();
+  EXPECT_EQ(buffer.Capacity(), 0);
+
+  buffer.Append("GET\r\n", 5);
+  EXPECT_EQ(buffer.Capacity(), 4096);
+  EXPECT_EQ(buffer.ReadLineView(), "GET");
+}
+
+TEST(DynamicBufferTest, WritableTailAllocatesAReleasedBuffer) {
+  DynamicBuffer buffer;
+  buffer.Release();
+  char* const tail = buffer.WritableTail(8192);
+  constexpr std::string_view kBytes = "abc";
+  std::ranges::copy(kBytes, tail);
+  buffer.Commit(kBytes.size());
+  EXPECT_EQ(buffer.Capacity(), 8192);
+  EXPECT_EQ(buffer.View(), "abc");
+}
+
+TEST(DynamicBufferDeathTest, RejectsReleasingUnreadBytes) {
+  DynamicBuffer buffer;
+  buffer.Append("abc", 3);
+  EXPECT_DEATH(buffer.Release(), "Check failed");
 }
 
 TEST(DynamicBufferDeathTest, RejectsCommitBeyondCapacity) {

@@ -27,6 +27,12 @@ void HandleGet(Client* const client) {
     client->AddReply(reply::NullView(client->Protocol()));
     return;
   }
+  // A large value is queued by reference: copying it into the output buffer
+  // would cost more than the rest of the command.
+  if (std::shared_ptr<const std::string> shared = object->SharedStringBytes()) {
+    client->AddBulkReply(std::move(shared));
+    return;
+  }
   client->AddBulkReply(object->String());
 }
 
@@ -299,7 +305,7 @@ void UpdateInteger(Client* const client, std::string_view key, int64_t operand,
   }
   object->SetInt(next);
   client->MarkModified();
-  client->AddReply(reply::FromInt64(next));
+  client->AddIntegerReply(next);
 }
 
 void HandleIncrementBy(Client* const client, IntegerOperation operation) {
@@ -356,7 +362,7 @@ void HandleAppend(Client* const client) {
     length = value->size();
   }
   client->MarkModified();
-  client->AddReply(reply::FromInt64(ToReplyInteger(length)));
+  client->AddIntegerReply(ToReplyInteger(length));
 }
 
 void HandleStrLen(Client* const client) {
@@ -367,12 +373,13 @@ void HandleStrLen(Client* const client) {
     return;
   }
   const size_t length = object == nullptr ? 0 : object->String().size();
-  client->AddReply(reply::FromInt64(ToReplyInteger(length)));
+  client->AddIntegerReply(ToReplyInteger(length));
 }
 
 void HandleMGet(Client* const client) {
   const commands::CommandArgs& keys = client->Args();
   std::string encoded = reply::FromArrayHeader(keys.size());
+  reply::ReserveBulkStrings(keys.size(), &encoded);
   for (const auto& key : keys) {
     // MGET reports keys of other types as missing instead of failing.
     const db::RedisObject* const object =

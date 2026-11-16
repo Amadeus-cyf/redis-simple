@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -65,35 +66,39 @@ std::unique_ptr<EpollPoller> EpollPoller::Create(int nevents) {
 }
 
 int EpollPoller::AddEvent(int fd, int mask) {
-  const auto existing_mask = masks_.find(fd);
-  const int new_mask =
-      existing_mask == masks_.end() ? mask : (existing_mask->second | mask);
+  if (fd < 0) {
+    return -1;
+  }
+  const auto index = static_cast<size_t>(fd);
+  const int existing_mask = index < masks_.size() ? masks_[index] : 0;
+  const int new_mask = existing_mask | mask;
 
   struct epoll_event event{};
   event.events = ToEpollEvents(new_mask);
   event.data.fd = fd;
-  const int operation =
-      existing_mask == masks_.end() ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
+  const int operation = existing_mask == 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
   if (epoll_ctl(epoll_fd_, operation, fd, &event) < 0) {
     RS_LOG_DEBUG("epoll add event failed: %s\n", std::strerror(errno));
     return -1;
   }
-  masks_[fd] = new_mask;
+  if (index >= masks_.size()) {
+    masks_.resize(index + 1);
+  }
+  masks_[index] = new_mask;
   return 0;
 }
 
 int EpollPoller::DeleteEvent(int fd, int mask) {
-  const auto existing_mask = masks_.find(fd);
-  if (existing_mask == masks_.end()) {
+  if (fd < 0 || static_cast<size_t>(fd) >= masks_.size() || masks_[fd] == 0) {
     return -1;
   }
-  const int remaining_mask = existing_mask->second & ~mask;
+  const int remaining_mask = masks_[fd] & ~mask;
   if (remaining_mask == 0) {
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr) < 0) {
       RS_LOG_DEBUG("epoll delete event failed: %s\n", std::strerror(errno));
       return -1;
     }
-    masks_.erase(existing_mask);
+    masks_[fd] = 0;
     return 0;
   }
 

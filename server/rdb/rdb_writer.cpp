@@ -31,8 +31,6 @@ constexpr size_t kBlockBytes = size_t{1024} * 1024;
 // Payloads at least this large go to the file directly, not through the
 // buffer, so a large value is not copied.
 constexpr size_t kDirectWriteBytes = kBlockBytes;
-// Redis' REDIS_AUTOSYNC_BYTES, for incremental fsync.
-constexpr size_t kAutoSyncBytes = size_t{4} * 1024 * 1024;
 // Redis compresses only strings longer than this.
 constexpr size_t kMinCompressBytes = 20;
 
@@ -52,7 +50,8 @@ class Encoder {
       : fd_(fd),
         options_(&options),
         file_ops_(file_ops),
-        block_(std::make_unique_for_overwrite<Block>()) {}
+        block_(std::make_unique_for_overwrite<Block>()),
+        sync_(file_ops, fd, options.keep_page_cache) {}
 
   [[nodiscard]] WriteStatus Status() const { return status_; }
 
@@ -230,12 +229,8 @@ class Encoder {
       status_ = WriteStatus::kWriteFailed;
       return;
     }
-    unsynced_bytes_ += bytes.size();
-    if (options_->incremental_fsync && unsynced_bytes_ >= kAutoSyncBytes) {
-      unsynced_bytes_ = 0;
-      if (!aof::SyncFile(file_ops_, fd_)) {
-        status_ = WriteStatus::kSyncFailed;
-      }
+    if (options_->incremental_fsync && !sync_.Written(bytes.size())) {
+      status_ = WriteStatus::kSyncFailed;
     }
   }
 
@@ -248,7 +243,7 @@ class Encoder {
   std::unique_ptr<Block> block_;
   size_t used_{};
   uint64_t crc_{};
-  size_t unsynced_bytes_{};
+  aof::IncrementalSync sync_;
   WriteStatus status_{WriteStatus::kWritten};
   utils::LzfCompressor compressor_;
   std::vector<char> compressed_;
@@ -340,17 +335,19 @@ void WriteKeyValue(std::string_view key, const db::RedisObject& object,
         out->String(*listpack);
         return;
       }
-      // Redis writes members from the greatest score down, since its
-      // skiplist inserts those at the head in O(1) when loading; any order
-      // loads correctly.
+      // From the greatest score down, as Redis' rdbSaveObject writes them:
+      // each member a loader then inserts is the smallest so far, which a
+      // skiplist places at its head without searching. Any order loads
+      // correctly.
       out->Byte(kTypeZSet2);
       out->String(key);
       out->Length(zset->Size());
-      zset->ForEachEntry([out](std::string_view member, double score) {
-        out->String(member);
-        out->BinaryDouble(score);
-        return true;
-      });
+      zset->ForEachSkiplistEntryDescending(
+          [out](std::string_view member, double score) {
+            out->String(member);
+            out->BinaryDouble(score);
+            return true;
+          });
       return;
     }
     case ObjectType::kHash: {
@@ -416,8 +413,14 @@ WriteStatus WriteRdbFile(db::RedisDb* const db, const std::string& path,
   out.Byte(kOpcodeEof);
   out.Finish();
   WriteStatus status = out.Status();
-  if (status == WriteStatus::kWritten && !aof::SyncFile(file_ops, fd)) {
-    status = WriteStatus::kSyncFailed;
+  if (status == WriteStatus::kWritten) {
+    if (!aof::SyncFile(file_ops, fd)) {
+      status = WriteStatus::kSyncFailed;
+    } else if (!options.keep_page_cache) {
+      // Redis' rdbSaveInternal: the file is on disk, so its pages are only
+      // taking memory the dataset could use. A failure only leaves them cached.
+      static_cast<void>(file_ops->DropPageCache(fd));
+    }
   }
   if (close(fd) < 0 && status == WriteStatus::kWritten) {
     status = WriteStatus::kWriteFailed;

@@ -88,6 +88,52 @@ TEST(HandleSetTest, DoesNotShrinkWhileResizingIsAvoided) {
   EXPECT_TRUE(set.Contains({items[0].get()}));
 }
 
+TEST(HandleSetTest, ShrinkIfNeededStartsAShrinkThatRebuildSomeFinishes) {
+  constexpr size_t kCount = 1000;
+  const auto items = MakeItems(kCount, kCount);
+  ItemSet set;
+  for (const auto& item : items) {
+    ASSERT_TRUE(set.Insert({item.get()}));
+  }
+  while (set.RebuildSome(64)) {
+  }
+  const size_t positions = Positions(set);
+  SetDictResizePolicy(DictResizePolicy::kAvoid);
+  for (size_t index = 2; index < kCount; ++index) {
+    ASSERT_TRUE(set.Erase({items[index].get()}));
+  }
+  set.ShrinkIfNeeded();
+  EXPECT_FALSE(set.IsRebuilding());
+
+  SetDictResizePolicy(DictResizePolicy::kEnabled);
+  set.ShrinkIfNeeded();
+  ASSERT_TRUE(set.IsRebuilding());
+  EXPECT_TRUE(set.RebuildSome(1));
+  while (set.RebuildSome(64)) {
+  }
+  EXPECT_LT(Positions(set), positions);
+  EXPECT_EQ(set.Size(), 2);
+  EXPECT_TRUE(set.Contains({items[0].get()}));
+  EXPECT_TRUE(set.Contains({items[1].get()}));
+}
+
+TEST(HandleSetTest, ReserveMakesRoomSoInsertsDoNotRebuild) {
+  constexpr size_t kCount = 1000;
+  const auto items = MakeItems(kCount, kCount);
+  ItemSet set;
+  ASSERT_TRUE(set.Insert({items[0].get()}));
+  set.Reserve(kCount);
+  while (set.RebuildSome(64)) {
+  }
+  const size_t positions = Positions(set);
+  for (size_t index = 1; index < kCount; ++index) {
+    ASSERT_TRUE(set.Insert({items[index].get()}));
+    ASSERT_FALSE(set.IsRebuilding());
+  }
+  EXPECT_EQ(Positions(set), positions);
+  EXPECT_EQ(Members(set).size(), kCount);
+}
+
 TEST(HandleSetTest, InsertsErasesAndFindsHandles) {
   const auto items = MakeItems(3, 3);
   ItemSet set;

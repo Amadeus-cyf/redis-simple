@@ -109,6 +109,10 @@ class RedisDb {
   };
   KeyWithExpiration LookupKeyWithExpiration(std::string_view key);
   int64_t TimeToLive(std::string_view key, TtlResolution resolution);
+  // Sizes the keyspace for `keys` more keys, `keys_with_expiration` of them
+  // with a TTL, before they are added (Redis' dbExpand), so that adding them
+  // does not grow and rehash the tables again and again.
+  void ReserveKeys(size_t keys, size_t keys_with_expiration);
   size_t KeyCount() const { return dict_->Size(); }
   size_t KeysWithExpirationCount() const { return expires_.Size(); }
   // Calls `visitor(key, object, expire)` for each live key; `expire` is a
@@ -129,6 +133,13 @@ class RedisDb {
   // Frees what UNLINK and Flush detached, for about `budget_milliseconds`;
   // the server cron calls it every tick. Returns whether any remains.
   bool FreeLazily(int64_t budget_milliseconds);
+  // Hash table upkeep that otherwise only commands drive, for about
+  // `budget_microseconds`; the server cron calls it every tick while no
+  // child runs, as Redis' databasesCron does. Moves entries of a keyspace
+  // or TTL index rehash under way, so an idle server does not keep both the
+  // old and the new table, and starts a shrink that was held back while a
+  // child ran. Returns whether a rehash is still under way.
+  bool RehashIncrementally(int64_t budget_microseconds);
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
   // Pins the clock while one command (or one EXEC) runs, so expiration
   // checks and relative TTLs all see a single time, as Redis'
@@ -225,10 +236,11 @@ class RedisDb {
 };
 
 // Carries a key's hash and keyspace entry from the lookup to the write that
-// follows, so the write neither hashes the key nor probes the keyspace
-// again, as Redis passes a dictEntryLink from lookupKeyWriteWithLink to
-// setKeyByLink. Valid until the database is next changed through another
-// key, and no longer than the key's bytes.
+// follows, as Redis passes a dictEntryLink from lookupKeyWriteWithLink to
+// setKeyByLink. The write does not hash the key again and, when
+// FindOrCreateKey located it, does not probe the keyspace again. Valid until
+// the key is deleted or the database is flushed, and no longer than the
+// key's bytes.
 class RedisDb::KeySlot {
  public:
   RedisObject* Object() const {

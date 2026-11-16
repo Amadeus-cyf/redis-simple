@@ -25,9 +25,6 @@ namespace redis_simple::aof {
 namespace {
 // Items per batched command, at most.
 constexpr size_t kSnapshotBatchSize = 64;
-// How much to write between syncs with incremental fsync (Redis'
-// REDIS_AUTOSYNC_BYTES).
-constexpr size_t kAutoSyncBytes = size_t{4} * 1024 * 1024;
 
 // Collects a collection's items into commands such as "SADD key m1 m2 ...",
 // starting a new command after kSnapshotBatchSize items or about
@@ -227,22 +224,18 @@ SnapshotStatus WriteSnapshotFile(db::RedisDb* const db, const std::string& path,
     return SnapshotStatus::kWriteFailed;
   }
   SnapshotStatus status = SnapshotStatus::kWritten;
-  size_t unsynced_bytes = 0;
+  IncrementalSync sync(file_ops, fd, /*keep_page_cache=*/false);
   const auto write_block = [&options, file_ops, fd, &status,
-                            &unsynced_bytes](std::string& block) {
+                            &sync](std::string& block) {
     std::array<std::string, 1> blocks{std::move(block)};
     block.clear();
     if (!WriteBlocks(file_ops, fd, blocks)) {
       status = SnapshotStatus::kWriteFailed;
       return false;
     }
-    unsynced_bytes += blocks[0].size();
-    if (options.incremental_fsync && unsynced_bytes >= kAutoSyncBytes) {
-      unsynced_bytes = 0;
-      if (!SyncFile(file_ops, fd)) {
-        status = SnapshotStatus::kSyncFailed;
-        return false;
-      }
+    if (options.incremental_fsync && !sync.Written(blocks[0].size())) {
+      status = SnapshotStatus::kSyncFailed;
+      return false;
     }
     return true;
   };
@@ -272,8 +265,15 @@ SnapshotStatus WriteSnapshotFile(db::RedisDb* const db, const std::string& path,
     if (status == SnapshotStatus::kWritten) {
       status = SnapshotStatus::kEncodeFailed;
     }
-  } else if (write_block(block) && !SyncFile(file_ops, fd)) {
-    status = SnapshotStatus::kSyncFailed;
+  } else if (write_block(block)) {
+    if (!SyncFile(file_ops, fd)) {
+      status = SnapshotStatus::kSyncFailed;
+    } else {
+      // Redis' rewriteAppendOnlyFile: the file is on disk, so its pages are
+      // only taking memory the dataset could use. A failure only leaves them
+      // cached.
+      static_cast<void>(file_ops->DropPageCache(fd));
+    }
   }
   if (close(fd) < 0 && status == SnapshotStatus::kWritten) {
     status = SnapshotStatus::kWriteFailed;
