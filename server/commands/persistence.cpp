@@ -96,6 +96,6 @@ void HandleBgSave(Client* const client) {
 
 void HandleLastSave(Client* const client) {
   const rdb::Rdb* const rdb = client->Server().rdb;
-  client->AddReply(reply::FromInt64(rdb == nullptr ? 0 : rdb->LastSaveTime()));
+  client->AddIntegerReply(rdb == nullptr ? 0 : rdb->LastSaveTime());
 }
 }  // namespace redis_simple::commands::persistence

@@ -125,6 +125,94 @@ TEST(RedisDbTest, SetStringKeyMatchesSetKeySemantics) {
   redis_db->UnwatchKeys(&watcher);
 }
 
+TEST(RedisDbTest, FindOrCreateKeyAddsAMissingKeyAndFindsAnExistingOne) {
+  auto redis_db = RedisDb::Create();
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  KeyWatcher watcher;
+  redis_db->WatchKey("key", &watcher);
+
+  const RedisDb::KeySlot created = redis_db->FindOrCreateKey("key");
+  EXPECT_TRUE(created.Created());
+  ASSERT_NE(created.Object(), nullptr);
+  EXPECT_EQ(created.Object()->Type(), RedisObject::ObjectType::kString);
+  // Adding a key is a change its watchers see.
+  EXPECT_TRUE(watcher.Dirty());
+  EXPECT_EQ(redis_db->KeyCount(), 1);
+  redis_db->SetStringAt(created, "value", future);
+  EXPECT_EQ(redis_db->LookupKey("key"), created.Object());
+  EXPECT_EQ(redis_db->LookupKey("key")->String(), "value");
+  EXPECT_EQ(redis_db->Expiration("key"), future);
+
+  const RedisDb::KeySlot found = redis_db->FindOrCreateKey("key");
+  EXPECT_FALSE(found.Created());
+  EXPECT_EQ(found.Object(), created.Object());
+  redis_db->SetStringAt(found, "12", 0, ExistingTtl::kKeep);
+  // The existing string object is updated in place and keeps its TTL.
+  EXPECT_EQ(redis_db->LookupKey("key"), created.Object());
+  EXPECT_EQ(redis_db->LookupKey("key")->StringEncoding(),
+            RedisObject::Encoding::kInt);
+  EXPECT_EQ(redis_db->Expiration("key"), future);
+
+  redis_db->SetStringAt(redis_db->FindOrCreateKey("key"), "new", 0);
+  EXPECT_EQ(redis_db->LookupKey("key")->String(), "new");
+  EXPECT_EQ(redis_db->Expiration("key"), std::nullopt);
+  EXPECT_EQ(redis_db->KeyCount(), 1);
+  redis_db->UnwatchKeys(&watcher);
+}
+
+TEST(RedisDbTest, FindOrCreateKeyReplacesAnExpiredKey) {
+  auto redis_db = RedisDb::Create();
+  ASSERT_EQ(
+      redis_db->SetKey(
+          "key", RedisObject::CreateWithSet(data_types::Set::Create()), 1),
+      DbStatus::kOk);
+  ASSERT_EQ(redis_db->KeysWithExpirationCount(), 1);
+
+  const RedisDb::KeySlot slot = redis_db->FindOrCreateKey("key");
+  // The expired set and its TTL are gone; the key starts over as created.
+  EXPECT_TRUE(slot.Created());
+  ASSERT_NE(slot.Object(), nullptr);
+  EXPECT_EQ(slot.Object()->Type(), RedisObject::ObjectType::kString);
+  EXPECT_EQ(slot.Object()->String(), "");
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 0);
+  EXPECT_EQ(redis_db->KeyCount(), 1);
+}
+
+TEST(RedisDbTest, FindKeyForWriteNeverCreatesAKey) {
+  auto redis_db = RedisDb::Create();
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  KeyWatcher watcher;
+
+  const RedisDb::KeySlot missing = redis_db->FindKeyForWrite("key");
+  EXPECT_EQ(missing.Object(), nullptr);
+  EXPECT_FALSE(missing.Created());
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+
+  ASSERT_EQ(redis_db->SetKey("expired", RedisObject::CreateWithString("v"), 1),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->FindKeyForWrite("expired").Object(), nullptr);
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+
+  ASSERT_EQ(
+      redis_db->SetKey(
+          "key", RedisObject::CreateWithSet(data_types::Set::Create()), 0),
+      DbStatus::kOk);
+  redis_db->WatchKey("key", &watcher);
+  const RedisDb::KeySlot found = redis_db->FindKeyForWrite("key");
+  ASSERT_NE(found.Object(), nullptr);
+  EXPECT_FALSE(found.Created());
+  EXPECT_FALSE(watcher.Dirty());
+  // Storing through the slot replaces a value of another type and records
+  // the TTL on the key's own entry.
+  redis_db->SetStringAt(found, "value", future);
+  EXPECT_TRUE(watcher.Dirty());
+  EXPECT_EQ(redis_db->LookupKey("key")->String(), "value");
+  EXPECT_EQ(redis_db->Expiration("key"), future);
+  redis_db->SetStringAt(redis_db->FindKeyForWrite("key"), "other", 0);
+  EXPECT_EQ(redis_db->Expiration("key"), std::nullopt);
+  redis_db->UnwatchKeys(&watcher);
+}
+
 TEST(RedisDbTest, ExpireSamplingWorksWhenFewKeysHaveTtl) {
   auto redis_db = RedisDb::Create();
   for (int index = 0; index < 20; ++index) {

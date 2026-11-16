@@ -50,6 +50,7 @@ TEST(TcpTest, AcceptedSocketSendsAtOnceAndProbesSilentPeers) {
   EXPECT_NE(option(IPPROTO_TCP, TCP_NODELAY), 0);
   EXPECT_NE(option(SOL_SOCKET, SO_KEEPALIVE), 0);
   EXPECT_NE(fcntl(accepted, F_GETFL) & O_NONBLOCK, 0);
+  EXPECT_NE(fcntl(accepted, F_GETFD) & FD_CLOEXEC, 0);
 
   close(accepted);
   close(client);
