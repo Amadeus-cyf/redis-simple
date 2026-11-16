@@ -102,7 +102,7 @@ TEST(ReplyTest, AppendsFloatsForEachProtocol) {
 
 TEST(ReplyTest, EncodesFloatsAsItAppendsThem) {
   EXPECT_EQ(EncodedFloat(7, ProtocolVersion::kResp2), "$1\r\n7\r\n");
-  // The longest texts are the smallest and largest magnitudes.
+  // The extreme magnitudes give long texts.
   for (const double value : {0.0, -0.0, 1.5, -3.0, 1e21, 0.1, 1.0 / 3.0,
                              std::numeric_limits<double>::max(),
                              std::numeric_limits<double>::lowest(),

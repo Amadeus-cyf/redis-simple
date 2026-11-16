@@ -115,7 +115,7 @@ void SharedIntegerReply(benchmark::State& state) {
 }
 
 // Encodes one score reply on the stack and queues it, as
-// Client::AddFloatReply does for ZSCORE and ZINCRBY.
+// Client::AddFloatReply does for ZSCORE and ZADD INCR.
 void FloatReply(benchmark::State& state) {
   double value = state.range(0) != 0 ? 1234.5678 : 1234.0;
   const auto protocol = state.range(1) == 3 ? reply::ProtocolVersion::kResp3
