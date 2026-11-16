@@ -545,6 +545,9 @@ Run one group with `--benchmark_filter`, for example
 - `AppendBulkStrings`, `FormatScore`, `AppendScores`: collection reply and
   score encoding.
 - `SetIntersect`: set intersection with and without reusing stored hashes.
+- `SetIntersectThree`, `SetDifference`: `SINTER` with the large set named
+  before or after the one that rules members out, and `SDIFF` by probing,
+  by subtracting, and by the algorithm its estimate picks.
 - `DbLookup`, `DbOverwriteString`: keyspace lookups with and without a TTL,
   and `SET` overwrites in place or with a new object.
 - `DbSetString`: `SET` of 3-, 36-, and 100-byte values, as new keys and as
