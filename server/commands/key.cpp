@@ -239,8 +239,8 @@ void HandleDbSize(Client* const client) {
 }
 
 void HandleFlushDb(Client* const client) {
-  // FLUSHDB [ASYNC | SYNC]. Flushing is always synchronous here, so both
-  // modes behave the same.
+  // FLUSHDB [ASYNC | SYNC]. Both modes empty the database at once and free a
+  // large keyspace in steps afterwards (RedisDb::Flush).
   const commands::CommandArgs& args = client->Args();
   if (args.size() > 1 ||
       (args.size() == 1 && !utils::EqualsIgnoreCase(args[0], "ASYNC") &&

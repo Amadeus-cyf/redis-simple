@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <string>
@@ -102,7 +103,12 @@ class RedisDb {
   // in Redis. Key views remain valid until the database is mutated.
   template <typename Visitor>
   size_t ScanKeys(size_t cursor, size_t count, Visitor&& visitor);
+  // Empties the database. A large keyspace is detached and freed in steps by
+  // FreeFlushedTables, so the flush does not hold up other clients.
   void Flush();
+  // Frees tables Flush detached, for about `budget_milliseconds`; the server
+  // cron calls it every tick. Returns whether any remain.
+  bool FreeFlushedTables(int64_t budget_milliseconds);
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
   // Pins the clock while one command (or one EXEC) runs, so expiration
   // checks and relative TTLs all see a single time, as Redis'
@@ -184,11 +190,20 @@ class RedisDb {
   bool IsKeyExpired(const containers::HashedKey& key) const;
   // Reads the clock, and keeps the time if it is pinned.
   int64_t ReadClock() const;
+  using ExpireTable =
+      containers::Dict<KeyRef, int64_t, KeyRefHash, KeyRefEqual>;
+  // Tables a flush detached, waiting to be freed. The TTL table is freed
+  // first, as for a single key.
+  struct FlushedTables {
+    std::unique_ptr<ExpireTable> expires;
+    std::unique_ptr<Keyspace> keyspace;
+  };
+
   std::unique_ptr<Keyspace> dict_;
   // Every TTL entry reads its key from a keyspace entry, so a key's TTL
   // must be removed before its keyspace entry is deleted.
-  std::unique_ptr<containers::Dict<KeyRef, int64_t, KeyRefHash, KeyRefEqual>>
-      expires_;
+  std::unique_ptr<ExpireTable> expires_;
+  std::deque<FlushedTables> flushed_;
   std::unique_ptr<containers::Dict<std::string, std::vector<KeyWatcher*>>>
       watched_keys_;
   AsyncReclaimer reclaimer_;

@@ -294,6 +294,45 @@ TEST(RedisDbTest, RenameAndFlush) {
   EXPECT_EQ(redis_db->LookupKey("target"), nullptr);
 }
 
+TEST(RedisDbTest, FlushStartsEmptyTablesThatKeepWorking) {
+  auto redis_db = RedisDb::Create();
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  // More keys than Flush clears in place, so the tables are detached.
+  for (int i = 0; i < 10'000; ++i) {
+    const std::string key = "key:" + std::to_string(i);
+    ASSERT_EQ(redis_db->SetKey(key, RedisObject::CreateWithString("v"),
+                               i % 2 == 0 ? future : 0),
+              DbStatus::kOk);
+  }
+  redis_db->Flush();
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+  EXPECT_EQ(redis_db->LookupKey("key:0"), nullptr);
+  EXPECT_EQ(redis_db->TimeToLive("key:0", TtlResolution::kMilliseconds), -2);
+  EXPECT_EQ(redis_db->ExpireSome(16, future + 1).expired, 0);
+
+  ASSERT_EQ(
+      redis_db->SetKey("key:0", RedisObject::CreateWithString("again"), future),
+      DbStatus::kOk);
+  EXPECT_EQ(redis_db->LookupKey("key:0")->String(), "again");
+  EXPECT_EQ(redis_db->ExpireSome(16, future + 1).expired, 1);
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+
+  // A second large flush queues behind the first; both are freed in steps.
+  for (int i = 0; i < 10'000; ++i) {
+    ASSERT_EQ(redis_db->SetKey("other:" + std::to_string(i),
+                               RedisObject::CreateWithString("v"), future),
+              DbStatus::kOk);
+  }
+  redis_db->Flush();
+  int steps = 0;
+  while (redis_db->FreeFlushedTables(0)) {
+    ++steps;
+  }
+  EXPECT_GT(steps, 2);
+  EXPECT_FALSE(redis_db->FreeFlushedTables(0));
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+}
+
 TEST(RedisDbTest, RenameDropsTargetTtlAndAllowsSelfRename) {
   auto redis_db = RedisDb::Create();
   const int64_t future = utils::NowInMilliseconds() + 60'000;

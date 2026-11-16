@@ -253,6 +253,11 @@ class Dict {
   size_t ScanStep(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const { return table_used_[0] + table_used_[1]; }
   void Clear();
+  // Frees about `max_entries` entries, whole buckets at a time, so a large
+  // Dict being discarded can be freed in steps between other work. Returns
+  // true once it is empty. Between the first call and the one that returns
+  // true, use the Dict only through this, Size(), and destruction.
+  bool ClearSome(size_t max_entries);
   ~Dict();
 
  private:
@@ -698,6 +703,30 @@ void Dict<K, V, Hash, KeyEqual>::Clear() {
   ClearTable(0);
   ClearTable(1);
   rehash_index_ = std::nullopt;
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+bool Dict<K, V, Hash, KeyEqual>::ClearSome(size_t max_entries) {
+  for (const int table : {1, 0}) {
+    std::vector<DictEntry*>& buckets = tables_[table];
+    while (!buckets.empty()) {
+      if (max_entries == 0) {
+        return false;
+      }
+      DictEntry* entry = buckets.back();
+      buckets.pop_back();
+      while (entry != nullptr) {
+        DictEntry* const next = entry->next;
+        DictEntry::Destroy(entry);
+        --table_used_[table];
+        max_entries -= max_entries > 0 ? 1 : 0;
+        entry = next;
+      }
+    }
+    std::vector<DictEntry*>().swap(buckets);
+  }
+  rehash_index_ = std::nullopt;
+  return true;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
