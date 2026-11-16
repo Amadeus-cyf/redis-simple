@@ -91,10 +91,12 @@ bool Rdb::Load(db::RedisDb* const db) {
 }
 
 Rdb::SaveStatus Rdb::WriteAndRename(db::RedisDb* const db,
-                                    const std::string& temporary) const {
+                                    const std::string& temporary,
+                                    bool keep_page_cache) const {
   const WriteStatus status = WriteRdbFile(db, temporary,
                                           {.compression = options_.compression,
                                            .checksum = options_.checksum,
+                                           .keep_page_cache = keep_page_cache,
                                            .creation_time = UnixSeconds()},
                                           options_.file_ops.get());
   if (status != WriteStatus::kWritten) {
@@ -116,12 +118,12 @@ Rdb::SaveStatus Rdb::WriteAndRename(db::RedisDb* const db,
 
 bool Rdb::Save(db::RedisDb* const db) {
   ++saves_;
-  return SaveNow(db);
+  return SaveNow(db, /*keep_page_cache=*/false);
 }
 
-bool Rdb::SaveNow(db::RedisDb* const db) {
+bool Rdb::SaveNow(db::RedisDb* const db, bool keep_page_cache) {
   const std::string temporary = TemporaryFileName(getpid());
-  switch (WriteAndRename(db, temporary)) {
+  switch (WriteAndRename(db, temporary, keep_page_cache)) {
     case SaveStatus::kSaved:
       break;
     case SaveStatus::kWriteFailed:
@@ -178,7 +180,8 @@ BackgroundSaveResult Rdb::StartBackgroundSave(db::RedisDb* const db) {
 
 void Rdb::RunChild(db::RedisDb* const db) const {
   // Redis' child names the temporary file after its own pid.
-  _exit(static_cast<int>(WriteAndRename(db, TemporaryFileName(getpid()))));
+  _exit(static_cast<int>(WriteAndRename(db, TemporaryFileName(getpid()),
+                                        /*keep_page_cache=*/false)));
 }
 
 void Rdb::Cron(db::RedisDb* const db, bool may_fork) {
@@ -275,7 +278,9 @@ bool Rdb::SaveBeforeShutdown(db::RedisDb* const db) {
     return true;
   }
   RS_LOG_INFO("Saving the final RDB snapshot before exiting.\n");
-  if (!SaveNow(db)) {
+  // As Redis' finishShutdown does, the file stays in the page cache: the
+  // next start reads it.
+  if (!SaveNow(db, /*keep_page_cache=*/true)) {
     RS_LOG_WARN("Error trying to save the DB, can't exit.\n");
     return false;
   }

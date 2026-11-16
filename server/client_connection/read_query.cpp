@@ -4,7 +4,6 @@
 
 #include "connection/connection.h"
 #include "logging/logger.h"
-#include "server/aof/aof.h"
 #include "server/client.h"
 #include "server/client_connection/write_reply.h"
 #include "server/server.h"
@@ -23,13 +22,12 @@ void ReadQuery(Server* const server, Client* const client) {
   if (client->ProcessInputBuffer() == ClientStatus::kError) {
     RS_LOG_DEBUG("process query buffer failed\n");
   }
-  // Persist this batch of mutations before any of its replies are sent.
-  if (aof::Aof* const append_only_file = server->Aof();
-      append_only_file != nullptr && !append_only_file->Flush()) {
-    server->Stop();
-    server->RemoveClient(client);
-    return;
-  }
+  server->HoldReplies(client);
+}
+}  // namespace
+
+void ReplyToQueries(Server* const server, Client* const client) {
+  connection::Connection* const connection = client->Connection();
   if (connection->State() != connection::ConnectionState::kConnected) {
     server->RemoveClient(client);
     return;
@@ -39,7 +37,6 @@ void ReadQuery(Server* const server, Client* const client) {
   }
   WriteToClient(server, client);
 }
-}  // namespace
 
 connection::ConnectionCallback CreateReadQueryCallback(Server* const server,
                                                        Client* const client) {

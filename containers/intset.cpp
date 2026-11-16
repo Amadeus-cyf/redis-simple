@@ -1,6 +1,5 @@
 #include "containers/intset.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -10,12 +9,21 @@
 #include <utility>
 
 #include "utils/check.h"
+#include "utils/size_class.h"
 
 namespace redis_simple::containers {
+namespace {
+// Storage whose bytes are all written before they are read, so it is not
+// zero-filled.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
+std::unique_ptr<unsigned char[]> AllocateContents(size_t bytes) {
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
+  return std::make_unique_for_overwrite<unsigned char[]>(bytes);
+}
+}  // namespace
+
 Intset::Intset()
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
-    : contents_(std::make_unique<unsigned char[]>(
-          static_cast<size_t>(kInitSize) * kInt16)),
+    : contents_(AllocateContents(CapacityBytes(0, kInt16))),
       length_(0),
       encoding_(kInt16) {}
 
@@ -28,12 +36,8 @@ bool Intset::Add(int64_t value) {
   if (Search(value, &index)) {
     return false;
   }
-  Resize(length_ + 1);
-  if (index < length_) {
-    MoveTail(index, index + 1);
-  }
+  InsertSlot(index);
   Set(index, value);
-  ++length_;
   return true;
 }
 
@@ -50,9 +54,7 @@ bool Intset::Delete(int64_t value) {
   if (!Search(value, &index)) {
     return false;
   }
-  MoveTail(index + 1, index);
-  Resize(length_ - 1);
-  --length_;
+  RemoveSlot(index);
   return true;
 }
 
@@ -70,14 +72,48 @@ Intset::EncodingType Intset::ValueEncoding(int64_t value) {
   return kInt16;
 }
 
-void Intset::Resize(uint32_t length) {
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
-  auto new_contents = std::make_unique<unsigned char[]>(
-      static_cast<size_t>(length) * encoding_);
-  const size_t copy_bytes =
-      static_cast<size_t>(std::min(length_, length)) * encoding_;
-  std::memcpy(new_contents.get(), contents_.get(), copy_bytes);
-  contents_ = std::move(new_contents);
+size_t Intset::CapacityBytes(uint32_t length, EncodingType encoding) {
+  return utils::AllocationSizeClass(static_cast<size_t>(length) * encoding);
+}
+
+// Redis' intsetResize reallocates on every insert and delete, which its
+// allocator turns into a copy only when the size class changes. Without
+// realloc, the same is done here by hand: the values move within the
+// allocation while its size class still fits, and otherwise are copied once,
+// straight to their final places in a new one.
+void Intset::InsertSlot(uint32_t index) {
+  const size_t slot_offset = static_cast<size_t>(index) * encoding_;
+  const size_t tail_bytes = static_cast<size_t>(length_ - index) * encoding_;
+  const size_t new_capacity = CapacityBytes(length_ + 1, encoding_);
+  if (new_capacity == CapacityBytes(length_, encoding_)) {
+    std::memmove(contents_.get() + slot_offset + encoding_,
+                 contents_.get() + slot_offset, tail_bytes);
+  } else {
+    auto new_contents = AllocateContents(new_capacity);
+    std::memcpy(new_contents.get(), contents_.get(), slot_offset);
+    std::memcpy(new_contents.get() + slot_offset + encoding_,
+                contents_.get() + slot_offset, tail_bytes);
+    contents_ = std::move(new_contents);
+  }
+  ++length_;
+}
+
+void Intset::RemoveSlot(uint32_t index) {
+  const size_t slot_offset = static_cast<size_t>(index) * encoding_;
+  const size_t tail_bytes =
+      static_cast<size_t>(length_ - index - 1) * encoding_;
+  const size_t new_capacity = CapacityBytes(length_ - 1, encoding_);
+  if (new_capacity == CapacityBytes(length_, encoding_)) {
+    std::memmove(contents_.get() + slot_offset,
+                 contents_.get() + slot_offset + encoding_, tail_bytes);
+  } else {
+    auto new_contents = AllocateContents(new_capacity);
+    std::memcpy(new_contents.get(), contents_.get(), slot_offset);
+    std::memcpy(new_contents.get() + slot_offset,
+                contents_.get() + slot_offset + encoding_, tail_bytes);
+    contents_ = std::move(new_contents);
+  }
+  --length_;
 }
 
 void Intset::UpgradeAndAdd(int64_t value) {
@@ -85,9 +121,7 @@ void Intset::UpgradeAndAdd(int64_t value) {
   const uint32_t old_length = length_;
   auto old_contents = std::move(contents_);
   encoding_ = ValueEncoding(value);
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
-  contents_ = std::make_unique<unsigned char[]>(
-      static_cast<size_t>(old_length + 1) * encoding_);
+  contents_ = AllocateContents(CapacityBytes(old_length + 1, encoding_));
   const uint32_t prepend = value < 0 ? 1 : 0;
   for (uint32_t index = old_length; index > 0; --index) {
     const uint32_t old_index = index - 1;
@@ -189,14 +223,5 @@ void Intset::Set(uint32_t index, int64_t value) {
     const auto value16 = static_cast<int16_t>(value);
     std::memcpy(destination, &value16, sizeof(value16));
   }
-}
-
-void Intset::MoveTail(uint32_t from, uint32_t to) {
-  const size_t bytes = static_cast<size_t>(length_ - from) * encoding_;
-  const unsigned char* source =
-      contents_.get() + (static_cast<size_t>(from) * encoding_);
-  unsigned char* destination =
-      contents_.get() + (static_cast<size_t>(to) * encoding_);
-  std::memmove(destination, source, bytes);
 }
 }  // namespace redis_simple::containers

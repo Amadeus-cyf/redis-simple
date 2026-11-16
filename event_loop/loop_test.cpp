@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -348,5 +349,53 @@ TEST(LoopTest, CallbackDeferredDuringDispatchRunsNextCycle) {
 
   loop->ProcessEvents();
   EXPECT_EQ(order, (std::vector<int>{1, 2}));
+}
+
+TEST(LoopTest, BeforeSleepRunsOncePerIterationBeforeOtherCallbacks) {
+  auto loop = Loop::Create();
+  ASSERT_NE(loop, nullptr);
+  std::vector<std::string> order;
+  loop->SetBeforeSleep([&order] { order.emplace_back("before sleep"); });
+  loop->Defer([&order] { order.emplace_back("deferred"); });
+  loop->CreateTimeEvent(TimeEvent::Create(
+      [&order](int64_t) {
+        order.emplace_back("time");
+        return TimeEvent::kNoMore;
+      },
+      nullptr));
+
+  loop->ProcessEvents();
+  EXPECT_EQ(order,
+            (std::vector<std::string>{"before sleep", "deferred", "time"}));
+
+  loop->ProcessEvents();
+  EXPECT_EQ(order, (std::vector<std::string>{"before sleep", "deferred", "time",
+                                             "before sleep"}));
+}
+
+TEST(LoopTest, CallbackDeferredBeforeSleepRunsInTheSameIteration) {
+  auto loop = Loop::Create();
+  ASSERT_NE(loop, nullptr);
+  int deferred_count = 0;
+  loop->SetBeforeSleep(
+      [&] { loop->Defer([&deferred_count] { ++deferred_count; }); });
+
+  loop->ProcessEvents();
+
+  EXPECT_EQ(deferred_count, 1);
+}
+
+TEST(LoopTest, EmptyBeforeSleepRemovesTheCallback) {
+  auto loop = Loop::Create();
+  ASSERT_NE(loop, nullptr);
+  int before_sleep_count = 0;
+  loop->SetBeforeSleep([&before_sleep_count] { ++before_sleep_count; });
+  loop->SetBeforeSleep(nullptr);
+  // A pending deferred callback keeps the poll from waiting.
+  loop->Defer([] {});
+
+  loop->ProcessEvents();
+
+  EXPECT_EQ(before_sleep_count, 0);
 }
 }  // namespace redis_simple::event_loop

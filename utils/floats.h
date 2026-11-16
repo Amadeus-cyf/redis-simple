@@ -29,7 +29,8 @@ std::string FloatToString(double value);
 std::optional<double> ToDouble(std::string_view value);
 // Parses a score range bound as Redis' zslParseRange does: strtod over the
 // whole text, rejecting only NaN, so leading spaces, "" (0), and overflow
-// (an infinity) are accepted.
+// (an infinity) are accepted. Plain decimals and "inf" are read in place,
+// without the copy strtod needs.
 std::optional<double> ToRangeDouble(std::string_view value);
 }  // namespace redis_simple::utils
 
