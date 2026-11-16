@@ -326,6 +326,26 @@ TEST(IoThreadTest, PausedThreadHandlesNothingUntilResumed) {
   thread->Stop();
 }
 
+TEST(IoThreadTest, ReleasesAnIdleClientsBuffersOnItsThread) {
+  MainThread main;
+  auto thread = main.StartThread();
+  ASSERT_NE(thread, nullptr);
+  auto [client, peer] = main.Connect(thread.get());
+  Send(peer, "*1\r\n$4\r\nPING\r\n");
+  EXPECT_EQ(Receive(&main, peer, 7), "+PONG\r\n");
+
+  // Two rounds of the thread's sweeper pass with no request.
+  main.RunFor(std::chrono::milliseconds(2500));
+  // A paused thread touches no client, so this thread may read one.
+  thread->Pause();
+  EXPECT_EQ(client->BufferCapacity(), 0);
+  thread->Resume();
+
+  Send(peer, "*1\r\n$4\r\nPING\r\n");
+  EXPECT_EQ(Receive(&main, peer, 7), "+PONG\r\n");
+  thread->Stop();
+}
+
 TEST(IoThreadTest, StopsWithClientsStillAssigned) {
   MainThread main;
   auto thread = main.StartThread();

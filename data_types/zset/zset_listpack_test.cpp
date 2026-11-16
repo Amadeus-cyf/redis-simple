@@ -9,10 +9,23 @@
 #include <utility>
 #include <vector>
 
+#include "containers/listpack.h"
 #include "data_types/zset/zset_storage_test_util.h"
 
 namespace redis_simple::data_types {
 TEST(ZSetListpackTest, Add) { zset_storage_test::TestAdd<ZSetListpack>(); }
+
+TEST(ZSetListpackTest, AddRulesForNewMember) {
+  zset_storage_test::TestAddRulesForNewMember<ZSetListpack>();
+}
+
+TEST(ZSetListpackTest, AddRulesForExistingMember) {
+  zset_storage_test::TestAddRulesForExistingMember<ZSetListpack>();
+}
+
+TEST(ZSetListpackTest, AddIncrementToNotANumber) {
+  zset_storage_test::TestAddIncrementToNotANumber<ZSetListpack>();
+}
 
 TEST(ZSetListpackTest, Rank) { zset_storage_test::TestRank<ZSetListpack>(); }
 
@@ -74,6 +87,30 @@ TEST(ZSetListpackTest, ReadsIntegralAndFractionalScoresExactly) {
     EXPECT_EQ(range[index].member, entries[index].first);
     EXPECT_EQ(range[index].score, entries[index].second);
   }
+}
+
+TEST(ZSetListpackTest, StoresPairsInScoreOrderInRedisByteFormat) {
+  ZSetListpack zset;
+  // Inserted at the tail, the head and the middle, then moved by an update.
+  ASSERT_TRUE(zset.InsertOrUpdate("b", 2.0, nullptr));
+  ASSERT_TRUE(zset.InsertOrUpdate("d", 4.5, nullptr));
+  ASSERT_TRUE(zset.InsertOrUpdate("a", 1.0, nullptr));
+  ASSERT_TRUE(zset.InsertOrUpdate("c", 3.0, nullptr));
+  bool changed = false;
+  ASSERT_FALSE(zset.InsertOrUpdate("a", 3.0, &changed));
+  EXPECT_TRUE(changed);
+
+  // Whole-number scores are stored as integers, the others as text.
+  containers::Listpack expected;
+  ASSERT_TRUE(expected.Append("b"));
+  ASSERT_TRUE(expected.Append(int64_t{2}));
+  ASSERT_TRUE(expected.Append("a"));
+  ASSERT_TRUE(expected.Append(int64_t{3}));
+  ASSERT_TRUE(expected.Append("c"));
+  ASSERT_TRUE(expected.Append(int64_t{3}));
+  ASSERT_TRUE(expected.Append("d"));
+  ASSERT_TRUE(expected.Append("4.5"));
+  EXPECT_EQ(zset.ListpackBytes(), expected.Bytes());
 }
 
 TEST(ZSetListpackTest, RangeByScore) {

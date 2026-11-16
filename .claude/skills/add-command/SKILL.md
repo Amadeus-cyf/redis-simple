@@ -44,7 +44,9 @@ request gets, and the differential scripts compare that.
 2. Add edge cases, and the command to the random operations when it fits,
    in `scripts/compare_with_redis.py`.
 3. For a write command, add cases to `scripts/compare_side_effects.py`,
-   including ones that change nothing, and add the command to the list in
+   including ones that change nothing and ones that fail on a missing or
+   wrong-type key (the script compares the keyspace left behind), and add
+   the command to the list in
    `scripts/check_aof_interop.sh`.
 4. For a new data-structure operation, add unit tests beside it and extend
    the matching harness under `fuzz/`.

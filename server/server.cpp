@@ -60,6 +60,7 @@ bool Server::Run(const ServerOptions& options) {
               .forks = &fork_stats_};
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
+  loop_->SetBeforeSleep([this] { active_expire_.RunFastCycle(db_.get()); });
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
   fd_ = -1;
@@ -161,6 +162,7 @@ void Server::StopIoThreads() {
   for (const std::unique_ptr<IoThread>& thread : io_threads_) {
     thread->Stop();
   }
+  idle_client_sweeper_.Clear();
   clients_.clear();
   context_ = {};
   aof_.reset();
@@ -220,6 +222,7 @@ bool Server::RemoveClient(Client* c) {
   if (c == nullptr) {
     return false;
   }
+  idle_client_sweeper_.Remove(c);
   c->Free();
   // Destroy the client after the current event, which may still use it.
   loop_->Defer([this, c] { clients_.erase(c); });
@@ -239,7 +242,7 @@ bool Server::InstallAcceptCallback() {
 }
 
 int64_t Server::ServerCron() {
-  constexpr int64_t kCronIntervalMs = 100;
+  constexpr int64_t kCronIntervalMs = IdleClientSweeper::kIntervalMs;
   if (shutdown::StopRequested()) {
     // Redis' prepareForShutdown: when the final save fails, the server keeps
     // running.
@@ -265,10 +268,17 @@ int64_t Server::ServerCron() {
   containers::SetDictResizePolicy(child_running
                                       ? containers::DictResizePolicy::kAvoid
                                       : containers::DictResizePolicy::kEnabled);
-  ActiveExpireCycle(db_.get());
+  active_expire_.RunSlowCycle(db_.get());
   // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
   constexpr int64_t kLazyFreeBudgetMs = 10;
   db_->FreeLazily(kLazyFreeBudgetMs);
+  if (!child_running) {
+    // As in Redis' databasesCron: one millisecond per tick. Skipped while a
+    // child runs, since moving entries writes to memory the child shares.
+    constexpr int64_t kRehashBudgetMicroseconds = 1000;
+    db_->RehashIncrementally(kRehashBudgetMicroseconds);
+  }
+  idle_client_sweeper_.Sweep();
   return kCronIntervalMs;
 }
 }  // namespace redis_simple

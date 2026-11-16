@@ -69,7 +69,10 @@ Guidance for AI coding agents working in this repository.
   version. Connections default to RESP2 and may switch through `HELLO`.
 - Pass `CommandArgs` by const reference instead of copying its view vector.
   Move completed `std::string` replies into `Client::AddReply`; use the
-  `std::string_view` overload only for borrowed reply data.
+  `std::string_view` overload only for borrowed reply data. Send a lone
+  integer or score with `Client::AddIntegerReply` or `AddFloatReply`, which
+  encode on the stack, and call `reply::ReserveBulkStrings` before encoding
+  a collection whose element count, or a bound on it, is known.
 - Add comments only when they clarify non-obvious behavior. When a comment
   names the Redis function or field the code follows, also say in plain
   words what it does, for readers who do not know Redis.
@@ -121,6 +124,15 @@ Guidance for AI coding agents working in this repository.
   interoperability with `scripts/check_rdb_interop.py`. Keep `BGSAVE`, save
   points, the save at shutdown, `stop-writes-on-bgsave-error`, and the `rdb_`
   `INFO` fields aligned with it too.
+- Both snapshot writers (the RDB writer and the AOF's command snapshot)
+  sync as they go through `aof::IncrementalSync`, which follows Redis'
+  `rioFileWrite`: on Linux `sync_file_range` starts each 4 MiB on its way
+  and waits only for the 4 MiB before it, elsewhere it is an `fsync`, and
+  on Linux the file's written pages are dropped from the page cache (not for the
+  save at shutdown, which the next start reads). Those calls are optional
+  members of `aof::FileOps` that default to "not available" (the page
+  cache drop to doing nothing), so a test's
+  file operations keep the `fsync` path unless they override them.
 - Only one child runs at a time, as in Redis: `Aof::Cron` and `Rdb::Cron`
   take `may_fork`, false while the other side's child runs, and
   `BGREWRITEAOF` and `BGSAVE` schedule or refuse as Redis' commands do.
@@ -133,6 +145,17 @@ Guidance for AI coding agents working in this repository.
   headers, lengths, and integers, and Redis' backlen layout), since RDB files
   store them as they are; their tests compare bytes with vectors Redis
   produced. Keep any change to their encoding byte-identical to Redis'.
+- `Listpack` and `Intset` have no `realloc`, so each rounds its allocation
+  up to a whole allocator size class (`utils::AllocationSizeClass`,
+  mimalloc's bins); the rounding costs no memory under mimalloc. `Intset`
+  allocates again only when its contents leave the class. `Listpack` grows
+  to the class of its new size, never further, so spare capacity is only
+  what the allocator reserves anyway (past the largest class, 64 KiB, it
+  grows by half), and it shrinks when a quarter full. A new buffer is not
+  zero-filled, and the bytes before and after the edit are copied straight
+  to their final offsets. A pair (member
+  and score, field and value) goes in with one `BatchInsert` or `BatchAppend`,
+  never two inserts.
 - The RDB loader never trusts the file: it checks every length against the
   bytes left before allocating, validates encoded listpacks and intsets with
   `containers::ListpackReader` and the intset checks, and rejects duplicates and
@@ -154,6 +177,13 @@ Guidance for AI coding agents working in this repository.
   so `Flush` never runs inside a transaction.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
+- An idle client keeps no buffers: `IdleClientSweeper` calls
+  `Client::ReleaseIdleBuffers` on each client once a second, from the server
+  cron without threaded I/O and otherwise from the client's I/O thread,
+  which skips clients handed to the main thread. Give new per-client
+  buffers that grow with a request or reply a release there, and keep
+  `DynamicBuffer` and `ReplyBuffer` usable after `Release()` and
+  `ReleaseBuffer()`.
 - Threaded I/O (`--io-threads` above 1) works like Redis 8; see
   `docs/design.md`. Keep commands, the database, and the AOF on the main
   thread, and I/O threads to the client's socket, buffers, and parser. A
@@ -195,6 +225,12 @@ Guidance for AI coding agents working in this repository.
   since the TTL entry reads its name from that entry. A key name that views
   a keyspace entry (found by scanning the TTL dict) is deleted through
   `DeleteStoredKey`, which touches watchers before freeing it.
+- Active expiration is `ActiveExpire` (`server/active_expire.h`), owned by
+  `Server`: the slow cycle runs from `ServerCron`, the fast one from the
+  loop's before-sleep hook (`Loop::SetBeforeSleep`). Its constants follow
+  Redis' `activeExpireCycle`; test it with an injected `ActiveExpire::Clock`,
+  not with sleeps. The before-sleep hook runs on every loop iteration, so
+  whatever is installed there must return quickly when it has nothing to do.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-2
   (`utils/siphash.h`), as Redis does, to resist hash flooding. Do not depend
   on iteration or `SCAN` order in tests; it changes between runs.
@@ -217,9 +253,16 @@ Guidance for AI coding agents working in this repository.
   (`FindOrInsertEntry` returns it), so remove a member from the skiplist
   before the dict.
   Change stored keys through `Skiplist::Update`, which repositions them.
-  A node and its levels are one allocation, the levels following the node
-  as in Redis' `zskiplistNode`; create and free nodes through
-  `Node::Create` and `Node::Destroy`.
+  A node and its levels are one allocation, the levels above the first
+  following the node as the `level[]` array does in Redis'
+  `zskiplistNode`; create and free nodes
+  through `Node::Create` and `Node::Destroy`. Level 0 is the node's `next`
+  pointer and stores no span, since a step there always spans one node; read
+  links through `Node::Next` and `Node::Span`, which cover every level. A
+  node does not store its level count: `Link` is passed it and `Unlink`
+  returns it. Both savings matter because mimalloc's size classes up to 64 bytes
+  are 16 bytes apart, so a sorted-set node is 32 bytes plus 16 per extra level;
+  do not add a field to `Node` without measuring.
 - Sorted-set range commands (`ZRANGE` and its older forms) encode replies
   from `ZSet::ForEachInRankRange`, `ForEachInScoreRange`, and
   `ForEachInLexRange`, which visit members where they are stored. They are
@@ -254,9 +297,15 @@ Guidance for AI coding agents working in this repository.
 - Each key's `RedisObject` lives inside its keyspace entry
   (`Dict<std::string, RedisObject>`), as Redis 8 keeps a key and its value
   in one block, so a key is one allocation. Storing a value moves the object
-  into the entry: take a new key's object from `RedisDb::StoreKey`, never
-  from a pointer into the object handed to it. `RENAME` moves the object
-  into the new key's entry.
+  into the entry, so never keep a pointer into the object handed to a
+  setter. A command that looks a key up and then creates or overwrites it
+  uses `RedisDb::FindOrCreateKey` (or `LookupOrCreateTyped` in
+  `server/commands/lookup.h`), which hashes the key and probes the keyspace
+  once for both. `FindOrCreateKey` returns a `KeySlot`; store a string
+  through it with `SetStringAt`. A created key holds an empty string until
+  the command stores its value, so nothing may return in between. Use
+  `FindKeyForWrite` when a missing key must stay missing (`SET ... XX`).
+  `RENAME` moves the object into the new key's entry.
 - Store whole string values through `RedisDb::SetStringKey`, which overwrites
   an existing string object in place with `RedisObject::AssignString` instead
   of allocating a new object. `AssignString` applies the same encoding rules
@@ -308,6 +357,11 @@ Guidance for AI coding agents working in this repository.
   memory a child shares: the fork hooks forbid resizing in the child and set
   "avoid" in the parent, and the server cron restores it once no child
   runs. Keep new forks on those hooks.
+- Commands advance a rehash one bucket per operation. The server cron
+  finishes it on an idle server: `RedisDb::RehashIncrementally` runs 1 ms
+  per tick (`Dict::RehashSome`), as Redis' `incrementallyRehash` does, and
+  retries a shrink held back by the resize policy. It is skipped while a
+  child runs; keep table upkeep added to the cron behind that check.
 - Keep rewrite snapshots visitor-based, and bound snapshot memory and replay
   command sizes together (`Limits`): split large strings into replay-safe
   commands and batch collections by encoded bytes, not only element count.
@@ -352,8 +406,9 @@ scripts/check_rdb_interop.py build/debug/redis_simple
 `compare_with_redis.py` compares every supported command's replies, edge
 cases and random operations included; add cases when adding commands or
 options. `compare_side_effects.py` compares what replies do not show: each
-command's change count and whether it fails another client's `WATCH`; add a
-case for every new write command, including ones that change nothing. `check_rdb_interop.py` checks that each server loads the other's RDB
+command's change count, whether it fails another client's `WATCH`, and the
+keyspace left behind; add a case for every new write command, including ones
+that change nothing and ones that fail on a missing or wrong-type key. `check_rdb_interop.py` checks that each server loads the other's RDB
 file.
 
 Run release and sanitizer checks after changes to ownership, memory layout,
@@ -477,6 +532,10 @@ Before committing, run the relevant build and tests.
 - Keep CMake target-based. Source files are discovered by scoped directory
   globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
   explicitly when they do not belong in a library target.
+- The `release` preset builds with link-time optimization
+  (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`), as Redis' release build does. Keep
+  it on for that preset only, so debug, sanitizer, and fuzz builds stay fast
+  to link.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
@@ -498,7 +557,12 @@ Before committing, run the relevant build and tests.
   `scripts/compare_callgrind.py` shows which functions a regression comes from.
   Use `redis_simple_benchmarks` for changes to one component. Report instruction
   counts, not `redis-benchmark` throughput from a small or shared machine, which
-  varies more than the effects being measured.
+  varies more than the effects being measured. Those counts miss work outside
+  the request path, so also measure, against the baseline and `redis-server`:
+  pauses and expiry speed with `scripts/measure_pauses.py` (freeing, flushing,
+  forking, active expiry), system calls with `scripts/count_syscalls.py`
+  (connection setup, the event loop, I/O threads), and snapshot disk writes
+  with `scripts/measure_snapshot_io.py` (the RDB writer and rewrites).
 - Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
   `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project
   conventions.

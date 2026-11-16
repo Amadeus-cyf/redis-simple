@@ -26,8 +26,9 @@ struct SnapshotOptions {
   Limits limits;
   // Start the file with a "#TS:<unix time>" annotation.
   bool timestamp{false};
-  // Sync every 4 MiB written, instead of only at the end (Redis'
-  // aof-rewrite-incremental-fsync), so the final sync does not stall.
+  // Push every 4 MiB written towards the disk (IncrementalSync), instead of
+  // syncing only at the end (Redis' aof-rewrite-incremental-fsync), so the
+  // final sync does not stall.
   bool incremental_fsync{true};
 };
 

@@ -13,8 +13,10 @@
 
 #include "connection/connection.h"
 #include "event_loop/loop.h"
+#include "server/active_expire.h"
 #include "server/aof/aof.h"
 #include "server/client.h"
+#include "server/idle_client_sweeper.h"
 #include "server/io_thread.h"
 #include "server/rdb/rdb.h"
 #include "server/server_context.h"
@@ -39,6 +41,10 @@ class Server {
   void AddClient(std::unique_ptr<Client> client) {
     Client* const key = client.get();
     clients_.emplace(key, std::move(client));
+    // With threaded I/O the client's I/O thread sweeps it instead.
+    if (io_threads_.empty()) {
+      idle_client_sweeper_.Add(key);
+    }
   }
   bool RemoveClient(Client* c);
   // Threaded I/O, enabled when --io-threads is above 1, as in Redis 8: each
@@ -76,10 +82,14 @@ class Server {
   int fd_{-1};
   std::unique_ptr<event_loop::Loop> loop_;
   std::unordered_map<Client*, std::unique_ptr<Client>> clients_;
+  // The clients this thread reads and writes: all of them without threaded
+  // I/O, none with it.
+  IdleClientSweeper idle_client_sweeper_;
   std::unique_ptr<db::RedisDb> db_;
   std::unique_ptr<aof::Aof> aof_;
   std::unique_ptr<rdb::Rdb> rdb_;
   ForkStats fork_stats_;
+  ActiveExpire active_expire_;
   // When the fork hooks last let a fork start.
   int64_t fork_start_us_{};
   std::string require_pass_;
