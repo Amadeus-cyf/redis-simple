@@ -837,10 +837,10 @@ TEST(ListpackTest, DeleteRangeUsesOneContiguousMutation) {
   EXPECT_EQ(listpack.Size(), 0);
 }
 
-// Inserts, replaces and deletes at the head, the middle and the tail while
-// the listpack grows and shrinks through many allocation sizes. After every
-// step its bytes must equal those of a listpack built by appending the
-// expected elements.
+// Inserts at the head, the middle and the tail, replaces throughout, and
+// deletes ranges from the middle while the listpack grows and shrinks through
+// many allocation sizes. After every step its bytes must equal those of a
+// listpack built by appending the expected elements.
 TEST(ListpackTest, KeepsBytesWhileGrowingAndShrinking) {
   Listpack listpack;
   std::vector<std::string> model;

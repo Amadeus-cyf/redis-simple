@@ -119,8 +119,9 @@ TEST(IntsetTest, Iterator) {
   it.SeekToLast();
   ASSERT_EQ(it.Value(), INT32_MAX);
 }
-// Grows and shrinks a set through many allocation sizes, adding and deleting
-// at the front, the middle and the back, and compares it with std::set.
+// Grows and shrinks a set through many allocation sizes, adding in a
+// scattered order and deleting from two thirds of the way in, and compares
+// it with std::set.
 TEST(IntsetTest, MatchesModelWhileGrowingAndShrinking) {
   constexpr int64_t kCount = 600;
   for (const int64_t scale : {int64_t{1}, int64_t{100000}, int64_t{1} << 40}) {

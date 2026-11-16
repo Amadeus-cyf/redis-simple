@@ -15,8 +15,10 @@
 #include "data_types/zset/zset.h"
 
 // Inserts into the compact encodings (intset and listpack), where each insert
-// may reallocate the whole value and moves the bytes after it. Sizes stay
-// within the encodings' limits, except the listpack ones marked otherwise.
+// may reallocate the whole value and moves the bytes after it;
+// ListpackDeleteFirst measures the same for a delete. Sizes stay within the
+// encodings' limits, except that 700 elements make a listpack of about 9 KB,
+// slightly more than one 8 KiB quicklist node.
 namespace redis_simple {
 namespace {
 // Fixed seeds keep runs comparable, which is the point of these benchmarks.
@@ -66,8 +68,7 @@ void IntsetInsertShuffled(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * state.range(0));
 }
 
-// RPUSH: every element goes after the last one. The larger size is a full
-// 8 KiB quicklist node.
+// RPUSH: every element goes after the last one.
 void ListpackAppend(benchmark::State& state) {
   const auto elements = Names("element:", static_cast<size_t>(state.range(0)));
   for (auto _ : state) {
