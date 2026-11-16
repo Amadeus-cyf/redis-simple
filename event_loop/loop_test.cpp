@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -127,6 +128,120 @@ TEST(LoopTest, DeleteOneFileEventMaskKeepsTheOtherMask) {
 
   EXPECT_EQ(read_count, 1);
   EXPECT_EQ(write_count, 2);
+}
+
+TEST(LoopTest, EveryReadableDescriptorFiresOnceInOnePoll) {
+  auto loop = Loop::Create();
+  ASSERT_NE(loop, nullptr);
+  constexpr size_t kPairs = 8;
+  std::vector<std::array<ScopedFd, 2>> pairs;
+  std::vector<int> read_counts(kPairs, 0);
+  for (size_t i = 0; i < kPairs; ++i) {
+    pairs.push_back(CreateSocketPair());
+    ASSERT_GE(pairs[i][0].Get(), 0);
+    auto read_callback = [&read_counts, i](Loop*, int fd, int) {
+      char byte = '\0';
+      EXPECT_EQ(read(fd, &byte, 1), 1);
+      ++read_counts[i];
+      return CallbackStatus::kOk;
+    };
+    ASSERT_EQ(loop->CreateFileEvent(
+                  pairs[i][0].Get(),
+                  FileEvent::Create(FileEvent::Callback(read_callback),
+                                    FileEvent::Callback(),
+                                    ToInt(EventFlag::kReadable))),
+              Status::kOk);
+  }
+  // Written in descending descriptor order, so the poll need not report
+  // them sorted.
+  for (size_t i = kPairs; i > 0; --i) {
+    ASSERT_EQ(write(pairs[i - 1][1].Get(), "a", 1), 1);
+  }
+
+  loop->ProcessEvents();
+
+  EXPECT_EQ(read_counts, std::vector<int>(kPairs, 1));
+}
+
+TEST(LoopTest, ReadAndWriteReadinessOfOneDescriptorMergeAmongOthers) {
+  auto loop = Loop::Create();
+  ASSERT_NE(loop, nullptr);
+  auto read_only = CreateSocketPair();
+  auto both = CreateSocketPair();
+  ASSERT_GE(read_only[0].Get(), 0);
+  ASSERT_GE(both[0].Get(), 0);
+
+  int read_only_count = 0;
+  int both_count = 0;
+  int both_mask = 0;
+  auto drain = [](int fd) {
+    char byte = '\0';
+    EXPECT_EQ(read(fd, &byte, 1), 1);
+  };
+  ASSERT_EQ(loop->CreateFileEvent(
+                read_only[0].Get(),
+                FileEvent::Create(FileEvent::Callback([&read_only_count, drain](
+                                                          Loop*, int fd, int) {
+                                    drain(fd);
+                                    ++read_only_count;
+                                    return CallbackStatus::kOk;
+                                  }),
+                                  FileEvent::Callback(),
+                                  ToInt(EventFlag::kReadable))),
+            Status::kOk);
+  // One callback for both directions runs once per poll, with both bits set.
+  const FileEvent::Callback both_callback = [&both_count, &both_mask, drain](
+                                                Loop*, int fd, int mask) {
+    drain(fd);
+    ++both_count;
+    both_mask = mask;
+    return CallbackStatus::kOk;
+  };
+  auto both_event = FileEvent::Create(
+      both_callback, FileEvent::Callback(),
+      ToInt(EventFlag::kReadable) | ToInt(EventFlag::kWritable));
+  ASSERT_EQ(loop->CreateFileEvent(both[0].Get(), std::move(both_event)),
+            Status::kOk);
+  ASSERT_EQ(write(read_only[1].Get(), "a", 1), 1);
+  ASSERT_EQ(write(both[1].Get(), "a", 1), 1);
+
+  loop->ProcessEvents();
+
+  EXPECT_EQ(read_only_count, 1);
+  EXPECT_EQ(both_count, 1);
+  EXPECT_EQ(both_mask,
+            ToInt(EventFlag::kReadable) | ToInt(EventFlag::kWritable));
+}
+
+TEST(LoopTest, DescriptorCanBeRegisteredAgainAfterItsEventsAreDeleted) {
+  auto loop = Loop::Create();
+  ASSERT_NE(loop, nullptr);
+  auto sockets = CreateSocketPair();
+  ASSERT_GE(sockets[0].Get(), 0);
+  const int fd = sockets[0].Get();
+
+  int read_count = 0;
+  const FileEvent::Callback read_callback = [&read_count](Loop*, int ready_fd,
+                                                          int) {
+    char byte = '\0';
+    EXPECT_EQ(read(ready_fd, &byte, 1), 1);
+    ++read_count;
+    return CallbackStatus::kOk;
+  };
+  const auto register_read = [&loop, fd, &read_callback] {
+    return loop->CreateFileEvent(
+        fd, FileEvent::Create(read_callback, FileEvent::Callback(),
+                              ToInt(EventFlag::kReadable)));
+  };
+  EXPECT_EQ(loop->DeleteFileEvent(fd, EventFlag::kReadable), Status::kError);
+  ASSERT_EQ(register_read(), Status::kOk);
+  ASSERT_EQ(loop->DeleteFileEvent(fd, EventFlag::kReadable), Status::kOk);
+  EXPECT_EQ(loop->DeleteFileEvent(fd, EventFlag::kReadable), Status::kError);
+  ASSERT_EQ(register_read(), Status::kOk);
+
+  ASSERT_EQ(write(sockets[1].Get(), "a", 1), 1);
+  loop->ProcessEvents();
+  EXPECT_EQ(read_count, 1);
 }
 
 TEST(LoopTest, TimeEventRunsAndFinalizes) {
