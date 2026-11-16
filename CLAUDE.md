@@ -250,6 +250,12 @@ Guidance for AI coding agents working in this repository.
   or `Int()`, and call `MutableString()` only to edit bytes in place, since it
   converts the value back to raw form. Create objects from borrowed bytes with
   `CreateWithStringCopy`, which embeds without a temporary `std::string`.
+- Each key's `RedisObject` lives inside its keyspace entry
+  (`Dict<std::string, RedisObject>`), as Redis 8 keeps a key and its value
+  in one block, so a key is one allocation. Storing a value moves the object
+  into the entry: take a new key's object from `RedisDb::StoreKey`, never
+  from a pointer into the object handed to it. `RENAME` moves the object
+  into the new key's entry.
 - Store whole string values through `RedisDb::SetStringKey`, which overwrites
   an existing string object in place with `RedisObject::AssignString` instead
   of allocating a new object. `AssignString` applies the same encoding rules
