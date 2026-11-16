@@ -162,6 +162,7 @@ void Server::StopIoThreads() {
   for (const std::unique_ptr<IoThread>& thread : io_threads_) {
     thread->Stop();
   }
+  idle_client_sweeper_.Clear();
   clients_.clear();
   context_ = {};
   aof_.reset();
@@ -223,6 +224,7 @@ bool Server::RemoveClient(Client* c) {
   if (c == nullptr) {
     return false;
   }
+  idle_client_sweeper_.Remove(c);
   c->Free();
   // Destroy the client after the current event, which may still use it.
   loop_->Defer([this, c] { clients_.erase(c); });
@@ -242,7 +244,7 @@ bool Server::InstallAcceptCallback() {
 }
 
 int64_t Server::ServerCron() {
-  constexpr int64_t kCronIntervalMs = 100;
+  constexpr int64_t kCronIntervalMs = IdleClientSweeper::kIntervalMs;
   if (shutdown::StopRequested()) {
     // Redis' prepareForShutdown: when the final save fails, the server keeps
     // running.
@@ -278,6 +280,7 @@ int64_t Server::ServerCron() {
     constexpr int64_t kRehashBudgetMicroseconds = 1000;
     db_->RehashIncrementally(kRehashBudgetMicroseconds);
   }
+  idle_client_sweeper_.Sweep();
   return kCronIntervalMs;
 }
 }  // namespace redis_simple

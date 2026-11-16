@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -71,6 +72,21 @@ class Client {
   // Encodes `value` as a bulk string straight into the output buffer.
   size_t AddBulkReply(std::string_view value);
   bool HasPendingReplies() const { return !reply_buffer_.Empty(); }
+  // Frees the query and reply buffers, and the argument and reply block
+  // lists, of a client that has read nothing since the previous call and
+  // holds no unparsed input or unsent reply. Otherwise one large request or
+  // reply would keep its memory for as long as the connection lives; Redis'
+  // clientsCron shrinks idle clients' buffers for the same reason. Only the
+  // side that owns the client may call this.
+  void ReleaseIdleBuffers();
+  // Bytes allocated for the query buffer and the reply buffer's main block.
+  size_t BufferCapacity() const {
+    return query_buffer_.Capacity() + reply_buffer_.BufferCapacity();
+  }
+  // The client's place in its IdleClientSweeper, which alone sets it.
+  static constexpr size_t kNotSwept = std::numeric_limits<size_t>::max();
+  size_t SweepIndex() const { return sweep_index_; }
+  void SetSweepIndex(size_t index) { sweep_index_ = index; }
   size_t PendingReplyBytes() const { return reply_buffer_.PendingBytes(); }
   bool ShouldPauseReads() const;
   bool ShouldResumeReads() const;
@@ -185,6 +201,8 @@ class Client {
   std::vector<iovec> reply_blocks_;
   OutputBufferLimits output_limits_;
   reply::ProtocolVersion protocol_{reply::ProtocolVersion::kResp2};
+  bool read_since_sweep_{};
+  size_t sweep_index_{kNotSwept};
   bool reads_paused_{};
   bool handed_to_main_{};
   bool freed_{};

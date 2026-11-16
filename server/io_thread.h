@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "event_loop/loop.h"
+#include "server/idle_client_sweeper.h"
 
 namespace redis_simple {
 class Client;
@@ -151,6 +152,9 @@ class IoThread {
   std::vector<Message> incoming_;
   std::vector<Handoff> handoffs_;
   bool handoffs_scheduled_{false};
+  // I/O thread only: the clients assigned to this thread and not closed.
+  // A time event on this thread's loop sweeps them.
+  IdleClientSweeper idle_client_sweeper_;
   // Main thread only.
   std::vector<Handoff> ready_;
   size_t clients_{};
