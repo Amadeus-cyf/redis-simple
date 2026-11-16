@@ -1,5 +1,6 @@
 #include <benchmark/benchmark.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -10,9 +11,11 @@
 
 #include "data_types/zset/zset.h"
 #include "data_types/zset/zset_range_spec.h"
+#include "utils/floats.h"
 
-// Sorted-set benchmarks sized well above the listpack limit, so every set uses
-// the skiplist encoding. Random sequences use fixed seeds so runs compare.
+// Sorted-set benchmarks. Sizes of 10'000 and more are well above the listpack
+// limit, so those sets use the skiplist encoding; a size of 100 stays in a
+// listpack. Random sequences use fixed seeds so runs compare.
 namespace redis_simple {
 namespace {
 // Fixed seeds keep runs comparable, which is the point of these benchmarks.
@@ -101,6 +104,38 @@ void ZSetDeleteSmallestName(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations());
 }
 
+// ZADD GT of a random existing member with a score above every other one, so
+// each call updates the member.
+void ZSetAddGreaterThan(benchmark::State& state) {
+  const auto names = MemberNames(static_cast<size_t>(state.range(0)));
+  auto zset = FilledZSet(names);
+  std::mt19937 generator = SeededRng(5);
+  std::uniform_int_distribution<size_t> member(0, names.size() - 1);
+  double score = 1'000'000;
+  for (auto _ : state) {
+    (void)_;
+    score += 1;
+    benchmark::DoNotOptimize(
+        zset->Add(names[member(generator)], score, {.gt = true}));
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
+// Parsing the bounds of a score range, as ZRANGEBYSCORE and ZCOUNT do.
+void ZSetParseScoreBounds(benchmark::State& state) {
+  constexpr std::array<std::string_view, 4> kBounds = {"-inf", "+inf", "1.5",
+                                                       "1234567.25"};
+  for (auto _ : state) {
+    (void)_;
+    for (std::string_view bound : kBounds) {
+      benchmark::DoNotOptimize(bound);
+      benchmark::DoNotOptimize(utils::ToRangeDouble(bound));
+    }
+  }
+  state.SetItemsProcessed(state.iterations() *
+                          static_cast<int64_t>(kBounds.size()));
+}
+
 // ZRANK of a random member.
 void ZSetRank(benchmark::State& state) {
   const auto names = MemberNames(static_cast<size_t>(state.range(0)));
@@ -142,6 +177,8 @@ BENCHMARK(ZSetInsert)->Arg(10'000)->Arg(100'000)->Unit(benchmark::kMillisecond);
 BENCHMARK(ZSetUpdateScore)->Arg(10'000)->Arg(100'000);
 BENCHMARK(ZSetDeleteRandom)->Arg(10'000)->Arg(100'000);
 BENCHMARK(ZSetDeleteSmallestName)->Arg(10'000)->Arg(100'000);
+BENCHMARK(ZSetAddGreaterThan)->Arg(100)->Arg(10'000)->Arg(100'000);
+BENCHMARK(ZSetParseScoreBounds);
 BENCHMARK(ZSetRank)->Arg(10'000)->Arg(100'000);
 BENCHMARK(ZSetRangeByScore)->Arg(10'000)->Arg(100'000);
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)

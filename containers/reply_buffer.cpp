@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -44,11 +45,26 @@ size_t ReplyBuffer::Append(std::string&& reply) {
   return length;
 }
 
+size_t ReplyBuffer::Append(std::shared_ptr<const std::string> reply) {
+  RS_CHECK(reply != nullptr);
+  const size_t length = reply->size();
+  if (length < kMinMovedReplySize) {
+    return Append(reply->data(), length);
+  }
+  PushNode(ReplyChunk::CreateShared(std::move(reply)));
+  pending_bytes_ += length;
+  return length;
+}
+
 size_t ReplyBuffer::AppendToBuffer(const char* s, size_t length) {
   // Preserve write order: once overflow nodes exist, new bytes must also go to
   // the list until earlier list data is drained.
   if (node_count_ != 0) {
     return 0;
+  }
+  if (buffer_ == nullptr) {
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
+    buffer_.reset(new char[buffer_capacity_]);
   }
   const size_t nwritten = std::min(length, buffer_capacity_ - size_);
   std::memcpy(buffer_.get() + size_, s, nwritten);
@@ -83,7 +99,9 @@ void ReplyBuffer::FillBlocks(std::vector<iovec>* const blocks) {
   size_t offset = size_ > 0 ? 0 : sent_;
   for (ReplyChunk* node = reply_head_.get(); node != nullptr;
        node = node->next.get()) {
-    blocks->push_back({node->Data() + offset, node->used - offset});
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): writev only reads
+    char* const bytes = const_cast<char*>(node->Bytes());
+    blocks->push_back({bytes + offset, node->used - offset});
     offset = 0;
   }
 }
@@ -121,6 +139,11 @@ void ReplyBuffer::ConsumeList(size_t nwritten) {
     nwritten -= remaining;
     PopFront();
   }
+}
+
+void ReplyBuffer::ReleaseBuffer() {
+  RS_CHECK(Empty());
+  buffer_.reset();
 }
 
 void ReplyBuffer::PushNode(std::unique_ptr<ReplyChunk> node) {

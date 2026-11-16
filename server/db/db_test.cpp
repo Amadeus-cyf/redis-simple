@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "containers/dict.h"
 #include "data_types/set/set.h"
 #include "server/db/key_watcher.h"
 #include "server/db/redis_object.h"
@@ -140,6 +141,94 @@ TEST(RedisDbTest, SetStringKeyMatchesSetKeySemantics) {
   EXPECT_EQ(redis_db->LookupKey("key")->StringEncoding(),
             RedisObject::Encoding::kInt);
   EXPECT_EQ(redis_db->TimeToLive("key", TtlResolution::kMilliseconds), -1);
+  redis_db->UnwatchKeys(&watcher);
+}
+
+TEST(RedisDbTest, FindOrCreateKeyAddsAMissingKeyAndFindsAnExistingOne) {
+  auto redis_db = RedisDb::Create();
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  KeyWatcher watcher;
+  redis_db->WatchKey("key", &watcher);
+
+  const RedisDb::KeySlot created = redis_db->FindOrCreateKey("key");
+  EXPECT_TRUE(created.Created());
+  ASSERT_NE(created.Object(), nullptr);
+  EXPECT_EQ(created.Object()->Type(), RedisObject::ObjectType::kString);
+  // Adding a key is a change its watchers see.
+  EXPECT_TRUE(watcher.Dirty());
+  EXPECT_EQ(redis_db->KeyCount(), 1);
+  redis_db->SetStringAt(created, "value", future);
+  EXPECT_EQ(redis_db->LookupKey("key"), created.Object());
+  EXPECT_EQ(redis_db->LookupKey("key")->String(), "value");
+  EXPECT_EQ(redis_db->Expiration("key"), future);
+
+  const RedisDb::KeySlot found = redis_db->FindOrCreateKey("key");
+  EXPECT_FALSE(found.Created());
+  EXPECT_EQ(found.Object(), created.Object());
+  redis_db->SetStringAt(found, "12", 0, ExistingTtl::kKeep);
+  // The existing string object is updated in place and keeps its TTL.
+  EXPECT_EQ(redis_db->LookupKey("key"), created.Object());
+  EXPECT_EQ(redis_db->LookupKey("key")->StringEncoding(),
+            RedisObject::Encoding::kInt);
+  EXPECT_EQ(redis_db->Expiration("key"), future);
+
+  redis_db->SetStringAt(redis_db->FindOrCreateKey("key"), "new", 0);
+  EXPECT_EQ(redis_db->LookupKey("key")->String(), "new");
+  EXPECT_EQ(redis_db->Expiration("key"), std::nullopt);
+  EXPECT_EQ(redis_db->KeyCount(), 1);
+  redis_db->UnwatchKeys(&watcher);
+}
+
+TEST(RedisDbTest, FindOrCreateKeyReplacesAnExpiredKey) {
+  auto redis_db = RedisDb::Create();
+  ASSERT_EQ(
+      redis_db->SetKey(
+          "key", RedisObject::CreateWithSet(data_types::Set::Create()), 1),
+      DbStatus::kOk);
+  ASSERT_EQ(redis_db->KeysWithExpirationCount(), 1);
+
+  const RedisDb::KeySlot slot = redis_db->FindOrCreateKey("key");
+  // The expired set and its TTL are gone; the key starts over as created.
+  EXPECT_TRUE(slot.Created());
+  ASSERT_NE(slot.Object(), nullptr);
+  EXPECT_EQ(slot.Object()->Type(), RedisObject::ObjectType::kString);
+  EXPECT_EQ(slot.Object()->String(), "");
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 0);
+  EXPECT_EQ(redis_db->KeyCount(), 1);
+}
+
+TEST(RedisDbTest, FindKeyForWriteNeverCreatesAKey) {
+  auto redis_db = RedisDb::Create();
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  KeyWatcher watcher;
+
+  const RedisDb::KeySlot missing = redis_db->FindKeyForWrite("key");
+  EXPECT_EQ(missing.Object(), nullptr);
+  EXPECT_FALSE(missing.Created());
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+
+  ASSERT_EQ(redis_db->SetKey("expired", RedisObject::CreateWithString("v"), 1),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->FindKeyForWrite("expired").Object(), nullptr);
+  EXPECT_EQ(redis_db->KeyCount(), 0);
+
+  ASSERT_EQ(
+      redis_db->SetKey(
+          "key", RedisObject::CreateWithSet(data_types::Set::Create()), 0),
+      DbStatus::kOk);
+  redis_db->WatchKey("key", &watcher);
+  const RedisDb::KeySlot found = redis_db->FindKeyForWrite("key");
+  ASSERT_NE(found.Object(), nullptr);
+  EXPECT_FALSE(found.Created());
+  EXPECT_FALSE(watcher.Dirty());
+  // Storing through the slot replaces a value of another type and records
+  // the TTL on the key's own entry.
+  redis_db->SetStringAt(found, "value", future);
+  EXPECT_TRUE(watcher.Dirty());
+  EXPECT_EQ(redis_db->LookupKey("key")->String(), "value");
+  EXPECT_EQ(redis_db->Expiration("key"), future);
+  redis_db->SetStringAt(redis_db->FindKeyForWrite("key"), "other", 0);
+  EXPECT_EQ(redis_db->Expiration("key"), std::nullopt);
   redis_db->UnwatchKeys(&watcher);
 }
 
@@ -344,6 +433,64 @@ TEST(RedisDbTest, UnlinkFreesSmallValuesAtOnceAndLargeOnesInSteps) {
   }
   EXPECT_GE(steps, 8);
   EXPECT_EQ(redis_db->UnlinkKey("first"), DbStatus::kError);
+}
+
+TEST(RedisDbTest, RehashIncrementallyFinishesARehashWithoutCommands) {
+  auto redis_db = RedisDb::Create();
+  EXPECT_FALSE(redis_db->RehashIncrementally(0));
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  // The keyspace and TTL tables began doubling to 131,072 buckets at 65,537
+  // keys, and the inserts since have moved only part of the old tables.
+  constexpr int kKeys = 100'000;
+  for (int i = 0; i < kKeys; ++i) {
+    ASSERT_EQ(redis_db->SetKey("key:" + std::to_string(i),
+                               RedisObject::CreateWithString("v"), future),
+              DbStatus::kOk);
+  }
+  // With no budget, each call moves one batch of buckets.
+  ASSERT_TRUE(redis_db->RehashIncrementally(0));
+  int calls = 1;
+  while (redis_db->RehashIncrementally(0)) {
+    ++calls;
+    ASSERT_LE(calls, 100'000);
+  }
+  EXPECT_GT(calls, 1);
+  EXPECT_FALSE(redis_db->RehashIncrementally(1000));
+  EXPECT_EQ(redis_db->KeyCount(), static_cast<size_t>(kKeys));
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), static_cast<size_t>(kKeys));
+  for (int i = 0; i < kKeys; i += 997) {
+    const std::string key = "key:" + std::to_string(i);
+    ASSERT_NE(redis_db->LookupKey(key), nullptr) << key;
+    EXPECT_EQ(redis_db->Expiration(key), future) << key;
+  }
+}
+
+TEST(RedisDbTest, RehashIncrementallyShrinksTablesAChildHeldBack) {
+  auto redis_db = RedisDb::Create();
+  constexpr int kKeys = 4096;
+  constexpr int kKept = 200;
+  for (int i = 0; i < kKeys; ++i) {
+    ASSERT_EQ(redis_db->SetKey("key:" + std::to_string(i),
+                               RedisObject::CreateWithString("v"), 0),
+              DbStatus::kOk);
+  }
+  while (redis_db->RehashIncrementally(1000)) {
+  }
+  // As while a child runs: deletes leave the 4,096-bucket table alone until
+  // it is far emptier than this.
+  containers::SetDictResizePolicy(containers::DictResizePolicy::kAvoid);
+  for (int i = kKept; i < kKeys; ++i) {
+    ASSERT_EQ(redis_db->DeleteKey("key:" + std::to_string(i)), DbStatus::kOk);
+  }
+  containers::SetDictResizePolicy(containers::DictResizePolicy::kEnabled);
+  // The call starts the shrink and, with no budget, moves one batch.
+  ASSERT_TRUE(redis_db->RehashIncrementally(0));
+  while (redis_db->RehashIncrementally(1000)) {
+  }
+  EXPECT_EQ(redis_db->KeyCount(), static_cast<size_t>(kKept));
+  for (int i = 0; i < kKept; ++i) {
+    ASSERT_NE(redis_db->LookupKey("key:" + std::to_string(i)), nullptr) << i;
+  }
 }
 
 TEST(RedisDbTest, FlushStartsEmptyTablesThatKeepWorking) {

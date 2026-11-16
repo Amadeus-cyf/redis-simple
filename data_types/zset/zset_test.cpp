@@ -62,6 +62,40 @@ TEST(ZSetEncodingTest, ConvertsToSkiplistWhenMemberIsLong) {
   ASSERT_EQ(zset->Score("short"), 1.0);
 }
 
+TEST(ZSetEncodingTest, AddOfLongMemberConvertsUnlessOnlyUpdating) {
+  auto zset = ZSet::Create();
+  ASSERT_TRUE(zset->InsertOrUpdate("short", 1.0));
+  const std::string long_member(65, 'x');
+
+  EXPECT_EQ(zset->Add(long_member, 2.0, {.xx = true}).status,
+            ZSetAddStatus::kSkipped);
+  EXPECT_EQ(zset->Encoding(), ZSet::Encoding::kListpack);
+  EXPECT_EQ(zset->Size(), 1);
+
+  EXPECT_EQ(zset->Add(long_member, 2.0, {.nx = true}).status,
+            ZSetAddStatus::kAdded);
+  EXPECT_EQ(zset->Encoding(), ZSet::Encoding::kSkiplist);
+  EXPECT_EQ(zset->Score(long_member), 2.0);
+  EXPECT_EQ(zset->Score("short"), 1.0);
+}
+
+TEST(ZSetEncodingTest, AddConvertsWhenEntryCountExceedsLimit) {
+  auto zset = ZSet::Create();
+  for (int i = 0; i < 128; ++i) {
+    ASSERT_TRUE(zset->InsertOrUpdate("key_" + std::to_string(i), i));
+  }
+  // An update keeps the listpack; only a new member can outgrow it.
+  EXPECT_EQ(zset->Add("key_5", 500.0, {.gt = true}).status,
+            ZSetAddStatus::kUpdated);
+  EXPECT_EQ(zset->Encoding(), ZSet::Encoding::kListpack);
+
+  EXPECT_EQ(zset->Add("key_128", 128.0, {.gt = true}).status,
+            ZSetAddStatus::kAdded);
+  EXPECT_EQ(zset->Encoding(), ZSet::Encoding::kSkiplist);
+  EXPECT_EQ(zset->Size(), 129);
+  EXPECT_EQ(zset->Score("key_5"), 500.0);
+}
+
 TEST(ZSetEncodingTest, ConvertsToSkiplistWhenEntryCountExceedsLimit) {
   auto zset = ZSet::Create();
   for (int i = 0; i < 128; ++i) {

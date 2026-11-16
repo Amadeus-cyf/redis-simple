@@ -12,32 +12,43 @@ ZSetSkiplist::ZSetSkiplist(size_t capacity)
     : dict_(zset_skiplist_internal::MemberDict::Create(capacity)),
       skiplist_(std::make_unique<SkiplistType>()) {}
 
-bool ZSetSkiplist::InsertOrUpdate(std::string_view member, double score,
-                                  bool* const changed) {
-  if (changed != nullptr) {
-    *changed = false;
-  }
+ZSetAddResult ZSetSkiplist::Add(std::string_view member, double score,
+                                const ZSetAddRules& rules) {
   if (std::isnan(score)) {
-    return false;
+    return {.status = ZSetAddStatus::kNotANumber, .score = score};
   }
-  const auto [current_score, stored_member, inserted] =
+  if (rules.xx) {
+    // XX never adds, so a plain find is the one lookup.
+    double* const current = dict_->FindValue(member);
+    if (current == nullptr) {
+      return {.status = ZSetAddStatus::kSkipped, .score = score};
+    }
+    return UpdateExisting(member, current, score, rules);
+  }
+  const auto [current, stored_member, inserted] =
       dict_->FindOrInsertEntry(member);
   if (!inserted) {
-    if (*current_score == score) {
-      return false;
-    }
+    return UpdateExisting(member, current, score, rules);
+  }
+  skiplist_->Insert(ScoredEntry{.score = score, .member = stored_member});
+  *current = score;
+  return {.status = ZSetAddStatus::kAdded, .score = score};
+}
+
+ZSetAddResult ZSetSkiplist::UpdateExisting(std::string_view member,
+                                           double* const current, double score,
+                                           const ZSetAddRules& rules) {
+  const ZSetAddResult result = ApplyAddRulesToExisting(*current, score, rules);
+  if (result.status == ZSetAddStatus::kUpdated) {
     // Change the score in place; the skiplist repositions the entry if its
     // order changed.
-    skiplist_->Update(ScoredMember{.score = *current_score, .member = member},
-                      [score](ScoredEntry& entry) { entry.score = score; });
-  } else {
-    skiplist_->Insert(ScoredEntry{.score = score, .member = stored_member});
+    skiplist_->Update(ScoredMember{.score = *current, .member = member},
+                      [updated = result.score](ScoredEntry& entry) {
+                        entry.score = updated;
+                      });
+    *current = result.score;
   }
-  *current_score = score;
-  if (changed != nullptr) {
-    *changed = true;
-  }
-  return inserted;
+  return result;
 }
 
 bool ZSetSkiplist::Delete(std::string_view member) {

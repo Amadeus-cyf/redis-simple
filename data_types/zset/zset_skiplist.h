@@ -71,8 +71,8 @@ class ZSetSkiplist : public ZSetStorage {
  public:
   // `capacity` sizes the member dict for that many members.
   explicit ZSetSkiplist(size_t capacity = 0);
-  bool InsertOrUpdate(std::string_view member, double score,
-                      bool* changed) override;
+  ZSetAddResult Add(std::string_view member, double score,
+                    const ZSetAddRules& rules) override;
   bool Delete(std::string_view member) override;
   std::optional<double> Score(std::string_view member) const override {
     const double* score = dict_->FindValue(member);
@@ -116,6 +116,9 @@ class ZSetSkiplist : public ZSetStorage {
   using SkiplistType =
       containers::Skiplist<ScoredEntry, zset_skiplist_internal::EntryOrder>;
 
+  // Applies `rules` to a member whose score in the dict is `*current`.
+  ZSetAddResult UpdateExisting(std::string_view member, double* current,
+                               double score, const ZSetAddRules& rules);
   bool OverlapsLexRange(const RangeByLexSpec* spec) const;
   static std::optional<SkiplistType::Limit> ToLimit(
       const std::optional<LimitSpec>& limit);

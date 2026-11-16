@@ -48,40 +48,50 @@ RedisObject* RedisDb::Lookup(const HashedKey& key) {
   return result;
 }
 
+RedisDb::KeySlot RedisDb::FindKeyForWrite(std::string_view key) {
+  const HashedKey hashed(key);
+  return {hashed, Lookup(hashed), KeyRef(), false};
+}
+
+RedisDb::KeySlot RedisDb::FindOrCreateKey(std::string_view key) {
+  const HashedKey hashed(key);
+  KeySlot slot = FindOrInsert(hashed);
+  if (!slot.created_ && IsKeyExpired(hashed)) {
+    RS_LOG_DEBUG("look up key expired\n");
+    Delete(hashed);
+    slot = FindOrInsert(hashed);
+  }
+  if (slot.created_) {
+    TouchWatchedKey(hashed);
+  }
+  return slot;
+}
+
+RedisDb::KeySlot RedisDb::FindOrInsert(const HashedKey& key) {
+  // FindOrInsertEntry copies the key only for a new entry.
+  const Keyspace::InsertResult found = dict_->FindOrInsertEntry(key);
+  return {key, found.value, found.entry, found.inserted};
+}
+
 DbStatus RedisDb::SetKey(std::string_view key, RedisObjectPtr object,
                          int64_t expire, ExistingTtl existing_ttl) {
   if (object == nullptr) {
     return DbStatus::kError;
   }
-  // FindOrInsert copies the key only for a new entry.
-  const HashedKey hashed(key);
-  *dict_->FindOrInsert(hashed).first = std::move(*object);
-  FinishSet(hashed, expire, existing_ttl);
+  const KeySlot slot = FindOrInsert(HashedKey(key));
+  *slot.object_ = std::move(*object);
+  FinishSet(slot, expire, existing_ttl);
   return DbStatus::kOk;
-}
-
-RedisObject* RedisDb::StoreKey(std::string_view key, RedisObjectPtr object) {
-  RS_CHECK(object != nullptr);
-  const HashedKey hashed(key);
-  RedisObject* const stored = dict_->FindOrInsert(hashed).first;
-  *stored = std::move(*object);
-  FinishSet(hashed, 0, ExistingTtl::kClear);
-  return stored;
 }
 
 bool RedisDb::AddKey(std::string_view key, RedisObjectPtr object,
                      int64_t expire) {
-  const HashedKey hashed(key);
-  const auto [slot, inserted] = dict_->FindOrInsert(hashed);
-  if (!inserted) {
+  const KeySlot slot = FindOrInsert(HashedKey(key));
+  if (!slot.created_) {
     return false;
   }
-  *slot = std::move(*object);
-  TouchWatchedKey(hashed);
-  // A new key has no TTL to clear.
-  if (expire > 0) {
-    SetExpire(hashed, expire);
-  }
+  *slot.object_ = std::move(*object);
+  FinishSet(slot, expire, ExistingTtl::kClear);
   return true;
 }
 
@@ -92,26 +102,33 @@ void RedisDb::ReserveKeys(size_t keys, size_t keys_with_expiration) {
 
 DbStatus RedisDb::SetStringKey(std::string_view key, std::string_view value,
                                int64_t expire, ExistingTtl existing_ttl) {
-  const HashedKey hashed(key);
-  const auto [slot, inserted] = dict_->FindOrInsert(hashed);
-  if (!inserted && slot->Type() == RedisObject::ObjectType::kString) {
-    slot->AssignString(value);
-  } else {
-    slot->ReplaceWithString(value);
-  }
-  FinishSet(hashed, expire, existing_ttl);
+  SetStringAt(FindOrInsert(HashedKey(key)), value, expire, existing_ttl);
   return DbStatus::kOk;
 }
 
-void RedisDb::FinishSet(const HashedKey& key, int64_t expire,
+void RedisDb::SetStringAt(const KeySlot& slot, std::string_view value,
+                          int64_t expire, ExistingTtl existing_ttl) {
+  RedisObject* const object = slot.object_;
+  RS_CHECK(object != nullptr);
+  if (!slot.created_ && object->Type() == RedisObject::ObjectType::kString) {
+    object->AssignString(value);
+  } else {
+    object->ReplaceWithString(value);
+  }
+  FinishSet(slot, expire, existing_ttl);
+}
+
+void RedisDb::FinishSet(const KeySlot& slot, int64_t expire,
                         ExistingTtl existing_ttl) {
-  TouchWatchedKey(key);
-  if (existing_ttl == ExistingTtl::kClear && expire == 0 &&
+  TouchWatchedKey(slot.key_);
+  // A created key has no TTL to clear.
+  if (!slot.created_ && existing_ttl == ExistingTtl::kClear && expire == 0 &&
       expires_->Size() > 0) {
-    expires_->Delete(key);
+    expires_->Delete(slot.key_);
   }
   if (expire > 0) {
-    SetExpire(key, expire);
+    SetExpire(slot.entry_ ? slot.entry_ : dict_->FindEntryRef(slot.key_),
+              expire);
     RS_LOG_DEBUG("add expire %" PRId64 "\n", expire);
   }
 }
@@ -141,12 +158,9 @@ void RedisDb::DeleteStoredKey(std::string_view key) {
   dict_->Delete(hashed);
 }
 
-void RedisDb::SetExpire(const HashedKey& key, int64_t expire) {
-  const KeyRef stored = dict_->FindEntryRef(key);
-  if (!stored) {
-    utils::Unreachable();  // Callers add the key to the keyspace first.
-  }
-  *expires_->FindOrInsert(stored).first = expire;
+void RedisDb::SetExpire(KeyRef entry, int64_t expire) {
+  RS_CHECK(entry);
+  *expires_->FindOrInsert(entry).first = expire;
 }
 
 DbStatus RedisDb::UnlinkKey(std::string_view key) {
@@ -204,7 +218,7 @@ DbStatus RedisDb::ExpireKeyAt(std::string_view key, int64_t expire,
   if (!loading_ && expire <= Now()) {
     return Delete(hashed);
   }
-  SetExpire(hashed, expire);
+  SetExpire(dict_->FindEntryRef(hashed), expire);
   TouchWatchedKey(hashed);
   return DbStatus::kOk;
 }
@@ -259,9 +273,10 @@ DbStatus RedisDb::RenameKey(std::string_view old_key,
   }
   const HashedKey new_hashed(new_key);
   // An existing key under the new name keeps its entry; its TTL is replaced.
-  *dict_->FindOrInsert(new_hashed).first = std::move(*object);
+  const Keyspace::InsertResult target = dict_->FindOrInsertEntry(new_hashed);
+  *target.value = std::move(*object);
   if (expire.has_value()) {
-    SetExpire(new_hashed, *expire);
+    SetExpire(target.entry, *expire);
   } else if (expires_->Size() > 0) {
     expires_->Delete(new_hashed);
   }
@@ -347,6 +362,26 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
   return !unlinked_.empty() || !flushed_.empty();
 }
 
+bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
+  // As Redis' dictRehashMicroseconds: enough buckets that reading the clock
+  // costs little, few enough to overrun the budget only slightly.
+  constexpr int kBucketsPerStep = 100;
+  dict_->ShrinkIfNeeded();
+  expires_->ShrinkIfNeeded();
+  if (!dict_->IsRehashing() && !expires_->IsRehashing()) {
+    return false;
+  }
+  const int64_t start = utils::MonotonicMicroseconds();
+  // The keyspace table first, then the TTL table.
+  while (dict_->RehashSome(kBucketsPerStep) ||
+         expires_->RehashSome(kBucketsPerStep)) {
+    if (utils::MonotonicMicroseconds() - start >= budget_microseconds) {
+      break;
+    }
+  }
+  return dict_->IsRehashing() || expires_->IsRehashing();
+}
+
 ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
   ExpireSampleResult result;
   if (max_samples == 0 || expires_->Size() == 0) {
@@ -355,21 +390,30 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
 
   std::vector<std::string_view> expired_keys;
   expired_keys.reserve(max_samples);
-  bool scan_complete = false;
-  while (result.sampled < max_samples && !scan_complete) {
+  // A scan resumed near the end of the table can finish without meeting a
+  // key. It then starts over once, so that only an empty table yields an
+  // empty sample; no key is visited twice, since the first pass visited none.
+  bool may_start_over = expire_cursor_ != 0;
+  while (result.sampled < max_samples) {
+    // Every key of a visited bucket is sampled, even past `max_samples`:
+    // the cursor has moved on, so a key left out here would be left out of
+    // every later pass over an unchanged table too.
     const std::optional<size_t> next_cursor = expires_->Scan(
-        expire_cursor_, [&result, &expired_keys, max_samples, now](
-                            const KeyRef& key, const int64_t& expire) {
-          if (result.sampled >= max_samples) {
-            return;
-          }
+        expire_cursor_, [&result, &expired_keys, now](const KeyRef& key,
+                                                      const int64_t& expire) {
           ++result.sampled;
           if (expire <= now) {
             expired_keys.push_back(key.Key());
           }
         });
-    scan_complete = !next_cursor.has_value();
     expire_cursor_ = next_cursor.value_or(0);
+    if (next_cursor.has_value()) {
+      continue;
+    }
+    if (result.sampled > 0 || !may_start_over) {
+      break;
+    }
+    may_start_over = false;
   }
   // Each key views its own keyspace entry, which deleting it frees; the
   // others stay valid, since entries never move.

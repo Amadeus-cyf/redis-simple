@@ -13,8 +13,10 @@
 
 #include "connection/connection.h"
 #include "event_loop/loop.h"
+#include "server/active_expire.h"
 #include "server/aof/aof.h"
 #include "server/client.h"
+#include "server/idle_client_sweeper.h"
 #include "server/io_thread.h"
 #include "server/rdb/rdb.h"
 #include "server/server_context.h"
@@ -39,8 +41,17 @@ class Server {
   void AddClient(std::unique_ptr<Client> client) {
     Client* const key = client.get();
     clients_.emplace(key, std::move(client));
+    // With threaded I/O the client's I/O thread sweeps it instead.
+    if (io_threads_.empty()) {
+      idle_client_sweeper_.Add(key);
+    }
   }
   bool RemoveClient(Client* c);
+  // Keeps the replies to the commands `client` just ran until the event loop
+  // is about to wait for events again. By then every client that was
+  // readable has run its commands, so one AOF flush covers them all, and the
+  // replies are sent after it.
+  void HoldReplies(Client* client);
   // Threaded I/O, enabled when --io-threads is above 1, as in Redis 8: each
   // client belongs to one I/O thread, which reads and frames its requests and
   // writes its replies, while commands run here on the main thread. Returns
@@ -69,25 +80,48 @@ class Server {
   int64_t ServerCron();
   bool StartIoThreads(size_t thread_count);
   void StopIoThreads();
-  // Runs the commands of the clients an I/O thread handed over, flushes the
-  // AOF once for all of them, and hands them back to write the replies.
+  // The clients of one handoff whose commands ran, as a run of `size`
+  // entries of `returning_clients_`, and the I/O thread that gets them back
+  // to write the replies.
+  struct ReturningBatch {
+    IoThread* thread;
+    size_t size;
+  };
+  // Runs the commands of the clients an I/O thread handed over. They go
+  // back to it, to write the replies, after the AOF flush in BeforeSleep,
+  // or at once when there is no AOF.
   void RunHandedOverClients(IoThread* thread,
                             std::vector<IoThread::Handoff>* handoffs);
+  // Runs each time the event loop is about to wait for events: flushes the
+  // AOF once for every command run since the last time, then lets the
+  // replies to those commands go out.
+  void BeforeSleep();
+  void ReleaseHeldReplies();
+  void ReturnClientsToIoThreads();
   int fd_{-1};
   std::unique_ptr<event_loop::Loop> loop_;
   std::unordered_map<Client*, std::unique_ptr<Client>> clients_;
+  // The clients this thread reads and writes: all of them without threaded
+  // I/O, none with it.
+  IdleClientSweeper idle_client_sweeper_;
   std::unique_ptr<db::RedisDb> db_;
   std::unique_ptr<aof::Aof> aof_;
   std::unique_ptr<rdb::Rdb> rdb_;
   ForkStats fork_stats_;
+  ActiveExpire active_expire_;
   // When the fork hooks last let a fork start.
   int64_t fork_start_us_{};
   std::string require_pass_;
   bool protected_mode_{true};
   std::vector<std::unique_ptr<IoThread>> io_threads_;
   ServerContext context_;
-  // Clients of the handoff being run, reused between handoffs.
-  std::vector<Client*> handed_over_;
+  // Clients whose replies wait for the AOF flush in BeforeSleep: those the
+  // main thread writes to, and those an I/O thread writes to.
+  std::vector<Client*> held_clients_;
+  std::vector<Client*> returning_clients_;
+  std::vector<ReturningBatch> returning_batches_;
+  // The held clients being replied to, reused between iterations.
+  std::vector<Client*> releasing_clients_;
 };
 }  // namespace redis_simple
 
