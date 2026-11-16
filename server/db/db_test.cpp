@@ -51,6 +51,25 @@ TEST(RedisDbTest, AddKeyRefusesAnExistingKey) {
   EXPECT_EQ(redis_db->KeyCount(), 2);
 }
 
+TEST(RedisDbTest, ReserveKeysKeepsExistingKeysAndTakesNewOnes) {
+  auto redis_db = RedisDb::Create();
+  constexpr int64_t kExpire = 4'102'444'800'000;
+  ASSERT_TRUE(
+      redis_db->AddKey("old", RedisObject::CreateWithString("value"), kExpire));
+
+  redis_db->ReserveKeys(1000, 500);
+  for (int i = 0; i < 1000; ++i) {
+    ASSERT_TRUE(redis_db->AddKey("key-" + std::to_string(i),
+                                 RedisObject::CreateWithString("v"),
+                                 i % 2 == 0 ? kExpire : 0));
+  }
+  EXPECT_EQ(redis_db->KeyCount(), 1001);
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 501);
+  ASSERT_NE(redis_db->LookupKey("old"), nullptr);
+  EXPECT_EQ(redis_db->Expiration("old"), kExpire);
+  EXPECT_NE(redis_db->LookupKey("key-999"), nullptr);
+}
+
 TEST(RedisDbTest, UnlinkRemovesKeyBeforeReclaimingValue) {
   auto redis_db = RedisDb::Create();
   const int64_t future = utils::NowInMilliseconds() + 60'000;

@@ -102,6 +102,9 @@ class ZSet {
     return Storage().LexCount(spec);
   }
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const;
+  // ForEachEntry from the greatest score down. Only for the skiplist
+  // encoding, whose order an RDB file saves this way.
+  bool ForEachSkiplistEntryDescending(const ZSetEntryVisitor& visitor) const;
   // One ZSCAN step, as Redis runs it: calls `visitor(member, score)` for
   // each member it visits and returns the next cursor, 0 when done. A
   // skiplist-encoded set steps through its member dict

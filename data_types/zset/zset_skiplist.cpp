@@ -124,6 +124,16 @@ bool ZSetSkiplist::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   return true;
 }
 
+bool ZSetSkiplist::ForEachEntryDescending(
+    const ZSetEntryVisitor& visitor) const {
+  for (auto entry = skiplist_->Last(); entry != skiplist_->End(); --entry) {
+    if (!visitor((*entry).Member(), (*entry).score)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 size_t ZSetSkiplist::Scan(size_t cursor, size_t count,
                           const ZSetMemberVisitor& visitor) {
   return dict_->ScanStep(cursor, count,

@@ -85,6 +85,11 @@ bool RedisDb::AddKey(std::string_view key, RedisObjectPtr object,
   return true;
 }
 
+void RedisDb::ReserveKeys(size_t keys, size_t keys_with_expiration) {
+  dict_->Reserve(dict_->Size() + keys);
+  expires_->Reserve(expires_->Size() + keys_with_expiration);
+}
+
 DbStatus RedisDb::SetStringKey(std::string_view key, std::string_view value,
                                int64_t expire, ExistingTtl existing_ttl) {
   const HashedKey hashed(key);

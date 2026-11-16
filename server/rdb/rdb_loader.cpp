@@ -41,6 +41,9 @@ namespace {
 // what an LZF-compressed string may claim to expand to.
 constexpr size_t kMaxStringBytes = size_t{512} * 1024 * 1024;
 constexpr size_t kReadBufferBytes = size_t{64} * 1024;
+// The smallest key in a file: a type byte, an empty key (one length byte)
+// and an empty string value (one length byte).
+constexpr uint64_t kMinKeyRecordBytes = 3;
 
 // Reads the file through a buffer, keeping the CRC64 of what was read and
 // how much of the file remains, which bounds every length the file claims.
@@ -298,6 +301,18 @@ class Loader {
       return Corrupt("an element count larger than the rest of the file");
     }
     return true;
+  }
+
+  // Sizes the keyspace from the file's hint, as Redis' rdbLoad does with
+  // dbExpand. The hint is not trusted: a key takes at least
+  // kMinKeyRecordBytes of the file, so the bytes left bound how many keys can
+  // follow, and a false hint cannot reserve more memory than a file of this
+  // size could fill.
+  void ReserveKeys(uint64_t key_count, uint64_t expire_count) {
+    const uint64_t possible_keys = input_.Remaining() / kMinKeyRecordBytes;
+    const uint64_t keys = std::min(key_count, possible_keys);
+    db_->ReserveKeys(static_cast<size_t>(keys),
+                     static_cast<size_t>(std::min(expire_count, keys)));
   }
 
   bool ReadBytes(size_t size, std::string* const out) {
@@ -1063,6 +1078,7 @@ bool Loader::Load() {
         if (!ReadLength(&key_count) || !ReadLength(&expire_count)) {
           return false;
         }
+        ReserveKeys(key_count, expire_count);
         continue;
       }
       case kOpcodeSlotInfo: {

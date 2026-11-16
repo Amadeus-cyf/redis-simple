@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -164,6 +165,63 @@ TEST(DictStringTest, ShrinksAfterMassDeletes) {
   }
   EXPECT_EQ(dict->Size(), 6);
   EXPECT_LE(visited_buckets, 64);
+}
+
+// Counts the buckets a full scan walks, which is the size of the table.
+size_t CountBuckets(Dict<std::string, int>* dict) {
+  size_t buckets = 0;
+  size_t cursor = 0;
+  while (true) {
+    const auto next = dict->Scan(cursor, [](std::string_view, const int&) {});
+    ++buckets;
+    if (!next.has_value()) {
+      return buckets;
+    }
+    cursor = *next;
+  }
+}
+
+TEST(DictStringTest, ReserveSizesTheTableBeforeInserts) {
+  auto dict = Dict<std::string, int>::Create();
+  dict->Reserve(1000);
+  EXPECT_EQ(dict->Size(), 0);
+  // The table has its full size from the first insert on.
+  dict->Insert("first", -1);
+  EXPECT_EQ(CountBuckets(dict.get()), 1024);
+  for (int i = 0; i < 999; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  EXPECT_EQ(dict->Size(), 1000);
+  EXPECT_EQ(CountBuckets(dict.get()), 1024);
+  EXPECT_EQ(*dict->FindValue(std::string_view("first")), -1);
+  EXPECT_EQ(*dict->FindValue(std::string_view("998")), 998);
+
+  // A smaller request leaves the table as it is.
+  dict->Reserve(10);
+  EXPECT_EQ(CountBuckets(dict.get()), 1024);
+
+  // A count no table can hold leaves the dict usable.
+  auto unchanged = Dict<std::string, int>::Create();
+  unchanged->Reserve(std::numeric_limits<size_t>::max());
+  unchanged->Insert("only", 1);
+  EXPECT_EQ(CountBuckets(unchanged.get()), 4);
+}
+
+TEST(DictStringTest, ReserveKeepsTheEntriesOfAFilledDict) {
+  auto dict = Dict<std::string, int>::Create();
+  for (int i = 0; i < 100; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  dict->Reserve(5000);
+  for (int i = 100; i < 5000; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  EXPECT_EQ(dict->Size(), 5000);
+  for (int i = 0; i < 5000; ++i) {
+    const int* value = dict->FindValue(std::string_view(std::to_string(i)));
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(*value, i);
+  }
 }
 
 TEST(DictStringTest, ScanVisitsEveryKeyWhileTheTableResizes) {

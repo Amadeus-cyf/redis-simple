@@ -340,17 +340,19 @@ void WriteKeyValue(std::string_view key, const db::RedisObject& object,
         out->String(*listpack);
         return;
       }
-      // Redis writes members from the greatest score down, since its
-      // skiplist inserts those at the head in O(1) when loading; any order
-      // loads correctly.
+      // From the greatest score down, as Redis' rdbSaveObject writes them:
+      // each member a loader then inserts is the smallest so far, which a
+      // skiplist places at its head without searching. Any order loads
+      // correctly.
       out->Byte(kTypeZSet2);
       out->String(key);
       out->Length(zset->Size());
-      zset->ForEachEntry([out](std::string_view member, double score) {
-        out->String(member);
-        out->BinaryDouble(score);
-        return true;
-      });
+      zset->ForEachSkiplistEntryDescending(
+          [out](std::string_view member, double score) {
+            out->String(member);
+            out->BinaryDouble(score);
+            return true;
+          });
       return;
     }
     case ObjectType::kHash: {

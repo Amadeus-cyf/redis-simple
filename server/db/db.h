@@ -96,6 +96,10 @@ class RedisDb {
   };
   KeyWithExpiration LookupKeyWithExpiration(std::string_view key);
   int64_t TimeToLive(std::string_view key, TtlResolution resolution);
+  // Sizes the keyspace for `keys` more keys, `keys_with_expiration` of them
+  // with a TTL, before they are added (Redis' dbExpand), so that adding them
+  // does not grow and rehash the tables again and again.
+  void ReserveKeys(size_t keys, size_t keys_with_expiration);
   size_t KeyCount() const { return dict_->Size(); }
   size_t KeysWithExpirationCount() const { return expires_->Size(); }
   // Key views and object references remain valid only until the database is
