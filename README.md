@@ -658,8 +658,10 @@ Run clang-tidy with the project wrapper:
 scripts/run_clang_tidy.sh
 ```
 
-The wrapper uses `build/debug/compile_commands.json` by default and discovers
-Homebrew's LLVM toolchain on macOS. Set `BUILD_DIR`, `CLANG_TIDY_BIN`, or
+The wrapper checks every project file, or only the files it is given
+(`scripts/run_clang_tidy.sh server/db/db.cpp`, as regular expressions). It
+uses `build/debug/compile_commands.json` by default and discovers Homebrew's
+LLVM toolchain on macOS. Set `BUILD_DIR`, `CLANG_TIDY_BIN`, or
 `RUN_CLANG_TIDY_BIN` to override those defaults.
 
 The root `CMakeLists.txt` is target-based. Production, test, and benchmark

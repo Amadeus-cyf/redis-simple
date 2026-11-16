@@ -17,7 +17,9 @@ check that could not run, with the reason.
    changed lines (`git clang-format`) and say that CI's format check is the
    first version-22 check.
 2. Lint: `scripts/run_clang_tidy.sh`. Warnings are errors. CI runs
-   clang-tidy 22, which flags more than older local versions.
+   clang-tidy 22, which flags more than older local versions. The whole
+   project takes a while; name files (`scripts/run_clang_tidy.sh
+   server/db/db.cpp`) to check only those while iterating.
 3. Build and test the debug preset:
 
    ```sh

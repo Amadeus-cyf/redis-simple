@@ -52,11 +52,17 @@ if [[ ! -f "${build_dir}/compile_commands.json" ]]; then
   exit 1
 fi
 
+# run-clang-tidy checks every file matching any positional regex, so the
+# project-wide regex applies only when no files are named:
+# `scripts/run_clang_tidy.sh server/db/db.cpp` checks just that file.
+if [[ $# -eq 0 ]]; then
+  set -- "${source_regex}"
+fi
+
 cd "${repo_root}"
 exec "${run_clang_tidy_bin}" \
   -p "${build_dir}" \
   -clang-tidy-binary "${clang_tidy_bin}" \
   -config-file "${repo_root}/.clang-tidy" \
   -quiet \
-  "$@" \
-  "${source_regex}"
+  "$@"
