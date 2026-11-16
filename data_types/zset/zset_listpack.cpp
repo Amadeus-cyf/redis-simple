@@ -15,31 +15,41 @@
 namespace redis_simple::data_types {
 ZSetListpack::ZSetListpack() = default;
 
-bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
-                                  bool* const changed) {
-  containers::Listpack::IntBuffer member_buffer;
-  if (changed != nullptr) {
-    *changed = false;
-  }
+ZSetAddResult ZSetListpack::Add(std::string_view member, double score,
+                                const ZSetAddRules& rules) {
   if (std::isnan(score)) {
-    return false;
+    return {.status = ZSetAddStatus::kNotANumber, .score = score};
   }
+  const ZSetAddResult skipped{.status = ZSetAddStatus::kSkipped,
+                              .score = score};
   const std::optional<size_t> member_offset = listpack_.FindAndSkip(member, 1);
-  const bool inserted = !member_offset.has_value();
-  if (member_offset.has_value()) {
-    const std::optional<EntryView> entry =
-        EntryAt(*member_offset, &member_buffer);
-    if (!entry.has_value()) {
-      return false;
+  if (!member_offset.has_value()) {
+    if (rules.xx || !InsertSorted(member, score)) {
+      return skipped;
     }
-    if (entry->score == score) {
-      return false;
-    }
-    DeleteMemberScorePair(*member_offset);
+    return {.status = ZSetAddStatus::kAdded, .score = score};
   }
+  containers::Listpack::IntBuffer member_buffer;
+  const std::optional<EntryView> current =
+      EntryAt(*member_offset, &member_buffer);
+  if (!current.has_value()) {
+    return skipped;
+  }
+  const ZSetAddResult result =
+      ApplyAddRulesToExisting(current->score, score, rules);
+  if (result.status != ZSetAddStatus::kUpdated) {
+    return result;
+  }
+  // Like Redis, move the member by deleting its pair and inserting it again.
+  DeleteMemberScorePair(*member_offset);
+  return InsertSorted(member, result.score) ? result : skipped;
+}
+
+bool ZSetListpack::InsertSorted(std::string_view member, double score) {
   // Like Redis, the listpack encoding stores a whole-number score as an
   // integer, which drops the sign of negative zero. The skiplist keeps it.
   const std::string score_text = utils::FloatToString(score == 0 ? 0.0 : score);
+  containers::Listpack::IntBuffer member_buffer;
   std::optional<size_t> offset = listpack_.First();
   while (offset.has_value()) {
     const std::optional<EntryView> entry = EntryAt(*offset, &member_buffer);
@@ -57,10 +67,7 @@ bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
         listpack_.Delete(*offset);
         return false;
       }
-      if (changed != nullptr) {
-        *changed = true;
-      }
-      return inserted;
+      return true;
     }
     offset = NextMemberAfterScore(entry->score_index);
   }
@@ -74,10 +81,7 @@ bool ZSetListpack::InsertOrUpdate(std::string_view member, double score,
     }
     return false;
   }
-  if (changed != nullptr) {
-    *changed = true;
-  }
-  return inserted;
+  return true;
 }
 
 bool ZSetListpack::Delete(std::string_view member) {

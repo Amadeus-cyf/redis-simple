@@ -43,6 +43,11 @@ class ZSet {
   // that are not NaN, in ascending (score, member) order.
   static std::unique_ptr<ZSet> CreateFromListpack(
       std::unique_ptr<containers::Listpack> listpack);
+  // Redis' zsetAdd: adds `member`, or changes its score, as `rules` allow,
+  // looking the member up once. Converts to the skiplist encoding when the
+  // member is too long or too many for a listpack.
+  ZSetAddResult Add(std::string_view member, double score,
+                    const ZSetAddRules& rules);
   // Returns true if `member` is new. `*changed`, when given, reports whether it
   // was inserted or its score changed.
   bool InsertOrUpdate(std::string_view member, double score,
