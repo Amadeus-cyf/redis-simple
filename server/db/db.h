@@ -125,6 +125,13 @@ class RedisDb {
   // Frees what UNLINK and Flush detached, for about `budget_milliseconds`;
   // the server cron calls it every tick. Returns whether any remains.
   bool FreeLazily(int64_t budget_milliseconds);
+  // Hash table upkeep that otherwise only commands drive, for about
+  // `budget_microseconds`; the server cron calls it every tick while no
+  // child runs, as Redis' databasesCron does. Moves entries of a keyspace
+  // or TTL table rehash under way, so an idle server does not keep both the
+  // old and the new table, and starts a shrink that was held back while a
+  // child ran. Returns whether a rehash is still under way.
+  bool RehashIncrementally(int64_t budget_microseconds);
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
   // Pins the clock while one command (or one EXEC) runs, so expiration
   // checks and relative TTLs all see a single time, as Redis'
