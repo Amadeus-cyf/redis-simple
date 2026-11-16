@@ -75,6 +75,33 @@ database, the AOF, the required password, and the I/O threads. The server
 owns that context; tests and AOF replay build their own, so commands never
 depend on a running `Server`.
 
+## Key expiration
+
+A key with a TTL is deleted when a command looks it up after it expired, and
+otherwise by `ActiveExpire` (`server/active_expire.h`), which follows Redis'
+`activeExpireCycle`. A round samples at least 20 keys from the TTL dict (it
+finishes the bucket it is in) and deletes the expired ones; the cycle repeats
+rounds while more than 10% of a round's sample was expired. The time budget
+is checked every 16 rounds, so a cycle can run up to 16 rounds past it.
+
+- The slow cycle runs from the server cron every 100 ms, for about 25 ms.
+- The fast cycle runs from the event loop's before-sleep hook
+  (`Loop::SetBeforeSleep`, called once per iteration right before the loop
+  waits for events), for about 1 ms. It starts only if the previous cycle
+  ran out of time or the running estimate of expired-but-present keys is
+  at least 10%, and never within 2 ms of the previous fast cycle. When the slow
+  cycle keeps up, the hook returns without reading a clock.
+
+Differences from Redis that remain:
+
+- A round has no cap on the buckets it visits (Redis stops after 400): the
+  TTL dict shrinks as it empties, so a round stays short.
+- "Now" is read once per cycle; Redis reads it every round. A key that
+  expires during a cycle is caught by the next one.
+- A cycle does not stop when the scan has gone once around the TTL dict.
+- There is no `active-expire-effort` setting, and a sparsely filled TTL dict
+  is not skipped.
+
 ## Threaded I/O
 
 With `--io-threads` above 1, I/O works as in Redis 8. Each client belongs to
@@ -191,6 +218,14 @@ and continues a rehash already under way only when the two tables differ
 greatly in size. Growing the 4-million-key keyspace table during a `BGSAVE`
 copied about 280 MB before this policy and about 34 MB with it.
 
+Commands move a rehash along, one bucket per operation on the table, so on
+their own an idle server would keep both the old and the new table. The
+server cron therefore calls `RedisDb::RehashIncrementally` every tick while
+no child runs, as Redis' `databasesCron` does: it moves buckets of the
+keyspace and TTL tables for one millisecond (`Dict::RehashSome`), and first
+retries a shrink (`Dict::ShrinkIfNeeded`) that deletes could not start
+while a child ran.
+
 Snapshots are bounded: large strings are split into a `SET` and `APPEND`s,
 and collections are batched by encoded bytes as well as element count, so
 every command fits the replay limit (`Limits`).
@@ -236,8 +271,25 @@ the bytes against vectors Redis produced). Strings are encoded as Redis'
 LZF-compressed when that saves at least four bytes.
 
 The writer buffers records and writes them in 1 MiB blocks, but writes a
-large value straight from the object, so it is never copied. It syncs every
-4 MiB, and it takes no locks and does not log, so a forked child can run it.
+large value straight from the object, so it is never copied. It takes no
+locks and does not log, so a forked child can run it.
+
+Both snapshot writers (this one and the AOF rewrite's `WriteSnapshotFile`)
+push every 4 MiB written towards the disk through `aof::IncrementalSync`, as
+the automatic sync of Redis' `rioFileWrite` does, so dirty pages never pile
+up for the final `fsync`. On Linux each interval after the first calls `sync_file_range` twice:
+once to start writing its own bytes without waiting, and once to wait for
+the interval before it, which has had a whole interval to reach the disk. A
+full `fsync` per interval would also flush the file's metadata and block the
+writer for all of it. Other platforms have no such call and `fsync` each
+interval. After each interval, and after the final `fsync` (which every
+platform still does before the rename), the writer asks the kernel to drop
+the file's pages from its page cache (`posix_fadvise` with `DONTNEED`, on
+Linux), so a snapshot does not crowd out the dataset's memory. As in Redis,
+the save at shutdown keeps them (`RDBFLAGS_KEEP_CACHE`): the next start
+reads that file. These calls go through `aof::FileOps`, where unit tests
+record their order.
+
 The file declares RDB version 11, the oldest that covers every type written,
 so Redis 7.2 and later load it.
 

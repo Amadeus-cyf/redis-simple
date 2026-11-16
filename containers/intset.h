@@ -28,14 +28,20 @@ class Intset {
   ~Intset() = default;
 
  private:
-  static constexpr uint32_t kInitSize = 1;
   enum EncodingType {
     kInt16 = sizeof(int16_t),
     kInt32 = sizeof(int32_t),
     kInt64 = sizeof(int64_t),
   };
   static EncodingType ValueEncoding(int64_t value);
-  void Resize(uint32_t length);
+  // The bytes allocated for `length` values of `encoding`. contents_ always
+  // holds exactly this many for the current length and encoding, so the
+  // capacity needs no member of its own.
+  static size_t CapacityBytes(uint32_t length, EncodingType encoding);
+  // Opens a slot for one more value at `index`.
+  void InsertSlot(uint32_t index);
+  // Closes the slot of the value at `index`.
+  void RemoveSlot(uint32_t index);
   int64_t EncodedValue(uint32_t index, EncodingType encoding) const;
   // The value at `index` of `contents`, an array of `encoding`-wide integers.
   static int64_t DecodeAt(const unsigned char* contents, uint32_t index,
@@ -43,7 +49,6 @@ class Intset {
   void UpgradeAndAdd(int64_t value);
   bool Search(int64_t value, uint32_t* index) const;
   void Set(uint32_t index, int64_t value);
-  void MoveTail(uint32_t from, uint32_t to);
   std::unique_ptr<unsigned char[]> contents_;
   uint32_t length_;
   EncodingType encoding_;

@@ -202,6 +202,11 @@ void Loop::Defer(std::function<void()> callback) {
 }
 
 void Loop::ProcessEvents() {
+  // Runs before the poll's timeout is chosen, so work the callback defers or
+  // schedules is not left waiting behind a sleep.
+  if (before_sleep_) {
+    before_sleep_();
+  }
   ProcessFileEvents();
   ProcessDeferredCallbacks();
   ProcessTimeEvents();

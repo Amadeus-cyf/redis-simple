@@ -67,10 +67,6 @@ class RedisDb {
   // `expire` is an absolute time in milliseconds, or 0 for none.
   DbStatus SetKey(std::string_view key, RedisObjectPtr object, int64_t expire,
                   ExistingTtl existing_ttl = ExistingTtl::kClear);
-  // SetKey with no TTL, returning the stored object. The object moves into
-  // the keyspace entry, so pointers into `object` do not stay valid; use the
-  // returned one.
-  RedisObject* StoreKey(std::string_view key, RedisObjectPtr object);
   // Adds a key that should not exist yet, hashing it once, as loading a
   // file does (Redis' dbAddRDBLoad). Returns false, changing nothing, if the
   // key exists. `expire` is as for SetKey.
@@ -80,6 +76,21 @@ class RedisDb {
   DbStatus SetStringKey(std::string_view key, std::string_view value,
                         int64_t expire,
                         ExistingTtl existing_ttl = ExistingTtl::kClear);
+  // A key located for a write, defined below.
+  class KeySlot;
+  // Looks `key` up for a command that goes on to write it. The slot's
+  // object is null when the key is missing or has expired.
+  KeySlot FindKeyForWrite(std::string_view key);
+  // FindKeyForWrite that adds a missing key, hashing the key and probing the
+  // keyspace once for both, as Redis' lookupKeyWriteWithLink and dbAddByLink
+  // look a key up and then add it at the place the lookup found. A created
+  // key holds an empty string and has no TTL; the caller stores its value
+  // before returning.
+  KeySlot FindOrCreateKey(std::string_view key);
+  // SetStringKey for a key already located by `slot`, which must hold an
+  // object.
+  void SetStringAt(const KeySlot& slot, std::string_view value, int64_t expire,
+                   ExistingTtl existing_ttl = ExistingTtl::kClear);
   DbStatus DeleteKey(std::string_view key);
   // DeleteKey, but a value of more than 64 elements is freed in steps by
   // FreeLazily, so other clients are not held up.
@@ -114,6 +125,13 @@ class RedisDb {
   // Frees what UNLINK and Flush detached, for about `budget_milliseconds`;
   // the server cron calls it every tick. Returns whether any remains.
   bool FreeLazily(int64_t budget_milliseconds);
+  // Hash table upkeep that otherwise only commands drive, for about
+  // `budget_microseconds`; the server cron calls it every tick while no
+  // child runs, as Redis' databasesCron does. Moves entries of a keyspace
+  // or TTL table rehash under way, so an idle server does not keep both the
+  // old and the new table, and starts a shrink that was held back while a
+  // child ran. Returns whether a rehash is still under way.
+  bool RehashIncrementally(int64_t budget_microseconds);
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
   // Pins the clock while one command (or one EXEC) runs, so expiration
   // checks and relative TTLs all see a single time, as Redis'
@@ -171,8 +189,8 @@ class RedisDb {
       return left == right.Key();
     }
   };
-  // Records `expire` for `key`, which must be in the keyspace.
-  void SetExpire(const containers::HashedKey& key, int64_t expire);
+  // Records `expire` for the key `entry` refers to.
+  void SetExpire(KeyRef entry, int64_t expire);
   // Deletes a key whose view points into its own keyspace entry, as keys
   // found by scanning the TTL table do.
   void DeleteStoredKey(std::string_view key);
@@ -185,10 +203,12 @@ class RedisDb {
   // Each public operation hashes its key once and passes the HashedKey to
   // the keyspace, TTL, and WATCH tables, which share one hash seed.
   RedisObject* Lookup(const containers::HashedKey& key);
-  // TTL and WATCH bookkeeping shared by SetKey and SetStringKey once the
-  // value is stored.
-  void FinishSet(const containers::HashedKey& key, int64_t expire,
-                 ExistingTtl existing_ttl);
+  // Finds `key`'s keyspace entry, adding it if missing, without checking
+  // whether an existing key has expired.
+  KeySlot FindOrInsert(const containers::HashedKey& key);
+  // TTL and WATCH bookkeeping shared by the setters once the value is
+  // stored in `slot`.
+  void FinishSet(const KeySlot& slot, int64_t expire, ExistingTtl existing_ttl);
   DbStatus Delete(const containers::HashedKey& key);
   void TouchWatchedKey(const containers::HashedKey& key);
   bool IsKeyExpired(std::string_view key) const;
@@ -219,6 +239,32 @@ class RedisDb {
   bool time_pinned_{};
   // Replay defers expiration checks until all historical writes are applied.
   bool loading_{};
+};
+
+// Carries a key's hash and keyspace entry from the lookup to the write that
+// follows, as Redis passes a dictEntryLink from lookupKeyWriteWithLink to
+// setKeyByLink. The write does not hash the key again and, when
+// FindOrCreateKey located it, does not probe the keyspace again. Valid until
+// the key is deleted or the database is flushed, and no longer than the
+// key's bytes.
+class RedisDb::KeySlot {
+ public:
+  RedisObject* Object() const { return object_; }
+  // Whether FindOrCreateKey added the key.
+  bool Created() const { return created_; }
+
+ private:
+  friend class RedisDb;
+  KeySlot(const containers::HashedKey& key, RedisObject* object, KeyRef entry,
+          bool created)
+      : key_(key), object_(object), entry_(entry), created_(created) {}
+
+  containers::HashedKey key_;
+  RedisObject* object_;
+  // Empty when FindKeyForWrite located the key: Dict's value lookup does not
+  // return the entry.
+  KeyRef entry_;
+  bool created_;
 };
 
 template <typename Visitor>

@@ -60,6 +60,7 @@ bool Server::Run(const ServerOptions& options) {
               .forks = &fork_stats_};
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
+  loop_->SetBeforeSleep([this] { active_expire_.RunFastCycle(db_.get()); });
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
   fd_ = -1;
@@ -269,10 +270,16 @@ int64_t Server::ServerCron() {
   containers::SetDictResizePolicy(child_running
                                       ? containers::DictResizePolicy::kAvoid
                                       : containers::DictResizePolicy::kEnabled);
-  ActiveExpireCycle(db_.get());
+  active_expire_.RunSlowCycle(db_.get());
   // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
   constexpr int64_t kLazyFreeBudgetMs = 10;
   db_->FreeLazily(kLazyFreeBudgetMs);
+  if (!child_running) {
+    // As in Redis' databasesCron: one millisecond per tick. Skipped while a
+    // child runs, since moving entries writes to memory the child shares.
+    constexpr int64_t kRehashBudgetMicroseconds = 1000;
+    db_->RehashIncrementally(kRehashBudgetMicroseconds);
+  }
   idle_client_sweeper_.Sweep();
   return kCronIntervalMs;
 }
