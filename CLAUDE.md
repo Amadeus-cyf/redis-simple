@@ -195,6 +195,12 @@ Guidance for AI coding agents working in this repository.
   since the TTL entry reads its name from that entry. A key name that views
   a keyspace entry (found by scanning the TTL dict) is deleted through
   `DeleteStoredKey`, which touches watchers before freeing it.
+- Active expiration is `ActiveExpire` (`server/active_expire.h`), owned by
+  `Server`: the slow cycle runs from `ServerCron`, the fast one from the
+  loop's before-sleep hook (`Loop::SetBeforeSleep`). Its constants follow
+  Redis' `activeExpireCycle`; test it with an injected `ActiveExpire::Clock`,
+  not with sleeps. The before-sleep hook runs on every loop iteration, so
+  whatever is installed there must return quickly when it has nothing to do.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-2
   (`utils/siphash.h`), as Redis does, to resist hash flooding. Do not depend
   on iteration or `SCAN` order in tests; it changes between runs.
@@ -477,6 +483,10 @@ Before committing, run the relevant build and tests.
 - Keep CMake target-based. Source files are discovered by scoped directory
   globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
   explicitly when they do not belong in a library target.
+- The `release` preset builds with link-time optimization
+  (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`), as Redis' release build does. Keep
+  it on for that preset only, so debug, sanitizer, and fuzz builds stay fast
+  to link.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
