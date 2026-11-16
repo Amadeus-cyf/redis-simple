@@ -20,9 +20,7 @@ containers::Quicklist::RemoveDirection ToQuicklistRemoveDirection(
 }  // namespace
 
 List::List(size_t list_max_listpack_bytes)
-    : listpack_(std::make_unique<containers::Listpack>()),
-      quicklist_(nullptr),
-      list_max_listpack_bytes_(list_max_listpack_bytes) {}
+    : quicklist_(nullptr), list_max_listpack_bytes_(list_max_listpack_bytes) {}
 
 bool List::LPush(std::string_view value) { return Push(value, true); }
 
@@ -47,12 +45,12 @@ bool List::Set(size_t index, std::string_view value) {
     return false;
   }
 
-  if (listpack_) {
-    const std::optional<size_t> offset = listpack_->OffsetAt(index);
-    if (!offset.has_value() || !listpack_->Replace(*offset, value)) {
+  if (listpack_.Allocated()) {
+    const std::optional<size_t> offset = listpack_.OffsetAt(index);
+    if (!offset.has_value() || !listpack_.Replace(*offset, value)) {
       return false;
     }
-    if (listpack_->TotalBytes() > list_max_listpack_bytes_) {
+    if (listpack_.TotalBytes() > list_max_listpack_bytes_) {
       return ConvertListpackToQuicklist();
     }
     return true;
@@ -68,9 +66,9 @@ bool List::Set(size_t index, std::string_view value) {
 
 size_t List::Remove(std::string_view value, size_t limit,
                     RemoveDirection direction) {
-  if (listpack_) {
-    return listpack_->DeleteMatching(value, limit,
-                                     direction == RemoveDirection::kFromTail);
+  if (listpack_.Allocated()) {
+    return listpack_.DeleteMatching(value, limit,
+                                    direction == RemoveDirection::kFromTail);
   }
   const size_t removed =
       quicklist_->Remove(value, limit, ToQuicklistRemoveDirection(direction));
@@ -82,7 +80,7 @@ bool List::Trim(size_t start, size_t stop) {
   const size_t size = Size();
   if (size == 0 || start > stop || start >= size) {
     // Nothing is kept: an empty list is an empty listpack.
-    listpack_ = std::make_unique<containers::Listpack>();
+    listpack_ = containers::Listpack();
     quicklist_.reset();
     return true;
   }
@@ -91,7 +89,7 @@ bool List::Trim(size_t start, size_t stop) {
     return true;
   }
 
-  if (listpack_) {
+  if (listpack_.Allocated()) {
     TrimListpack(start, stop);
     return true;
   }
@@ -104,20 +102,21 @@ bool List::Trim(size_t start, size_t stop) {
 }
 
 void List::TrimListpack(size_t start, size_t stop) {
-  const size_t size = listpack_->Size();
+  const size_t size = ListpackStorage().Size();
   const size_t tail_count = size - stop - 1;
-  const std::optional<size_t> tail_offset = listpack_->OffsetAt(stop + 1);
+  const std::optional<size_t> tail_offset =
+      ListpackStorage().OffsetAt(stop + 1);
   if (tail_offset.has_value()) {
-    listpack_->DeleteRange(*tail_offset, tail_count);
+    ListpackStorage().DeleteRange(*tail_offset, tail_count);
   }
-  const std::optional<size_t> first = listpack_->First();
+  const std::optional<size_t> first = ListpackStorage().First();
   if (first.has_value()) {
-    listpack_->DeleteRange(*first, start);
+    ListpackStorage().DeleteRange(*first, start);
   }
 }
 
 size_t List::Size() const {
-  return listpack_ ? listpack_->Size() : quicklist_->Size();
+  return listpack_.Allocated() ? listpack_.Size() : quicklist_->Size();
 }
 
 size_t List::NodeCount() const {
@@ -140,33 +139,33 @@ std::vector<std::string> List::Range(size_t start, size_t stop) const {
 }
 
 enum List::Encoding List::Encoding() const {
-  return listpack_ ? Encoding::kListpack : Encoding::kQuicklist;
+  return listpack_.Allocated() ? Encoding::kListpack : Encoding::kQuicklist;
 }
 
 bool List::Push(std::string_view value, bool head) {
-  if (listpack_) {
+  if (listpack_.Allocated()) {
     if (WouldExceedListpackLimit(value) && !ConvertListpackToQuicklist()) {
       return false;
     }
-    if (listpack_) {
-      return head ? listpack_->Prepend(value) : listpack_->Append(value);
+    if (listpack_.Allocated()) {
+      return head ? listpack_.Prepend(value) : listpack_.Append(value);
     }
   }
   return head ? quicklist_->LPush(value) : quicklist_->RPush(value);
 }
 
 std::optional<std::string> List::Pop(bool head) {
-  if (listpack_) {
-    if (listpack_->Size() == 0) {
+  if (listpack_.Allocated()) {
+    if (listpack_.Size() == 0) {
       return std::nullopt;
     }
     const std::optional<size_t> offset =
-        head ? listpack_->First() : listpack_->Last();
+        head ? listpack_.First() : listpack_.Last();
     if (!offset.has_value()) {
       return std::nullopt;
     }
-    std::optional<std::string> value = listpack_->Get(*offset);
-    listpack_->Delete(*offset);
+    std::optional<std::string> value = listpack_.Get(*offset);
+    listpack_.Delete(*offset);
     return value;
   }
 
@@ -177,10 +176,10 @@ std::optional<std::string> List::Pop(bool head) {
 }
 
 bool List::WouldExceedListpackLimit(std::string_view value) const {
-  if (!listpack_) {
+  if (!listpack_.Allocated()) {
     return false;
   }
-  const size_t bytes = listpack_->TotalBytes();
+  const size_t bytes = listpack_.TotalBytes();
   const size_t added = containers::Listpack::EstimateEntryBytes(value);
   return bytes > list_max_listpack_bytes_ ||
          added > list_max_listpack_bytes_ - bytes;
@@ -191,7 +190,8 @@ bool List::ConvertListpackToQuicklist() {
       std::make_unique<containers::Quicklist>(list_max_listpack_bytes_);
   // The elements stay in the quicklist even if splitting an oversized node
   // fails, so the list is never left without its contents.
-  const bool adopted = quicklist->AdoptListpack(std::move(listpack_));
+  const bool adopted = quicklist->AdoptListpack(std::move(ListpackStorage()));
+  listpack_.Release();
   quicklist_ = std::move(quicklist);
   return adopted;
 }

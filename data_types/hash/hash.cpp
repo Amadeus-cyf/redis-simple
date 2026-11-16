@@ -19,10 +19,7 @@ bool CanStoreInListpack(std::string_view field, std::string_view value) {
 
 }  // namespace
 
-Hash::Hash()
-    : encoding_(Encoding::kListpack),
-      listpack_(std::make_unique<containers::Listpack>()),
-      dict_(nullptr) {}
+Hash::Hash() : encoding_(Encoding::kListpack), dict_(nullptr) {}
 
 std::unique_ptr<Hash> Hash::CreateForSize(size_t count) {
   std::unique_ptr<Hash> hash(new Hash());
@@ -38,7 +35,7 @@ std::unique_ptr<Hash> Hash::CreateFromListpack(
            listpack->Size() % 2 == 0 &&
            listpack->Size() / 2 <= kListpackMaxEntries);
   std::unique_ptr<Hash> hash(new Hash());
-  hash->listpack_ = std::move(listpack);
+  hash->listpack_ = std::move(*listpack);
   return hash;
 }
 
@@ -66,7 +63,7 @@ bool Hash::Delete(std::string_view field) {
       return false;
     }
     const auto offset = static_cast<size_t>(*field_offset);
-    listpack_->DeleteRange(offset, 2);
+    ListpackStorage().DeleteRange(offset, 2);
     return true;
   }
   if (encoding_ == Encoding::kDict) {
@@ -87,12 +84,12 @@ bool Hash::Exists(std::string_view field) const {
 
 std::string_view Hash::ListpackBytes() const {
   RS_CHECK(encoding_ == Encoding::kListpack);
-  return listpack_->Bytes();
+  return ListpackStorage().Bytes();
 }
 
 size_t Hash::Size() const {
   if (encoding_ == Encoding::kListpack) {
-    return listpack_ == nullptr ? 0 : listpack_->Size() / 2;
+    return listpack_.Allocated() ? listpack_.Size() / 2 : 0;
   }
   if (encoding_ == Encoding::kDict) {
     return dict_ == nullptr ? 0 : dict_->Size();
@@ -114,7 +111,7 @@ bool Hash::CanAppendToListpack(std::string_view field,
                                std::string_view value) const {
   return Size() < kListpackMaxEntries && CanStoreInListpack(field, value) &&
          containers::Listpack::SafeToAdd(
-             listpack_.get(),
+             listpack_.Allocated() ? &listpack_ : nullptr,
              containers::Listpack::EstimateEntryBytes(field) +
                  containers::Listpack::EstimateEntryBytes(value));
 }
@@ -128,11 +125,12 @@ bool Hash::SetListpack(std::string_view field, std::string_view value) {
       SetDict(field, value);
       return false;
     }
-    const std::optional<size_t> value_offset = listpack_->Next(*field_offset);
+    const std::optional<size_t> value_offset =
+        ListpackStorage().Next(*field_offset);
     if (!value_offset.has_value()) {
       return false;
     }
-    listpack_->Replace(*value_offset, value);
+    ListpackStorage().Replace(*value_offset, value);
     return false;
   }
 
@@ -141,7 +139,7 @@ bool Hash::SetListpack(std::string_view field, std::string_view value) {
     SetDict(field, value);
     return true;
   }
-  return listpack_->BatchAppend({{field, 0, false}, {value, 0, false}});
+  return ListpackStorage().BatchAppend({{field, 0, false}, {value, 0, false}});
 }
 
 bool Hash::SetDict(std::string_view field, std::string_view value) {
@@ -158,19 +156,19 @@ void Hash::ConvertListpackToDict(size_t capacity) {
   RS_CHECK(encoding_ == Encoding::kListpack);
   dict_ = containers::Dict<std::string, containers::CompactString>::Create(
       capacity);
-  if (listpack_ != nullptr) {
-    listpack_->ForEachPair(
+  if (listpack_.Allocated()) {
+    listpack_.ForEachPair(
         [this](std::string_view field, std::string_view value) {
           dict_->FindOrInsert(field).first->Assign(value);
           return true;
         });
   }
-  listpack_.reset();
+  listpack_.Release();
   encoding_ = Encoding::kDict;
 }
 
 std::optional<size_t> Hash::FindListpackField(std::string_view field) const {
   RS_CHECK(encoding_ == Encoding::kListpack);
-  return listpack_->FindAndSkip(field, 1);
+  return ListpackStorage().FindAndSkip(field, 1);
 }
 }  // namespace redis_simple::data_types

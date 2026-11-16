@@ -51,24 +51,25 @@ class Quicklist {
   bool ForEachNode(Visitor&& visitor) const {
     for (const Node* node = head_.get(); node != nullptr;
          node = node->next.get()) {
-      if (!visitor(*node->listpack)) {
+      if (!visitor(node->listpack)) {
         return false;
       }
     }
     return true;
   }
   std::optional<size_t> ListpackBytes() const;
-  std::unique_ptr<Listpack> ReleaseListpack();
+  Listpack ReleaseListpack();
   // Takes `listpack` as the only node of this empty list without re-encoding
   // its elements, splitting it if it exceeds the node size limit. This is the
   // inverse of ReleaseListpack, like Redis' quicklistAppendListpack.
-  bool AdoptListpack(std::unique_ptr<Listpack> listpack);
+  bool AdoptListpack(Listpack listpack);
 
  private:
   struct Node {
     Node();
 
-    std::unique_ptr<Listpack> listpack;
+    // In the node, so a node is one allocation besides its bytes.
+    Listpack listpack;
     std::unique_ptr<Node> next;
     Node* prev;
   };
@@ -119,13 +120,13 @@ bool Quicklist::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   size_t index = start - location->local_index;
   for (const Node* node = location->node; node != nullptr && index <= stop;
        node = node->next.get()) {
-    const size_t node_size = node->listpack->Size();
+    const size_t node_size = node->listpack.Size();
     if (node_size == 0) {
       continue;
     }
     const size_t local_start = start > index ? start - index : 0;
     const size_t local_stop = std::min(stop - index, node_size - 1);
-    if (!node->listpack->ForEach(local_start, local_stop, visitor)) {
+    if (!node->listpack.ForEach(local_start, local_stop, visitor)) {
       return false;
     }
     index += node_size;
@@ -149,10 +150,10 @@ bool Quicklist::ForEachReverse(size_t start, size_t stop,
   // List position of the current node's first element.
   size_t node_start = stop - location->local_index;
   while (true) {
-    const size_t node_stop = node_start + node->listpack->Size() - 1;
+    const size_t node_stop = node_start + node->listpack.Size() - 1;
     const size_t local_start = start > node_start ? start - node_start : 0;
     const size_t local_stop = std::min(stop, node_stop) - node_start;
-    if (!node->listpack->ForEachReverse(local_start, local_stop, visitor)) {
+    if (!node->listpack.ForEachReverse(local_start, local_stop, visitor)) {
       return false;
     }
     if (node_start <= start) {
@@ -160,11 +161,11 @@ bool Quicklist::ForEachReverse(size_t start, size_t stop,
     }
     do {
       node = node->prev;
-    } while (node != nullptr && node->listpack->Size() == 0);
+    } while (node != nullptr && node->listpack.Size() == 0);
     if (node == nullptr) {
       return true;
     }
-    node_start -= node->listpack->Size();
+    node_start -= node->listpack.Size();
   }
 }
 }  // namespace redis_simple::containers
