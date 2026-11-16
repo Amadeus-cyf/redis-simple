@@ -997,8 +997,8 @@ void Listpack::ResizeGap(size_t offset, size_t removed_bytes,
   RS_CHECK(offset >= kListpackHeaderSize && tail_offset <= old_bytes);
   const size_t tail_bytes = old_bytes - tail_offset;
   const size_t new_bytes = offset + inserted_bytes + tail_bytes;
-  // Keep spare capacity so repeated inserts do not copy the whole listpack
-  // each time, but release memory once most of it is unused.
+  // Spare capacity keeps repeated inserts from copying the whole listpack
+  // each time; the memory is released once most of it is unused.
   if (new_bytes > capacity_ || new_bytes < capacity_ / 4) {
     ResizeGapInNewStorage(offset, tail_offset, inserted_bytes, new_bytes);
     return;
@@ -1017,12 +1017,15 @@ void Listpack::ResizeGap(size_t offset, size_t removed_bytes,
                                                        size_t inserted_bytes,
                                                        size_t new_bytes) {
   const size_t tail_bytes = TotalBytes() - tail_offset;
-  const size_t wanted = new_bytes > capacity_
-                            ? std::max(new_bytes, capacity_ + (capacity_ / 2))
-                            : new_bytes;
-  // The allocator rounds the request up to this size anyway, so the bytes
-  // the rounding adds cost no memory.
-  const size_t new_capacity = utils::AllocationSizeClass(wanted);
+  // The allocator rounds a request up to its size class anyway, so that
+  // capacity costs no memory and is outgrown only a quarter of a power of two
+  // later. A listpack too large to have a size class grows by half instead.
+  const bool grows_without_size_class =
+      new_bytes > capacity_ && new_bytes > utils::kMaxAllocationSizeClassBytes;
+  const size_t new_capacity =
+      grows_without_size_class
+          ? std::max(new_bytes, capacity_ + (capacity_ / 2))
+          : utils::AllocationSizeClass(new_bytes);
   // Every byte up to the new total is copied here or written by the caller,
   // so the new storage needs no zero-fill.
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage

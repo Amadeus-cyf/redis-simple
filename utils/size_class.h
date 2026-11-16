@@ -5,6 +5,9 @@
 #include <cstddef>
 
 namespace redis_simple::utils {
+// The largest request AllocationSizeClass rounds up.
+inline constexpr size_t kMaxAllocationSizeClassBytes = size_t{64} * 1024;
+
 // The bytes mimalloc, the server's allocator, reserves for a request of
 // `bytes`: multiples of 8 up to 64 bytes, then four sizes per power of two
 // (80, 96, 112, 128, 160, ...) up to 64 KiB. A larger request is returned
@@ -18,9 +21,8 @@ namespace redis_simple::utils {
 constexpr size_t AllocationSizeClass(size_t bytes) {
   constexpr size_t kWordBytes = 8;
   constexpr size_t kMaxWordSteppedBytes = 64;
-  constexpr size_t kMaxClassBytes = 64 * 1024;
   constexpr size_t kClassesPerPowerOfTwo = 4;
-  if (bytes > kMaxClassBytes) {
+  if (bytes > kMaxAllocationSizeClassBytes) {
     return bytes;
   }
   if (bytes <= kWordBytes) {
