@@ -21,6 +21,10 @@ class FileOps {
   virtual ssize_t WriteVector(int fd, const iovec* blocks, int count) = 0;
   virtual int Sync(int fd) = 0;
   virtual int Rename(const char* source, const char* destination) = 0;
+  // close() and unlink(), which BackgroundJobs calls on its file thread;
+  // tests override them to stand in for a slow disk.
+  virtual int Close(int fd);
+  virtual int Unlink(const char* path);
   virtual ~FileOps() = default;
 };
 

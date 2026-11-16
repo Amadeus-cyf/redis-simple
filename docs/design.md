@@ -95,7 +95,7 @@ after they return. Connections close on their I/O thread; the main thread only f
 | `manifest.h`, `.cpp` | The manifest format, and file naming |
 | `records.h`, `.cpp` | Encoding mutations as AOF records |
 | `snapshot.h`, `.cpp` | Writing the database as commands, for a base file with `--aof-use-rdb-preamble no` |
-| `background_jobs.h`, `.cpp` | The background thread that syncs, closes, and deletes files |
+| `background_jobs.h`, `.cpp` | The background threads for file work: one syncs, one closes and deletes |
 | `file_ops.h`, `.cpp` | File system helpers, and the `FileOps` interface tests use to inject failures |
 
 ### Files
@@ -119,7 +119,7 @@ to the last incremental file; only a rewrite starts a new one.
 The manifest is replaced in an order that survives a crash at any point
 (`PersistManifest`): write and sync a temporary file, rename it over the
 manifest, then sync the directory. Files the new manifest retires are deleted
-only after that, on the background thread.
+only after that, on the background file thread.
 
 ### Writing
 
@@ -132,7 +132,7 @@ in `MULTI`/`EXEC` records when there is more than one, so replay applies all
 or none of them.
 
 `Aof::Flush` (Redis' `flushAppendOnlyFile`) writes the buffer. With
-`everysec` it queues an fsync on the background thread once a second, and
+`everysec` it queues an fsync on the background sync thread once a second, and
 when a sync is still running it postpones the write for up to two seconds,
 since on Linux the write would block behind it. With `always` it syncs on the
 event-loop thread. After a write, a buffer that grew past 1 MiB is released,
@@ -161,9 +161,21 @@ files become history and are deleted once that manifest is durable.
 as the allocator's) at that moment, the child would inherit it locked
 forever. The server's fork hooks pause the I/O threads. (Values `UNLINK` and
 `FLUSHDB` detach are freed on the main thread, in steps from the cron, not
-on a thread of their own.) The background job thread never
-allocates, frees, or logs, so it can keep running: its jobs hold paths in
-fixed-size buffers, and its queues keep their memory when cleared. The child
+on a thread of their own.) The background job threads never
+allocate, free, or log, so they can keep running: their jobs hold paths in
+fixed-size buffers, their queues keep their memory when cleared, and the
+thread that queues a sync-then-close reserves the room the sync thread needs
+to hand the close over.
+
+`BackgroundJobs` runs two threads, each with its own queue, as Redis' `bio.c`
+runs one per job class: the sync thread only syncs files (`BIO_AOF_FSYNC`),
+and the file thread closes and deletes them (`BIO_CLOSE_FILE`). Closing the
+last descriptor of a deleted file, or deleting a large one, frees its blocks
+and can take seconds; on a thread of its own it cannot hold up the
+every-second sync, which would otherwise make `Aof::Flush` postpone writes.
+A file to sync and then close is synced on the sync thread and closed on the
+file thread. `Rdb` has its own `BackgroundJobs` for the temporary file of a
+background save that was stopped. The child
 itself takes no locks and does not log.
 
 Hash tables hold back while a child lives. Moving entries to a bigger table
@@ -258,7 +270,9 @@ does not log, and the same fork hooks pause the threads that allocate. The
 server cron (`Rdb::Cron`) reaps it. On success the changes it covered are
 subtracted from the change counter (Redis' `server.dirty`), since writes made
 while it ran are not in the file, and `LASTSAVE` moves to when it ended. A
-child killed by a signal leaves its temporary file, which the parent deletes;
+child killed by a signal leaves its temporary file, which the parent deletes
+on its background file thread (as Redis' `bg_unlink` does, since the file can
+hold most of a snapshot);
 `SIGUSR1`, which shutdown uses to stop it, is not counted as a failure.
 
 As in Redis, only one child runs at a time. The cron passes each side whether

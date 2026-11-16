@@ -16,6 +16,10 @@
 #include <string_view>
 
 namespace redis_simple::aof {
+int FileOps::Close(int fd) { return close(fd); }
+
+int FileOps::Unlink(const char* path) { return unlink(path); }
+
 namespace {
 class SystemFileOps final : public FileOps {
  public:

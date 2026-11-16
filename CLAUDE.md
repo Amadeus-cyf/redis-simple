@@ -295,14 +295,21 @@ Guidance for AI coding agents working in this repository.
 - Change the AOF's base and retired files only through a new manifest,
   replaced in `PersistManifest`'s order (temporary file, sync, rename,
   directory sync), and keep the previous manifest and files until the new one
-  is durable. Delete history files only after that, on the background thread.
+  is durable. Delete history files only after that, on the background file thread.
   Keep failed rewrites observable through `INFO persistence` without
   disabling a still-healthy AOF.
 - No thread may allocate or free memory during a `fork` (the AOF rewrite's
   or `BGSAVE`'s). Pause any new thread that touches the heap through the
   server's fork hooks, which both share, as the I/O threads are.
-  `BackgroundJobs` must not allocate, free, or log. Keep the
+  `BackgroundJobs` must not allocate, free, or log on its threads; reserve
+  what a job needs on the thread that queues it. Keep the
   children free of locks and logging.
+- `BackgroundJobs` keeps one thread and queue per job class, as Redis'
+  `bio.c` does: syncs on the sync thread, closes and deletions on the file
+  thread. Do not put a job that can be slow on the sync thread, and call
+  `close` and `unlink` there through `FileOps` so tests can slow them down.
+  Delete a file that can be large (a stopped save's temporary file, AOF
+  history) through `QueueDeletion`, not inline on the main thread.
 - `Dict` follows a process-wide resize policy (`SetDictResizePolicy`), as
   Redis' `dict_can_resize` does, so tables do not move entries across
   memory a child shares: the fork hooks forbid resizing in the child and set
