@@ -485,8 +485,9 @@ operations included, in RESP2 and RESP3 (the script starts both servers):
 scripts/compare_with_redis.py build/debug/redis_simple
 ```
 
-To compare what replies do not show, each write command's change count and
-whether it fails another client's `WATCH`:
+To compare what replies do not show, each write command's change count,
+whether it fails another client's `WATCH`, and the keyspace it leaves
+behind (so a failed command that leaves an empty key shows up):
 
 ```sh
 scripts/compare_side_effects.py build/debug/redis_simple
@@ -599,7 +600,35 @@ where a regression comes from.
 
 `measure_server_memory.sh` reports idle and loaded RSS and bytes per key.
 `MEMORY_VALUE_SIZES`, `MEMORY_REQUESTS`, and `MEMORY_KEY_RANGE` change the
-load. Both scripts need `redis-benchmark` and `redis-cli`, which ship with
+load.
+
+Instruction counts and memory per key miss work outside the request path,
+so three more scripts cover it. Each takes any number of binaries,
+`redis-server` included, and runs each in a fresh server:
+
+```sh
+# Pauses other clients see during DEL, UNLINK, FLUSHDB, BGSAVE, and
+# BGREWRITEAOF, and how long after the last deadline expired keys are gone
+scripts/measure_pauses.py build/release/redis_simple path/to/baseline/redis_simple redis-server
+# System calls per connection and per request (Linux, needs strace)
+scripts/count_syscalls.py build/release/redis_simple path/to/baseline/redis_simple redis-server
+# How a BGSAVE or rewrite writes its file: dirty pages (Linux), page cache
+# left behind, and, with --trace (Linux, needs strace), the sync calls
+scripts/measure_snapshot_io.py build/release/redis_simple path/to/baseline/redis_simple redis-server --trace
+```
+
+`measure_pauses.py` times with a PING loop, so its numbers vary between
+runs; compare large effects, such as a pause of tens of milliseconds, and
+repeat a run before reporting a small one. Its `window s` column is how
+long the PING columns cover; compare `>1ms` counts only between rows with
+similar windows. `-s` picks scenarios and `-n` the number of keys or
+elements. `count_syscalls.py` attaches strace after startup, so the counts
+cover only the workload; `connect` opens a connection per request, which no
+other script does. strace slows the server, so compare binaries rather than
+reading the counts as absolute. `measure_snapshot_io.py` must write to a
+disk, not a tmpfs; pass `--dir` if the temporary directory is one.
+
+These scripts need `redis-benchmark` and `redis-cli`, which ship with
 Redis (`brew install redis` or `apt install redis-tools`). Like the
 benchmarks, they are not part of CTest or CI.
 

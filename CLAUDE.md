@@ -394,8 +394,9 @@ scripts/check_rdb_interop.py build/debug/redis_simple
 `compare_with_redis.py` compares every supported command's replies, edge
 cases and random operations included; add cases when adding commands or
 options. `compare_side_effects.py` compares what replies do not show: each
-command's change count and whether it fails another client's `WATCH`; add a
-case for every new write command, including ones that change nothing. `check_rdb_interop.py` checks that each server loads the other's RDB
+command's change count, whether it fails another client's `WATCH`, and the
+keyspace left behind; add a case for every new write command, including ones
+that change nothing and ones that fail on a missing or wrong-type key. `check_rdb_interop.py` checks that each server loads the other's RDB
 file.
 
 Run release and sanitizer checks after changes to ownership, memory layout,
@@ -544,7 +545,12 @@ Before committing, run the relevant build and tests.
   `scripts/compare_callgrind.py` shows which functions a regression comes from.
   Use `redis_simple_benchmarks` for changes to one component. Report instruction
   counts, not `redis-benchmark` throughput from a small or shared machine, which
-  varies more than the effects being measured.
+  varies more than the effects being measured. Those counts miss work outside
+  the request path, so also measure, against the baseline and `redis-server`:
+  pauses and expiry speed with `scripts/measure_pauses.py` (freeing, flushing,
+  forking, active expiry), system calls with `scripts/count_syscalls.py`
+  (connection setup, the event loop, I/O threads), and snapshot disk writes
+  with `scripts/measure_snapshot_io.py` (the RDB writer and rewrites).
 - Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
   `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project
   conventions.
