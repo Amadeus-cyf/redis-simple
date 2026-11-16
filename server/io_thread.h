@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -83,10 +84,13 @@ class IoThread {
   // The loop clients of this thread register their sockets with.
   event_loop::Loop* Loop() { return loop_.get(); }
 
-  // Main thread. Assign starts reading a new client; Return hands back a
-  // client whose commands ran, to write its replies and resume reading.
+  // Main thread. Assign starts reading a new client; Return hands back
+  // clients whose commands ran, to write their replies and resume reading.
+  // Return takes the queue's lock and wakes the thread at most once for all
+  // of them, as Redis' sendPendingClientsToIOThreads sends each thread its
+  // clients as one list.
   void Assign(Client* client);
-  void Return(Client* client);
+  void Return(std::span<Client* const> clients);
   // Stops the thread for good; the main thread then owns every client.
   void Stop();
   // Waits until the thread is idle between events, and keeps it there until
@@ -109,7 +113,7 @@ class IoThread {
            std::unique_ptr<Wakeup> inbox_wakeup,
            std::unique_ptr<Wakeup> outbox_wakeup, event_loop::Loop* main_loop,
            ReadyCallback on_ready);
-  void Send(Message message);
+  void Send(std::span<Client* const> clients, bool returning);
 
   // I/O thread.
   void Run();

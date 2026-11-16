@@ -206,9 +206,7 @@ void Server::RunHandedOverClients(
     Stop();
     return;
   }
-  for (Client* const client : handed_over_) {
-    thread->Return(client);
-  }
+  thread->Return(handed_over_);
   handed_over_.clear();
 }
 
