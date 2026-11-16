@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace redis_simple::containers {
@@ -208,5 +209,44 @@ TEST(ReplyBufferTest, CopiesSmallMovedRepliesIntoSharedChunks) {
     expected.append("+OK\r\n");
   }
   EXPECT_EQ(sent, expected);
+}
+
+TEST(ReplyBufferTest, ReleaseBufferFreesTheMainBufferUntilTheNextReply) {
+  ReplyBuffer buffer(4096, 1024);
+  EXPECT_EQ(buffer.BufferCapacity(), 4096);
+  buffer.Append("+OK\r\n", 5);
+  buffer.Consume(5);
+  ASSERT_TRUE(buffer.Empty());
+
+  buffer.ReleaseBuffer();
+  EXPECT_EQ(buffer.BufferCapacity(), 0);
+  EXPECT_TRUE(buffer.Empty());
+  std::vector<iovec> blocks;
+  buffer.FillBlocks(&blocks);
+  EXPECT_TRUE(blocks.empty());
+
+  // A reply larger than the main buffer fills it and overflows as before.
+  const std::string reply(5000, 'x');
+  EXPECT_EQ(buffer.Append(reply.data(), reply.size()), reply.size());
+  EXPECT_EQ(buffer.BufferCapacity(), 4096);
+  EXPECT_EQ(buffer.BufferSize(), 4096);
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 2);
+  EXPECT_EQ(BlockString(blocks[0]) + BlockString(blocks[1]), reply);
+}
+
+TEST(ReplyBufferTest, MovedReplyNeedsNoMainBufferAfterRelease) {
+  ReplyBuffer buffer;
+  buffer.ReleaseBuffer();
+  std::string reply(8192, 'x');
+  EXPECT_EQ(buffer.Append(std::move(reply)), 8192);
+  EXPECT_EQ(buffer.BufferCapacity(), 0);
+  EXPECT_EQ(buffer.ReplyCount(), 1);
+}
+
+TEST(ReplyBufferDeathTest, RejectsReleasingUnsentReplies) {
+  ReplyBuffer buffer;
+  buffer.Append("+OK\r\n", 5);
+  EXPECT_DEATH(buffer.ReleaseBuffer(), "Check failed");
 }
 }  // namespace redis_simple::containers

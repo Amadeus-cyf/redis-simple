@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -15,6 +16,7 @@
 #include "connection/connection.h"
 #include "event_loop/file_event.h"
 #include "event_loop/loop.h"
+#include "event_loop/time_event.h"
 #include "logging/logger.h"
 #include "server/client.h"
 #include "server/client_connection/write_reply.h"
@@ -112,6 +114,12 @@ std::unique_ptr<IoThread> IoThread::Create(size_t index,
     return nullptr;
   }
   thread->outbox_watched_ = true;
+  thread->loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
+      [instance = thread.get()](int64_t /*id*/) {
+        instance->idle_client_sweeper_.Sweep();
+        return IdleClientSweeper::kIntervalMs;
+      },
+      nullptr));
   // The project does not throw, but std::thread reports a failure to start
   // only by throwing std::system_error; catch it at this boundary so the
   // caller sees an ordinary error.
@@ -147,17 +155,22 @@ IoThread::~IoThread() {
 
 void IoThread::Assign(Client* const client) {
   ++clients_;
-  Send({client, false});
+  Send(std::span<Client* const>(&client, 1), false);
 }
 
-void IoThread::Return(Client* const client) { Send({client, true}); }
+void IoThread::Return(std::span<Client* const> clients) { Send(clients, true); }
 
-void IoThread::Send(Message message) {
+void IoThread::Send(std::span<Client* const> clients, bool returning) {
+  if (clients.empty()) {
+    return;
+  }
   bool was_empty = false;
   {
     const std::scoped_lock lock(mutex_);
     was_empty = inbox_.empty();
-    inbox_.push_back(message);
+    for (Client* const client : clients) {
+      inbox_.push_back({client, returning});
+    }
   }
   // The thread takes the whole inbox per wakeup, so only the first message
   // since then needs to wake it.
@@ -227,6 +240,7 @@ void IoThread::HandleInbox() {
       message.client->SetReadsPaused(message.client->ShouldPauseReads());
       WriteReplies(message.client);
     } else {
+      idle_client_sweeper_.Add(message.client);
       StartReading(message.client);
     }
   }
@@ -315,7 +329,10 @@ void IoThread::WriteReplies(Client* const client) {
 }
 
 void IoThread::HandToMain(Client* const client, bool closed) {
-  if (!closed) {
+  if (closed) {
+    // The main thread may free the client as soon as it sees it.
+    idle_client_sweeper_.Remove(client);
+  } else {
     // The main thread owns the client until it returns it. The read callback
     // stays registered, saving two epoll_ctl calls per request; OnReadable
     // leaves the client alone meanwhile. The write callback goes, as only

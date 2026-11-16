@@ -16,6 +16,7 @@
 #include "server/active_expire.h"
 #include "server/aof/aof.h"
 #include "server/client.h"
+#include "server/idle_client_sweeper.h"
 #include "server/io_thread.h"
 #include "server/rdb/rdb.h"
 #include "server/server_context.h"
@@ -40,6 +41,10 @@ class Server {
   void AddClient(std::unique_ptr<Client> client) {
     Client* const key = client.get();
     clients_.emplace(key, std::move(client));
+    // With threaded I/O the client's I/O thread sweeps it instead.
+    if (io_threads_.empty()) {
+      idle_client_sweeper_.Add(key);
+    }
   }
   bool RemoveClient(Client* c);
   // Keeps the replies to the commands `client` just ran until the event loop
@@ -75,11 +80,12 @@ class Server {
   int64_t ServerCron();
   bool StartIoThreads(size_t thread_count);
   void StopIoThreads();
-  // A client whose commands ran, and the I/O thread that gets it back to
-  // write the replies.
-  struct ReturningClient {
+  // The clients of one handoff whose commands ran, as a run of `size`
+  // entries of `returning_clients_`, and the I/O thread that gets them back
+  // to write the replies.
+  struct ReturningBatch {
     IoThread* thread;
-    Client* client;
+    size_t size;
   };
   // Runs the commands of the clients an I/O thread handed over. They go
   // back to it, to write the replies, after the AOF flush in BeforeSleep,
@@ -95,6 +101,9 @@ class Server {
   int fd_{-1};
   std::unique_ptr<event_loop::Loop> loop_;
   std::unordered_map<Client*, std::unique_ptr<Client>> clients_;
+  // The clients this thread reads and writes: all of them without threaded
+  // I/O, none with it.
+  IdleClientSweeper idle_client_sweeper_;
   std::unique_ptr<db::RedisDb> db_;
   std::unique_ptr<aof::Aof> aof_;
   std::unique_ptr<rdb::Rdb> rdb_;
@@ -109,7 +118,8 @@ class Server {
   // Clients whose replies wait for the AOF flush in BeforeSleep: those the
   // main thread writes to, and those an I/O thread writes to.
   std::vector<Client*> held_clients_;
-  std::vector<ReturningClient> returning_clients_;
+  std::vector<Client*> returning_clients_;
+  std::vector<ReturningBatch> returning_batches_;
   // The held clients being replied to, reused between iterations.
   std::vector<Client*> releasing_clients_;
 };

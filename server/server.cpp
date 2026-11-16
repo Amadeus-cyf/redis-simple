@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -162,8 +163,10 @@ void Server::StopIoThreads() {
   for (const std::unique_ptr<IoThread>& thread : io_threads_) {
     thread->Stop();
   }
+  idle_client_sweeper_.Clear();
   held_clients_.clear();
   returning_clients_.clear();
+  returning_batches_.clear();
   clients_.clear();
   context_ = {};
   aof_.reset();
@@ -194,6 +197,7 @@ void Server::ResumeIoThreads() {
 
 void Server::RunHandedOverClients(
     IoThread* const thread, std::vector<IoThread::Handoff>* const handoffs) {
+  const size_t returning_before = returning_clients_.size();
   for (const IoThread::Handoff& handoff : *handoffs) {
     if (handoff.closed) {
       thread->ClientFreed();
@@ -201,7 +205,11 @@ void Server::RunHandedOverClients(
       continue;
     }
     handoff.client->RunParsedQueries();
-    returning_clients_.push_back({thread, handoff.client});
+    returning_clients_.push_back(handoff.client);
+  }
+  if (const size_t size = returning_clients_.size() - returning_before;
+      size > 0) {
+    returning_batches_.push_back({thread, size});
   }
   // Without an AOF no flush has to come first, and an I/O thread that gets
   // its clients back now writes their replies while the main thread runs
@@ -228,6 +236,7 @@ void Server::BeforeSleep() {
     // never sent: the clients stay marked, and the server stops.
     held_clients_.clear();
     returning_clients_.clear();
+    returning_batches_.clear();
     Stop();
     return;
   }
@@ -246,10 +255,14 @@ void Server::ReleaseHeldReplies() {
 }
 
 void Server::ReturnClientsToIoThreads() {
-  for (const ReturningClient& returning : returning_clients_) {
-    returning.thread->Return(returning.client);
+  size_t first = 0;
+  for (const ReturningBatch& batch : returning_batches_) {
+    batch.thread->Return(
+        std::span(returning_clients_).subspan(first, batch.size));
+    first += batch.size;
   }
   returning_clients_.clear();
+  returning_batches_.clear();
 }
 
 void Server::Stop() {
@@ -262,6 +275,7 @@ bool Server::RemoveClient(Client* c) {
   if (c == nullptr) {
     return false;
   }
+  idle_client_sweeper_.Remove(c);
   if (c->AwaitsFlush()) {
     std::erase(held_clients_, c);
   }
@@ -284,7 +298,7 @@ bool Server::InstallAcceptCallback() {
 }
 
 int64_t Server::ServerCron() {
-  constexpr int64_t kCronIntervalMs = 100;
+  constexpr int64_t kCronIntervalMs = IdleClientSweeper::kIntervalMs;
   if (shutdown::StopRequested()) {
     // Redis' prepareForShutdown: when the final save fails, the server keeps
     // running.
@@ -314,6 +328,13 @@ int64_t Server::ServerCron() {
   // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
   constexpr int64_t kLazyFreeBudgetMs = 10;
   db_->FreeLazily(kLazyFreeBudgetMs);
+  if (!child_running) {
+    // As in Redis' databasesCron: one millisecond per tick. Skipped while a
+    // child runs, since moving entries writes to memory the child shares.
+    constexpr int64_t kRehashBudgetMicroseconds = 1000;
+    db_->RehashIncrementally(kRehashBudgetMicroseconds);
+  }
+  idle_client_sweeper_.Sweep();
   return kCronIntervalMs;
 }
 }  // namespace redis_simple

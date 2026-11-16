@@ -60,6 +60,20 @@ Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
    fails under `always`, the server stops and the held replies are never
    sent.
 
+### Idle clients' buffers
+
+A client's query buffer, reply buffer, and argument lists grow with its
+largest request and reply. So that an idle connection does not keep them,
+an `IdleClientSweeper` visits every client once a second, a tenth of them
+per 100 ms tick, and a client that has read nothing since its previous
+visit and holds no unparsed input or unsent reply frees them
+(`Client::ReleaseIdleBuffers`); its next request allocates them again. This
+is the job of Redis' `clientsCronResizeQueryBuffer` and
+`clientsCronResizeOutputBuffer`. Without threaded I/O the server cron runs
+the sweeper. With it, each I/O thread runs its own, from a timer on its
+event loop, over the clients assigned to it, and skips clients the main
+thread holds, as Redis' `IOThreadClientsCron` does.
+
 ### What a command can reach
 
 A handler gets its `Client`. Through it, it reaches its arguments, its reply
@@ -107,7 +121,11 @@ until `Server::BeforeSleep` has flushed the AOF, once for every client that
 ran in that iteration, whichever I/O thread it came from. Then it hands the
 clients back, and the I/O thread writes their replies and resumes reading.
 Without an AOF there is nothing to flush, so each handoff's clients go back
-as soon as their requests have run.
+as soon as their requests have run. Each direction moves a whole
+batch at once: one lock acquisition, and one pipe wakeup only when the
+receiving queue was empty, however many clients the batch holds, as Redis'
+`sendPendingClientsToIOThreads` and `sendPendingClientsToMainThreadIfNeeded`
+join whole lists.
 
 So commands, the database, and the AOF stay on the main thread, and an I/O
 thread only touches its clients' sockets, buffers, and parsers. A client is on
@@ -215,6 +233,14 @@ and continues a rehash already under way only when the two tables differ
 greatly in size. Growing the 4-million-key keyspace table during a `BGSAVE`
 copied about 280 MB before this policy and about 34 MB with it.
 
+Commands move a rehash along, one bucket per operation on the table, so on
+their own an idle server would keep both the old and the new table. The
+server cron therefore calls `RedisDb::RehashIncrementally` every tick while
+no child runs, as Redis' `databasesCron` does: it moves buckets of the
+keyspace and TTL tables for one millisecond (`Dict::RehashSome`), and first
+retries a shrink (`Dict::ShrinkIfNeeded`) that deletes could not start
+while a child ran.
+
 Snapshots are bounded: large strings are split into a `SET` and `APPEND`s,
 and collections are batched by encoded bytes as well as element count, so
 every command fits the replay limit (`Limits`).
@@ -260,8 +286,25 @@ the bytes against vectors Redis produced). Strings are encoded as Redis'
 LZF-compressed when that saves at least four bytes.
 
 The writer buffers records and writes them in 1 MiB blocks, but writes a
-large value straight from the object, so it is never copied. It syncs every
-4 MiB, and it takes no locks and does not log, so a forked child can run it.
+large value straight from the object, so it is never copied. It takes no
+locks and does not log, so a forked child can run it.
+
+Both snapshot writers (this one and the AOF rewrite's `WriteSnapshotFile`)
+push every 4 MiB written towards the disk through `aof::IncrementalSync`, as
+the automatic sync of Redis' `rioFileWrite` does, so dirty pages never pile
+up for the final `fsync`. On Linux each interval after the first calls `sync_file_range` twice:
+once to start writing its own bytes without waiting, and once to wait for
+the interval before it, which has had a whole interval to reach the disk. A
+full `fsync` per interval would also flush the file's metadata and block the
+writer for all of it. Other platforms have no such call and `fsync` each
+interval. After each interval, and after the final `fsync` (which every
+platform still does before the rename), the writer asks the kernel to drop
+the file's pages from its page cache (`posix_fadvise` with `DONTNEED`, on
+Linux), so a snapshot does not crowd out the dataset's memory. As in Redis,
+the save at shutdown keeps them (`RDBFLAGS_KEEP_CACHE`): the next start
+reads that file. These calls go through `aof::FileOps`, where unit tests
+record their order.
+
 The file declares RDB version 11, the oldest that covers every type written,
 so Redis 7.2 and later load it.
 
