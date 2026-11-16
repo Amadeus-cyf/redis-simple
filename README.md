@@ -32,6 +32,10 @@ cmake --preset release
 cmake --build --preset release
 ```
 
+The release preset builds with link-time optimization, as Redis' own release
+build does (`-O3 -flto`), so the compiler can inline calls between source
+files.
+
 The server allocates its objects with the bundled
 [mimalloc](https://github.com/microsoft/mimalloc) (`third_party/mimalloc`,
 v2.5.2). It replaces global `operator new` and `delete` in the server
