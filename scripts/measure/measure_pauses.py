@@ -27,7 +27,7 @@ before reporting a small one.
 
 Pass any number of binaries, including redis-server, to compare them:
 
-  scripts/measure_pauses.py build/release/redis_simple \\
+  scripts/measure/measure_pauses.py build/release/redis_simple \\
       path/to/baseline/redis_simple redis-server -s expire,unlink-hash
 
 Needs redis-cli on PATH, for loading.

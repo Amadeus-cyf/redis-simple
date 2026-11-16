@@ -7,7 +7,7 @@ writes to PROFILE_OUTPUT_DIR, and lists the functions whose counts changed
 most. A function that grows while its caller shrinks by a similar amount was
 usually inlined before and is now called.
 
-Usage: scripts/compare_callgrind.py [-n COUNT] BASELINE.cg BINARY.cg
+Usage: scripts/measure/compare_callgrind.py [-n COUNT] BASELINE.cg BINARY.cg
 """
 
 import argparse

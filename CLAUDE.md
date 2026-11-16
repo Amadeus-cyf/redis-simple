@@ -110,8 +110,8 @@ Guidance for AI coding agents working in this repository.
   the time of writing): manifest format and parsing, file naming and sequence
   numbers, startup, upgrade, loading, flushing, fsync errors, rewrite
   scheduling and limiting, and `INFO` fields. Document any deliberate
-  difference in the README and `docs/design.md`; two exist, where Redis can
-  lose data. Check interoperability with a `redis-server` when one is
+  difference in `server/aof/README.md` and `docs/design.md`; two exist, where
+  Redis can lose data. Check interoperability with a `redis-server` when one is
   available: each must load the other's AOF directory, with the base file
   as RDB (`aof-use-rdb-preamble yes`, the default) and as commands. Detect a
   base's format by its content (`REDIS`), as Redis does, never by its name.
@@ -567,8 +567,16 @@ Before committing, run the relevant build and tests.
   quality checks; clang-tidy warnings are treated as errors.
 - Never put required side effects inside `assert`; release builds must preserve
   behavior when assertions are disabled.
-- Always update relevant docs, including `README.md` and this `CLAUDE.md`, when
-  changing build, test, workflow, or project conventions. `AGENTS.md` only
+- Always update relevant docs, including the READMEs and this `CLAUDE.md`,
+  when changing build, test, workflow, or project conventions. The root
+  `README.md` stays short: requirements, build, run, the command coverage
+  list, and links. Details live next to what they describe:
+  `server/README.md` (protocol, threaded I/O, transactions),
+  `server/aof/README.md`, `server/rdb/README.md`, `integration/README.md`,
+  `fuzz/README.md`, `benchmarks/README.md`, `scripts/README.md` (test
+  runners and checks), `scripts/measure/README.md` (measurement scripts,
+  which CTest and CI do not use), and `docs/development.md` (tooling,
+  style, CI). `AGENTS.md` only
   points here, so keep the guidance in this file.
 - Agent skills live in `.claude/skills/<name>/SKILL.md`, and `.agents/skills`
   is a symlink to that folder, so keep one copy. Use the `pre-pr-check` skill
@@ -598,22 +606,22 @@ Before committing, run the relevant build and tests.
   `main` sets mimalloc's purge delay to 0 (unless `MIMALLOC_PURGE_DELAY` is
   set), so freed memory returns to the OS when it is freed, as with Redis'
   allocator; with the default delay an idle server kept it indefinitely.
-- Measure performance changes to the server with `scripts/profile_server.sh`
+- Measure performance changes to the server with `scripts/measure/profile_server.sh`
   (callgrind instruction counts per workload) and memory changes with
-  `scripts/measure_server_memory.sh` (RSS per key), passing the previous build
+  `scripts/measure/measure_server_memory.sh` (RSS per key), passing the previous build
   as the baseline, as the `benchmark-against-baseline` skill describes;
-  `scripts/compare_callgrind.py` shows which functions a regression comes from.
+  `scripts/measure/compare_callgrind.py` shows which functions a regression comes from.
   Use `redis_simple_benchmarks` for changes to one component. Report instruction
   counts, not `redis-benchmark` throughput from a small or shared machine, which
   varies more than the effects being measured. Those counts miss work outside
   the request path, so also measure, against the baseline and `redis-server`:
-  pauses and expiry speed with `scripts/measure_pauses.py` (freeing, flushing,
-  forking, active expiry), system calls with `scripts/count_syscalls.py`
+  pauses and expiry speed with `scripts/measure/measure_pauses.py` (freeing, flushing,
+  forking, active expiry), system calls with `scripts/measure/count_syscalls.py`
   (connection setup, the event loop, I/O threads), and snapshot disk writes
-  with `scripts/measure_snapshot_io.py` (the RDB writer and rewrites).
-  `scripts/compare_builds.py` summarizes throughput, latency, server CPU,
+  with `scripts/measure/measure_snapshot_io.py` (the RDB writer and rewrites).
+  `scripts/measure/compare_builds.py` summarizes throughput, latency, server CPU,
   and memory for two builds as tables for a pull request, and
-  `scripts/measure_server_cpu.sh` measures server CPU for one workload;
+  `scripts/measure/measure_server_cpu.sh` measures server CPU for one workload;
   both run on macOS, where callgrind does not.
 - Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
   `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project

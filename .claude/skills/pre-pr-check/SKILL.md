@@ -71,7 +71,7 @@ the conflicts normally. Neither needs a force push.
 
 - `git status` is clean apart from the intended change, and no build output
   or scratch files are staged.
-- `README.md` and `CLAUDE.md` describe any changed build, test, workflow, or
-  convention.
+- The READMEs (the root one and the one in the directory changed) and
+  `CLAUDE.md` describe any changed build, test, workflow, or convention.
 - After pushing, watch the pull request's CI and fix failures; it is the
   only place clang-format 22, clang-tidy 22, and the macOS jobs all run.

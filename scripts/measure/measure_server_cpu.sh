@@ -9,7 +9,7 @@
 # Usage: measure_server_cpu.sh PORT RUNS BINARY BASELINE -- \
 #          redis-benchmark arguments
 # Example:
-#   scripts/measure_server_cpu.sh 7460 7 build/release/redis_simple \
+#   scripts/measure/measure_server_cpu.sh 7460 7 build/release/redis_simple \
 #     path/to/baseline/redis_simple -- -t set,get -n 2000000 -P 16
 #
 # Each run starts a fresh server in an empty directory with saving off, runs

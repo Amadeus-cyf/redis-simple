@@ -26,9 +26,9 @@ CPU reports the minimum, which a busy machine disturbs least. Throughput
 and latency still vary by a few percent between runs: trust the CPU column
 for small differences, and repeat a run before reporting one.
 
-  scripts/compare_builds.py path/to/baseline/redis_simple \\
+  scripts/measure/compare_builds.py path/to/baseline/redis_simple \\
       build/release/redis_simple --runs 5
-  scripts/compare_builds.py BASELINE BINARY --only memory --case "sorted set"
+  scripts/measure/compare_builds.py BASELINE BINARY --only memory --case "sorted set"
 
 Works on macOS and Linux. Needs redis-benchmark on PATH, and on macOS
 vmmap, which ships with the Xcode command line tools.

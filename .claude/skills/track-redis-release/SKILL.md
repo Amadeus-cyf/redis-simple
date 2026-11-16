@@ -35,7 +35,8 @@ Read the release notes and the changed code in Redis (`src/t_*.c`,
 - A new command or type: out of scope unless asked. The scripts send only
   supported commands, so this alone does not fail them.
 - A difference this server keeps on purpose: list it under "Known
-  differences" in the `redis-differential-check` skill and in the README.
+  differences" in the `redis-differential-check` skill and in the README of
+  the directory it concerns (`server/aof/README.md` for the AOF).
 
 ## 3. File formats
 

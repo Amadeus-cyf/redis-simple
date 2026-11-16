@@ -22,7 +22,7 @@ The servers write under --dir, which must be on a disk: on tmpfs nothing is
 written back and nothing is dirty. The default, the temporary directory, is
 a tmpfs on some Linux systems (check with `df /tmp`); pass --dir there.
 
-  scripts/measure_snapshot_io.py build/release/redis_simple \\
+  scripts/measure/measure_snapshot_io.py build/release/redis_simple \\
       path/to/baseline/redis_simple redis-server --trace
 
 Needs redis-cli on PATH, for loading.

@@ -39,7 +39,7 @@ scripts/run_redis_compatibility_check.sh build/debug/redis_simple
 redis-cli -p 6379 shutdown nosave
 ```
 
-Profiling (`scripts/profile_server.sh`, ports from 8200), the memory
+Profiling (`scripts/measure/profile_server.sh`, ports from 8200), the memory
 script (8500), `count_syscalls.py` (8700), `measure_snapshot_io.py` (8800),
 and `measure_pauses.py` (8900) use other ports and can run at the same
 time, though timings are steadier one at a time.
@@ -154,5 +154,6 @@ Not bugs; leave them unless the task is about them.
 - `BGREWRITEAOF` with the AOF off replies with an error instead of writing a
   one-off file.
 
-Anything else that differs from the latest Redis is a bug, unless the README
-lists it as a deliberate difference.
+Anything else that differs from the latest Redis is a bug, unless a README
+(`server/README.md`, `server/aof/README.md`, `server/rdb/README.md`) lists
+it as a deliberate difference.

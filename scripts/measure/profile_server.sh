@@ -7,7 +7,7 @@
 # They do not capture cache-miss costs, so confirm large changes with
 # redis-benchmark throughput on a quiet machine.
 #
-# Usage: scripts/profile_server.sh [-w workload[,workload...]] BINARY [BASELINE]
+# Usage: scripts/measure/profile_server.sh [-w workload[,workload...]] BINARY [BASELINE]
 #
 # Requires valgrind (Linux), redis-benchmark, and redis-cli. Set PROFILE_PORT
 # to change the first port used (default 8200) and PROFILE_OUTPUT_DIR to keep
