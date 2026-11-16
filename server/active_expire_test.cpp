@@ -80,11 +80,12 @@ TEST(ActiveExpireTest, CycleReadsTheClocksRarely) {
 
   active_expire.RunSlowCycle(db.get());
 
-  // Deleting everything takes at least kKeys / kSamplesPerRound rounds; the
-  // budget is checked on every sixteenth, and "now" is read once.
+  // A round deletes its twenty samples plus the rest of the last bucket it
+  // visited, taken here as at most twenty more. The budget is checked on
+  // every sixteenth round, and "now" is read once.
   EXPECT_EQ(db->KeyCount(), 0);
   EXPECT_EQ(clock.wall_reads, 1);
-  EXPECT_GE(clock.monotonic_reads, 1 + (kKeys / kSamplesPerRound / 16));
+  EXPECT_GE(clock.monotonic_reads, kKeys / (2 * kSamplesPerRound) / 16);
   EXPECT_LE(clock.monotonic_reads, kKeys / kSamplesPerRound / 4);
 }
 
@@ -110,9 +111,10 @@ TEST(ActiveExpireTest, SlowCycleStopsAtTheFirstTimeCheckPastItsBudget) {
 
   active_expire.RunSlowCycle(db.get());
 
-  // Sixteen rounds of at most twenty keys ran before the check.
+  // Sixteen rounds ran before the check, each deleting about twenty keys
+  // and fewer than forty.
   EXPECT_TRUE(active_expire.HitTimeLimit());
-  EXPECT_GE(db->KeyCount(), 5'000 - 320);
+  EXPECT_GE(db->KeyCount(), 5'000 - 640);
   EXPECT_LT(db->KeyCount(), 5'000);
   EXPECT_DOUBLE_EQ(active_expire.StaleShare(), 0.05);
 }
@@ -147,7 +149,7 @@ TEST(ActiveExpireTest, FastCycleRunsAfterTheSlowCycleRanOutOfTime) {
 
   EXPECT_TRUE(active_expire.HitTimeLimit());
   EXPECT_LT(db->KeyCount(), keys_after_slow_cycle);
-  EXPECT_GE(db->KeyCount(), keys_after_slow_cycle - 640);
+  EXPECT_GE(db->KeyCount(), keys_after_slow_cycle - 1'280);
 }
 
 TEST(ActiveExpireTest, FastCyclesStartAtLeastTwoMillisecondsApart) {
