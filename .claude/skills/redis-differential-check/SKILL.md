@@ -40,8 +40,8 @@ redis-cli -p 6379 shutdown nosave
 ```
 
 Profiling (`scripts/profile_server.sh`, ports from 8200), the memory
-script (8500), `measure_pauses.py` (8600), `count_syscalls.py` (8700), and
-`measure_snapshot_io.py` (8800) use other ports and can run at the same
+script (8500), `count_syscalls.py` (8700), `measure_snapshot_io.py` (8800),
+and `measure_pauses.py` (8900) use other ports and can run at the same
 time, though timings are steadier one at a time.
 
 ## 2. Every command, edge cases and random operations

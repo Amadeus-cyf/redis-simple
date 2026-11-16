@@ -153,7 +153,7 @@ ZADD missing INCR 1 m 2 n
 ZADD missing GT 1 m
 SET missing v EX 0
 SET missing v EX -5
-SET missing v PX 9223372036854775807
+SET missing v EX 9223372036854775807
 SET missing v KEEPTTL EX 10
 SET missing v NX XX
 LPUSH s x

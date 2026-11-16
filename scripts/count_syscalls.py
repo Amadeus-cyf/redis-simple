@@ -19,8 +19,18 @@ Pass any number of binaries, including redis-server, to compare them:
   scripts/count_syscalls.py build/release/redis_simple \\
       path/to/baseline/redis_simple redis-server
 
+The counts are per operation, but not all are the request path's own:
+
+  * `connect` runs 10 clients (-c 10). How many connections the server
+    finds waiting at once, and so its accept count, depends on that number.
+  * With I/O threads, read and write include the calls that wake a thread
+    (on a pipe in redis_simple, an eventfd in Redis), not only socket I/O.
+  * strace slows the server, which changes counts that depend on timing,
+    such as epoll_wait and futex. Compare binaries, not absolute numbers.
+
 Linux only. Needs strace and redis-benchmark on PATH, and permission to
-attach to a child process (kernel.yama.ptrace_scope at most 1).
+attach to a process that is not strace's child: kernel.yama.ptrace_scope 0,
+or root (CAP_SYS_PTRACE).
 """
 
 import argparse

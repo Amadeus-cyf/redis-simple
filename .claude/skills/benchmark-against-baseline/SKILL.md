@@ -65,15 +65,16 @@ python3 third_party/benchmark/tools/compare.py benchmarks \
 ```
 
 `measure_pauses.py` reports, per scenario, how long the command took, the
-longest and 99th-percentile PING round trip of another client, and PINGs
-answered per second; for `expire`, how long the last expired key stayed
-after its deadline. Its timings vary between runs: trust differences of
+longest and 99th-percentile PING round trip of another client, PINGs
+answered per second, and the length of the window those cover; for `expire`,
+the time from the last deadline until no key is left. Its timings vary between runs: trust differences of
 several times or tens of milliseconds, and repeat a run before reporting a
 smaller one. `count_syscalls.py` prints system calls per connection
 (`connect`) and per operation (`unpipelined`, `pipelined`, `io-threads`); a
 call Redis does not make is worth explaining. `measure_snapshot_io.py`
 reports how much of the finished file stays in the page cache, the growth of
-dirty pages during the save, and, with `--trace`, the child's sync calls.
+dirty pages during the save, and, with `--trace`, the server's and its
+child's sync calls.
 
 `compare.py` needs `pip install scipy`; without it, run the same filter in
 both binaries and compare the reported times by hand. Treat differences under

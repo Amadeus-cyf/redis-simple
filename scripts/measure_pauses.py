@@ -8,11 +8,18 @@ server, then runs a client that sends PING in a loop while the scenario's
 trigger runs on another connection, and reports:
 
   trigger   how long the trigger command took to answer; for `expire`, the
-            time from the last key's deadline until DBSIZE reached 0, which
-            is how long expired keys stay in memory
+            time from the last key's deadline until DBSIZE reached 0
   max, p99  the longest and the 99th-percentile PING round trip
   >1ms      how many PINGs took longer than 1 ms
-  ping/s    PINGs answered per second while the scenario ran
+  ping/s    PINGs answered per second
+  window s  the seconds those four columns cover: from the trigger (for
+            `expire`, from the first key's deadline) until 0.5 s after it
+            finished, because frees and expiry continue in steps. Rows
+            with windows of different lengths have `>1ms` counts that do
+            not compare directly.
+
+The PING loop keeps the server busy, so `expire` shows expiry under load,
+not on an idle server.
 
 Timings vary from run to run on a shared machine: compare large effects
 (several times longer, pauses of tens of milliseconds), and repeat a run
@@ -27,6 +34,7 @@ Needs redis-cli on PATH, for loading.
 """
 
 import argparse
+import math
 import multiprocessing
 import os
 import shutil
@@ -57,34 +65,46 @@ def encode(*args):
     return b"".join(out)
 
 
+class ReplyError(Exception):
+    """An error reply from the server."""
+
+
 class Connection:
-    """A blocking RESP client that returns replies as raw values."""
+    """A blocking RESP client that returns replies as raw values.
+
+    An error reply raises ReplyError.
+    """
 
     def __init__(self, port):
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=120)
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.buffer = b""
 
+    def _receive(self):
+        data = self.sock.recv(65536)
+        if not data:
+            raise EOFError("connection closed")
+        self.buffer += data
+
     def _line(self):
         while b"\r\n" not in self.buffer:
-            data = self.sock.recv(65536)
-            if not data:
-                raise EOFError("connection closed")
-            self.buffer += data
+            self._receive()
         line, self.buffer = self.buffer.split(b"\r\n", 1)
         return line
 
     def reply(self):
         line = self._line()
         kind, rest = line[:1], line[1:]
-        if kind in (b"+", b"-", b":"):
+        if kind == b"-":
+            raise ReplyError(rest.decode())
+        if kind in (b"+", b":"):
             return rest
         if kind == b"$":
             size = int(rest)
             if size < 0:
                 return None
             while len(self.buffer) < size + 2:
-                self.buffer += self.sock.recv(65536)
+                self._receive()
             data, self.buffer = self.buffer[:size], self.buffer[size + 2 :]
             return data
         if kind == b"*":
@@ -94,6 +114,15 @@ class Connection:
     def call(self, *args):
         self.sock.sendall(encode(*args))
         return self.reply()
+
+
+def require_free_port(port):
+    """Exits if something listens on PORT: it would be measured instead."""
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=1).close()
+    except OSError:
+        return
+    sys.exit(f"{os.path.basename(sys.argv[0])}: port {port} is in use")
 
 
 def commands(scenario, n, ttl_ms):
@@ -131,12 +160,16 @@ def commands(scenario, n, ttl_ms):
 
 
 def load(port, data):
-    subprocess.run(
+    """Sends DATA with redis-cli --pipe; exits if any command failed."""
+    result = subprocess.run(
         ["redis-cli", "-p", str(port), "--pipe"],
         input=b"".join(data),
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         check=True,
     )
+    if b"errors: 0," not in result.stdout:
+        summary = result.stdout.decode(errors="replace").strip()
+        sys.exit(f"{os.path.basename(sys.argv[0])}: loading failed: {summary}")
 
 
 def wait_for(control, field, timeout):
@@ -166,14 +199,19 @@ def probe(port, stop, results):
 
 
 def run(binary, port, scenario, n, ttl_ms):
+    require_free_port(port)
     directory = tempfile.mkdtemp(prefix="measure_pauses.")
     arguments = [binary, "--port", str(port), "--dir", directory, "--save", ""]
     arguments += ["--appendonly", "yes" if scenario == "bgrewriteaof" else "no"]
+    # Loading must not start a rewrite of its own.
+    arguments += ["--auto-aof-rewrite-percentage", "0"]
     server = subprocess.Popen(
         arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     try:
         for _ in range(100):
+            if server.poll() is not None:
+                sys.exit(f"measure_pauses.py: {binary} exited at startup")
             try:
                 Connection(port).call("PING")
                 break
@@ -194,12 +232,15 @@ def run(binary, port, scenario, n, ttl_ms):
             # Every key's deadline lies between these two moments.
             first_deadline = load_start + ttl_ms / 1000
             last_deadline = load_end + ttl_ms / 1000
-            time.sleep(max(0.0, first_deadline - time.monotonic()))
+            # Leave the prober the half second below to start in.
+            time.sleep(max(0.0, first_deadline - 0.5 - time.monotonic()))
         context = multiprocessing.get_context("spawn")
         stop = context.Event()
         receiver, sender = context.Pipe(duplex=False)
         prober = context.Process(target=probe, args=(port, stop, sender))
         prober.start()
+        # With only the prober's end open, recv() fails if the prober dies.
+        sender.close()
         time.sleep(0.5)
         window_start = time.monotonic()
         if scenario == "expire":
@@ -217,10 +258,11 @@ def run(binary, port, scenario, n, ttl_ms):
                 "bgrewriteaof": ("BGREWRITEAOF",),
             }.get(scenario, ("UNLINK", "big"))
             start = time.perf_counter()
-            reply = control.call(*command)
+            try:
+                control.call(*command)
+            except ReplyError as error:
+                sys.exit(f"measure_pauses.py: {command[0]}: {error}")
             trigger_ms = (time.perf_counter() - start) * 1000
-            if isinstance(reply, bytes) and reply.startswith(b"ERR"):
-                sys.exit(f"measure_pauses.py: {command[0]}: {reply.decode()}")
             if scenario == "bgsave":
                 wait_for(control, b"rdb_bgsave_in_progress", 300)
             elif scenario == "bgrewriteaof":
@@ -240,13 +282,13 @@ def run(binary, port, scenario, n, ttl_ms):
             server.wait()
         shutil.rmtree(directory, ignore_errors=True)
 
+    window = window_end - window_start
     waits = sorted(w for start, w in samples if window_start <= start < window_end)
     if not waits:
-        return trigger_ms, 0.0, 0.0, 0, 0.0
-    p99 = waits[min(len(waits) - 1, int(len(waits) * 0.99))]
+        return trigger_ms, 0.0, 0.0, 0, 0.0, window
+    p99 = waits[math.ceil(len(waits) * 0.99) - 1]
     slow = sum(1 for w in waits if w > 0.001)
-    rate = len(waits) / (window_end - window_start)
-    return trigger_ms, waits[-1] * 1000, p99 * 1000, slow, rate
+    return trigger_ms, waits[-1] * 1000, p99 * 1000, slow, len(waits) / window, window
 
 
 def main():
@@ -269,7 +311,7 @@ def main():
         default=10_000,
         help="TTL of the expire scenario's keys; must exceed loading time",
     )
-    parser.add_argument("--port", type=int, default=8600)
+    parser.add_argument("--port", type=int, default=8900)
     args = parser.parse_args()
     if shutil.which("redis-cli") is None:
         sys.exit("measure_pauses.py: redis-cli is not on PATH")
@@ -284,16 +326,17 @@ def main():
     width = max(len(label) for label in labels)
     print(
         f"{'scenario':<14} {'binary':<{width}} {'trigger ms':>10} "
-        f"{'max ms':>8} {'p99 ms':>8} {'>1ms':>6} {'ping/s':>8}"
+        f"{'max ms':>8} {'p99 ms':>8} {'>1ms':>6} {'ping/s':>8} {'window s':>8}"
     )
     for scenario in scenarios:
         for label, binary in zip(labels, args.binaries):
-            trigger, longest, p99, slow, rate = run(
+            trigger, longest, p99, slow, rate, window = run(
                 binary, args.port, scenario, args.keys, args.ttl_ms
             )
             print(
                 f"{scenario:<14} {label:<{width}} {trigger:>10.1f} "
-                f"{longest:>8.1f} {p99:>8.3f} {slow:>6} {rate:>8.0f}",
+                f"{longest:>8.1f} {p99:>8.3f} {slow:>6} {rate:>8.0f} "
+                f"{window:>8.1f}",
                 flush=True,
             )
 
