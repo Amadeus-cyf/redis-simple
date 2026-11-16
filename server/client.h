@@ -71,6 +71,10 @@ class Client {
   bool ShouldResumeReads() const;
   bool ReadsPaused() const { return reads_paused_; }
   void SetReadsPaused(bool paused) { reads_paused_ = paused; }
+  // Whether the client's I/O thread has handed it to the main thread to run
+  // its commands. Only that I/O thread reads or writes this.
+  bool HandedToMain() const { return handed_to_main_; }
+  void SetHandedToMain(bool handed) { handed_to_main_ = handed; }
   bool ShouldCloseAfterReply() const { return close_after_reply_; }
   void CloseAfterReply() { close_after_reply_ = true; }
   reply::ProtocolVersion Protocol() const { return protocol_; }
@@ -177,6 +181,7 @@ class Client {
   OutputBufferLimits output_limits_;
   reply::ProtocolVersion protocol_{reply::ProtocolVersion::kResp2};
   bool reads_paused_{};
+  bool handed_to_main_{};
   bool freed_{};
   bool close_after_reply_{};
   bool modified_{};

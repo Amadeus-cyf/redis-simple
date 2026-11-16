@@ -223,6 +223,7 @@ void IoThread::HandleInbox() {
     if (message.returning) {
       // Its commands ran: send the replies, then read again unless the
       // output is too far behind.
+      message.client->SetHandedToMain(false);
       message.client->SetReadsPaused(message.client->ShouldPauseReads());
       WriteReplies(message.client);
     } else {
@@ -253,6 +254,15 @@ void IoThread::StartReading(Client* const client) {
 }
 
 void IoThread::OnReadable(Client* const client) {
+  if (client->HandedToMain() || client->ReadsPaused()) {
+    // More input arrived while the main thread runs this client's commands,
+    // or while its output is too far behind. Stop watching the socket, which
+    // stays readable, until WriteReplies starts reading again. Most clients
+    // wait for their replies, so this is rare, and the socket otherwise stays
+    // registered across handoffs, as in Redis 8.
+    client->Connection()->UnsetReadCallback();
+    return;
+  }
   const ssize_t nread = client->ReadQuery();
   reads_processed_.fetch_add(1, std::memory_order_relaxed);
   if (nread <= 0) {
@@ -306,12 +316,12 @@ void IoThread::WriteReplies(Client* const client) {
 
 void IoThread::HandToMain(Client* const client, bool closed) {
   if (!closed) {
-    // The main thread owns the client until it returns it; no event of this
-    // thread may touch it meanwhile.
+    // The main thread owns the client until it returns it. The read callback
+    // stays registered, saving two epoll_ctl calls per request; OnReadable
+    // leaves the client alone meanwhile. The write callback goes, as only
+    // WriteReplies sends replies, once the client is back.
+    client->SetHandedToMain(true);
     connection::Connection* const connection = client->Connection();
-    if (connection->HasReadCallback()) {
-      connection->UnsetReadCallback();
-    }
     if (connection->HasWriteCallback()) {
       connection->UnsetWriteCallback();
     }
