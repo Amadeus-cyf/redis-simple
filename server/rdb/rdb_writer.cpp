@@ -402,12 +402,10 @@ WriteStatus WriteRdbFile(db::RedisDb* const db, const std::string& path,
     out.Byte(kOpcodeResizeDb);
     out.Length(db->KeyCount());
     out.Length(db->KeysWithExpirationCount());
-    // Without any TTL there is nothing to look up for each key.
-    const bool has_expirations = db->KeysWithExpirationCount() > 0;
-    db->ForEachObject([db, has_expirations, &out](
-                          std::string_view key, const db::RedisObject& object) {
-      if (const std::optional<int64_t> expire =
-              has_expirations ? db->Expiration(key) : std::nullopt) {
+    db->ForEachObject([&out](std::string_view key,
+                             const db::RedisObject& object,
+                             std::optional<int64_t> expire) {
+      if (expire.has_value()) {
         out.Byte(kOpcodeExpireTimeMs);
         out.SignedInteger(*expire);
       }

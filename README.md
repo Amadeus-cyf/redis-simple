@@ -534,13 +534,15 @@ Run one group with `--benchmark_filter`, for example
 - `AppendBulkStrings`, `FormatScore`, `AppendScores`: collection reply and
   score encoding.
 - `SetIntersect`: set intersection with and without reusing stored hashes.
-- `DbLookup`, `DbOverwriteString`: keyspace lookups with and without a TTL,
-  and `SET` overwrites in place or with a new object.
+- `DbLookup`, `DbOverwriteString`: keyspace lookups with no TTL, with a TTL
+  on one key, and with a TTL on every key, and `SET` overwrites in place or
+  with a new object.
 - `DbSetString`: `SET` of 3-, 36-, and 100-byte values, as new keys and as
   overwrites. The sizes fall inside `std::string`'s inline buffer, inside the
   embedded-string range, and beyond both.
 - `DbSetCommand`: the `SET` command's keyspace work, a lookup followed by
-  the store, on new and existing keys, with and without a TTL in the table.
+  the store, on new and existing keys, with and without a TTL in the
+  database.
 
 Benchmarks that take a 0 or 1 argument compare two ways of doing the same
 work in one run. They are not part of CTest or CI, because timings vary

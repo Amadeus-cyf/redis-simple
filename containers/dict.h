@@ -247,6 +247,11 @@ class Dict {
   bool Delete(std::string_view key) { return DeleteImpl(key); }
   bool Delete(const char* key) { return Delete(std::string_view(key)); }
   bool Delete(const HashedKey& key) { return DeleteImpl(key); }
+  // Delete that calls `before_delete(EntryRef)` with the entry it found,
+  // once the entry is out of the table and before it is freed, so a caller
+  // indexing entries elsewhere can drop it there without a second lookup.
+  template <typename Lookup, typename Callback>
+  bool DeleteWith(const Lookup& key, Callback&& before_delete);
   std::optional<V> Extract(const K& key) { return ExtractImpl(key); }
   std::optional<V> Extract(std::string_view key) { return ExtractImpl(key); }
   std::optional<V> Extract(const char* key) {
@@ -358,27 +363,34 @@ class Dict {
   mutable size_t pause_rehash_{};
 };
 
-// A stored entry's key and hash, held without a copy of the key, so another
-// Dict can index the same keys: the database's TTL table indexes the
-// keyspace's keys this way, as Redis' expires dict shares the keyspace's.
-// Valid until the entry is deleted or the dict cleared; rehashing relinks
-// entries without moving them.
+// A handle to a stored entry: its key, hash, and value, held without a copy
+// of the key, so another container can index the same entries. The
+// database's TTL index holds keyspace entries this way, as Redis' expires
+// dict shares the keyspace's. Valid until the entry is deleted or the dict
+// cleared; rehashing relinks entries without moving them.
 template <typename K, typename V, typename Hash, typename KeyEqual>
 class Dict<K, V, Hash, KeyEqual>::EntryRef {
  public:
   // An empty handle.
   EntryRef() = default;
   // Whether this refers to an entry; FindEntryRef returns an empty handle
-  // for a missing key. Key() and StoredHash() need a non-empty one.
+  // for a missing key. The accessors below need a non-empty one.
   explicit operator bool() const { return entry_ != nullptr; }
   KeyView Key() const { return entry_->Key(); }
   size_t StoredHash() const { return entry_->hash; }
+  V& Value() const { return entry_->value; }
+  // The key with its stored hash, so looking it up does not hash it again.
+  HashedKey Hashed() const
+    requires std::same_as<Hash, DictHash<std::string>>
+  {
+    return HashedKey(entry_->Key(), entry_->hash);
+  }
   bool operator==(const EntryRef& other) const = default;
 
  private:
   friend class Dict;
-  explicit EntryRef(const DictEntry* entry) : entry_(entry) {}
-  const DictEntry* entry_{};
+  explicit EntryRef(DictEntry* entry) : entry_(entry) {}
+  DictEntry* entry_{};
 };
 
 // Walks every entry once. While an iterator lives the dict moves no entry
@@ -558,7 +570,7 @@ template <typename K, typename V, typename Hash, typename KeyEqual>
 template <typename Lookup>
 V* Dict<K, V, Hash, KeyEqual>::FindValueImpl(const Lookup& key) {
   // Like Redis' dictFind, an empty dict answers without hashing the key,
-  // which keeps lookups in an empty TTL table nearly free.
+  // which keeps lookups in an empty WATCH table nearly free.
   if (Size() == 0) {
     return nullptr;
   }
@@ -641,6 +653,20 @@ bool Dict<K, V, Hash, KeyEqual>::DeleteImpl(const Lookup& key) {
   if (entry == nullptr) {
     return false;
   }
+  entry.reset();
+  ShrinkIfNeeded();
+  return true;
+}
+
+template <typename K, typename V, typename Hash, typename KeyEqual>
+template <typename Lookup, typename Callback>
+bool Dict<K, V, Hash, KeyEqual>::DeleteWith(const Lookup& key,
+                                            Callback&& before_delete) {
+  EntryPtr entry(Unlink(key));
+  if (entry == nullptr) {
+    return false;
+  }
+  before_delete(EntryRef(entry.get()));
   entry.reset();
   ShrinkIfNeeded();
   return true;

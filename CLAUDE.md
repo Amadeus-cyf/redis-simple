@@ -185,16 +185,21 @@ Guidance for AI coding agents working in this repository.
   exactly their length. Read them with `View()` and replace them with
   `Assign()`, which accepts a view of the string's own bytes.
 - `RedisDb` operations hash their key once as a `containers::HashedKey` and
-  pass it to the keyspace, TTL, and WATCH dicts, which share the seeded string
-  hash. Keep operations that touch more than one of those dicts on that path
-  instead of looking the key up by `std::string_view` in each.
-- The TTL dict stores no key names: its keys are `Dict::EntryRef`s, handles
-  to keyspace entries, as Redis' expires dict shares the keyspace's keys.
-  Add a TTL through `RedisDb::SetExpire` once the key is in the keyspace,
-  and remove a key's TTL before its keyspace entry is deleted or extracted,
-  since the TTL entry reads its name from that entry. A key name that views
-  a keyspace entry (found by scanning the TTL dict) is deleted through
-  `DeleteStoredKey`, which touches watchers before freeing it.
+  pass it to the keyspace and WATCH dicts, which share the seeded string
+  hash. Keep operations that touch both on that path instead of looking the
+  key up by `std::string_view` in each.
+- A key's expiration time is stored in its keyspace entry
+  (`RedisDb::KeyValue::expire`, 0 for none), as Redis 8 keeps it in the
+  kvobj, so finding a key also finds its TTL. Do not add a second lookup for
+  it. `RedisDb::expires_` is only an index of the entries that have a TTL,
+  for active expiration to sample: a `containers::HandleSet` of
+  `Dict::EntryRef`s, 8 bytes per member in one array and no allocation per
+  key. An entry is in it exactly while its `expire` is not 0, so change a
+  TTL only through `RedisDb::SetExpire` and `RemoveExpire`, and take an
+  entry out of the index before it is deleted or extracted
+  (`Dict::DeleteWith` hands the entry over just before freeing it). A key
+  found through the index is deleted through `DeleteStoredKey`, which
+  touches watchers before freeing the entry that holds its name.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-2
   (`utils/siphash.h`), as Redis does, to resist hash flooding. Do not depend
   on iteration or `SCAN` order in tests; it changes between runs.
@@ -252,8 +257,9 @@ Guidance for AI coding agents working in this repository.
   converts the value back to raw form. Create objects from borrowed bytes with
   `CreateWithStringCopy`, which embeds without a temporary `std::string`.
 - Each key's `RedisObject` lives inside its keyspace entry
-  (`Dict<std::string, RedisObject>`), as Redis 8 keeps a key and its value
-  in one block, so a key is one allocation. Storing a value moves the object
+  (`Dict<std::string, RedisDb::KeyValue>`), next to its expiration time, as
+  Redis 8 keeps a key, its value, and its TTL in one block, so a key is one
+  allocation. Storing a value moves the object
   into the entry, so never keep a pointer into the object handed to a
   setter. A command that looks a key up and then creates or overwrites it
   uses `RedisDb::FindOrCreateKey` (or `LookupOrCreateTyped` in

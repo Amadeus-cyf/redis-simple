@@ -8,8 +8,8 @@ be compared.
 ## Layers
 
 ```text
-containers/    listpack, quicklist, dict, skiplist, intset: containers that
-               know nothing about Redis types
+containers/    listpack, quicklist, dict, skiplist, intset, handle set:
+               containers that know nothing about Redis types
 data_types/    set, list, sorted set, hash: Redis types built on those, each
                switching encodings as Redis does
 server/db/     the keyspace (RedisDb), TTLs, WATCH, and RedisObject, which
@@ -24,6 +24,18 @@ server/commands/  the command table, and one file of handlers per command
 ```
 
 Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
+
+## The keyspace
+
+`RedisDb` keeps one hash table entry per key, a single allocation that holds
+the key's name, its `RedisObject`, and its expiration time, as Redis 8's
+kvobj does. A lookup that finds the key therefore has its TTL without
+another probe. Active expiration must still sample only keys that have a
+TTL, so the database also keeps an index of those entries
+(`containers::HandleSet`): an open-addressed array of 8-byte entry handles,
+which costs a key with a TTL one slot and no allocation, where Redis' expires
+dict costs it a pointer in a bucket. The index is rebuilt a few slots per
+insert or erase when it fills up or empties.
 
 ## A request's path
 

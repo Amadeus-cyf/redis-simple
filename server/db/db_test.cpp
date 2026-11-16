@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -270,6 +272,49 @@ TEST(RedisDbTest, TtlsFollowTheirKeysThroughGrowthRenameAndDelete) {
             std::optional<int64_t>(kFuture + 7));
   ASSERT_EQ(redis_db->PersistKey(name(11)), DbStatus::kOk);
   EXPECT_EQ(redis_db->Expiration(name(11)), std::nullopt);
+}
+
+TEST(RedisDbTest, TtlIndexHoldsExactlyTheKeysWithATtl) {
+  auto redis_db = RedisDb::Create();
+  constexpr int64_t kFuture = int64_t{1} << 50;
+  redis_db->SetCommandTime(1000);
+  ASSERT_EQ(redis_db->SetStringKey("kept", "v", kFuture), DbStatus::kOk);
+  ASSERT_EQ(redis_db->SetStringKey("cleared", "v", kFuture), DbStatus::kOk);
+  ASSERT_EQ(redis_db->SetStringKey("lapsed", "v", 2000), DbStatus::kOk);
+  ASSERT_EQ(redis_db->SetStringKey("plain", "v", 0), DbStatus::kOk);
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 3);
+
+  // Setting a TTL again replaces it without indexing the key twice.
+  ASSERT_EQ(redis_db->ExpireKeyAt("kept", kFuture + 1), DbStatus::kOk);
+  ASSERT_EQ(redis_db->SetStringKey("kept", "w", 0, ExistingTtl::kKeep),
+            DbStatus::kOk);
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 3);
+  ASSERT_EQ(redis_db->SetStringKey("cleared", "w", 0), DbStatus::kOk);
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 2);
+  // A lookup that finds a key expired drops it from the index too.
+  redis_db->SetCommandTime(3000);
+  EXPECT_EQ(redis_db->LookupKey("lapsed"), nullptr);
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 1);
+
+  std::map<std::string, std::optional<int64_t>> seen;
+  redis_db->ForEachObject([&seen](std::string_view key, const RedisObject&,
+                                  std::optional<int64_t> expire) {
+    seen.emplace(key, expire);
+    return true;
+  });
+  const std::map<std::string, std::optional<int64_t>> expected = {
+      {"kept", kFuture + 1},
+      {"cleared", std::nullopt},
+      {"plain", std::nullopt}};
+  EXPECT_EQ(seen, expected);
+
+  // Only the key with a TTL is sampled, and it has not expired.
+  const ExpireSampleResult sample = redis_db->ExpireSome(20, 3000);
+  EXPECT_EQ(sample.sampled, 1);
+  EXPECT_EQ(sample.expired, 0);
+  redis_db->Flush();
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 0);
+  EXPECT_EQ(redis_db->ExpireSome(20, kFuture + 2).sampled, 0);
 }
 
 TEST(RedisDbTest, ActiveExpirationDeletesManyKeysAndTouchesWatchers) {

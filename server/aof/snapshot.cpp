@@ -263,10 +263,10 @@ SnapshotStatus WriteSnapshotFile(db::RedisDb* const db, const std::string& path,
     return block.size() < options.limits.snapshot_block_bytes ||
            write_block(block);
   };
-  const bool encoded =
-      db->ForEachObject([db, &options, &sink](std::string_view key,
-                                              const db::RedisObject& object) {
-        return EmitKey(key, object, db->Expiration(key), options.limits, &sink);
+  const bool encoded = db->ForEachObject(
+      [&options, &sink](std::string_view key, const db::RedisObject& object,
+                        std::optional<int64_t> expire) {
+        return EmitKey(key, object, expire, options.limits, &sink);
       });
   if (!encoded) {
     if (status == SnapshotStatus::kWritten) {
