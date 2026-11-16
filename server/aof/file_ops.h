@@ -41,6 +41,10 @@ class FileOps {
   // platform has no such call.
   virtual int DropPageCache(int fd);
 
+  // close() and unlink(), which BackgroundJobs calls on its file thread;
+  // tests override them to stand in for a slow disk.
+  virtual int Close(int fd);
+  virtual int Unlink(const char* path);
   virtual ~FileOps() = default;
 };
 

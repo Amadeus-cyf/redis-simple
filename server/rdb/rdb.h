@@ -12,8 +12,9 @@
 #include <vector>
 
 namespace redis_simple::aof {
+class BackgroundJobs;
 class FileOps;
-}
+}  // namespace redis_simple::aof
 
 namespace redis_simple::db {
 class RedisDb;
@@ -135,6 +136,9 @@ class Rdb {
 
   const std::string& FileName() const { return options_.file_name; }
 
+  // Waits until the temporary files queued for deletion are gone.
+  void WaitForBackgroundJobs();
+
  private:
   // How saving the file ended. A background save's child exits with it.
   enum class SaveStatus : uint8_t {
@@ -159,11 +163,17 @@ class Rdb {
   void FinishBackgroundSave(int wait_status);
   // Stops the child without recording a failure (Redis' killRDBChild).
   void AbandonBackgroundSave();
+  // Deletes what a stopped child left of its file (Redis'
+  // rdbRemoveTempFile), on the background file thread: it can hold most of
+  // a snapshot, and freeing that much takes the disk a while.
+  void RemoveTemporaryFile(pid_t child);
   void SetLastBackgroundSaveOk(bool ok);
   // The first save point reached at `now`, if any.
   const SavePoint* ReachedSavePoint(int64_t now) const;
 
   Options options_;
+  // Null if its threads could not start; files are then deleted inline.
+  std::unique_ptr<aof::BackgroundJobs> jobs_;
   std::function<void()> before_fork_;
   std::function<void(bool forked)> after_fork_;
   pid_t child_{-1};

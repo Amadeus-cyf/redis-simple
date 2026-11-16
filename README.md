@@ -135,7 +135,8 @@ the command format, large strings are split into replay-safe commands, and
 collection batches are limited by encoded bytes. When the child finishes, its file becomes the next
 base file, and a new manifest lists it with the incremental file opened at the
 start. The old base and incremental files are then deleted on a background
-thread, as Redis' bio thread does. Writes made during the rewrite are already
+thread, as Redis' bio threads do; syncs run on a separate thread, so a slow
+close or deletion does not delay them. Writes made during the rewrite are already
 in that incremental file, so nothing is buffered or copied at the end. Inside
 `MULTI`, `BGREWRITEAOF` is scheduled and the cron starts it after `EXEC`.
 Shutdown kills a rewrite that has not been installed yet; the previous files

@@ -827,6 +827,8 @@ TEST_F(RdbBackgroundSaveTest, SavesBeforeShutdownOnlyWithSavePoints) {
   ASSERT_TRUE(rdb->SaveBeforeShutdown(Db()));
   EXPECT_FALSE(rdb->BackgroundSaveInProgress());
   EXPECT_TRUE(std::filesystem::exists("dump.rdb"));
+  // The stopped child's file is deleted on the background file thread.
+  rdb->WaitForBackgroundJobs();
   EXPECT_TRUE(OtherFiles().empty());
   EXPECT_EQ(rdb->State().changes_since_last_save, 0);
 
