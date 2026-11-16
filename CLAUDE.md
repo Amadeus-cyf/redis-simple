@@ -270,7 +270,10 @@ Guidance for AI coding agents working in this repository.
   `RunsImmediatelyInMulti` (`EXEC`, `DISCARD`, `MULTI`, `WATCH`, `QUIT`).
   Queued arguments are copied once into the client's `MultiState`, the
   ownership boundary for arguments that outlive a read. `EXEC` runs the queue
-  under the `EXEC` command's pinned clock.
+  under the `EXEC` command's pinned clock. The queue grows geometrically (do
+  not reserve the exact size per command), and `MultiState::Reset` frees a
+  queue that allocated more than 64 KiB so one large transaction does not
+  stay allocated for the rest of the connection.
 - `UNLINK` frees a value of more than 64 elements, and `FLUSHDB` a keyspace
   of more than 4,096 keys, on the main thread in steps:
   `RedisDb::FreeLazily` runs 10 ms per cron tick through `Dict::ClearSome`,
