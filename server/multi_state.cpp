@@ -52,11 +52,12 @@ void MultiState::Reset() {
   active_ = false;
   failed_ = false;
   if (AllocatedBytes() > kRetainedBytes) {
-    // Assigning empty containers frees the storage, which shrink_to_fit is
-    // only asked to do.
-    commands_ = std::vector<QueuedCommand>();
-    arg_ends_ = std::vector<ArgEnd>();
-    args_ = std::string();
+    // Swapping with empty containers frees the storage. shrink_to_fit is
+    // only asked to, and libstdc++ keeps a string's buffer when an empty
+    // string is move-assigned to it.
+    std::vector<QueuedCommand>().swap(commands_);
+    std::vector<ArgEnd>().swap(arg_ends_);
+    std::string().swap(args_);
     return;
   }
   commands_.clear();
