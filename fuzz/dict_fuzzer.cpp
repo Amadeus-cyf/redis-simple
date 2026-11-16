@@ -105,7 +105,14 @@ void RunOperations(FuzzInput* input) {
         Require(ReadWithScan(dict.get()) == model);
         break;
       case 5:
-        dict->Clear();
+        if (value.size() % 2 == 0) {
+          dict->Clear();
+        } else {
+          // In steps, as a flushed keyspace is freed; the Dict is usable
+          // again once the last step reports it empty.
+          while (!dict->ClearSome(key.size() + 1)) {
+          }
+        }
         model.clear();
         break;
       case 6: {

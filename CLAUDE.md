@@ -271,6 +271,12 @@ Guidance for AI coding agents working in this repository.
   Queued arguments are copied once into the client's `MultiState`, the
   ownership boundary for arguments that outlive a read. `EXEC` runs the queue
   under the `EXEC` command's pinned clock.
+- `FLUSHDB` detaches a keyspace of more than 4,096 keys and frees it on the
+  main thread in steps (`RedisDb::FreeFlushedTables`, 10 ms per cron tick,
+  through `Dict::ClearSome`). Do not move that to the `UNLINK` reclaimer's
+  thread: mimalloc keeps memory another thread frees until the thread that
+  allocated it collects, and collecting costs about as much as freeing, so
+  the server either keeps the memory or stalls anyway.
 - Read the time in commands through `RedisDb::Now()`, never the system clock
   directly: it is pinned per command (and per `EXEC`), as Redis'
   `commandTimeSnapshot` is, and read lazily, so commands that touch no TTL

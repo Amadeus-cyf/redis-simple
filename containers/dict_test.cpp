@@ -51,6 +51,24 @@ TEST(DictStringTest, UsesCustomHashAndEqualityPolicies) {
   EXPECT_EQ(*dict->FindValue(std::string_view("kEy")), 1);
 }
 
+TEST(DictStringTest, ClearSomeFreesInStepsAcrossBothTables) {
+  auto dict = Dict<std::string, int>::Create(1024);
+  // The 1025th insert begins a rehash, so entries sit in both tables.
+  for (int i = 0; i < 1025; ++i) {
+    dict->Set("key:" + std::to_string(i), i);
+  }
+  size_t steps = 0;
+  size_t previous_size = dict->Size();
+  while (!dict->ClearSome(100)) {
+    ++steps;
+    EXPECT_LT(dict->Size(), previous_size);
+    previous_size = dict->Size();
+  }
+  EXPECT_GE(steps, 1025 / 200);
+  EXPECT_EQ(dict->Size(), 0);
+  EXPECT_TRUE(dict->ClearSome(0));
+}
+
 TEST(DictStringTest, FindOrInsertHashesOnceAndKeepsExistingValues) {
   auto dict = Dict<std::string, std::string>::Create();
   auto [value, inserted] = dict->FindOrInsert(std::string_view("key"));

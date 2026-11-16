@@ -315,7 +315,11 @@ returns a null reply and runs nothing. `EXEC` and `DISCARD` unwatch every key,
 and one transaction may queue at most 64 MiB of arguments.
 
 `UNLINK` detaches keys synchronously and releases their values on a background
-worker. Command names, arity, access mode, and key positions are held in one
+worker. `FLUSHDB`, in both modes, empties the database at once and frees a
+large keyspace (over 4,096 keys) on the main thread in steps of at most 10 ms
+per 100 ms cron tick, so a flush of millions of keys does not hold up other
+clients; Redis 8 frees it on a background thread and, for `SYNC`, replies
+once that is done. Here the reply comes at once. Command names, arity, access mode, and key positions are held in one
 allocation-free registry used for case-insensitive dispatch and early argument
 validation.
 

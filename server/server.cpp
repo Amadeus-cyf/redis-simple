@@ -262,6 +262,9 @@ int64_t Server::ServerCron() {
                                       ? containers::DictResizePolicy::kAvoid
                                       : containers::DictResizePolicy::kEnabled);
   ActiveExpireCycle(db_.get());
+  // A tenth of each tick, as the flush has already replied.
+  constexpr int64_t kFlushFreeBudgetMs = 10;
+  db_->FreeFlushedTables(kFlushFreeBudgetMs);
   return kCronIntervalMs;
 }
 }  // namespace redis_simple

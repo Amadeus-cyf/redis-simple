@@ -23,8 +23,7 @@ std::unique_ptr<RedisDb> RedisDb::Create() {
 
 RedisDb::RedisDb()
     : dict_(Keyspace::Create()),
-      expires_(
-          containers::Dict<KeyRef, int64_t, KeyRefHash, KeyRefEqual>::Create()),
+      expires_(ExpireTable::Create()),
       watched_keys_(
           containers::Dict<std::string, std::vector<KeyWatcher*>>::Create()) {}
 
@@ -296,9 +295,41 @@ void RedisDb::Flush() {
           });
     }
   }
-  expires_->Clear();
-  dict_->Clear();
   expire_cursor_ = 0;
+  // Freeing a keyspace takes about 70 ms per million keys, during which no
+  // client would be served. Redis 8 frees a flushed database on a background
+  // thread; here memory freed by another thread stays with mimalloc until
+  // this thread collects it, which costs about as much as freeing it, so a
+  // large keyspace is detached and freed on this thread in budgeted steps.
+  constexpr size_t kFlushInPlaceKeys = 4096;
+  if (dict_->Size() <= kFlushInPlaceKeys) {
+    expires_->Clear();
+    dict_->Clear();
+    return;
+  }
+  flushed_.push_back({.expires = std::exchange(expires_, ExpireTable::Create()),
+                      .keyspace = std::exchange(dict_, Keyspace::Create())});
+}
+
+bool RedisDb::FreeFlushedTables(int64_t budget_milliseconds) {
+  // Enough entries that reading the clock costs little, few enough that the
+  // budget is kept to within a fraction of a millisecond.
+  constexpr size_t kEntriesPerStep = 1024;
+  if (flushed_.empty()) {
+    return false;
+  }
+  const int64_t start = utils::MonotonicMilliseconds();
+  while (!flushed_.empty()) {
+    FlushedTables& tables = flushed_.front();
+    if (tables.expires->ClearSome(kEntriesPerStep) &&
+        tables.keyspace->ClearSome(kEntriesPerStep)) {
+      flushed_.pop_front();
+    }
+    if (utils::MonotonicMilliseconds() - start >= budget_milliseconds) {
+      break;
+    }
+  }
+  return !flushed_.empty();
 }
 
 ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
