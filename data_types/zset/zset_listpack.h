@@ -22,8 +22,8 @@ class ZSetListpack : public ZSetStorage {
   void Release() { listpack_.Release(); }
   explicit ZSetListpack(std::unique_ptr<containers::Listpack> listpack)
       : listpack_(std::move(*listpack)) {}
-  bool InsertOrUpdate(std::string_view member, double score,
-                      bool* changed) override;
+  ZSetAddResult Add(std::string_view member, double score,
+                    const ZSetAddRules& rules) override;
   bool Delete(std::string_view member) override;
   std::optional<double> Score(std::string_view member) const override;
   std::optional<ZSetRank> RankAndScore(std::string_view member) const override;
@@ -57,6 +57,9 @@ class ZSetListpack : public ZSetStorage {
     size_t score_index;
   };
 
+  // Inserts the pair at its place in (score, member) order. Returns false,
+  // leaving the listpack as it was, if the listpack cannot hold the pair.
+  bool InsertSorted(std::string_view member, double score);
   void DeleteMemberScorePair(size_t offset);
   // ValueAt and EntryAt format an integer-encoded member into the caller's
   // buffer, so a view from one stays valid while its buffer does.
