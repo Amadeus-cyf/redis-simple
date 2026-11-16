@@ -154,6 +154,13 @@ Guidance for AI coding agents working in this repository.
   so `Flush` never runs inside a transaction.
 - Reply directly after processing a client's input; install a write callback
   only while output remains unsent. Read once per readable event.
+- An idle client keeps no buffers: `IdleClientSweeper` calls
+  `Client::ReleaseIdleBuffers` on each client once a second, from the server
+  cron without threaded I/O and otherwise from the client's I/O thread,
+  which skips clients handed to the main thread. Give new per-client
+  buffers that grow with a request or reply a release there, and keep
+  `DynamicBuffer` and `ReplyBuffer` usable after `Release()` and
+  `ReleaseBuffer()`.
 - Threaded I/O (`--io-threads` above 1) works like Redis 8; see
   `docs/design.md`. Keep commands, the database, and the AOF on the main
   thread, and I/O threads to the client's socket, buffers, and parser. A

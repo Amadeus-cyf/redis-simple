@@ -72,6 +72,14 @@ void DynamicBuffer::Compact() {
   }
 }
 
+void DynamicBuffer::Release() {
+  RS_CHECK(Empty());
+  buffer_.reset();
+  capacity_ = 0;
+  size_ = 0;
+  processed_ = 0;
+}
+
 void DynamicBuffer::MoveUnreadToFront() {
   if (processed_ == 0) {
     return;
@@ -84,6 +92,10 @@ void DynamicBuffer::MoveUnreadToFront() {
 
 std::optional<std::string_view> DynamicBuffer::ReadLineView() {
   const size_t readable = UnreadSize();
+  if (readable == 0) {
+    // Also keeps a released buffer's null pointer away from memchr.
+    return std::nullopt;
+  }
   const auto* newline = static_cast<const char*>(
       std::memchr(buffer_.get() + processed_, '\n', readable));
   if (newline == nullptr) {
@@ -111,10 +123,12 @@ void DynamicBuffer::Resize(size_t n) {
   const size_t doubled = capacity_ > std::numeric_limits<size_t>::max() / 2
                              ? std::numeric_limits<size_t>::max()
                              : capacity_ * 2;
-  const size_t new_capacity = std::max(n, doubled);
+  const size_t new_capacity = std::max({n, doubled, kInitialCapacity});
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
   std::unique_ptr<char[]> new_buffer(new char[new_capacity]);
-  std::memcpy(new_buffer.get(), buffer_.get(), size_);
+  if (size_ > 0) {
+    std::memcpy(new_buffer.get(), buffer_.get(), size_);
+  }
   buffer_ = std::move(new_buffer);
   capacity_ = new_capacity;
 }

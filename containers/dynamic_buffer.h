@@ -26,6 +26,9 @@ class DynamicBuffer {
   // Moves the unread bytes to the front, making room after them, and
   // releases a large buffer once nothing in it is unread.
   void Compact();
+  // Frees the storage of a buffer with nothing unread. The next write
+  // allocates it again.
+  void Release();
   std::optional<std::string_view> ReadLineView();
   std::string ReadLine();
   std::string_view View() const {

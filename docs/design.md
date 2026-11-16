@@ -52,6 +52,20 @@ Each layer uses only the layers listed before it, plus `utils/` and `logging/`.
    (`Aof::Flush`), and only then sends the replies, so a client never sees a
    reply for a write that is not in the file.
 
+### Idle clients' buffers
+
+A client's query buffer, reply buffer, and argument lists grow with its
+largest request and reply. So that an idle connection does not keep them,
+an `IdleClientSweeper` visits every client once a second, a tenth of them
+per 100 ms tick, and a client that has read nothing since its previous
+visit and holds no unparsed input or unsent reply frees them
+(`Client::ReleaseIdleBuffers`); its next request allocates them again. This
+is the job of Redis' `clientsCronResizeQueryBuffer` and
+`clientsCronResizeOutputBuffer`. Without threaded I/O the server cron runs
+the sweeper. With it, each I/O thread runs its own, from a timer on its
+event loop, over the clients assigned to it, and skips clients the main
+thread holds, as Redis' `IOThreadClientsCron` does.
+
 ### What a command can reach
 
 A handler gets its `Client`. Through it, it reaches its arguments, its reply
