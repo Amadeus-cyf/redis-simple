@@ -178,8 +178,9 @@ class Aof {
   // the failure backoff is reset, as in Redis.
   void ScheduleRewrite();
   bool RewriteInProgress() const { return rewrite_child_ > 0; }
+  // `after_fork` runs in the parent, told whether the fork succeeded.
   void SetForkHooks(std::function<void()> before_fork,
-                    std::function<void()> after_fork) {
+                    std::function<void(bool forked)> after_fork) {
     before_fork_ = std::move(before_fork);
     after_fork_ = std::move(after_fork);
   }
@@ -344,7 +345,7 @@ class Aof {
   bool manifest_unsafe_{false};
   int manifest_errno_{0};
   std::function<void()> before_fork_;
-  std::function<void()> after_fork_;
+  std::function<void(bool forked)> after_fork_;
 };
 }  // namespace redis_simple::aof
 

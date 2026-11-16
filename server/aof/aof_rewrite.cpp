@@ -105,7 +105,7 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
   }
   const int fork_errno = errno;
   if (after_fork_) {
-    after_fork_();
+    after_fork_(child > 0);
   }
   if (child < 0) {
     last_rewrite_ok_ = false;

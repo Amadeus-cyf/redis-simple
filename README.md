@@ -183,7 +183,9 @@ more than that many seconds have passed since the last save. The default is
 Redis 8's, `3600 1 300 100 60 10000`. The first `--save` replaces it and later
 ones add pairs; `--save ""` turns saving off. Changes are counted as Redis
 counts them (one per key, member, field, or element set or removed), and
-`INFO persistence` reports them with Redis' other `rdb_` fields. With save
+`INFO persistence` reports them with Redis' other `rdb_` fields, and
+`INFO stats` reports `latest_fork_usec` and `total_forks` for the forks of
+`BGSAVE` and AOF rewrites. With save
 points, the server also saves when it shuts down, and keeps running if that
 save fails. After a failed background save, write commands and `PING` are
 refused with Redis' `MISCONF` error until a save succeeds, unless

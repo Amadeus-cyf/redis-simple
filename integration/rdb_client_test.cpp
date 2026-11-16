@@ -46,9 +46,10 @@ int64_t LastSave(cli::RedisCli* const cli) {
   return std::strtoll(reply.c_str(), nullptr, 10);
 }
 
-// A field of INFO persistence, or an empty string if it is missing.
-std::string InfoField(cli::RedisCli* const cli, std::string_view name) {
-  cli->AddCommand("INFO persistence\r\n");
+// A field of an INFO section, or an empty string if it is missing.
+std::string InfoField(cli::RedisCli* const cli, std::string_view name,
+                      std::string_view section = "persistence") {
+  cli->AddCommand("INFO " + std::string(section) + "\r\n");
   const std::string prefix = std::string(name) + ":";
   for (std::string line : NonEmptyLines(cli->ReadReply())) {
     if (!line.empty() && line.back() == '\r') {
@@ -196,7 +197,9 @@ bool BackgroundSave(cli::RedisCli* const cli) {
       {"rdb_last_bgsave_status", "ok"},      {"rdb_last_bgsave_time_sec", "-1"},
       {"rdb_current_bgsave_time_sec", "-1"}, {"rdb_saves", "0"},
       {"rdb_last_load_keys_loaded", "0"}};
-  if (!ExpectReplies(cli, writes) || !ExpectInfo(cli, before_save)) {
+  if (!ExpectReplies(cli, writes) || !ExpectInfo(cli, before_save) ||
+      InfoField(cli, "total_forks", "stats") != "0" ||
+      InfoField(cli, "latest_fork_usec", "stats") != "0") {
     return false;
   }
   const int64_t before = LastSave(cli);
@@ -213,6 +216,13 @@ bool BackgroundSave(cli::RedisCli* const cli) {
       !ExpectInfo(cli, after_save) || LastSave(cli) < before) {
     return false;
   }
+  // The fork statistics count the save's fork and time it.
+  const std::string fork_usec = InfoField(cli, "latest_fork_usec", "stats");
+  if (InfoField(cli, "total_forks", "stats") != "1" || fork_usec.empty() ||
+      std::strtoll(fork_usec.c_str(), nullptr, 10) <= 0) {
+    RS_LOG_DEBUG("unexpected fork statistics after BGSAVE\n");
+    return false;
+  }
   // Inside EXEC the save is scheduled, and the cron starts it.
   const std::vector<Case> scheduled = {
       {"MULTI\r\n", "OK\n"},
@@ -220,7 +230,8 @@ bool BackgroundSave(cli::RedisCli* const cli) {
       {"EXEC\r\n", "Background saving scheduled\n"},
   };
   if (!ExpectReplies(cli, scheduled) || !WaitForInfo(cli, "rdb_saves", "2") ||
-      !WaitForInfo(cli, "rdb_bgsave_in_progress", "0")) {
+      !WaitForInfo(cli, "rdb_bgsave_in_progress", "0") ||
+      InfoField(cli, "total_forks", "stats") != "2") {
     return false;
   }
   // Not saved by BGSAVE, so only the save at shutdown keeps it.
