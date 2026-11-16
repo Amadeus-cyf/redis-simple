@@ -61,6 +61,10 @@ class ZSetListpack : public ZSetStorage {
   // leaving the listpack as it was, if the listpack cannot hold the pair.
   bool InsertSorted(std::string_view member, double score);
   void DeleteMemberScorePair(size_t offset);
+  // The offset of the first member that sorts after `member` with `score`,
+  // or nullopt if none does.
+  std::optional<size_t> FirstMemberAfter(std::string_view member,
+                                         double score) const;
   // ValueAt and EntryAt format an integer-encoded member into the caller's
   // buffer, so a view from one stays valid while its buffer does.
   std::optional<std::string_view> ValueAt(

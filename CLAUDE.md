@@ -133,6 +133,13 @@ Guidance for AI coding agents working in this repository.
   headers, lengths, and integers, and Redis' backlen layout), since RDB files
   store them as they are; their tests compare bytes with vectors Redis
   produced. Keep any change to their encoding byte-identical to Redis'.
+- `Listpack` and `Intset` have no `realloc`, so each asks for a whole
+  allocator size class (`utils::AllocationSizeClass`, mimalloc's bins) and
+  allocates again only when the size leaves it; the rounding costs no memory
+  under mimalloc. A new buffer is not zero-filled, and the bytes before and
+  after the edit are copied straight to their final offsets. A pair (member
+  and score, field and value) goes in with one `BatchInsert` or `BatchAppend`,
+  never two inserts.
 - The RDB loader never trusts the file: it checks every length against the
   bytes left before allocating, validates encoded listpacks and intsets with
   `containers::ListpackReader` and the intset checks, and rejects duplicates and
