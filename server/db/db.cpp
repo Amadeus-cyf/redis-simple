@@ -365,21 +365,30 @@ ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
 
   std::vector<std::string_view> expired_keys;
   expired_keys.reserve(max_samples);
-  bool scan_complete = false;
-  while (result.sampled < max_samples && !scan_complete) {
+  // A scan resumed near the end of the table can finish without meeting a
+  // key. It then starts over once, so that only an empty table yields an
+  // empty sample; no key is visited twice, since the first pass visited none.
+  bool may_start_over = expire_cursor_ != 0;
+  while (result.sampled < max_samples) {
+    // Every key of a visited bucket is sampled, even past `max_samples`:
+    // the cursor has moved on, so a key left out here would be left out of
+    // every later pass over an unchanged table too.
     const std::optional<size_t> next_cursor = expires_->Scan(
-        expire_cursor_, [&result, &expired_keys, max_samples, now](
-                            const KeyRef& key, const int64_t& expire) {
-          if (result.sampled >= max_samples) {
-            return;
-          }
+        expire_cursor_, [&result, &expired_keys, now](const KeyRef& key,
+                                                      const int64_t& expire) {
           ++result.sampled;
           if (expire <= now) {
             expired_keys.push_back(key.Key());
           }
         });
-    scan_complete = !next_cursor.has_value();
     expire_cursor_ = next_cursor.value_or(0);
+    if (next_cursor.has_value()) {
+      continue;
+    }
+    if (result.sampled > 0 || !may_start_over) {
+      break;
+    }
+    may_start_over = false;
   }
   // Each key views its own keyspace entry, which deleting it frees; the
   // others stay valid, since entries never move.

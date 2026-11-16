@@ -39,7 +39,7 @@ void HandleSAdd(Client* const client) {
   if (added > 0) {
     client->MarkModified(added);
   }
-  client->AddReply(reply::FromInt64(added));
+  client->AddIntegerReply(added);
 }
 
 void HandleSCard(Client* const client) {
@@ -50,7 +50,7 @@ void HandleSCard(Client* const client) {
     return;
   }
   const size_t size = object == nullptr ? 0 : object->Set()->Size();
-  client->AddReply(reply::FromInt64(static_cast<int64_t>(size)));
+  client->AddIntegerReply(static_cast<int64_t>(size));
 }
 
 namespace {
@@ -96,6 +96,7 @@ SetLookup FindSet(db::RedisDb* const redis_db, std::string_view key) {
 
 SetReply EncodeMembers(const Set& set) {
   std::string body;
+  reply::ReserveBulkStrings(set.Size(), &body);
   set.ForEachMember([&body](std::string_view member) {
     reply::AppendBulkString(member, &body);
     return true;
@@ -127,6 +128,8 @@ std::optional<SetReply> SInter(db::RedisDb* const redis_db,
 
   auto smallest = std::ranges::min_element(sets, {}, &Set::Size);
   std::string body;
+  // The smallest set bounds the result.
+  reply::ReserveBulkStrings((*smallest)->Size(), &body);
   size_t count = 0;
   (*smallest)->ForEachMemberWithHash(
       [&sets, &body, &count, smallest](std::string_view member,
@@ -192,6 +195,7 @@ std::optional<SetReply> SUnion(db::RedisDb* const redis_db,
     });
   }
   std::string body;
+  reply::ReserveBulkStrings(members->Size(), &body);
   auto it = MemberDict::Iterator(members.get());
   for (it.SeekToFirst(); it.Valid(); it.Next()) {
     reply::AppendBulkString(it.Key(), &body);
@@ -225,6 +229,8 @@ std::optional<SetReply> SDiff(db::RedisDb* const redis_db,
   }
 
   std::string body;
+  // The first set bounds the result.
+  reply::ReserveBulkStrings(first.set->Size(), &body);
   size_t count = 0;
   first.set->ForEachMemberWithHash(
       [&subtract_sets, &body, &count](std::string_view member,
@@ -275,7 +281,7 @@ void HandleSIsMember(Client* const client) {
     return;
   }
   const bool member = object != nullptr && object->Set()->HasMember(args[1]);
-  client->AddReply(reply::FromInt64(member ? 1 : 0));
+  client->AddIntegerReply(member ? 1 : 0);
 }
 
 void HandleSMembers(Client* const client) {
@@ -291,6 +297,7 @@ void HandleSMembers(Client* const client) {
   }
   const data_types::Set* const set = object->Set();
   std::string encoded = reply::FromSetHeader(set->Size(), client->Protocol());
+  reply::ReserveBulkStrings(set->Size(), &encoded);
   set->ForEachMember([&encoded](std::string_view member) {
     reply::AppendBulkString(member, &encoded);
     return true;
@@ -320,7 +327,7 @@ void HandleSRem(Client* const client) {
   if (removed > 0) {
     client->MarkModified(removed);
   }
-  client->AddReply(reply::FromInt64(removed));
+  client->AddIntegerReply(removed);
 }
 
 void HandleSScan(Client* const client) {

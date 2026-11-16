@@ -177,14 +177,14 @@ void HandleZAdd(Client* const client) {
   }
   if (options.rules.incr) {
     if (totals.processed) {
-      client->AddReply(reply::FromFloat(totals.last_score, client->Protocol()));
+      client->AddFloatReply(totals.last_score);
     } else {
       client->AddReply(reply::NullView(client->Protocol()));
     }
     return;
   }
-  client->AddReply(reply::FromInt64(options.ch ? totals.added + totals.updated
-                                               : totals.added));
+  client->AddIntegerReply(options.ch ? totals.added + totals.updated
+                                     : totals.added);
 }
 
 void HandleZCard(Client* const client) {
@@ -195,7 +195,7 @@ void HandleZCard(Client* const client) {
     return;
   }
   const size_t size = object == nullptr ? 0 : object->ZSet()->Size();
-  client->AddReply(reply::FromInt64(static_cast<int64_t>(size)));
+  client->AddIntegerReply(static_cast<int64_t>(size));
 }
 
 namespace {
@@ -545,11 +545,12 @@ void AddRangeReply(Client* const client, RangeType type, Direction direction) {
   std::move(reply).Send(client);
 }
 
-std::optional<int64_t> ToReplyInteger(size_t value) {
-  if (value > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
-    return std::nullopt;
+void AddCountReply(Client* const client, size_t count) {
+  if (count > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+    client->AddReply(reply::FromError("ERR zset count out of range"));
+    return;
   }
-  return static_cast<int64_t>(value);
+  client->AddIntegerReply(static_cast<int64_t>(count));
 }
 }  // namespace
 
@@ -593,11 +594,8 @@ void HandleZLexCount(Client* const client) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
-  const size_t count = object == nullptr ? 0 : object->ZSet()->LexCount(&spec);
-  const std::optional<int64_t> reply_count = ToReplyInteger(count);
-  client->AddReply(reply_count.has_value()
-                       ? reply::FromInt64(*reply_count)
-                       : reply::FromError("ERR zset count out of range"));
+  AddCountReply(client,
+                object == nullptr ? 0 : object->ZSet()->LexCount(&spec));
 }
 
 void HandleZCount(Client* const client) {
@@ -614,15 +612,7 @@ void HandleZCount(Client* const client) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
-  if (object == nullptr) {
-    client->AddReply(reply::FromInt64(0));
-    return;
-  }
-  const std::optional<int64_t> count =
-      ToReplyInteger(object->ZSet()->Count(&spec));
-  client->AddReply(count.has_value()
-                       ? reply::FromInt64(*count)
-                       : reply::FromError("ERR zset count out of range"));
+  AddCountReply(client, object == nullptr ? 0 : object->ZSet()->Count(&spec));
 }
 
 namespace {
@@ -654,7 +644,7 @@ void AddRankReply(Client* const client, bool reverse) {
   if (with_score) {
     reply::AppendArrayHeader(2, &encoded);
   }
-  encoded.append(reply::FromInt64(static_cast<int64_t>(rank)));
+  reply::AppendInt64(static_cast<int64_t>(rank), &encoded);
   if (with_score) {
     reply::AppendFloat(found->score, client->Protocol(), &encoded);
   }
@@ -688,7 +678,7 @@ void HandleZRem(Client* const client) {
   if (removed > 0) {
     client->MarkModified(removed);
   }
-  client->AddReply(reply::FromInt64(removed));
+  client->AddIntegerReply(removed);
 }
 
 void HandleZScan(Client* const client) {
@@ -732,7 +722,7 @@ void HandleZScore(Client* const client) {
   const std::optional<double> score =
       object == nullptr ? std::nullopt : object->ZSet()->Score(args[1]);
   if (score.has_value()) {
-    client->AddReply(reply::FromFloat(*score, client->Protocol()));
+    client->AddFloatReply(*score);
   } else {
     client->AddReply(reply::NullView(client->Protocol()));
   }

@@ -74,6 +74,7 @@ void AddHashListReply(Client* const client, Visit visit) {
     return;
   }
   std::string encoded = reply::FromArrayHeader(hash->Size());
+  reply::ReserveBulkStrings(hash->Size(), &encoded);
   visit(*hash, [&encoded](std::string_view item) {
     reply::AppendBulkString(item, &encoded);
     return true;
@@ -107,7 +108,7 @@ std::optional<int64_t> SetFields(Client* const client,
 
 void HandleHSet(Client* const client) {
   if (const std::optional<int64_t> added = SetFields(client, "hset")) {
-    client->AddReply(reply::FromInt64(*added));
+    client->AddIntegerReply(*added);
   }
 }
 
@@ -156,7 +157,7 @@ void HandleHDel(Client* const client) {
   if (deleted > 0) {
     client->MarkModified(deleted);
   }
-  client->AddReply(reply::FromInt64(deleted));
+  client->AddIntegerReply(deleted);
 }
 
 void HandleHLen(Client* const client) {
@@ -165,7 +166,7 @@ void HandleHLen(Client* const client) {
     return;
   }
   const size_t size = hash == nullptr ? 0 : hash->Size();
-  client->AddReply(reply::FromInt64(static_cast<int64_t>(size)));
+  client->AddIntegerReply(static_cast<int64_t>(size));
 }
 
 void HandleHExists(Client* const client) {
@@ -175,7 +176,7 @@ void HandleHExists(Client* const client) {
     return;
   }
   const bool exists = hash != nullptr && hash->Exists(args[1]);
-  client->AddReply(reply::FromInt64(exists ? 1 : 0));
+  client->AddIntegerReply(exists ? 1 : 0);
 }
 
 void HandleHGetAll(Client* const client) {
@@ -185,6 +186,7 @@ void HandleHGetAll(Client* const client) {
   }
   const size_t size = hash == nullptr ? 0 : hash->Size();
   std::string encoded = reply::FromMapHeader(size, client->Protocol());
+  reply::ReserveBulkStrings(2 * size, &encoded);
   if (hash != nullptr) {
     hash->ForEachEntry(
         [&encoded](std::string_view field, std::string_view value) {
@@ -239,6 +241,7 @@ void HandleHMGet(Client* const client) {
   }
   const std::string_view null_reply = reply::NullView(client->Protocol());
   std::string encoded = reply::FromArrayHeader(args.size() - 1);
+  reply::ReserveBulkStrings(args.size() - 1, &encoded);
   for (size_t i = 1; i < args.size(); ++i) {
     const bool found =
         hash != nullptr &&
@@ -295,6 +298,6 @@ void HandleHIncrBy(Client* const client) {
   hash->Set(args[1],
             std::string_view(buffer.data(), static_cast<size_t>(length)));
   client->MarkModified();
-  client->AddReply(reply::FromInt64(next));
+  client->AddIntegerReply(next);
 }
 }  // namespace redis_simple::commands::hash
