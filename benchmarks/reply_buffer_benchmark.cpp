@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,31 @@ void ReplyBufferPartialWrites(benchmark::State& state) {
   state.SetBytesProcessed(state.iterations() *
                           static_cast<int64_t>(kReplies * kReplyBytes));
 }
+
+// One bulk-string reply of a large value, as GET queues it, then one write.
+// Argument 1 queues the value by reference; 0 copies it into reply chunks.
+void ReplyBufferLargeBulkReply(benchmark::State& state) {
+  const auto bytes = static_cast<size_t>(state.range(0));
+  const bool by_reference = state.range(1) != 0;
+  const auto value = std::make_shared<const std::string>(bytes, 'v');
+  const std::string header = "$" + std::to_string(bytes) + "\r\n";
+  containers::ReplyBuffer buffer;
+  std::vector<iovec> blocks;
+  for (auto _ : state) {
+    (void)_;
+    buffer.Append(header.data(), header.size());
+    if (by_reference) {
+      buffer.Append(value);
+    } else {
+      buffer.Append(value->data(), value->size());
+    }
+    buffer.Append("\r\n", 2);
+    buffer.FillBlocks(&blocks);
+    benchmark::DoNotOptimize(blocks.data());
+    buffer.Consume(buffer.PendingBytes());
+  }
+  state.SetBytesProcessed(state.iterations() * state.range(0));
+}
 }  // namespace
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
@@ -64,5 +90,8 @@ BENCHMARK(ReplyBufferAppendAndWrite)
     ->ArgsProduct({{1, 64, 1024}, {8, 512}})
     ->ArgNames({"replies", "bytes"});
 BENCHMARK(ReplyBufferPartialWrites);
+BENCHMARK(ReplyBufferLargeBulkReply)
+    ->ArgsProduct({{65'536, 1'048'576}, {0, 1}})
+    ->ArgNames({"bytes", "by_reference"});
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple

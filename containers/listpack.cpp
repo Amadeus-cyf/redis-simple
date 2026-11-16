@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "utils/check.h"
+#include "utils/size_class.h"
 #include "utils/strings.h"
 
 namespace redis_simple::containers {
@@ -77,8 +78,7 @@ void StoreLittleEndian(uint64_t value, unsigned char* bytes) {
 }  // namespace
 
 Listpack::Listpack()
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
-    : listpack_(std::make_unique<unsigned char[]>(kListpackHeaderSize + 1)),
+    : listpack_(new unsigned char[kListpackHeaderSize + 1]),
       capacity_(kListpackHeaderSize + 1) {
   SetTotalBytes(kListpackHeaderSize + 1);
   SetNumOfElements(0);
@@ -270,6 +270,12 @@ bool Listpack::BatchInsert(size_t offset,
                      entries.size());
 }
 
+bool Listpack::BatchInsert(size_t offset,
+                           std::initializer_list<ListpackEntry> entries) {
+  return BatchInsert(offset, Position::kInsertBefore, entries.begin(),
+                     entries.size());
+}
+
 std::optional<size_t> Listpack::OffsetAt(size_t index) const {
   // Walks from whichever end is closer, as Redis' lpSeek does.
   const size_t size = Size();
@@ -293,14 +299,8 @@ size_t Listpack::DeleteRange(size_t offset, size_t count) {
     end = Skip(end);
     ++deleted;
   }
-  const size_t deleted_bytes = end - offset;
-  const size_t new_listpack_bytes = listpack_bytes - deleted_bytes;
   const uint16_t element_count = ElementCount();
-  std::memmove(listpack_.get() + offset, listpack_.get() + end,
-               listpack_bytes - end);
-  // Shrink after memmove so the source range remains valid.
-  Realloc(new_listpack_bytes);
-  SetTotalBytes(new_listpack_bytes);
+  ResizeGap(offset, end - offset, 0);
   if (element_count != kListpackUnknownElementCount) {
     SetNumOfElements(element_count - deleted);
   }
@@ -366,9 +366,8 @@ size_t Listpack::DeleteMatching(std::string_view value, size_t limit,
     write += keep_end - keep_begin;
   }
   const uint16_t element_count = ElementCount();
-  // Shrink after the moves so every source range remains valid.
-  Realloc(write);
-  SetTotalBytes(write);
+  // The bytes from `write` on are left over from the moves.
+  ResizeGap(write, listpack_bytes - write, 0);
   if (element_count != kListpackUnknownElementCount) {
     SetNumOfElements(static_cast<uint16_t>(element_count - match_count));
   }
@@ -508,25 +507,13 @@ bool Listpack::Insert(size_t offset, Listpack::Position where,
   if (encoded_bytes > std::numeric_limits<uint32_t>::max() - retained_bytes) {
     return false;
   }
-  const size_t new_listpack_bytes = retained_bytes + encoded_bytes;
-  // Grow before memmove so the destination range is valid.
-  if (new_listpack_bytes > listpack_bytes) {
-    Realloc(new_listpack_bytes);
-  }
-  std::memmove(listpack_.get() + offset + backlen + backlen_bytes,
-               listpack_.get() + offset + replaced_bytes,
-               listpack_bytes - offset - replaced_bytes);
+  ResizeGap(offset, replaced_bytes, encoded_bytes);
   if (where == Position::kInsertBefore) {
     uint16_t element_count = ElementCount();
     if (element_count != kListpackUnknownElementCount) {
       SetNumOfElements(element_count + 1);
     }
   }
-  // Shrink after memmove so the source range remains valid.
-  if (new_listpack_bytes < listpack_bytes) {
-    Realloc(new_listpack_bytes);
-  }
-  SetTotalBytes(new_listpack_bytes);
   if (integer_value.has_value()) {
     EncodeInteger(listpack_.get() + offset, *integer_value);
   } else {
@@ -577,7 +564,7 @@ bool Listpack::BatchInsert(size_t offset, Listpack::Position where,
   if (where == Position::kInsertAfter) {
     offset = Skip(offset);
   }
-  // Size every entry first so insertion needs one Realloc and one memmove;
+  // Size every entry first so insertion moves the bytes after it only once;
   // the second pass below re-plans each entry instead of storing plans.
   size_t inserted_bytes = 0;
   for (size_t i = 0; i < entry_count; ++i) {
@@ -595,12 +582,8 @@ bool Listpack::BatchInsert(size_t offset, Listpack::Position where,
   if (inserted_bytes > std::numeric_limits<uint32_t>::max() - listpack_bytes) {
     return false;
   }
-  const size_t new_listpack_bytes = listpack_bytes + inserted_bytes;
   const uint16_t element_count = ElementCount();
-  Realloc(new_listpack_bytes);
-  std::memmove(listpack_.get() + offset + inserted_bytes,
-               listpack_.get() + offset, listpack_bytes - offset);
-  // Update number of elements and total bytes.
+  ResizeGap(offset, 0, inserted_bytes);
   if (element_count != kListpackUnknownElementCount) {
     if (std::cmp_greater(entry_count,
                          kListpackUnknownElementCount - element_count)) {
@@ -609,7 +592,6 @@ bool Listpack::BatchInsert(size_t offset, Listpack::Position where,
       SetNumOfElements(element_count + entry_count);
     }
   }
-  SetTotalBytes(new_listpack_bytes);
   // Insert elements based on encoding types.
   for (size_t i = 0; i < entry_count; ++i) {
     Encoding encoding{};
@@ -955,6 +937,9 @@ void Listpack::EncodeBacklen(unsigned char* const buffer, size_t backlen) {
   const uint8_t backlen_bytes = BacklenBytes(backlen);
   for (uint8_t i = 0; i < backlen_bytes; ++i) {
     const unsigned shift = 7U * (backlen_bytes - 1U - i);
+    // The analyzer cannot tell that the caller reserved the entry's encoded
+    // size.
+    // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
     buffer[i] = static_cast<unsigned char>((backlen >> shift) & 127);
     if (i > 0) {
       buffer[i] |= 128;
@@ -1002,26 +987,55 @@ bool Listpack::IsString(EncodingType encoding_type) {
          encoding_type == EncodingType::k32BitString;
 }
 
-void Listpack::Realloc(size_t bytes) {
-  RS_CHECK(bytes >= kListpackHeaderSize + 1);
-  // Keep spare capacity so repeated inserts do not copy the whole listpack
-  // each time, but release memory once most of it is unused.
-  if (bytes <= capacity_ && bytes >= capacity_ / 4) {
+// Redis' lpInsert reallocates the listpack and then moves the bytes after
+// the insertion point. Without realloc, a new allocation would copy those
+// bytes twice, so they are copied straight to their final place instead.
+void Listpack::ResizeGap(size_t offset, size_t removed_bytes,
+                         size_t inserted_bytes) {
+  const size_t old_bytes = TotalBytes();
+  const size_t tail_offset = offset + removed_bytes;
+  RS_CHECK(offset >= kListpackHeaderSize && tail_offset <= old_bytes);
+  const size_t tail_bytes = old_bytes - tail_offset;
+  const size_t new_bytes = offset + inserted_bytes + tail_bytes;
+  // Spare capacity keeps repeated inserts from copying the whole listpack
+  // each time; the memory is released once most of it is unused.
+  if (new_bytes > capacity_ || new_bytes < capacity_ / 4) {
+    ResizeGapInNewStorage(offset, tail_offset, inserted_bytes, new_bytes);
     return;
   }
-  size_t new_capacity = bytes;
-  if (bytes > capacity_) {
-    new_capacity = std::max(bytes, capacity_ + (capacity_ / 2));
-  }
-  // Every byte up to TotalBytes() is copied, and the rest is written before
-  // it is read, so the new storage needs no zero-fill.
+  // The size is in the header, which the move below does not touch; setting
+  // it first leaves the move as the last call.
+  SetTotalBytes(new_bytes);
+  std::memmove(listpack_.get() + offset + inserted_bytes,
+               listpack_.get() + tail_offset, tail_bytes);
+}
+
+// Out of line so that the common case above, which keeps the storage, stays
+// small.
+[[gnu::noinline]] void Listpack::ResizeGapInNewStorage(size_t offset,
+                                                       size_t tail_offset,
+                                                       size_t inserted_bytes,
+                                                       size_t new_bytes) {
+  const size_t tail_bytes = TotalBytes() - tail_offset;
+  // The allocator rounds a request up to its size class anyway, so that
+  // capacity costs no memory and is outgrown only a quarter of a power of two
+  // later. A listpack too large to have a size class grows by half instead.
+  const bool grows_without_size_class =
+      new_bytes > capacity_ && new_bytes > utils::kMaxAllocationSizeClassBytes;
+  const size_t new_capacity =
+      grows_without_size_class
+          ? std::max(new_bytes, capacity_ + (capacity_ / 2))
+          : utils::AllocationSizeClass(new_bytes);
+  // Every byte up to the new total is copied here or written by the caller,
+  // so the new storage needs no zero-fill.
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
   std::unique_ptr<unsigned char[]> new_listpack(
       new unsigned char[new_capacity]);
-  const size_t copy_bytes =
-      std::min(static_cast<size_t>(TotalBytes()), new_capacity);
-  std::memcpy(new_listpack.get(), listpack_.get(), copy_bytes);
+  std::memcpy(new_listpack.get(), listpack_.get(), offset);
+  std::memcpy(new_listpack.get() + offset + inserted_bytes,
+              listpack_.get() + tail_offset, tail_bytes);
   listpack_ = std::move(new_listpack);
   capacity_ = new_capacity;
+  SetTotalBytes(new_bytes);
 }
 }  // namespace redis_simple::containers

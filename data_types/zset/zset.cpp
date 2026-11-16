@@ -76,6 +76,12 @@ bool ZSet::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   return Storage().ForEachEntry(visitor);
 }
 
+bool ZSet::ForEachSkiplistEntryDescending(
+    const ZSetEntryVisitor& visitor) const {
+  RS_CHECK(Encoding() == Encoding::kSkiplist);
+  return Skiplist()->ForEachEntryDescending(visitor);
+}
+
 enum ZSet::Encoding ZSet::Encoding() const {
   return listpack_.Allocated() ? Encoding::kListpack : Encoding::kSkiplist;
 }

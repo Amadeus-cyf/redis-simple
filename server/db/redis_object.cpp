@@ -26,6 +26,10 @@ std::unique_ptr<RedisObject> RedisObject::CreateWithString(std::string value) {
   if (value.size() <= EmbeddedString::kCapacity) {
     return CreateEmbedded(value);
   }
+  if (value.size() >= kMinSharedStringBytes) {
+    return Create<SharedString>(
+        std::make_shared<std::string>(std::move(value)));
+  }
   return Create<std::string>(std::move(value));
 }
 
@@ -37,6 +41,9 @@ std::unique_ptr<RedisObject> RedisObject::CreateWithStringCopy(
   }
   if (value.size() <= EmbeddedString::kCapacity) {
     return CreateEmbedded(value);
+  }
+  if (value.size() >= kMinSharedStringBytes) {
+    return Create<SharedString>(std::make_shared<std::string>(value));
   }
   return Create<std::string>(value);
 }
@@ -61,9 +68,40 @@ StringValue RedisObject::String() const {
   if (const auto* embedded = GetIf<EmbeddedString>()) {
     return StringValue(embedded->View());
   }
+  if (const auto* shared = GetIf<SharedString>()) {
+    return StringValue(std::string_view(**shared));
+  }
   const auto* value = GetIf<std::string>();
   RS_CHECK(value != nullptr);
   return StringValue(std::string_view(*value));
+}
+
+std::shared_ptr<const std::string> RedisObject::SharedStringBytes() const {
+  const auto* shared = GetIf<SharedString>();
+  return shared == nullptr ? nullptr : *shared;
+}
+
+std::string* RedisObject::ExclusiveString() {
+  if (auto* const raw = GetIf<std::string>()) {
+    return raw;
+  }
+  // Only the main thread takes new references, so a count of one cannot
+  // grow while this thread works on the string. A reply that drops its
+  // reference on an I/O thread meanwhile only makes the count read late,
+  // which costs a copy.
+  if (const auto* shared = GetIf<SharedString>();
+      shared != nullptr && shared->use_count() == 1) {
+    return shared->get();
+  }
+  return nullptr;
+}
+
+void RedisObject::EmplaceLongString(std::string value) {
+  if (value.size() >= kMinSharedStringBytes) {
+    Emplace<SharedString>(std::make_shared<std::string>(std::move(value)));
+    return;
+  }
+  Emplace<std::string>(std::move(value));
 }
 
 std::optional<int64_t> RedisObject::Int() const {
@@ -79,6 +117,12 @@ std::string* RedisObject::MutableString() {
   } else if (const auto* embedded = GetIf<EmbeddedString>()) {
     // Copy out first: emplacing destroys the embedded bytes.
     std::string raw(embedded->View());
+    Emplace<std::string>(std::move(raw));
+  } else if (const auto* shared = GetIf<SharedString>()) {
+    // The caller edits in place, which a reply holding the bytes must not
+    // see: take the buffer when nothing else holds it, and copy otherwise.
+    std::string raw = ExclusiveString() != nullptr ? std::move(**shared)
+                                                   : std::string(**shared);
     Emplace<std::string>(std::move(raw));
   }
   return GetIf<std::string>();
@@ -106,27 +150,26 @@ void RedisObject::AssignString(std::string_view value) {
   }
   // Short strings live inline, so any buffer up to this size is cheap to keep.
   constexpr size_t kAlwaysReusableBytes = 64;
-  auto* const current = GetIf<std::string>();
-  // An existing raw buffer is reused when it is small or well filled, which
-  // overwrites without allocating. Otherwise a short value is embedded, which
-  // also releases an oversized buffer.
+  std::string* const current = ExclusiveString();
+  // An existing buffer that no reply holds is reused when it is small or
+  // well filled, which overwrites without allocating. Otherwise a short
+  // value is embedded, which also releases an oversized buffer.
   if (current != nullptr && (current->capacity() <= kAlwaysReusableBytes ||
                              current->capacity() / 2 <= value.size())) {
     current->assign(value);
+    if (GetIf<std::string>() != nullptr &&
+        current->size() >= kMinSharedStringBytes) {
+      EmplaceLongString(std::move(*current));
+    }
     return;
   }
   if (value.size() <= EmbeddedString::kCapacity) {
     EmbedString(value);
     return;
   }
-  if (current == nullptr) {
-    Emplace<std::string>(value);
-    return;
-  }
-  // Assigning, or emplacing the same alternative, would copy into the
-  // oversized buffer and keep it; swapping in a new string frees it.
-  std::string fresh(value);
-  current->swap(fresh);
+  // Copy first, in case `value` views this object's current bytes. A new
+  // string, rather than an assignment, also frees an oversized buffer.
+  EmplaceLongString(std::string(value));
 }
 
 void RedisObject::ReplaceWithString(std::string_view value) {
@@ -140,8 +183,7 @@ void RedisObject::ReplaceWithString(std::string_view value) {
     return;
   }
   // Copy first, in case `value` views this object's current bytes.
-  std::string raw(value);
-  Emplace<std::string>(std::move(raw));
+  EmplaceLongString(std::string(value));
 }
 
 RedisObject::Encoding RedisObject::StringEncoding() const {
@@ -151,6 +193,7 @@ RedisObject::Encoding RedisObject::StringEncoding() const {
     case Tag::kEmbedded:
       return Encoding::kEmbedded;
     case Tag::kRaw:
+    case Tag::kShared:
       return Encoding::kRaw;
     case Tag::kSet:
     case Tag::kList:

@@ -55,6 +55,15 @@ class HandleSet {
   bool Contains(Handle handle) const;
   size_t Size() const { return main_.used + old_.used; }
   void Clear();
+  // Makes room for `members` members, so that inserting up to that many
+  // does not rebuild the table again.
+  void Reserve(size_t members);
+  // Starts the shrink that Erase holds back while resizing is avoided.
+  void ShrinkIfNeeded();
+  bool IsRebuilding() const { return old_.capacity != 0; }
+  // Moves up to `max_slots` slots of a rebuild under way, for a caller with
+  // idle time to spend. Returns whether the rebuild is still under way.
+  bool RebuildSome(size_t max_slots);
   // Calls `visitor(handle)` for the members at one table position and
   // returns the next cursor, or nullopt after the last position. A sweep
   // from cursor 0 visits every member that stays in the set throughout,
@@ -91,10 +100,13 @@ class HandleSet {
   // Stores a handle that is not in `table`, which must have an empty slot
   // to spare.
   static void Place(Table* table, uintptr_t bits, size_t hash);
-  bool Rebuilding() const { return old_.capacity != 0; }
-  // Makes main_ a new table sized for the current members and starts moving
-  // them into it from old_.
-  void StartRebuild();
+  static bool Fits(size_t members, size_t capacity) {
+    // Three quarters full is where linear probing starts to slow down.
+    return members * 4 <= capacity * 3;
+  }
+  // Makes main_ a new table sized for `members` members and starts moving
+  // the current ones into it from old_.
+  void StartRebuild(size_t members);
   void MoveSome(size_t max_slots);
   void MoveOldSlot(size_t index);
 
@@ -149,12 +161,11 @@ bool HandleSet<Handle, Hash>::Insert(Handle handle) {
     return false;
   }
   // Every member ends up in main_, so its load counts those still in old_.
-  // Three quarters full is where linear probing starts to slow down.
-  if ((Size() + main_.erased + 1) * 4 > main_.capacity * 3) {
+  if (!Fits(Size() + main_.erased + 1, main_.capacity)) {
     // A rebuild normally finishes long before main_ fills again; if it has
     // not, finish it now, since only one can run at a time.
     MoveSome(old_.capacity);
-    StartRebuild();
+    StartRebuild(Size());
   }
   Place(&main_, bits, hash);
   return true;
@@ -175,14 +186,33 @@ bool HandleSet<Handle, Hash>::Erase(Handle handle) {
   } else {
     return false;
   }
-  // Shrink a table left mostly empty, so a scan does not walk long runs of
-  // empty slots.
-  if (!Rebuilding() && main_.capacity > kInitialCapacity &&
+  ShrinkIfNeeded();
+  return true;
+}
+
+template <typename Handle, typename Hash>
+void HandleSet<Handle, Hash>::Reserve(size_t members) {
+  if (Fits(members + main_.erased, main_.capacity)) {
+    return;
+  }
+  MoveSome(old_.capacity);
+  StartRebuild(members);
+}
+
+template <typename Handle, typename Hash>
+void HandleSet<Handle, Hash>::ShrinkIfNeeded() {
+  // A table left mostly empty makes a scan walk long runs of empty slots.
+  if (!IsRebuilding() && main_.capacity > kInitialCapacity &&
       Size() * 8 < main_.capacity &&
       CurrentDictResizePolicy() == DictResizePolicy::kEnabled) {
-    StartRebuild();
+    StartRebuild(Size());
   }
-  return true;
+}
+
+template <typename Handle, typename Hash>
+bool HandleSet<Handle, Hash>::RebuildSome(size_t max_slots) {
+  MoveSome(max_slots);
+  return IsRebuilding();
 }
 
 template <typename Handle, typename Hash>
@@ -217,12 +247,12 @@ std::optional<size_t> HandleSet<Handle, Hash>::Scan(size_t cursor,
 }
 
 template <typename Handle, typename Hash>
-void HandleSet<Handle, Hash>::StartRebuild() {
-  // Half full at most once every member has moved. At least a quarter of
+void HandleSet<Handle, Hash>::StartRebuild(size_t members) {
+  // Half full at most once `members` members are in. At least a quarter of
   // the old capacity, so that main_ cannot fill up before the old table,
   // emptied kSlotsMovedPerCall slots at a time, is done.
   const size_t capacity = std::max(
-      {kInitialCapacity, std::bit_ceil(2 * (Size() + 1)), main_.capacity / 4});
+      {kInitialCapacity, std::bit_ceil(2 * (members + 1)), main_.capacity / 4});
   old_ = std::exchange(main_,
                        Table{.slots = std::make_unique<uintptr_t[]>(capacity),
                              .capacity = capacity});
@@ -234,7 +264,7 @@ void HandleSet<Handle, Hash>::StartRebuild() {
 
 template <typename Handle, typename Hash>
 void HandleSet<Handle, Hash>::MoveSome(size_t max_slots) {
-  if (!Rebuilding()) {
+  if (!IsRebuilding()) {
     return;
   }
   const size_t end = std::min(old_.capacity, move_index_ + max_slots);

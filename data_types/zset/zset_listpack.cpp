@@ -49,6 +49,18 @@ bool ZSetListpack::InsertSorted(std::string_view member, double score) {
   // Like Redis, the listpack encoding stores a whole-number score as an
   // integer, which drops the sign of negative zero. The skiplist keeps it.
   const std::string score_text = utils::FloatToString(score == 0 ? 0.0 : score);
+  // Member and score go in as one listpack insert, as in Redis' zzlInsertAt,
+  // so the bytes after them are moved once.
+  const std::optional<size_t> successor = FirstMemberAfter(member, score);
+  return successor.has_value()
+             ? listpack_.BatchInsert(
+                   *successor, {{member, 0, false}, {score_text, 0, false}})
+             : listpack_.BatchAppend(
+                   {{member, 0, false}, {score_text, 0, false}});
+}
+
+std::optional<size_t> ZSetListpack::FirstMemberAfter(std::string_view member,
+                                                     double score) const {
   containers::Listpack::IntBuffer member_buffer;
   std::optional<size_t> offset = listpack_.First();
   while (offset.has_value()) {
@@ -58,30 +70,11 @@ bool ZSetListpack::InsertSorted(std::string_view member, double score) {
     }
     if (score < entry->score ||
         (score == entry->score && member < entry->member)) {
-      if (!listpack_.Insert(*offset, member)) {
-        return false;
-      }
-      const std::optional<size_t> score_offset = listpack_.Next(*offset);
-      if (!score_offset.has_value() ||
-          !listpack_.Insert(*score_offset, score_text)) {
-        listpack_.Delete(*offset);
-        return false;
-      }
-      return true;
+      return offset;
     }
     offset = NextMemberAfterScore(entry->score_index);
   }
-  if (!listpack_.Append(member)) {
-    return false;
-  }
-  const std::optional<size_t> appended_member = listpack_.Last();
-  if (!listpack_.Append(score_text)) {
-    if (appended_member.has_value()) {
-      listpack_.Delete(*appended_member);
-    }
-    return false;
-  }
-  return true;
+  return std::nullopt;
 }
 
 bool ZSetListpack::Delete(std::string_view member) {

@@ -97,6 +97,11 @@ bool RedisDb::AddKey(std::string_view key, RedisObjectPtr object,
   return true;
 }
 
+void RedisDb::ReserveKeys(size_t keys, size_t keys_with_expiration) {
+  dict_->Reserve(dict_->Size() + keys);
+  expires_.Reserve(expires_.Size() + keys_with_expiration);
+}
+
 DbStatus RedisDb::SetStringKey(std::string_view key, std::string_view value,
                                int64_t expire, ExistingTtl existing_ttl) {
   SetStringAt(FindOrInsert(HashedKey(key)), value, expire, existing_ttl);
@@ -380,6 +385,26 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
     }
   }
   return !unlinked_.empty() || !flushed_.empty();
+}
+
+bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
+  // As Redis' dictRehashMicroseconds: enough buckets that reading the clock
+  // costs little, few enough to overrun the budget only slightly.
+  constexpr int kBucketsPerStep = 100;
+  dict_->ShrinkIfNeeded();
+  expires_.ShrinkIfNeeded();
+  if (!dict_->IsRehashing() && !expires_.IsRebuilding()) {
+    return false;
+  }
+  const int64_t start = utils::MonotonicMicroseconds();
+  // The keyspace table first, then the TTL index.
+  while (dict_->RehashSome(kBucketsPerStep) ||
+         expires_.RebuildSome(kBucketsPerStep)) {
+    if (utils::MonotonicMicroseconds() - start >= budget_microseconds) {
+      break;
+    }
+  }
+  return dict_->IsRehashing() || expires_.IsRebuilding();
 }
 
 ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -145,6 +146,109 @@ TEST(RedisObjectTest, AssignStringChoosesEncodingAndReusesBuffers) {
   EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
   EXPECT_EQ(object->String(), "short");
   EXPECT_LT(object->MutableString()->capacity(), 1000);
+}
+
+TEST(RedisObjectTest, OnlyLargeStringsAreShared) {
+  const std::string large(RedisObject::kMinSharedStringBytes, 'a');
+  const std::string below(RedisObject::kMinSharedStringBytes - 1, 'b');
+
+  const auto moved = RedisObject::CreateWithString(large);
+  const auto copied = RedisObject::CreateWithStringCopy(large);
+  for (const RedisObject* object : {moved.get(), copied.get()}) {
+    const std::shared_ptr<const std::string> bytes =
+        object->SharedStringBytes();
+    ASSERT_NE(bytes, nullptr);
+    EXPECT_EQ(*bytes, large);
+    EXPECT_EQ(object->String(), large);
+    EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kRaw);
+    EXPECT_EQ(object->Type(), RedisObject::ObjectType::kString);
+  }
+
+  EXPECT_EQ(RedisObject::CreateWithString(below)->SharedStringBytes(), nullptr);
+  EXPECT_EQ(RedisObject::CreateWithStringCopy(below)->SharedStringBytes(),
+            nullptr);
+  EXPECT_EQ(RedisObject::CreateWithString("12")->SharedStringBytes(), nullptr);
+  EXPECT_EQ(RedisObject::CreateWithString("tiny")->SharedStringBytes(),
+            nullptr);
+
+  auto object = RedisObject::CreateWithString("tiny");
+  object->AssignString(large);
+  EXPECT_NE(object->SharedStringBytes(), nullptr);
+  object->ReplaceWithString(below);
+  EXPECT_EQ(object->SharedStringBytes(), nullptr);
+  object->ReplaceWithString(large);
+  EXPECT_NE(object->SharedStringBytes(), nullptr);
+  // A raw buffer that an overwrite grows in place becomes shared too.
+  object->ReplaceWithString(std::string(10'000, 'c'));
+  ASSERT_EQ(object->SharedStringBytes(), nullptr);
+  object->AssignString(large);
+  EXPECT_NE(object->SharedStringBytes(), nullptr);
+  EXPECT_EQ(object->String(), large);
+}
+
+TEST(RedisObjectTest, HeldSharedBytesSurviveWritesAndDestruction) {
+  const std::string first(RedisObject::kMinSharedStringBytes, 'a');
+  const std::string second(RedisObject::kMinSharedStringBytes + 7, 'b');
+  auto object = RedisObject::CreateWithString(first);
+
+  const std::shared_ptr<const std::string> held_first =
+      object->SharedStringBytes();
+  object->AssignString(second);
+  EXPECT_EQ(*held_first, first);
+  EXPECT_EQ(object->String(), second);
+
+  // An in-place edit, as APPEND makes, works on the object's own copy.
+  const std::shared_ptr<const std::string> held_second =
+      object->SharedStringBytes();
+  ASSERT_NE(held_second, nullptr);
+  object->MutableString()->append("tail");
+  EXPECT_EQ(*held_second, second);
+  EXPECT_EQ(object->String(), second + "tail");
+  EXPECT_EQ(object->SharedStringBytes(), nullptr);
+
+  object->ReplaceWithString(first);
+  const std::shared_ptr<const std::string> held_third =
+      object->SharedStringBytes();
+  ASSERT_NE(held_third, nullptr);
+  object->AssignString("7");
+  EXPECT_EQ(*held_third, first);
+  EXPECT_EQ(object->StringEncoding(), RedisObject::Encoding::kInt);
+
+  object->AssignString(second);
+  const std::shared_ptr<const std::string> held_last =
+      object->SharedStringBytes();
+  object.reset();
+  EXPECT_EQ(*held_last, second);
+  EXPECT_EQ(held_last.use_count(), 1);
+}
+
+TEST(RedisObjectTest, SharedBufferNobodyHoldsIsReused) {
+  const std::string first(RedisObject::kMinSharedStringBytes, 'a');
+  const std::string second(RedisObject::kMinSharedStringBytes, 'b');
+  auto object = RedisObject::CreateWithString(first);
+  const char* const buffer = object->SharedStringBytes()->data();
+
+  object->AssignString(second);
+  ASSERT_NE(object->SharedStringBytes(), nullptr);
+  EXPECT_EQ(object->SharedStringBytes()->data(), buffer);
+  EXPECT_EQ(object->String(), second);
+
+  // Assigning the object's own bytes, held or not, keeps them.
+  object->AssignString(object->String().View().substr(1));
+  EXPECT_EQ(object->String(), second.substr(1));
+  {
+    const std::shared_ptr<const std::string> held = object->SharedStringBytes();
+    ASSERT_NE(held, nullptr);
+    object->AssignString(std::string_view(*held).substr(1));
+    EXPECT_EQ(*held, second.substr(1));
+  }
+  EXPECT_EQ(object->String(), second.substr(2));
+
+  // An in-place edit takes the buffer instead of copying it.
+  object->ReplaceWithString(first);
+  const char* const shared_buffer = object->SharedStringBytes()->data();
+  EXPECT_EQ(object->MutableString()->data(), shared_buffer);
+  EXPECT_EQ(object->String(), first);
 }
 
 TEST(RedisObjectTest, StringValueCopiesKeepIntegerBytes) {

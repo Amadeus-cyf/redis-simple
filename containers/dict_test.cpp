@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -164,6 +165,63 @@ TEST(DictStringTest, ShrinksAfterMassDeletes) {
   }
   EXPECT_EQ(dict->Size(), 6);
   EXPECT_LE(visited_buckets, 64);
+}
+
+// Counts the buckets a full scan walks, which is the size of the table.
+size_t CountBuckets(Dict<std::string, int>* dict) {
+  size_t buckets = 0;
+  size_t cursor = 0;
+  while (true) {
+    const auto next = dict->Scan(cursor, [](std::string_view, const int&) {});
+    ++buckets;
+    if (!next.has_value()) {
+      return buckets;
+    }
+    cursor = *next;
+  }
+}
+
+TEST(DictStringTest, ReserveSizesTheTableBeforeInserts) {
+  auto dict = Dict<std::string, int>::Create();
+  dict->Reserve(1000);
+  EXPECT_EQ(dict->Size(), 0);
+  // The table has its full size from the first insert on.
+  dict->Insert("first", -1);
+  EXPECT_EQ(CountBuckets(dict.get()), 1024);
+  for (int i = 0; i < 999; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  EXPECT_EQ(dict->Size(), 1000);
+  EXPECT_EQ(CountBuckets(dict.get()), 1024);
+  EXPECT_EQ(*dict->FindValue(std::string_view("first")), -1);
+  EXPECT_EQ(*dict->FindValue(std::string_view("998")), 998);
+
+  // A smaller request leaves the table as it is.
+  dict->Reserve(10);
+  EXPECT_EQ(CountBuckets(dict.get()), 1024);
+
+  // A count no table can hold leaves the dict usable.
+  auto unchanged = Dict<std::string, int>::Create();
+  unchanged->Reserve(std::numeric_limits<size_t>::max());
+  unchanged->Insert("only", 1);
+  EXPECT_EQ(CountBuckets(unchanged.get()), 4);
+}
+
+TEST(DictStringTest, ReserveKeepsTheEntriesOfAFilledDict) {
+  auto dict = Dict<std::string, int>::Create();
+  for (int i = 0; i < 100; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  dict->Reserve(5000);
+  for (int i = 100; i < 5000; ++i) {
+    dict->Insert(std::to_string(i), i);
+  }
+  EXPECT_EQ(dict->Size(), 5000);
+  for (int i = 0; i < 5000; ++i) {
+    const int* value = dict->FindValue(std::string_view(std::to_string(i)));
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(*value, i);
+  }
 }
 
 TEST(DictStringTest, ScanVisitsEveryKeyWhileTheTableResizes) {
@@ -532,5 +590,86 @@ TEST(DictResizePolicyTest, AvoidShrinksOnlyAVeryEmptyTable) {
     ExpectHolds(dict.get(), 8);
   }
   EXPECT_EQ(ScanPositions(dict.get()), 8);
+}
+
+TEST(DictRehashSomeTest, FinishesARehashWithoutOtherOperations) {
+  auto dict = Dict<int, int>::Create(64);
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_FALSE(dict->RehashSome(100));
+  for (int key = 0; key < 65; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  // The 65th insert began a rehash from 64 buckets to 128.
+  ASSERT_TRUE(dict->IsRehashing());
+  EXPECT_TRUE(dict->RehashSome(8));
+  EXPECT_TRUE(dict->IsRehashing());
+  int steps = 1;
+  while (dict->RehashSome(8)) {
+    ++steps;
+    ASSERT_LE(steps, 64);
+  }
+  EXPECT_GT(steps, 1);
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(ScanPositions(dict.get()), 128);
+  ExpectHolds(dict.get(), 65);
+}
+
+TEST(DictRehashSomeTest, WaitsForIteratorsAndTheResizePolicy) {
+  auto dict = Dict<int, int>::Create(64);
+  for (int key = 0; key < 65; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  ASSERT_TRUE(dict->IsRehashing());
+  {
+    // An iterator needs every entry to stay in its table.
+    auto it = Dict<int, int>::Iterator(dict.get());
+    it.SeekToFirst();
+    EXPECT_FALSE(dict->RehashSome(100));
+  }
+  {
+    const ScopedResizePolicy forbidden(DictResizePolicy::kForbidden);
+    EXPECT_FALSE(dict->RehashSome(100));
+  }
+  {
+    // 128 buckets are not four times 64, so this rehash waits for the child.
+    const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
+    EXPECT_FALSE(dict->RehashSome(100));
+  }
+  EXPECT_TRUE(dict->IsRehashing());
+  EXPECT_EQ(ScanPositions(dict.get()), 64);
+  EXPECT_FALSE(dict->RehashSome(100));
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(ScanPositions(dict.get()), 128);
+  ExpectHolds(dict.get(), 65);
+}
+
+TEST(DictRehashSomeTest, ShrinkIfNeededRetriesAShrinkThePolicyHeldBack) {
+  auto dict = Dict<int, int>::Create(256);
+  for (int key = 0; key < 200; ++key) {
+    ASSERT_TRUE(dict->Insert(key, key));
+  }
+  {
+    const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
+    for (int key = 199; key >= 16; --key) {
+      ASSERT_TRUE(dict->Delete(key));
+    }
+    // A sixteenth of the buckets used: sparse, but not enough to shrink
+    // while a child runs.
+    dict->ShrinkIfNeeded();
+    EXPECT_FALSE(dict->IsRehashing());
+  }
+  // Nothing has been deleted since, so only a retry starts the shrink.
+  ExpectHolds(dict.get(), 16);
+  EXPECT_EQ(ScanPositions(dict.get()), 256);
+  dict->ShrinkIfNeeded();
+  EXPECT_TRUE(dict->IsRehashing());
+  while (dict->RehashSome(100)) {
+  }
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(ScanPositions(dict.get()), 16);
+  ExpectHolds(dict.get(), 16);
+  // A table that is full enough is left alone.
+  dict->ShrinkIfNeeded();
+  EXPECT_FALSE(dict->IsRehashing());
 }
 }  // namespace redis_simple::containers

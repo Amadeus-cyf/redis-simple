@@ -70,10 +70,32 @@ like `Dict` it does not shrink while a snapshot child shares its pages.
 5. **Propagate.** A handler that changed data calls `MarkModified()`. The
    client then touches WATCHed keys and appends the command to the AOF
    buffer (`Aof::Append`).
-6. **Flush, then reply.** After the batch of requests read from the socket
-   has run, the read handler writes the AOF buffer to the file
-   (`Aof::Flush`), and only then sends the replies, so a client never sees a
-   reply for a write that is not in the file.
+6. **Flush, then reply.** The read handler does not reply. It leaves the
+   client with the server (`Server::HoldReplies`), and when the event loop
+   has run every client that was readable and is about to wait again,
+   `Server::BeforeSleep` writes the AOF buffer to the file once
+   (`Aof::Flush`) and only then sends the held replies, so a client never
+   sees a reply for a write that is not in the file. This is Redis'
+   `beforeSleep`, and it is a group commit: with `appendfsync always`, the
+   clients served in one iteration share one `write` and one `fsync`
+   instead of paying for one each. A write callback left from an earlier,
+   partly sent reply also waits while its client is held. If the flush
+   fails under `always`, the server stops and the held replies are never
+   sent.
+
+### Idle clients' buffers
+
+A client's query buffer, reply buffer, and argument lists grow with its
+largest request and reply. So that an idle connection does not keep them,
+an `IdleClientSweeper` visits every client once a second, a tenth of them
+per 100 ms tick, and a client that has read nothing since its previous
+visit and holds no unparsed input or unsent reply frees them
+(`Client::ReleaseIdleBuffers`); its next request allocates them again. This
+is the job of Redis' `clientsCronResizeQueryBuffer` and
+`clientsCronResizeOutputBuffer`. Without threaded I/O the server cron runs
+the sweeper. With it, each I/O thread runs its own, from a timer on its
+event loop, over the clients assigned to it, and skips clients the main
+thread holds, as Redis' `IOThreadClientsCron` does.
 
 ### What a command can reach
 
@@ -84,15 +106,49 @@ database, the AOF, the required password, and the I/O threads. The server
 owns that context; tests and AOF replay build their own, so commands never
 depend on a running `Server`.
 
+## Key expiration
+
+A key with a TTL is deleted when a command looks it up after it expired, and
+otherwise by `ActiveExpire` (`server/active_expire.h`), which follows Redis'
+`activeExpireCycle`. A round samples up to 20 keys from the TTL index,
+going around it at most once, and deletes the expired ones; the cycle repeats
+rounds while more than 10% of a round's sample was expired. The time budget
+is checked every 16 rounds, so a cycle can run up to 16 rounds past it.
+
+- The slow cycle runs from the server cron every 100 ms, for about 25 ms.
+- The fast cycle runs from the event loop's before-sleep hook
+  (`Loop::SetBeforeSleep`, called once per iteration right before the loop
+  waits for events), for about 1 ms. It starts only if the previous cycle
+  ran out of time or the running estimate of expired-but-present keys is
+  at least 10%, and never within 2 ms of the previous fast cycle. When the slow
+  cycle keeps up, the hook returns without reading a clock.
+
+Differences from Redis that remain:
+
+- A round has no cap on the slots it visits (Redis stops after 400
+  buckets): the TTL index shrinks as it empties, so a round stays short.
+- "Now" is read once per cycle; Redis reads it every round. A key that
+  expires during a cycle is caught by the next one.
+- A cycle does not stop when the scan has gone once around the TTL index.
+- There is no `active-expire-effort` setting, and a sparsely filled TTL
+  index is not skipped.
+
 ## Threaded I/O
 
 With `--io-threads` above 1, I/O works as in Redis 8. Each client belongs to
 the `IoThread` with the fewest clients when it connected. That thread's own
 event loop reads the client's socket and frames its requests
 (`Client::ParseQueries`), then hands the client to the main thread. The main
-thread runs the requests (`Client::RunParsedQueries`), flushes the AOF once
-for every client in the handoff, and hands the clients back, and the I/O
-thread writes their replies and resumes reading.
+thread runs the requests (`Client::RunParsedQueries`) and keeps the clients
+until `Server::BeforeSleep` has flushed the AOF, once for every client that
+ran in that iteration, whichever I/O thread it came from. Then it hands the
+clients back, and the I/O thread writes their replies and resumes reading.
+Without an AOF there is nothing to flush, so each handoff's clients go back
+as soon as their requests have run. Each direction moves a whole
+batch at once: one lock acquisition, and one pipe wakeup only when the
+receiving queue was empty, however many clients the batch holds, as Redis'
+`sendPendingClientsToIOThreads` and `sendPendingClientsToMainThreadIfNeeded`
+join whole lists.
 
 So commands, the database, and the AOF stay on the main thread, and an I/O
 thread only touches its clients' sockets, buffers, and parsers. A client is on
@@ -118,7 +174,7 @@ after they return. Connections close on their I/O thread; the main thread only f
 | `manifest.h`, `.cpp` | The manifest format, and file naming |
 | `records.h`, `.cpp` | Encoding mutations as AOF records |
 | `snapshot.h`, `.cpp` | Writing the database as commands, for a base file with `--aof-use-rdb-preamble no` |
-| `background_jobs.h`, `.cpp` | The background thread that syncs, closes, and deletes files |
+| `background_jobs.h`, `.cpp` | The background threads for file work: one syncs, one closes and deletes |
 | `file_ops.h`, `.cpp` | File system helpers, and the `FileOps` interface tests use to inject failures |
 
 ### Files
@@ -142,7 +198,7 @@ to the last incremental file; only a rewrite starts a new one.
 The manifest is replaced in an order that survives a crash at any point
 (`PersistManifest`): write and sync a temporary file, rename it over the
 manifest, then sync the directory. Files the new manifest retires are deleted
-only after that, on the background thread.
+only after that, on the background file thread.
 
 ### Writing
 
@@ -155,7 +211,7 @@ in `MULTI`/`EXEC` records when there is more than one, so replay applies all
 or none of them.
 
 `Aof::Flush` (Redis' `flushAppendOnlyFile`) writes the buffer. With
-`everysec` it queues an fsync on the background thread once a second, and
+`everysec` it queues an fsync on the background sync thread once a second, and
 when a sync is still running it postpones the write for up to two seconds,
 since on Linux the write would block behind it. With `always` it syncs on the
 event-loop thread. After a write, a buffer that grew past 1 MiB is released,
@@ -184,9 +240,21 @@ files become history and are deleted once that manifest is durable.
 as the allocator's) at that moment, the child would inherit it locked
 forever. The server's fork hooks pause the I/O threads. (Values `UNLINK` and
 `FLUSHDB` detach are freed on the main thread, in steps from the cron, not
-on a thread of their own.) The background job thread never
-allocates, frees, or logs, so it can keep running: its jobs hold paths in
-fixed-size buffers, and its queues keep their memory when cleared. The child
+on a thread of their own.) The background job threads never
+allocate, free, or log, so they can keep running: their jobs hold paths in
+fixed-size buffers, their queues keep their memory when cleared, and the
+thread that queues a sync-then-close reserves the room the sync thread needs
+to hand the close over.
+
+`BackgroundJobs` runs two threads, each with its own queue, as Redis' `bio.c`
+runs one per job class: the sync thread only syncs files (`BIO_AOF_FSYNC`),
+and the file thread closes and deletes them (`BIO_CLOSE_FILE`). Closing the
+last descriptor of a deleted file, or deleting a large one, frees its blocks
+and can take seconds; on a thread of its own it cannot hold up the
+every-second sync, which would otherwise make `Aof::Flush` postpone writes.
+A file to sync and then close is synced on the sync thread and closed on the
+file thread. `Rdb` has its own `BackgroundJobs` for the temporary file of a
+background save that was stopped. The child
 itself takes no locks and does not log.
 
 Hash tables hold back while a child lives. Moving entries to a bigger table
@@ -199,6 +267,14 @@ it holds four entries per bucket, shrinks only when far emptier than usual,
 and continues a rehash already under way only when the two tables differ
 greatly in size. Growing the 4-million-key keyspace table during a `BGSAVE`
 copied about 280 MB before this policy and about 34 MB with it.
+
+Commands move a rehash along, one bucket per operation on the table, so on
+their own an idle server would keep both the old and the new table. The
+server cron therefore calls `RedisDb::RehashIncrementally` every tick while
+no child runs, as Redis' `databasesCron` does: it moves buckets of the
+keyspace table and slots of the TTL index for one millisecond
+(`Dict::RehashSome`, `HandleSet::RebuildSome`), and first retries a shrink
+(`ShrinkIfNeeded`) that deletes could not start while a child ran.
 
 Snapshots are bounded: large strings are split into a `SET` and `APPEND`s,
 and collections are batched by encoded bytes as well as element count, so
@@ -237,7 +313,10 @@ database 0, `SELECTDB` and `RESIZEDB` and each key with its expiration time,
 then `EOF` and the CRC64 of everything before it. Each value is written in
 the encoding Redis writes for the same in-memory encoding: an intset or a
 listpack as one blob, a quicklist as its nodes' listpacks, and hash tables
-and skiplists as counted elements. Blobs are copied as they are, which works
+and skiplists as counted elements. A skiplist sorted set is written from its
+greatest member down, as Redis' `rdbSaveObject` does, so that a loader
+inserting in file order always inserts at the head of its skiplist, without
+searching past smaller members. Blobs are copied as they are, which works
 because `Listpack` and `Intset` keep Redis' byte format in memory: little-endian
 headers, lengths, and integers, and Redis' backlen layout (unit tests check
 the bytes against vectors Redis produced). Strings are encoded as Redis'
@@ -245,8 +324,25 @@ the bytes against vectors Redis produced). Strings are encoded as Redis'
 LZF-compressed when that saves at least four bytes.
 
 The writer buffers records and writes them in 1 MiB blocks, but writes a
-large value straight from the object, so it is never copied. It syncs every
-4 MiB, and it takes no locks and does not log, so a forked child can run it.
+large value straight from the object, so it is never copied. It takes no
+locks and does not log, so a forked child can run it.
+
+Both snapshot writers (this one and the AOF rewrite's `WriteSnapshotFile`)
+push every 4 MiB written towards the disk through `aof::IncrementalSync`, as
+the automatic sync of Redis' `rioFileWrite` does, so dirty pages never pile
+up for the final `fsync`. On Linux each interval after the first calls `sync_file_range` twice:
+once to start writing its own bytes without waiting, and once to wait for
+the interval before it, which has had a whole interval to reach the disk. A
+full `fsync` per interval would also flush the file's metadata and block the
+writer for all of it. Other platforms have no such call and `fsync` each
+interval. After each interval, and after the final `fsync` (which every
+platform still does before the rename), the writer asks the kernel to drop
+the file's pages from its page cache (`posix_fadvise` with `DONTNEED`, on
+Linux), so a snapshot does not crowd out the dataset's memory. As in Redis,
+the save at shutdown keeps them (`RDBFLAGS_KEEP_CACHE`): the next start
+reads that file. These calls go through `aof::FileOps`, where unit tests
+record their order.
+
 The file declares RDB version 11, the oldest that covers every type written,
 so Redis 7.2 and later load it.
 
@@ -267,7 +363,12 @@ one, which lookups rely on. Any other value, including lists and intsets, is
 rebuilt through the data types, so no corrupt structure enters memory. A
 hash, set, or sorted set stored as a hash table and counting more entries
 than a listpack holds starts in that encoding, sized for the count, instead of
-filling a listpack and converting it. Duplicate members, fields, or keys, NaN
+filling a listpack and converting it. The keyspace and expiration tables are
+sized once from the `RESIZEDB` counts (Redis' `dbExpand`), so they do not
+rehash while the keys arrive; each count is first cut down to the keys the
+bytes left in the file could hold (three bytes a key at the least), so a
+false count cannot make the server allocate more than a few times the file's
+size. Duplicate members, fields, or keys, NaN
 scores, and types this server does not have stop the load with a message
 naming the offset; empty collections are skipped, and keys whose expiration
 time has passed are dropped, as Redis does.
@@ -281,7 +382,9 @@ does not log, and the same fork hooks pause the threads that allocate. The
 server cron (`Rdb::Cron`) reaps it. On success the changes it covered are
 subtracted from the change counter (Redis' `server.dirty`), since writes made
 while it ran are not in the file, and `LASTSAVE` moves to when it ended. A
-child killed by a signal leaves its temporary file, which the parent deletes;
+child killed by a signal leaves its temporary file, which the parent deletes
+on its background file thread (as Redis' `bg_unlink` does, since the file can
+hold most of a snapshot);
 `SIGUSR1`, which shutdown uses to stop it, is not counted as a failure.
 
 As in Redis, only one child runs at a time. The cron passes each side whether

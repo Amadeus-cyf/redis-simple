@@ -232,6 +232,74 @@ TEST(ClientTest, RespRequestsPreserveSpacesAndBinaryData) {
   client->Db()->DeleteKey(key);
 }
 
+TEST(ClientTest, LargeGetReplySurvivesOverwriteAndDeleteBeforeFlush) {
+  auto [client, peer] = CreateClient();
+  const std::string first(100'000, 'a');
+  const std::string second(100'000, 'b');
+  db::RedisDb* const redis_db = client->Db();
+  const std::string get = EncodeRequest({"GET", "shared-get-key"});
+  const auto run_get = [&] {
+    ASSERT_EQ(write(peer.Get(), get.data(), get.size()),
+              static_cast<ssize_t>(get.size()));
+    ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(get.size()));
+    ASSERT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  };
+
+  redis_db->SetStringKey("shared-get-key", first, 0);
+  const std::shared_ptr<const std::string> stored =
+      redis_db->LookupKey("shared-get-key")->SharedStringBytes();
+  ASSERT_NE(stored, nullptr);
+  ASSERT_EQ(stored.use_count(), 2);
+  run_get();
+  // The reply holds the value instead of a copy of it.
+  EXPECT_EQ(stored.use_count(), 3);
+
+  // Nothing was sent yet: overwrite the value, read it again, delete it.
+  redis_db->SetStringKey("shared-get-key", second, 0);
+  run_get();
+  redis_db->DeleteKey("shared-get-key");
+  run_get();
+
+  std::string expected = "$100000\r\n" + first + "\r\n$100000\r\n";
+  expected.append(second).append("\r\n$-1\r\n");
+  std::string response;
+  std::array<char, 4096> buffer{};
+  while (response.size() < expected.size()) {
+    if (client->HasPendingReplies()) {
+      // A full socket buffer makes this a would-block, not an error.
+      client->SendReply();
+      ASSERT_EQ(client->Connection()->State(),
+                connection::ConnectionState::kConnected);
+    }
+    const ssize_t bytes_read = read(peer.Get(), buffer.data(), buffer.size());
+    ASSERT_GT(bytes_read, 0);
+    response.append(buffer.data(), static_cast<size_t>(bytes_read));
+  }
+  EXPECT_EQ(response, expected);
+  EXPECT_FALSE(client->HasPendingReplies());
+  EXPECT_EQ(stored.use_count(), 1);
+}
+
+TEST(ClientTest, LargeGetReplyObeysOutputLimitsAndDiscardedReplies) {
+  const std::string value(100'000, 'a');
+  auto [client, peer] = CreateClient(
+      {.resume_bytes = 1024, .soft_bytes = 2048, .hard_bytes = 50'000});
+  (void)peer;
+  const auto shared = std::make_shared<const std::string>(value);
+  EXPECT_EQ(client->AddBulkReply(shared), 0);
+  EXPECT_TRUE(client->ShouldCloseAfterReply());
+  EXPECT_FALSE(client->HasPendingReplies());
+  EXPECT_EQ(shared.use_count(), 1);
+
+  auto [unlimited_client, unlimited_peer] = CreateClient();
+  (void)unlimited_peer;
+  EXPECT_EQ(unlimited_client->AddBulkReply(shared), value.size() + 11);
+  EXPECT_EQ(unlimited_client->PendingReplyBytes(), value.size() + 11);
+  EXPECT_EQ(shared.use_count(), 2);
+  unlimited_client.reset();
+  EXPECT_EQ(shared.use_count(), 1);
+}
+
 TEST(ClientTest, HelloNegotiatesResp3) {
   auto [client, peer] = CreateClient();
   const std::string request = EncodeRequest({"HELLO", "3"}) +
@@ -368,6 +436,39 @@ TEST(ClientTest, OutputLimitsControlBackpressure) {
   EXPECT_EQ(limited_client->AddReply(std::string(17, 'x')), 0);
   EXPECT_TRUE(limited_client->ShouldCloseAfterReply());
   EXPECT_FALSE(limited_client->HasPendingReplies());
+}
+
+TEST(ClientTest, AddsIntegerRepliesWithoutAString) {
+  auto [client, peer] = CreateClient();
+  EXPECT_EQ(client->AddIntegerReply(0), 4);
+  EXPECT_EQ(client->AddIntegerReply(1), 4);
+  EXPECT_EQ(client->AddIntegerReply(-1), 5);
+  EXPECT_EQ(client->AddIntegerReply(1234567), 10);
+  EXPECT_EQ(client->AddIntegerReply(std::numeric_limits<int64_t>::max()), 22);
+  EXPECT_EQ(client->AddIntegerReply(std::numeric_limits<int64_t>::min()), 23);
+  EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()),
+            ":0\r\n:1\r\n:-1\r\n:1234567\r\n:9223372036854775807\r\n"
+            ":-9223372036854775808\r\n");
+
+  auto [limited_client, limited_peer] =
+      CreateClient({.resume_bytes = 1, .soft_bytes = 2, .hard_bytes = 3});
+  (void)limited_peer;
+  EXPECT_EQ(limited_client->AddIntegerReply(1), 0);
+  EXPECT_TRUE(limited_client->ShouldCloseAfterReply());
+}
+
+TEST(ClientTest, AddsFloatRepliesInTheNegotiatedProtocol) {
+  auto [client, peer] = CreateClient();
+  EXPECT_EQ(client->AddFloatReply(1.5), 9);
+  EXPECT_EQ(client->AddFloatReply(-3), 8);
+  EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()),
+            "$3\r\n1.5\r\n$2\r\n-3\r\n");
+
+  const std::string hello = EncodeRequest({"HELLO", "3"});
+  EXPECT_FALSE(Roundtrip(client.get(), peer.Get(), hello).empty());
+  EXPECT_EQ(client->AddFloatReply(1.5), 6);
+  EXPECT_EQ(client->AddFloatReply(std::numeric_limits<double>::infinity()), 6);
+  EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), ",1.5\r\n,inf\r\n");
 }
 
 TEST(ClientTest, QueuesSplitReplyAtomically) {
@@ -652,5 +753,44 @@ TEST(ClientTest, ExecRejectsQueuedWritesWhenTheAofFailsAfterQueueing) {
   aof.reset();
   std::error_code error;
   std::filesystem::remove_all(path, error);
+}
+
+TEST(ClientTest, ReleasesBuffersOnceIdleBetweenTwoSweeps) {
+  auto [client, peer] = CreateClient();
+  ASSERT_EQ(Roundtrip(client.get(), peer.Get(), EncodeRequest({"PING"})),
+            "+PONG\r\n");
+  ASSERT_GT(client->BufferCapacity(), 0);
+
+  // The first sweep after a read only notes that the client was active.
+  client->ReleaseIdleBuffers();
+  EXPECT_GT(client->BufferCapacity(), 0);
+  client->ReleaseIdleBuffers();
+  EXPECT_EQ(client->BufferCapacity(), 0);
+
+  // The buffers come back with the next request.
+  EXPECT_EQ(Roundtrip(client.get(), peer.Get(), EncodeRequest({"PING"})),
+            "+PONG\r\n");
+  EXPECT_GT(client->BufferCapacity(), 0);
+}
+
+TEST(ClientTest, IdleSweepKeepsAPartialRequestAndAnUnsentReply) {
+  auto [client, peer] = CreateClient();
+  constexpr std::string_view kFirst = "*2\r\n$4\r\nECHO\r\n$5\r\nhe";
+  constexpr std::string_view kSecond = "llo\r\n";
+  ASSERT_EQ(write(peer.Get(), kFirst.data(), kFirst.size()),
+            static_cast<ssize_t>(kFirst.size()));
+  ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(kFirst.size()));
+  ASSERT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  client->ReleaseIdleBuffers();
+  client->ReleaseIdleBuffers();
+
+  ASSERT_EQ(write(peer.Get(), kSecond.data(), kSecond.size()),
+            static_cast<ssize_t>(kSecond.size()));
+  ASSERT_EQ(client->ReadQuery(), static_cast<ssize_t>(kSecond.size()));
+  ASSERT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  ASSERT_TRUE(client->HasPendingReplies());
+  client->ReleaseIdleBuffers();
+  client->ReleaseIdleBuffers();
+  EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), "$5\r\nhello\r\n");
 }
 }  // namespace redis_simple

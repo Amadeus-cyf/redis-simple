@@ -42,8 +42,8 @@ inline TypedLookup<db::RedisObject> MutableLookupTyped(
   return {object, false};
 }
 
-// Result of LookupOrCreateTyped. `object` is null only when the key holds
-// another type.
+// Result of a lookup that may create the key. From LookupOrCreateTyped,
+// `object` is null only when the key holds another type.
 struct CreatingLookup {
   db::RedisObject* object{nullptr};
   bool created{false};

@@ -78,7 +78,7 @@ void RunOperations(FuzzInput* input) {
 
   for (size_t operation_count = 0; operation_count < 256 && input->HasData();
        ++operation_count) {
-    const uint8_t operation = input->ReadByte() % 8;
+    const uint8_t operation = input->ReadByte() % 9;
     const std::string key = input->ReadValue(64);
     const std::string value = input->ReadValue(96);
     switch (operation) {
@@ -130,6 +130,12 @@ void RunOperations(FuzzInput* input) {
         // growing, shrinking, or rehashing, part-way through or not.
         containers::SetDictResizePolicy(
             PolicyFor(key.empty() ? 0 : static_cast<uint8_t>(key[0])));
+        break;
+      case 8:
+        // As the server cron does for an idle keyspace: retry a shrink and
+        // move a batch of a rehash under way.
+        dict->ShrinkIfNeeded();
+        dict->RehashSome(static_cast<int>(key.size()) + 1);
         break;
       default:
         break;

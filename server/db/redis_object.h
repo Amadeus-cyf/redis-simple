@@ -78,10 +78,10 @@ static_assert(sizeof(EmbeddedString) == sizeof(std::string) + 8);
 
 // A key's value and, for a key in the keyspace, its expiration time.
 //
-// The value is one of seven encodings held in the same bytes: a raw, integer
-// or embedded string, or a collection. Collections are held by value, inside
-// the object, so a small one is not a separate allocation: each fits in the
-// space an embedded string takes. Which encoding is live is a 3-bit tag in
+// The value is one of eight encodings held in the same bytes: a raw, shared,
+// integer or embedded string, or a collection. Collections are held by value,
+// inside the object, so a small one is not a separate allocation: each fits in
+// the space an embedded string takes. Which encoding is live is a 3-bit tag in
 // the header word, where Redis' robj packs its type and encoding into bit
 // fields; a std::variant would spend a whole word on it.
 //
@@ -104,6 +104,10 @@ class RedisObject {
     kOther,
   };
 
+  // A string value of at least this many bytes, the size of a reply block,
+  // is stored behind a shared pointer, so a reply can hold the bytes instead
+  // of copying them.
+  static constexpr size_t kMinSharedStringBytes = size_t{16} * 1024;
   // The largest expiration time the header word holds, about 73 million
   // years after the epoch in milliseconds.
   static constexpr int64_t kMaxExpire = (int64_t{1} << 61) - 1;
@@ -164,6 +168,12 @@ class RedisObject {
   }
   // String accessors require a string object (Type() == kString).
   StringValue String() const;
+  // The bytes of a string stored behind a shared pointer, or nullptr for
+  // any other string. The bytes stay as they are for as long as the caller
+  // holds the pointer, on any thread: a write to the object, or its
+  // destruction, leaves a buffer that someone else holds alone and gives the
+  // object a new one. Call it on the main thread only.
+  std::shared_ptr<const std::string> SharedStringBytes() const;
   // Returns the integer value if the string is integer-encoded or holds a
   // decimal integer.
   std::optional<int64_t> Int() const;
@@ -219,10 +229,12 @@ class RedisObject {
     kHash,
     kInt,
     kEmbedded,
+    kShared,
   };
+  using SharedString = std::shared_ptr<std::string>;
   static constexpr int kTagBits = 3;
   static constexpr uint64_t kTagMask = (uint64_t{1} << kTagBits) - 1;
-  static_assert(static_cast<uint64_t>(Tag::kEmbedded) <= kTagMask);
+  static_assert(static_cast<uint64_t>(Tag::kShared) <= kTagMask);
   static_assert(static_cast<int>(Tag::kRaw) + 1 ==
                 static_cast<int>(ObjectType::kString));
   static_assert(static_cast<int>(Tag::kSet) + 1 ==
@@ -248,6 +260,8 @@ class RedisObject {
       return Tag::kHash;
     } else if constexpr (std::is_same_v<T, int64_t>) {
       return Tag::kInt;
+    } else if constexpr (std::is_same_v<T, SharedString>) {
+      return Tag::kShared;
     } else {
       static_assert(std::is_same_v<T, EmbeddedString>);
       return Tag::kEmbedded;
@@ -266,6 +280,11 @@ class RedisObject {
   }
 
   static std::unique_ptr<RedisObject> CreateEmbedded(std::string_view value);
+  // The string the object may change in place: its raw string, or its shared
+  // one while nothing else holds it. Null for the other encodings.
+  std::string* ExclusiveString();
+  // Stores a string too long to embed, shared when it is large enough.
+  void EmplaceLongString(std::string value);
   // Replaces the value with an embedded copy of `value`, which must fit and
   // may view this object's current bytes.
   void EmbedString(std::string_view value);
@@ -328,6 +347,8 @@ class RedisObject {
         return visitor(*As<int64_t>());
       case Tag::kEmbedded:
         return visitor(*As<EmbeddedString>());
+      case Tag::kShared:
+        return visitor(*As<SharedString>());
     }
   }
   void DestroyValue() {

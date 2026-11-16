@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace redis_simple::containers {
@@ -188,6 +189,66 @@ TEST(ReplyBufferTest, MovesLargeReplyIntoOutputList) {
   EXPECT_EQ(BlockString(blocks[0]), std::string(4096, 'x'));
 }
 
+TEST(ReplyBufferTest, HoldsLargeSharedReplyUntilItIsSent) {
+  ReplyBuffer buffer;
+  auto reply = std::make_shared<const std::string>(8192, 'x');
+  buffer.Append("head", 4);
+
+  EXPECT_EQ(buffer.Append(reply), 8192);
+  buffer.Append("tail", 4);
+  EXPECT_EQ(reply.use_count(), 2);
+  EXPECT_EQ(buffer.PendingBytes(), 8200);
+
+  std::vector<iovec> blocks;
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 3);
+  EXPECT_EQ(BlockString(blocks[0]), "head");
+  EXPECT_EQ(static_cast<const char*>(blocks[1].iov_base), reply->data());
+  EXPECT_EQ(blocks[1].iov_len, 8192);
+  EXPECT_EQ(BlockString(blocks[2]), "tail");
+
+  buffer.Consume(4 + 4096);
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 2);
+  EXPECT_EQ(static_cast<const char*>(blocks[0].iov_base), reply->data() + 4096);
+  EXPECT_EQ(blocks[0].iov_len, 4096);
+  EXPECT_EQ(reply.use_count(), 2);
+
+  buffer.Consume(4096);
+  EXPECT_EQ(reply.use_count(), 1);
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 1);
+  EXPECT_EQ(BlockString(blocks[0]), "tail");
+  buffer.Consume(4);
+  EXPECT_TRUE(buffer.Empty());
+  EXPECT_EQ(buffer.ReplyBytes(), 0);
+}
+
+TEST(ReplyBufferTest, CopiesSmallSharedReply) {
+  ReplyBuffer buffer;
+  auto reply = std::make_shared<const std::string>(
+      ReplyBuffer::kMinMovedReplySize - 1, 'x');
+
+  EXPECT_EQ(buffer.Append(reply), reply->size());
+  EXPECT_EQ(reply.use_count(), 1);
+  std::vector<iovec> blocks;
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 1);
+  EXPECT_NE(static_cast<const char*>(blocks[0].iov_base), reply->data());
+  EXPECT_EQ(BlockString(blocks[0]), *reply);
+}
+
+TEST(ReplyBufferTest, ReleasesSharedRepliesItNeverSent) {
+  auto reply = std::make_shared<const std::string>(8192, 'x');
+  {
+    ReplyBuffer buffer;
+    buffer.Append(reply);
+    buffer.Append(reply);
+    EXPECT_EQ(reply.use_count(), 3);
+  }
+  EXPECT_EQ(reply.use_count(), 1);
+}
+
 TEST(ReplyBufferTest, CopiesSmallMovedRepliesIntoSharedChunks) {
   ReplyBuffer buffer(16, 1024);
   for (int i = 0; i < 100; ++i) {
@@ -208,5 +269,44 @@ TEST(ReplyBufferTest, CopiesSmallMovedRepliesIntoSharedChunks) {
     expected.append("+OK\r\n");
   }
   EXPECT_EQ(sent, expected);
+}
+
+TEST(ReplyBufferTest, ReleaseBufferFreesTheMainBufferUntilTheNextReply) {
+  ReplyBuffer buffer(4096, 1024);
+  EXPECT_EQ(buffer.BufferCapacity(), 4096);
+  buffer.Append("+OK\r\n", 5);
+  buffer.Consume(5);
+  ASSERT_TRUE(buffer.Empty());
+
+  buffer.ReleaseBuffer();
+  EXPECT_EQ(buffer.BufferCapacity(), 0);
+  EXPECT_TRUE(buffer.Empty());
+  std::vector<iovec> blocks;
+  buffer.FillBlocks(&blocks);
+  EXPECT_TRUE(blocks.empty());
+
+  // A reply larger than the main buffer fills it and overflows as before.
+  const std::string reply(5000, 'x');
+  EXPECT_EQ(buffer.Append(reply.data(), reply.size()), reply.size());
+  EXPECT_EQ(buffer.BufferCapacity(), 4096);
+  EXPECT_EQ(buffer.BufferSize(), 4096);
+  buffer.FillBlocks(&blocks);
+  ASSERT_EQ(blocks.size(), 2);
+  EXPECT_EQ(BlockString(blocks[0]) + BlockString(blocks[1]), reply);
+}
+
+TEST(ReplyBufferTest, MovedReplyNeedsNoMainBufferAfterRelease) {
+  ReplyBuffer buffer;
+  buffer.ReleaseBuffer();
+  std::string reply(8192, 'x');
+  EXPECT_EQ(buffer.Append(std::move(reply)), 8192);
+  EXPECT_EQ(buffer.BufferCapacity(), 0);
+  EXPECT_EQ(buffer.ReplyCount(), 1);
+}
+
+TEST(ReplyBufferDeathTest, RejectsReleasingUnsentReplies) {
+  ReplyBuffer buffer;
+  buffer.Append("+OK\r\n", 5);
+  EXPECT_DEATH(buffer.ReleaseBuffer(), "Check failed");
 }
 }  // namespace redis_simple::containers

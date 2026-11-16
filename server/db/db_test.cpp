@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "containers/dict.h"
 #include "data_types/set/set.h"
 #include "server/db/key_watcher.h"
 #include "server/db/redis_object.h"
@@ -52,6 +53,25 @@ TEST(RedisDbTest, AddKeyRefusesAnExistingKey) {
       redis_db->AddKey("plain", RedisObject::CreateWithString("value"), 0));
   EXPECT_EQ(redis_db->Expiration("plain"), std::nullopt);
   EXPECT_EQ(redis_db->KeyCount(), 2);
+}
+
+TEST(RedisDbTest, ReserveKeysKeepsExistingKeysAndTakesNewOnes) {
+  auto redis_db = RedisDb::Create();
+  constexpr int64_t kExpire = 4'102'444'800'000;
+  ASSERT_TRUE(
+      redis_db->AddKey("old", RedisObject::CreateWithString("value"), kExpire));
+
+  redis_db->ReserveKeys(1000, 500);
+  for (int i = 0; i < 1000; ++i) {
+    ASSERT_TRUE(redis_db->AddKey("key-" + std::to_string(i),
+                                 RedisObject::CreateWithString("v"),
+                                 i % 2 == 0 ? kExpire : 0));
+  }
+  EXPECT_EQ(redis_db->KeyCount(), 1001);
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), 501);
+  ASSERT_NE(redis_db->LookupKey("old"), nullptr);
+  EXPECT_EQ(redis_db->Expiration("old"), kExpire);
+  EXPECT_NE(redis_db->LookupKey("key-999"), nullptr);
 }
 
 TEST(RedisDbTest, UnlinkRemovesKeyBeforeReclaimingValue) {
@@ -555,6 +575,64 @@ TEST(RedisDbTest, UnlinkFreesSmallValuesAtOnceAndLargeOnesInSteps) {
   }
   EXPECT_GE(steps, 8);
   EXPECT_EQ(redis_db->UnlinkKey("first"), DbStatus::kError);
+}
+
+TEST(RedisDbTest, RehashIncrementallyFinishesARehashWithoutCommands) {
+  auto redis_db = RedisDb::Create();
+  EXPECT_FALSE(redis_db->RehashIncrementally(0));
+  const int64_t future = utils::NowInMilliseconds() + 60'000;
+  // The keyspace table began doubling to 131,072 buckets at 65,537 keys, and
+  // the inserts since have moved only part of the old table.
+  constexpr int kKeys = 100'000;
+  for (int i = 0; i < kKeys; ++i) {
+    ASSERT_EQ(redis_db->SetKey("key:" + std::to_string(i),
+                               RedisObject::CreateWithString("v"), future),
+              DbStatus::kOk);
+  }
+  // With no budget, each call moves one batch of buckets.
+  ASSERT_TRUE(redis_db->RehashIncrementally(0));
+  int calls = 1;
+  while (redis_db->RehashIncrementally(0)) {
+    ++calls;
+    ASSERT_LE(calls, 100'000);
+  }
+  EXPECT_GT(calls, 1);
+  EXPECT_FALSE(redis_db->RehashIncrementally(1000));
+  EXPECT_EQ(redis_db->KeyCount(), static_cast<size_t>(kKeys));
+  EXPECT_EQ(redis_db->KeysWithExpirationCount(), static_cast<size_t>(kKeys));
+  for (int i = 0; i < kKeys; i += 997) {
+    const std::string key = "key:" + std::to_string(i);
+    ASSERT_NE(redis_db->LookupKey(key), nullptr) << key;
+    EXPECT_EQ(redis_db->Expiration(key), future) << key;
+  }
+}
+
+TEST(RedisDbTest, RehashIncrementallyShrinksTablesAChildHeldBack) {
+  auto redis_db = RedisDb::Create();
+  constexpr int kKeys = 4096;
+  constexpr int kKept = 200;
+  for (int i = 0; i < kKeys; ++i) {
+    ASSERT_EQ(redis_db->SetKey("key:" + std::to_string(i),
+                               RedisObject::CreateWithString("v"), 0),
+              DbStatus::kOk);
+  }
+  while (redis_db->RehashIncrementally(1000)) {
+  }
+  // As while a child runs: deletes leave the 4,096-bucket table alone until
+  // it is far emptier than this.
+  containers::SetDictResizePolicy(containers::DictResizePolicy::kAvoid);
+  for (int i = kKept; i < kKeys; ++i) {
+    ASSERT_EQ(redis_db->DeleteKey("key:" + std::to_string(i)), DbStatus::kOk);
+  }
+  containers::SetDictResizePolicy(containers::DictResizePolicy::kEnabled);
+  // The call starts the shrink and, with no budget, moves one batch.
+  ASSERT_TRUE(redis_db->RehashIncrementally(0));
+  while (redis_db->RehashIncrementally(1000)) {
+  }
+  EXPECT_EQ(redis_db->KeyCount(), static_cast<size_t>(kKept));
+  for (int i = 0; i < kKept; ++i) {
+    ASSERT_NE(redis_db->LookupKey("key:" + std::to_string(i)), nullptr) << i;
+  }
 }
 
 TEST(RedisDbTest, FlushStartsEmptyTablesThatKeepWorking) {

@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "logging/logger.h"
+#include "server/aof/background_jobs.h"
 #include "server/aof/file_ops.h"
 #include "server/db/db.h"
 #include "server/rdb/rdb_loader.h"
@@ -47,6 +48,13 @@ Rdb::Rdb(Options options)
     : options_(std::move(options)), last_save_time_(UnixSeconds()) {
   if (options_.file_ops == nullptr) {
     options_.file_ops = aof::DefaultFileOps();
+  }
+  jobs_ = std::make_unique<aof::BackgroundJobs>(options_.file_ops.get());
+  if (!jobs_->Start()) {
+    RS_LOG_WARN(
+        "Can't start the background file threads; temporary RDB "
+        "files are deleted inline\n");
+    jobs_.reset();
   }
 }
 
@@ -91,10 +99,12 @@ bool Rdb::Load(db::RedisDb* const db) {
 }
 
 Rdb::SaveStatus Rdb::WriteAndRename(db::RedisDb* const db,
-                                    const std::string& temporary) const {
+                                    const std::string& temporary,
+                                    bool keep_page_cache) const {
   const WriteStatus status = WriteRdbFile(db, temporary,
                                           {.compression = options_.compression,
                                            .checksum = options_.checksum,
+                                           .keep_page_cache = keep_page_cache,
                                            .creation_time = UnixSeconds()},
                                           options_.file_ops.get());
   if (status != WriteStatus::kWritten) {
@@ -116,12 +126,12 @@ Rdb::SaveStatus Rdb::WriteAndRename(db::RedisDb* const db,
 
 bool Rdb::Save(db::RedisDb* const db) {
   ++saves_;
-  return SaveNow(db);
+  return SaveNow(db, /*keep_page_cache=*/false);
 }
 
-bool Rdb::SaveNow(db::RedisDb* const db) {
+bool Rdb::SaveNow(db::RedisDb* const db, bool keep_page_cache) {
   const std::string temporary = TemporaryFileName(getpid());
-  switch (WriteAndRename(db, temporary)) {
+  switch (WriteAndRename(db, temporary, keep_page_cache)) {
     case SaveStatus::kSaved:
       break;
     case SaveStatus::kWriteFailed:
@@ -178,7 +188,8 @@ BackgroundSaveResult Rdb::StartBackgroundSave(db::RedisDb* const db) {
 
 void Rdb::RunChild(db::RedisDb* const db) const {
   // Redis' child names the temporary file after its own pid.
-  _exit(static_cast<int>(WriteAndRename(db, TemporaryFileName(getpid()))));
+  _exit(static_cast<int>(WriteAndRename(db, TemporaryFileName(getpid()),
+                                        /*keep_page_cache=*/false)));
 }
 
 void Rdb::Cron(db::RedisDb* const db, bool may_fork) {
@@ -239,7 +250,7 @@ void Rdb::FinishBackgroundSave(int wait_status) {
   } else if (wait_status != -1 && WIFSIGNALED(wait_status)) {
     RS_LOG_WARN("Background saving terminated by signal %d\n",
                 WTERMSIG(wait_status));
-    unlink(TemporaryFileName(child).c_str());
+    RemoveTemporaryFile(child);
     // SIGUSR1 is how a save is stopped on purpose, not a failure.
     if (WTERMSIG(wait_status) != SIGUSR1) {
       SetLastBackgroundSaveOk(false);
@@ -254,12 +265,26 @@ void Rdb::FinishBackgroundSave(int wait_status) {
   background_save_start_ = -1;
 }
 
+void Rdb::RemoveTemporaryFile(pid_t child) {
+  if (jobs_ != nullptr) {
+    jobs_->QueueDeletion(TemporaryFileName(child));
+  } else {
+    options_.file_ops->Unlink(TemporaryFileName(child).c_str());
+  }
+}
+
+void Rdb::WaitForBackgroundJobs() {
+  if (jobs_ != nullptr) {
+    jobs_->WaitUntilIdle();
+  }
+}
+
 void Rdb::AbandonBackgroundSave() {
   if (kill(child_, SIGUSR1) == 0) {
     int wait_status = 0;
     WaitForChild(child_, &wait_status, 0);
   }
-  unlink(TemporaryFileName(child_).c_str());
+  RemoveTemporaryFile(child_);
   child_ = -1;
   background_save_start_ = -1;
 }
@@ -275,7 +300,9 @@ bool Rdb::SaveBeforeShutdown(db::RedisDb* const db) {
     return true;
   }
   RS_LOG_INFO("Saving the final RDB snapshot before exiting.\n");
-  if (!SaveNow(db)) {
+  // As Redis' finishShutdown does, the file stays in the page cache: the
+  // next start reads it.
+  if (!SaveNow(db, /*keep_page_cache=*/true)) {
     RS_LOG_WARN("Error trying to save the DB, can't exit.\n");
     return false;
   }
