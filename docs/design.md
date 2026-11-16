@@ -228,7 +228,7 @@ locks and does not log, so a forked child can run it.
 Both snapshot writers (this one and the AOF rewrite's `WriteSnapshotFile`)
 push every 4 MiB written towards the disk through `aof::IncrementalSync`, as
 the automatic sync of Redis' `rioFileWrite` does, so dirty pages never pile
-up for the final `fsync`. On Linux an interval calls `sync_file_range` twice:
+up for the final `fsync`. On Linux each interval after the first calls `sync_file_range` twice:
 once to start writing its own bytes without waiting, and once to wait for
 the interval before it, which has had a whole interval to reach the disk. A
 full `fsync` per interval would also flush the file's metadata and block the
@@ -238,8 +238,9 @@ platform still does before the rename), the writer asks the kernel to drop
 the file's pages from its page cache (`posix_fadvise` with `DONTNEED`, on
 Linux), so a snapshot does not crowd out the dataset's memory. As in Redis,
 the save at shutdown keeps them (`RDBFLAGS_KEEP_CACHE`): the next start
-reads that file. The four calls go through `aof::FileOps`, where unit tests
+reads that file. These calls go through `aof::FileOps`, where unit tests
 record their order.
+
 The file declares RDB version 11, the oldest that covers every type written,
 so Redis 7.2 and later load it.
 

@@ -23,7 +23,8 @@ class FileOps {
   virtual int Rename(const char* source, const char* destination) = 0;
 
   // The calls below tune how a snapshot reaches the disk. They are
-  // not pure, and default to "not available", so file operations that only
+  // not pure: the range calls default to "not available" and the page cache
+  // drop to doing nothing, so file operations that only
   // inject failures keep the plain Sync path on every platform.
 
   // Whether StartWriteback and WaitForWriteback work (Linux'
@@ -52,8 +53,9 @@ class FileOps {
 // With range sync (Linux) an interval only starts writing its own bytes and
 // waits for the bytes of the interval before it, which have had a whole
 // interval to reach the disk, so the writer rarely blocks. Elsewhere each
-// interval is a full Sync. Either way it then drops the file's clean pages
-// from the page cache, unless told to keep them, so a snapshot does not push
+// interval is a full Sync. Either way it then asks to drop the file's clean
+// pages from the page cache (which does something only on Linux), unless
+// told to keep them, so a snapshot does not push
 // the dataset's own memory out.
 class IncrementalSync {
  public:

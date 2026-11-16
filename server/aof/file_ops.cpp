@@ -81,7 +81,7 @@ bool IncrementalSync::Written(size_t size) {
     return false;
   }
   if (!keep_page_cache_) {
-    // The pending interval may still be on its way to the disk, and pages
+    // The interval just started may still be on its way to the disk, and pages
     // being written are not dropped, so this asks for the whole file: each
     // interval's pages get another chance at the next one. A failure only
     // leaves pages cached.
@@ -101,7 +101,8 @@ bool IncrementalSync::SyncPending() {
       return false;
     }
     // Waiting for the interval before keeps the promise of incremental
-    // sync: at most two intervals are ever not yet on disk.
+    // sync: at most two intervals of dirty pages are ever waiting for
+    // writeback.
     const off_t previous_size = pending_offset_ - previous_offset_;
     if (previous_size > 0 &&
         file_ops_->WaitForWriteback(fd_, previous_offset_, previous_size) < 0) {

@@ -417,8 +417,8 @@ WriteStatus WriteRdbFile(db::RedisDb* const db, const std::string& path,
     if (!aof::SyncFile(file_ops, fd)) {
       status = WriteStatus::kSyncFailed;
     } else if (!options.keep_page_cache) {
-      // Redis' rdbSave: the file is on disk, so its pages are only taking
-      // memory the dataset could use. A failure only leaves them cached.
+      // Redis' rdbSaveInternal: the file is on disk, so its pages are only
+      // taking memory the dataset could use. A failure only leaves them cached.
       static_cast<void>(file_ops->DropPageCache(fd));
     }
   }
