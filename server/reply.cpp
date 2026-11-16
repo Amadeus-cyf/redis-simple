@@ -62,6 +62,11 @@ void AppendLine(char prefix, bool negative, uint64_t magnitude,
 void AppendSizeLine(char prefix, size_t size, std::string* const reply) {
   AppendLine(prefix, false, size, reply);
 }
+
+// Encoded bytes per bulk string that ReserveBulkStrings reserves, for at
+// most this many of them.
+constexpr size_t kReservedBulkStringBytes = 24;
+constexpr size_t kMaxReservedBulkStrings = 1024;
 }  // namespace
 
 std::string FromString(std::string_view text) {
@@ -78,13 +83,21 @@ std::string FromBulkString(std::string_view value) {
   return reply;
 }
 
-std::string FromInt64(int64_t value) {
-  std::string reply;
+std::string_view EncodeInt64(int64_t value, IntegerBuffer* const buffer) {
+  char* const begin = buffer->data();
+  *begin = kInt64Prefix;
+  const auto result =
+      std::to_chars(begin + 1, begin + buffer->size() - kCrlf.size(), value);
+  RS_CHECK(result.ec == std::errc());
+  char* const end = std::ranges::copy(kCrlf, result.ptr).out;
+  return {begin, static_cast<size_t>(end - begin)};
+}
+
+void AppendInt64(int64_t value, std::string* const reply) {
   // Negate in unsigned arithmetic so INT64_MIN does not overflow.
   const auto magnitude = value < 0 ? uint64_t{0} - static_cast<uint64_t>(value)
                                    : static_cast<uint64_t>(value);
-  AppendLine(kInt64Prefix, value < 0, magnitude, &reply);
-  return reply;
+  AppendLine(kInt64Prefix, value < 0, magnitude, reply);
 }
 
 std::string FromArray(const std::vector<std::string>& array) {
@@ -114,6 +127,11 @@ void AppendArrayHeader(size_t size, std::string* const reply) {
   AppendSizeLine(kArrayPrefix, size, reply);
 }
 
+void ReserveBulkStrings(size_t count, std::string* const reply) {
+  const size_t elements = std::min(count, kMaxReservedBulkStrings);
+  reply->reserve(reply->size() + (elements * kReservedBulkStringBytes));
+}
+
 size_t EncodeBulkStringHeader(size_t length, char* const buffer,
                               size_t capacity) {
   RS_CHECK(capacity >= kBulkStringHeaderCapacity);
@@ -126,10 +144,20 @@ size_t EncodeBulkStringHeader(size_t length, char* const buffer,
   return static_cast<size_t>(end - buffer);
 }
 
-std::string FromFloat(double value, ProtocolVersion protocol) {
-  std::string reply;
-  AppendFloat(value, protocol, &reply);
-  return reply;
+std::string_view EncodeFloat(double value, ProtocolVersion protocol,
+                             FloatReplyBuffer* const buffer) {
+  utils::FloatBuffer text_buffer;
+  const std::string_view text = utils::FormatFloat(value, &text_buffer);
+  char* const begin = buffer->data();
+  char* out = begin;
+  if (protocol == ProtocolVersion::kResp2) {
+    out += EncodeBulkStringHeader(text.size(), begin, buffer->size());
+  } else {
+    *out++ = kDoublePrefix;
+  }
+  out = std::ranges::copy(text, out).out;
+  out = std::ranges::copy(kCrlf, out).out;
+  return {begin, static_cast<size_t>(out - begin)};
 }
 
 void AppendFloat(double value, ProtocolVersion protocol,

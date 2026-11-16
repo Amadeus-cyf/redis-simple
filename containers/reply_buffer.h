@@ -33,6 +33,10 @@ class ReplyBuffer {
   size_t ReplyBytes() const { return reply_bytes_; }
   size_t PendingBytes() const { return pending_bytes_; }
   size_t BufferSize() const { return size_; }
+  // Bytes allocated for the main buffer: none after ReleaseBuffer().
+  size_t BufferCapacity() const {
+    return buffer_ != nullptr ? buffer_capacity_ : 0;
+  }
   size_t Append(const char* s, size_t length);
   size_t Append(std::string&& reply);
   // Queues `reply`, which must not be null, without copying it when it is
@@ -41,6 +45,9 @@ class ReplyBuffer {
   void Consume(size_t nwritten);
   void FillBlocks(std::vector<iovec>* blocks);
   bool Empty() const { return size_ == 0 && node_count_ == 0; }
+  // Frees the main buffer of a buffer that is Empty(). The next reply
+  // allocates it again.
+  void ReleaseBuffer();
 
  private:
   size_t AppendToBuffer(const char* s, size_t length);

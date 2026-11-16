@@ -62,6 +62,10 @@ size_t ReplyBuffer::AppendToBuffer(const char* s, size_t length) {
   if (node_count_ != 0) {
     return 0;
   }
+  if (buffer_ == nullptr) {
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): contiguous byte buffer
+    buffer_.reset(new char[buffer_capacity_]);
+  }
   const size_t nwritten = std::min(length, buffer_capacity_ - size_);
   std::memcpy(buffer_.get() + size_, s, nwritten);
   size_ += nwritten;
@@ -135,6 +139,11 @@ void ReplyBuffer::ConsumeList(size_t nwritten) {
     nwritten -= remaining;
     PopFront();
   }
+}
+
+void ReplyBuffer::ReleaseBuffer() {
+  RS_CHECK(Empty());
+  buffer_.reset();
 }
 
 void ReplyBuffer::PushNode(std::unique_ptr<ReplyChunk> node) {

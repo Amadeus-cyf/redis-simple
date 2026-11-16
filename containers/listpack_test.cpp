@@ -837,6 +837,76 @@ TEST(ListpackTest, DeleteRangeUsesOneContiguousMutation) {
   EXPECT_EQ(listpack.Size(), 0);
 }
 
+// Inserts at the head, the middle and the tail, replaces throughout, and
+// deletes ranges from the middle while the listpack grows and shrinks through
+// many allocation sizes. After every step its bytes must equal those of a
+// listpack built by appending the expected elements.
+TEST(ListpackTest, KeepsBytesWhileGrowingAndShrinking) {
+  Listpack listpack;
+  std::vector<std::string> model;
+  const auto expect_matches_model = [&listpack, &model] {
+    Listpack expected;
+    for (const std::string& value : model) {
+      ASSERT_TRUE(expected.Append(value));
+    }
+    ASSERT_EQ(listpack.Bytes(), expected.Bytes());
+    ASSERT_EQ(listpack.Size(), model.size());
+  };
+  const auto offset_at = [&listpack](size_t index) {
+    return index == listpack.Size() ? size_t{listpack.TotalBytes()} - 1
+                                    : RequireIndex(listpack.OffsetAt(index));
+  };
+  constexpr size_t kSteps = 400;
+  constexpr std::string_view kLetters = "abcdefghijklmnopqrstuvwxyz";
+  for (size_t step = 0; step < kSteps; ++step) {
+    const size_t index = step % 3 == 0 ? 0 : model.size() * (step % 3) / 2;
+    const std::string value =
+        step % 5 == 0 ? std::to_string(step * 1000)
+                      : std::string(1 + (step * 7 % 90),
+                                    kLetters[step % kLetters.size()]);
+    ASSERT_TRUE(listpack.Insert(offset_at(index), value));
+    model.insert(model.begin() + static_cast<std::ptrdiff_t>(index), value);
+    expect_matches_model();
+  }
+  for (size_t step = 0; step < kSteps; ++step) {
+    const size_t index = step * 13 % model.size();
+    const std::string value(step % 2 == 0 ? 1 : 200, 'r');
+    ASSERT_TRUE(listpack.Replace(offset_at(index), value));
+    model[index] = value;
+    expect_matches_model();
+  }
+  while (!model.empty()) {
+    const size_t index = model.size() / 2;
+    const size_t count = std::min<size_t>(3, model.size() - index);
+    ASSERT_EQ(listpack.DeleteRange(offset_at(index), count), count);
+    const auto first = model.begin() + static_cast<std::ptrdiff_t>(index);
+    model.erase(first, first + static_cast<std::ptrdiff_t>(count));
+    expect_matches_model();
+  }
+}
+
+TEST(ListpackTest, BatchInsertOfPairEqualsTwoInserts) {
+  Listpack batched;
+  Listpack single;
+  // The offset of element `index`, or of the terminator past the last one.
+  const auto offset_at = [](const Listpack& listpack, size_t index) {
+    return index == listpack.Size() ? size_t{listpack.TotalBytes()} - 1
+                                    : RequireIndex(listpack.OffsetAt(index));
+  };
+  for (int pair = 0; pair < 200; ++pair) {
+    const std::string field = "field:" + std::to_string(pair);
+    const std::string value = std::to_string(pair * 37);
+    // Alternate between the head, the middle and the tail.
+    const size_t index = (batched.Size() / 2) * (pair % 3) / 2 * 2;
+    ASSERT_TRUE(batched.BatchInsert(offset_at(batched, index),
+                                    {{field, 0, false}, {value, 0, false}}));
+    ASSERT_TRUE(single.Insert(offset_at(single, index), field));
+    ASSERT_TRUE(single.Insert(offset_at(single, index + 1), value));
+    ASSERT_EQ(batched.Bytes(), single.Bytes());
+  }
+  EXPECT_EQ(batched.Size(), 400);
+}
+
 TEST(ListpackTest, DeleteMatchingHonorsDirectionAndLimit) {
   Listpack listpack;
   for (std::string_view value : {"x", "keep", "x", "x", "keep", "x"}) {

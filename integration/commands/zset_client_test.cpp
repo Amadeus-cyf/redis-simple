@@ -154,6 +154,19 @@ int Run() {
       {"ZADD zflags INCR 2 a\r\n", "7\n"},
       {"ZADD zflags NX INCR 2 a\r\n", "(nil)\n"},
       {"ZCARD zflags\r\n", "2\n"},
+      // GT does not stop a new member; INCR to NaN is an error that changes
+      // nothing.
+      {"ZADD zrules GT 5 fresh\r\n", "1\n"},
+      {"ZADD zrules GT CH 4 fresh\r\n", "0\n"},
+      {"ZADD zrules INCR inf fresh\r\n", "inf\n"},
+      {"ZADD zrules INCR -inf fresh\r\n",
+       "ERR resulting score is not a number (NaN)\n"},
+      {"ZSCORE zrules fresh\r\n", "inf\n"},
+      // Score range bounds, as strtod reads them.
+      {"ZCOUNT zrules (5 INF\r\n", "1\n"},
+      {"ZCOUNT zrules -Inf (+inf\r\n", "0\n"},
+      {"ZCOUNT zrules 0x1 Infinity\r\n", "1\n"},
+      {"ZCOUNT zrules 1.5x 2\r\n", "ERR min or max is not a float\n"},
       {"ZREVRANK zflags a\r\n", "0\n"},
       {"ZRANK zflags missing WITHSCORE\r\n", "(nil)\n"},
       {"ZRANK zflags a WITHSCOR\r\n", "ERR syntax error\n"},

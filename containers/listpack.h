@@ -71,6 +71,7 @@ class Listpack {
   bool BatchAppend(std::initializer_list<ListpackEntry> entries);
   bool BatchPrepend(const std::vector<ListpackEntry>& entries);
   bool BatchInsert(size_t offset, const std::vector<ListpackEntry>& entries);
+  bool BatchInsert(size_t offset, std::initializer_list<ListpackEntry> entries);
   std::optional<size_t> OffsetAt(size_t index) const;
   // The value view is valid only during the callback invocation.
   template <typename Visitor>
@@ -212,7 +213,14 @@ class Listpack {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
   Listpack(std::unique_ptr<unsigned char[]> listpack, size_t capacity)
       : listpack_(std::move(listpack)), capacity_(capacity) {}
-  void Realloc(size_t bytes);
+  // Replaces the `removed_bytes` at `offset` with `inserted_bytes` of space
+  // for the caller to fill, moves the bytes after them, and sets the total
+  // size. Keeps the storage while the result fits and uses at least a quarter
+  // of it.
+  void ResizeGap(size_t offset, size_t removed_bytes, size_t inserted_bytes);
+  // ResizeGap into new storage, sized for `new_bytes` with room to grow into.
+  void ResizeGapInNewStorage(size_t offset, size_t tail_offset,
+                             size_t inserted_bytes, size_t new_bytes);
   std::unique_ptr<unsigned char[]> listpack_;
   // Allocated bytes of listpack_; at least TotalBytes().
   size_t capacity_;

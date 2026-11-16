@@ -21,7 +21,65 @@ class FileOps {
   virtual ssize_t WriteVector(int fd, const iovec* blocks, int count) = 0;
   virtual int Sync(int fd) = 0;
   virtual int Rename(const char* source, const char* destination) = 0;
+
+  // The calls below tune how a snapshot reaches the disk. They are
+  // not pure: the range calls default to "not available" and the page cache
+  // drop to doing nothing, so file operations that only
+  // inject failures keep the plain Sync path on every platform.
+
+  // Whether StartWriteback and WaitForWriteback work (Linux'
+  // sync_file_range).
+  [[nodiscard]] virtual bool HasRangeSync() const { return false; }
+  // Asks the kernel to start writing the range's dirty pages to the disk,
+  // without waiting for them.
+  virtual int StartWriteback(int fd, off_t offset, off_t size);
+  // Blocks until the range's pages are on their way to the disk and that
+  // write has finished. Unlike Sync it flushes no file metadata.
+  virtual int WaitForWriteback(int fd, off_t offset, off_t size);
+  // Asks the kernel to drop the file's pages that are already on disk from
+  // its page cache (posix_fadvise's DONTNEED). Does nothing where the
+  // platform has no such call.
+  virtual int DropPageCache(int fd);
+
   virtual ~FileOps() = default;
+};
+
+// Keeps a snapshot that is written from the start of an empty file from
+// piling up dirty pages, as the automatic sync of Redis' rioFileWrite does:
+// after every kIntervalBytes written it pushes them towards the disk, so the
+// final Sync has little left to do and never stalls other disk users for the
+// whole file.
+//
+// With range sync (Linux) an interval only starts writing its own bytes and
+// waits for the bytes of the interval before it, which have had a whole
+// interval to reach the disk, so the writer rarely blocks. Elsewhere each
+// interval is a full Sync. Either way it then asks to drop the file's clean
+// pages from the page cache (which does something only on Linux), unless
+// told to keep them, so a snapshot does not push
+// the dataset's own memory out.
+class IncrementalSync {
+ public:
+  // Redis' REDIS_AUTOSYNC_BYTES.
+  static constexpr size_t kIntervalBytes = size_t{4} * 1024 * 1024;
+
+  IncrementalSync(FileOps* file_ops, int fd, bool keep_page_cache)
+      : file_ops_(file_ops), fd_(fd), keep_page_cache_(keep_page_cache) {}
+
+  // Call after each `size` bytes written to the file. False, with errno
+  // set, if a sync failed.
+  bool Written(size_t size);
+
+ private:
+  bool SyncPending();
+
+  FileOps* file_ops_;
+  int fd_;
+  bool keep_page_cache_;
+  // Where the interval before the pending one starts, where the pending one
+  // starts, and how many bytes it holds so far.
+  off_t previous_offset_{};
+  off_t pending_offset_{};
+  size_t pending_bytes_{};
 };
 
 // The real system calls.

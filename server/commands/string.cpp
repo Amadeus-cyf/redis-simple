@@ -217,8 +217,13 @@ void HandleSet(Client* const client) {
   }
   const SetArgs* const args = &parsed;
   db::RedisDb* const redis_db = client->Db();
-  const db::RedisObject* const existing = redis_db->LookupKey(args->key);
-  const bool exists = existing != nullptr;
+  // Only XX must leave a missing key missing. Every other form sets it
+  // unless it exists under NX, so the lookup also adds it.
+  const db::RedisDb::KeySlot slot = args->condition == SetCondition::kIfExists
+                                        ? redis_db->FindKeyForWrite(args->key)
+                                        : redis_db->FindOrCreateKey(args->key);
+  const db::RedisObject* const existing = slot.Object();
+  const bool exists = existing != nullptr && !slot.Created();
   if (args->return_old_value && exists &&
       existing->Type() != db::RedisObject::ObjectType::kString) {
     client->AddReply(reply::kWrongTypeError);
@@ -238,8 +243,7 @@ void HandleSet(Client* const client) {
   if (blocked) {
     return;
   }
-  redis_db->SetStringKey(args->key, args->value, args->expire,
-                         args->existing_ttl);
+  redis_db->SetStringAt(slot, args->value, args->expire, args->existing_ttl);
   client->MarkModified();
   if (!args->return_old_value) {
     client->AddReply(reply::kOk);
@@ -277,14 +281,16 @@ bool ApplyIntegerOperation(int64_t value, int64_t operand,
 
 void UpdateInteger(Client* const client, std::string_view key, int64_t operand,
                    IntegerOperation operation) {
-  const auto [object, wrong_type] =
-      MutableLookupTyped(client->Db(), key, kString);
+  const auto [object, created, wrong_type] =
+      LookupOrCreateTyped(client->Db(), key, kString);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
+  // A missing key counts from 0, which no operand the callers pass can
+  // overflow, so a created key always gets its value below.
   int64_t value = 0;
-  if (object != nullptr) {
+  if (!created) {
     const std::optional<int64_t> current = object->Int();
     if (!current.has_value()) {
       client->AddReply(reply::kNotAnIntegerError);
@@ -297,13 +303,9 @@ void UpdateInteger(Client* const client, std::string_view key, int64_t operand,
     client->AddReply(reply::kOverflowError);
     return;
   }
-  if (object != nullptr) {
-    object->SetInt(next);
-  } else {
-    client->Db()->SetKey(key, db::RedisObject::CreateWithInt(next), 0);
-  }
+  object->SetInt(next);
   client->MarkModified();
-  client->AddReply(reply::FromInt64(next));
+  client->AddIntegerReply(next);
 }
 
 void HandleIncrementBy(Client* const client, IntegerOperation operation) {
@@ -345,23 +347,22 @@ void HandleAppend(Client* const client) {
   const commands::CommandArgs& args = client->Args();
   const std::string_view key = args[0];
   const std::string_view value_to_append = args[1];
-  const auto [object, wrong_type] =
-      MutableLookupTyped(client->Db(), key, kString);
+  const auto [object, created, wrong_type] =
+      LookupOrCreateTyped(client->Db(), key, kString);
   if (wrong_type) {
     client->AddReply(reply::kWrongTypeError);
     return;
   }
   size_t length = value_to_append.size();
-  if (object == nullptr) {
-    client->Db()->SetKey(
-        key, db::RedisObject::CreateWithStringCopy(value_to_append), 0);
+  if (created) {
+    object->ReplaceWithString(value_to_append);
   } else {
     std::string* const value = object->MutableString();
     value->append(value_to_append);
     length = value->size();
   }
   client->MarkModified();
-  client->AddReply(reply::FromInt64(ToReplyInteger(length)));
+  client->AddIntegerReply(ToReplyInteger(length));
 }
 
 void HandleStrLen(Client* const client) {
@@ -372,12 +373,13 @@ void HandleStrLen(Client* const client) {
     return;
   }
   const size_t length = object == nullptr ? 0 : object->String().size();
-  client->AddReply(reply::FromInt64(ToReplyInteger(length)));
+  client->AddIntegerReply(ToReplyInteger(length));
 }
 
 void HandleMGet(Client* const client) {
   const commands::CommandArgs& keys = client->Args();
   std::string encoded = reply::FromArrayHeader(keys.size());
+  reply::ReserveBulkStrings(keys.size(), &encoded);
   for (const auto& key : keys) {
     // MGET reports keys of other types as missing instead of failing.
     const db::RedisObject* const object =
