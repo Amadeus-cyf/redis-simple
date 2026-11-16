@@ -71,6 +71,10 @@ class Client {
   size_t AddReply(std::string&& header, std::string&& body);
   // Encodes `value` as a bulk string straight into the output buffer.
   size_t AddBulkReply(std::string_view value);
+  // The same reply for a value held behind a shared pointer, which must not
+  // be null. A large value is queued by reference and sent without a copy;
+  // the reply keeps it alive, and unchanged, until it is flushed.
+  size_t AddBulkReply(std::shared_ptr<const std::string> value);
   bool HasPendingReplies() const { return !reply_buffer_.Empty(); }
   // Frees the query and reply buffers, and the argument and reply block
   // lists, of a client that has read nothing since the previous call and

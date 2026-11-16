@@ -27,6 +27,12 @@ void HandleGet(Client* const client) {
     client->AddReply(reply::NullView(client->Protocol()));
     return;
   }
+  // A large value is queued by reference: copying it into the output buffer
+  // would cost more than the rest of the command.
+  if (std::shared_ptr<const std::string> shared = object->SharedStringBytes()) {
+    client->AddBulkReply(std::move(shared));
+    return;
+  }
   client->AddBulkReply(object->String());
 }
 

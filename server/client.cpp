@@ -149,6 +149,26 @@ size_t Client::AddBulkReply(std::string_view value) {
   return total_size;
 }
 
+size_t Client::AddBulkReply(std::shared_ptr<const std::string> value) {
+  RS_CHECK(value != nullptr);
+  if (discard_replies_ ||
+      value->size() < containers::ReplyBuffer::kMinMovedReplySize) {
+    return AddBulkReply(std::string_view(*value));
+  }
+  constexpr std::string_view kCrlf = "\r\n";
+  std::array<char, reply::kBulkStringHeaderCapacity> header{};
+  const size_t header_size = reply::EncodeBulkStringHeader(
+      value->size(), header.data(), header.size());
+  const size_t total_size = header_size + value->size() + kCrlf.size();
+  if (!CanQueueReply(total_size)) {
+    return 0;
+  }
+  reply_buffer_.Append(header.data(), header_size);
+  reply_buffer_.Append(std::move(value));
+  reply_buffer_.Append(kCrlf.data(), kCrlf.size());
+  return total_size;
+}
+
 bool Client::ShouldPauseReads() const {
   return !reads_paused_ && (close_after_reply_ ||
                             (output_limits_.soft_bytes > 0 &&

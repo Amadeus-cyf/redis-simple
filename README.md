@@ -764,7 +764,10 @@ pass.
 
 Command handlers borrow their argument views directly from the client query
 buffer. Completed string replies are moved into the output queue, and the queue
-reuses scatter/gather metadata across partial writes.
+reuses scatter/gather metadata across partial writes. `GET` of a value of at
+least 16 KiB queues a reference to the stored value instead of a copy; the
+reply keeps those bytes alive if the key is overwritten or deleted before the
+reply is sent.
 
 ## CI
 

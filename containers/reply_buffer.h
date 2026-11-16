@@ -39,6 +39,9 @@ class ReplyBuffer {
   }
   size_t Append(const char* s, size_t length);
   size_t Append(std::string&& reply);
+  // Queues `reply`, which must not be null, without copying it when it is
+  // large enough to be moved: the buffer holds the string until it is sent.
+  size_t Append(std::shared_ptr<const std::string> reply);
   void Consume(size_t nwritten);
   void FillBlocks(std::vector<iovec>* blocks);
   bool Empty() const { return size_ == 0 && node_count_ == 0; }

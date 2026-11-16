@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -40,6 +41,17 @@ size_t ReplyBuffer::Append(std::string&& reply) {
     return Append(reply.data(), length);
   }
   PushNode(ReplyChunk::CreateOwned(std::move(reply)));
+  pending_bytes_ += length;
+  return length;
+}
+
+size_t ReplyBuffer::Append(std::shared_ptr<const std::string> reply) {
+  RS_CHECK(reply != nullptr);
+  const size_t length = reply->size();
+  if (length < kMinMovedReplySize) {
+    return Append(reply->data(), length);
+  }
+  PushNode(ReplyChunk::CreateShared(std::move(reply)));
   pending_bytes_ += length;
   return length;
 }
@@ -87,7 +99,9 @@ void ReplyBuffer::FillBlocks(std::vector<iovec>* const blocks) {
   size_t offset = size_ > 0 ? 0 : sent_;
   for (ReplyChunk* node = reply_head_.get(); node != nullptr;
        node = node->next.get()) {
-    blocks->push_back({node->Data() + offset, node->used - offset});
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): writev only reads
+    char* const bytes = const_cast<char*>(node->Bytes());
+    blocks->push_back({bytes + offset, node->used - offset});
     offset = 0;
   }
 }

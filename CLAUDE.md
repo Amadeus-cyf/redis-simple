@@ -320,6 +320,14 @@ Guidance for AI coding agents working in this repository.
   as `CreateWithString`, overwrites embedded values in place, reuses a small
   or well-filled raw buffer, and releases a buffer much larger than the new
   value. It accepts a value that views the object's own bytes.
+- A string value of at least `RedisObject::kMinSharedStringBytes` (16 KiB) is
+  held through a `std::shared_ptr`, so `GET` queues a reference to it
+  (`Client::AddBulkReply(std::shared_ptr<const std::string>)`) instead of
+  copying it into the reply buffer. A queued reply keeps the bytes alive and
+  unchanged: never write through a buffer another holder shares.
+  `AssignString` and `MutableString()` already allocate a new buffer in that
+  case. Only the main thread may take a reference
+  (`RedisObject::SharedStringBytes()`); I/O threads only release them.
 - Only commands marked `AllowBeforeAuth` in the command table (`AUTH`,
   `HELLO`, and `QUIT`, as in Redis) run before a client authenticates when
   `--requirepass` is set.

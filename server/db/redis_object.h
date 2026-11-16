@@ -80,11 +80,12 @@ class RedisObject {
  private:
   // Collections are held by value, inside the object, so a small one is not
   // a separate allocation: each fits in the space an embedded string takes.
-  // Integer- and embedded-encoded strings are last so the other alternatives
-  // keep indices that map directly onto ObjectType.
-  using Value =
-      std::variant<std::string, data_types::Set, data_types::List,
-                   data_types::ZSet, data_types::Hash, int64_t, EmbeddedString>;
+  // The other encodings of a string are last so the alternatives before
+  // them keep indices that map directly onto ObjectType.
+  using SharedString = std::shared_ptr<std::string>;
+  using Value = std::variant<std::string, data_types::Set, data_types::List,
+                             data_types::ZSet, data_types::Hash, int64_t,
+                             EmbeddedString, SharedString>;
 
  public:
   enum class ObjectType {
@@ -101,6 +102,11 @@ class RedisObject {
     kEmbedded,
     kOther,
   };
+
+  // A string value of at least this many bytes, the size of a reply block,
+  // is stored behind a shared pointer, so a reply can hold the bytes instead
+  // of copying them.
+  static constexpr size_t kMinSharedStringBytes = size_t{16} * 1024;
 
   // An empty raw string, the state of a keyspace entry's object before the
   // database stores a value in it.
@@ -139,6 +145,12 @@ class RedisObject {
   }
   // String accessors require a string object (Type() == kString).
   StringValue String() const;
+  // The bytes of a string stored behind a shared pointer, or nullptr for
+  // any other string. The bytes stay as they are for as long as the caller
+  // holds the pointer, on any thread: a write to the object, or its
+  // destruction, leaves a buffer that someone else holds alone and gives the
+  // object a new one. Call it on the main thread only.
+  std::shared_ptr<const std::string> SharedStringBytes() const;
   // Returns the integer value if the string is integer-encoded or holds a
   // decimal integer.
   std::optional<int64_t> Int() const;
@@ -198,6 +210,11 @@ class RedisObject {
       : value_(type, std::forward<Args>(args)...) {}
 
   static std::unique_ptr<RedisObject> CreateEmbedded(std::string_view value);
+  // The string the object may change in place: its raw string, or its shared
+  // one while nothing else holds it. Null for the other encodings.
+  std::string* ExclusiveString();
+  // Stores a string too long to embed, shared when it is large enough.
+  void EmplaceLongString(std::string value);
   // Replaces the value with an embedded copy of `value`, which must fit and
   // may view this object's current bytes.
   void EmbedString(std::string_view value);
@@ -218,7 +235,7 @@ class RedisObject {
   static_assert(std::is_same_v<
                 std::variant_alternative_t<kFirstStringEncodingIndex, Value>,
                 int64_t>);
-  static_assert(std::variant_size_v<Value> == kFirstStringEncodingIndex + 2);
+  static_assert(std::variant_size_v<Value> == kFirstStringEncodingIndex + 3);
 
   Value value_;
 };
