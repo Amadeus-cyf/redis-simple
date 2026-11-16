@@ -61,6 +61,11 @@ class Client {
   ssize_t ReadQuery();
   ssize_t SendReply();
   size_t AddReply(std::string_view reply);
+  // Encode the value on the stack (0 and 1 are constant replies) and copy
+  // it straight into the output buffer. The float is a bulk string in RESP2 and
+  // a double in RESP3.
+  size_t AddIntegerReply(int64_t value);
+  size_t AddFloatReply(double value);
   size_t AddReply(std::string&& reply);
   size_t AddReply(std::string&& header, std::string&& body);
   // Encodes `value` as a bulk string straight into the output buffer.

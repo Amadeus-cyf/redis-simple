@@ -26,9 +26,9 @@ std::string EncodeHello(const Client& client) {
   reply::AppendBulkString("version", &encoded);
   reply::AppendBulkString(kServerVersion, &encoded);
   reply::AppendBulkString("proto", &encoded);
-  encoded.append(reply::FromInt64(static_cast<int64_t>(protocol)));
+  reply::AppendInt64(static_cast<int64_t>(protocol), &encoded);
   reply::AppendBulkString("id", &encoded);
-  encoded.append(reply::FromInt64(static_cast<int64_t>(client.Id())));
+  reply::AppendInt64(static_cast<int64_t>(client.Id()), &encoded);
   reply::AppendBulkString("mode", &encoded);
   reply::AppendBulkString("standalone", &encoded);
   reply::AppendBulkString("role", &encoded);
@@ -160,7 +160,7 @@ void HandleClient(Client* const client) {
   };
   if (utils::EqualsIgnoreCase(subcommand, "ID")) {
     if (check_arity(1, "id")) {
-      client->AddReply(reply::FromInt64(static_cast<int64_t>(client->Id())));
+      client->AddIntegerReply(static_cast<int64_t>(client->Id()));
     }
   } else if (utils::EqualsIgnoreCase(subcommand, "GETNAME")) {
     if (check_arity(1, "getname")) {

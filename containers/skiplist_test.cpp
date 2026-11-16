@@ -438,6 +438,16 @@ TEST(SkiplistTest, NodeLevelsFollowRedisDistribution) {
   }
 }
 
+// A node pays for its key and two level-0 pointers; only the levels above
+// the first add a pointer and a span each, and no level count is stored.
+TEST(SkiplistTest, NodeStoresNoSpanForLevelZeroAndNoLevelCount) {
+  using PointerSkiplist = Skiplist<void*>;
+  constexpr size_t kPointerBytes = sizeof(void*);
+  EXPECT_EQ(PointerSkiplist::NodeBytes(1), 3 * kPointerBytes);
+  EXPECT_EQ(PointerSkiplist::NodeBytes(2), 5 * kPointerBytes);
+  EXPECT_EQ(PointerSkiplist::NodeBytes(32), (3 + (2 * 31)) * kPointerBytes);
+}
+
 TEST(SkiplistTest, Iteration) {
   auto skiplist = MakeRankedSkiplist();
   auto it = skiplist->Last();

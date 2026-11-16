@@ -69,7 +69,10 @@ Guidance for AI coding agents working in this repository.
   version. Connections default to RESP2 and may switch through `HELLO`.
 - Pass `CommandArgs` by const reference instead of copying its view vector.
   Move completed `std::string` replies into `Client::AddReply`; use the
-  `std::string_view` overload only for borrowed reply data.
+  `std::string_view` overload only for borrowed reply data. Send a lone
+  integer or score with `Client::AddIntegerReply` or `AddFloatReply`, which
+  encode on the stack, and call `reply::ReserveBulkStrings` before encoding
+  a collection whose element count, or a bound on it, is known.
 - Add comments only when they clarify non-obvious behavior. When a comment
   names the Redis function or field the code follows, also say in plain
   words what it does, for readers who do not know Redis.
@@ -206,6 +209,12 @@ Guidance for AI coding agents working in this repository.
   since the TTL entry reads its name from that entry. A key name that views
   a keyspace entry (found by scanning the TTL dict) is deleted through
   `DeleteStoredKey`, which touches watchers before freeing it.
+- Active expiration is `ActiveExpire` (`server/active_expire.h`), owned by
+  `Server`: the slow cycle runs from `ServerCron`, the fast one from the
+  loop's before-sleep hook (`Loop::SetBeforeSleep`). Its constants follow
+  Redis' `activeExpireCycle`; test it with an injected `ActiveExpire::Clock`,
+  not with sleeps. The before-sleep hook runs on every loop iteration, so
+  whatever is installed there must return quickly when it has nothing to do.
 - String-keyed `Dict`s hash with process-seeded SipHash-1-2
   (`utils/siphash.h`), as Redis does, to resist hash flooding. Do not depend
   on iteration or `SCAN` order in tests; it changes between runs.
@@ -228,9 +237,16 @@ Guidance for AI coding agents working in this repository.
   (`FindOrInsertEntry` returns it), so remove a member from the skiplist
   before the dict.
   Change stored keys through `Skiplist::Update`, which repositions them.
-  A node and its levels are one allocation, the levels following the node
-  as in Redis' `zskiplistNode`; create and free nodes through
-  `Node::Create` and `Node::Destroy`.
+  A node and its levels are one allocation, the levels above the first
+  following the node as the `level[]` array does in Redis'
+  `zskiplistNode`; create and free nodes
+  through `Node::Create` and `Node::Destroy`. Level 0 is the node's `next`
+  pointer and stores no span, since a step there always spans one node; read
+  links through `Node::Next` and `Node::Span`, which cover every level. A
+  node does not store its level count: `Link` is passed it and `Unlink`
+  returns it. Both savings matter because mimalloc's size classes up to 64 bytes
+  are 16 bytes apart, so a sorted-set node is 32 bytes plus 16 per extra level;
+  do not add a field to `Node` without measuring.
 - Sorted-set range commands (`ZRANGE` and its older forms) encode replies
   from `ZSet::ForEachInRankRange`, `ForEachInScoreRange`, and
   `ForEachInLexRange`, which visit members where they are stored. They are
@@ -488,6 +504,10 @@ Before committing, run the relevant build and tests.
 - Keep CMake target-based. Source files are discovered by scoped directory
   globs in `CMakeLists.txt`; exclude generated, test, or entry-point sources
   explicitly when they do not belong in a library target.
+- The `release` preset builds with link-time optimization
+  (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`), as Redis' release build does. Keep
+  it on for that preset only, so debug, sanitizer, and fuzz builds stay fast
+  to link.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
