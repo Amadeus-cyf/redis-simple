@@ -66,6 +66,11 @@ class Set {
   template <typename Visitor>
   size_t ScanDict(size_t cursor, size_t count, Visitor&& visitor);
   size_t Size() const;
+  // Frees up to about `max_elements` elements of a large encoding, so a
+  // discarded value can be freed in steps (as RedisDb does for UNLINK).
+  // Returns true once the rest is cheap to free at once. Between the first
+  // call and the one that returns true, only destroy the value.
+  bool ReleaseSome(size_t max_elements);
   Encoding Encoding() const { return encoding_; }
   // The encoded forms RDB files store. A listpack-encoded set's listpack,
   // in Redis' byte format.

@@ -167,6 +167,10 @@ class RedisObject {
     return std::get_if<data_types::Hash>(&value_);
   }
   // ObjectType values follow the variant's alternative order, offset by one.
+  // Frees up to about `max_elements` elements of a large collection, so a
+  // discarded value can be freed in steps. Returns true once the rest is
+  // cheap to free at once; until then, only destroy the object.
+  bool ReleaseSome(size_t max_elements);
   ObjectType Type() const {
     if (value_.index() >= kFirstStringEncodingIndex) {
       return ObjectType::kString;

@@ -49,6 +49,11 @@ class Hash {
   bool Delete(std::string_view field);
   bool Exists(std::string_view field) const;
   size_t Size() const;
+  // Frees up to about `max_elements` elements of a large encoding, so a
+  // discarded value can be freed in steps (as RedisDb does for UNLINK).
+  // Returns true once the rest is cheap to free at once. Between the first
+  // call and the one that returns true, only destroy the value.
+  bool ReleaseSome(size_t max_elements);
   std::vector<Entry> Entries() const;
   // The value view is valid only during the callback invocation.
   template <typename Visitor>

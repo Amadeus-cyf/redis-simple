@@ -212,6 +212,20 @@ TEST(SkiplistDeathTest, RejectsInvalidLevel) {
   EXPECT_DEATH(StringSkiplist(33), "Check failed");
 }
 
+TEST(SkiplistTest, ClearSomeFreesFromTheFrontInSteps) {
+  StringSkiplist list;
+  for (int i = 0; i < 1000; ++i) {
+    list.Insert("key:" + std::to_string(i));
+  }
+  size_t previous = list.Size();
+  while (!list.ClearSome(100)) {
+    EXPECT_EQ(list.Size(), previous - 100);
+    previous = list.Size();
+  }
+  EXPECT_EQ(list.Size(), 0);
+  EXPECT_TRUE(list.ClearSome(0));
+}
+
 TEST(SkiplistTest, DestroysStoredKeys) {
   const auto first = std::make_shared<int>(1);
   const auto second = std::make_shared<int>(2);

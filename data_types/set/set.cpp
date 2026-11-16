@@ -119,6 +119,13 @@ void Set::AppendIntsetBlob(std::string* const out) const {
   intset_->AppendRedisBlob(out);
 }
 
+bool Set::ReleaseSome(size_t max_elements) {
+  if (encoding_ != Encoding::kDict || dict_ == nullptr) {
+    return true;
+  }
+  return dict_->ClearSome(max_elements);
+}
+
 size_t Set::Size() const {
   switch (encoding_) {
     case Encoding::kIntset:

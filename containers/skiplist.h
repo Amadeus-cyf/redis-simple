@@ -249,6 +249,26 @@ class Skiplist {
     return keys;
   }
 
+  // Frees up to `max_keys` keys from the front, so a large list being
+  // discarded can be freed in steps between other work. Returns true once
+  // it is empty. Between the first call and the one that returns true, use
+  // the list only through this, Size(), and destruction.
+  bool ClearSome(size_t max_keys) {
+    Level& first = head_->Levels()[0];
+    for (; first.next != nullptr && max_keys > 0; --max_keys) {
+      Node* const node = first.next;
+      first.next = node->Levels()[0].next;
+      Node::Destroy(node);
+      --size_;
+    }
+    if (first.next != nullptr) {
+      return false;
+    }
+    std::ranges::fill(head_->Levels(), Level{});
+    level_ = kInitSkiplistLevel;
+    return true;
+  }
+
   void Clear() {
     Node* node = head_->Levels()[0].next;
     while (node != nullptr) {

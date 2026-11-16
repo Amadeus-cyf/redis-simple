@@ -75,6 +75,10 @@ class ZSetSkiplist : public ZSetStorage {
     return std::nullopt;
   }
   size_t Size() const override { return skiplist_->Size(); }
+  // Frees skiplist nodes before the dict entries whose names they view.
+  bool ReleaseSome(size_t max_elements) override {
+    return skiplist_->ClearSome(max_elements) && dict_->ClearSome(max_elements);
+  }
 
   // The same ranges for a visitor of any callable type, which is called
   // directly. Commands use these through ZSet, so a large range costs no
