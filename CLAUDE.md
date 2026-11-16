@@ -470,6 +470,9 @@ Before committing, run the relevant build and tests.
   default allocator, and keep `REDIS_SIMPLE_USE_MIMALLOC=OFF` building. Allocate
   with `new` (containers, `std::make_unique`), never `malloc`, so allocations go
   through mimalloc.
+  `main` sets mimalloc's purge delay to 0 (unless `MIMALLOC_PURGE_DELAY` is
+  set), so freed memory returns to the OS when it is freed, as with Redis'
+  allocator; with the default delay an idle server kept it indefinitely.
 - Measure performance changes to the server with `scripts/profile_server.sh`
   (callgrind instruction counts per workload) and memory changes with
   `scripts/measure_server_memory.sh` (RSS per key), passing the previous build

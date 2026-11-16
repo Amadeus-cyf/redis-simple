@@ -9,9 +9,20 @@
 // object allocation in the server goes through, with mimalloc. Include it
 // in exactly one translation unit.
 #include <mimalloc-new-delete.h>
+#include <mimalloc.h>
 #endif
 
 int main(int argc, char* argv[]) {
+#ifdef REDIS_SIMPLE_USE_MIMALLOC
+  // Return freed memory to the OS as soon as it is freed, as Redis'
+  // allocator does. With mimalloc's default delay, freed pages are only
+  // returned during later allocations on the same thread, so a server that
+  // deletes a large value and then idles kept the memory indefinitely. The
+  // environment variable still overrides this.
+  if (std::getenv("MIMALLOC_PURGE_DELAY") == nullptr) {
+    mi_option_set(mi_option_purge_delay, 0);
+  }
+#endif
   const redis_simple::OptionsResult result =
       redis_simple::ParseServerOptions(argc, argv);
   if (result.status == redis_simple::OptionsStatus::kHelp) {
