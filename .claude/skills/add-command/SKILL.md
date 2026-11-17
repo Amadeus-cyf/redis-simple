@@ -49,7 +49,7 @@ request gets, and the differential scripts compare that.
    the command to the list in
    `scripts/check_aof_interop.sh`.
 4. For a new data-structure operation, add unit tests beside it and extend
-   the matching harness under `fuzz/`.
+   the matching fuzzer under `fuzz/`.
 
 ## 4. Docs
 

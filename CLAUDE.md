@@ -528,7 +528,7 @@ Before committing, run the relevant build and tests.
   them needs (`Case`, `ExpectReply`, `NonEmptyLines`, `ScanAll`) live in
   `integration/client_helpers.h`; add shared ones there instead of copying
   them into each test.
-- Stateful libFuzzer harnesses live under `fuzz/`, compare operations against
+- Stateful libFuzzer fuzzers live under `fuzz/`, compare operations against
   simple reference models where practical, and use bounded CTest smoke runs
   for CI.
 - Current integration coverage should stay focused:

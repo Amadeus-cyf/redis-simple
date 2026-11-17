@@ -127,7 +127,7 @@ containers/     Core in-memory data structures
 data_types/     Redis hash, list, set, and sorted-set implementations
 docs/           Design notes and development guide
 event_loop/     Event loop with kqueue and epoll pollers
-fuzz/           Stateful libFuzzer harnesses and reference models
+fuzz/           Stateful libFuzzer fuzzers and reference models
 integration/    End-to-end tests against a running server
 logging/        Project logging wrapper
 scripts/        Test runners, checks against Redis, and measurement scripts
