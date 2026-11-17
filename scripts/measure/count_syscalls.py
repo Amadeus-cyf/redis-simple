@@ -16,7 +16,7 @@ prints how many of each system call the server made per operation:
 
 Pass any number of binaries, including redis-server, to compare them:
 
-  scripts/count_syscalls.py build/release/redis_simple \\
+  scripts/measure/count_syscalls.py build/release/redis_simple \\
       path/to/baseline/redis_simple redis-server
 
 The counts are per operation, but not all are the request path's own:

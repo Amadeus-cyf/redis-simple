@@ -6,7 +6,7 @@
 # The default sizes cover std::string's inline buffer (3 bytes), the
 # embedded-string range (36), and values with their own allocation (100).
 #
-# Usage: scripts/measure_server_memory.sh BINARY [BASELINE]
+# Usage: scripts/measure/measure_server_memory.sh BINARY [BASELINE]
 #
 # Requires redis-benchmark and redis-cli. Environment overrides:
 #   MEMORY_VALUE_SIZES  space-separated value sizes (default "3 36 100")

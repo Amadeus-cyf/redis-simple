@@ -39,7 +39,7 @@ check that could not run, with the reason.
 | Change | Also run |
 | --- | --- |
 | Ownership, memory layout, assertions, low-level data structures | `release` and `sanitizer` presets (build plus `ctest`), then `scripts/run_leak_check.sh` |
-| Request parsing, data types, core containers, buffers, expiration, persistence, event loop | `fuzz` preset: build `redis_simple_fuzzers`, then `ctest --preset fuzz -L fuzz`. Where the fuzz preset cannot link (no libFuzzer runtime), still compile every changed harness (`clang++ -std=c++23 -fsyntax-only -I. fuzz/<harness>.cpp`) and run it through a small `main` that calls `LLVMFuzzerTestOneInput` on a few inputs, linked with the sanitizer build's `libredis_simple_core.a`; otherwise CI is the first to build them |
+| Request parsing, data types, core containers, buffers, expiration, persistence, event loop | `fuzz` preset: build `redis_simple_fuzzers`, then `ctest --preset fuzz -L fuzz`. Where the fuzz preset cannot link (no libFuzzer runtime), still compile every changed fuzzer (`clang++ -std=c++23 -fsyntax-only -I. fuzz/<name>_fuzzer.cpp`) and run it through a small `main` that calls `LLVMFuzzerTestOneInput` on a few inputs, linked with the sanitizer build's `libredis_simple_core.a`; otherwise CI is the first to build them |
 | AOF (`server/aof/`) | `redis_simple_integration_aof`, `redis_simple_integration_aof_io_threads`, and `redis_simple_integration_aof_command_base` (the base file as commands), the sanitizer suite, and the `thread-sanitizer` preset's suite (the AOF background thread and the rewrite's `fork`). With a `redis-server` installed, `scripts/check_aof_interop.sh` (see the `redis-differential-check` skill), and compare behavior changes with the latest Redis `src/aof.c` |
 | RDB (`server/rdb/`), or the byte format of `Listpack` or `Intset` | `redis_simple_integration_rdb` and `redis_simple_integration_rdb_io_threads`, the `RdbTest`, `RdbBackgroundSaveTest`, `ListpackTest`, `ListpackReaderTest`, and `IntsetTest` suites (which compare bytes with vectors Redis produced), the sanitizer suite, `rdb_fuzzer`, and, for `BGSAVE` or anything that forks, the `thread-sanitizer` suite. With a `redis-server` 7.2 or later, `scripts/check_rdb_interop.py` (see the `redis-differential-check` skill), and compare behavior changes with the latest Redis `src/rdb.c` |
 | Threaded I/O (`server/io_thread*`, client handoff, `Client::ParseQueries`/`RunParsedQueries`) | the `*_io_threads` integration variants, and the `thread-sanitizer` preset: `cmake --preset thread-sanitizer`, build, then `ctest --preset thread-sanitizer` (serially; integration tests share a port) |
@@ -71,7 +71,7 @@ the conflicts normally. Neither needs a force push.
 
 - `git status` is clean apart from the intended change, and no build output
   or scratch files are staged.
-- `README.md` and `CLAUDE.md` describe any changed build, test, workflow, or
-  convention.
+- The READMEs (the root one and the one in the directory changed) and
+  `CLAUDE.md` describe any changed build, test, workflow, or convention.
 - After pushing, watch the pull request's CI and fix failures; it is the
   only place clang-format 22, clang-tidy 22, and the macOS jobs all run.
