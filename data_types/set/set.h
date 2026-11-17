@@ -19,6 +19,9 @@
 #include "utils/check.h"
 
 namespace redis_simple::data_types {
+// A Redis set: an intset while every member is an integer, a listpack
+// while the members are few and short, and a dict past the limits below.
+// It only converts toward the dict, never back.
 class Set {
  public:
   enum class Encoding {
@@ -45,6 +48,7 @@ class Set {
   // kListpackMaxElementLength, as the RDB loader checks.
   static std::unique_ptr<Set> CreateFromListpack(
       std::unique_ptr<containers::Listpack> listpack);
+  // Returns true when `value` was added, false when it was already a member.
   bool Add(std::string_view value);
   bool HasMember(std::string_view value) const;
   // As HasMember, but a dict-encoded set probes with `hashed`, when given, so
@@ -52,6 +56,9 @@ class Set {
   bool HasMember(std::string_view value,
                  const containers::HashedKey* hashed) const;
   std::vector<std::string> ListAllMembers() const;
+  // Calls `visitor(std::string_view member)` for each member until it
+  // returns false, and returns false then. The view is valid only during
+  // the call.
   template <typename Visitor>
   bool ForEachMember(Visitor&& visitor) const;
   // Like ForEachMember, but also passes each member's stored hash as a

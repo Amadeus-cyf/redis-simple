@@ -5,7 +5,7 @@
 #include <string_view>
 
 namespace redis_simple::data_types {
-// Entry storing member and score
+// A sorted set member and its score, owning a copy of the member.
 struct ZSetEntry {
   ZSetEntry() = default;
   ZSetEntry(const std::string& member, double score)

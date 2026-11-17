@@ -187,13 +187,13 @@ int TcpBindAndConnect(const TcpAddress& remote,
 }
 
 int TcpAccept(int socket_fd, TcpAddress* const address) {
-  sockaddr_storage sa{};
-  socklen_t length = sizeof(sa);
+  sockaddr_storage storage{};
+  socklen_t length = sizeof(storage);
   int remote_fd = -1;
   // accept() may be interrupted by a signal; retry those transient failures.
   while (true) {
-    remote_fd =
-        TcpGenericAccept(socket_fd, reinterpret_cast<sockaddr*>(&sa), &length);
+    remote_fd = TcpGenericAccept(
+        socket_fd, reinterpret_cast<sockaddr*>(&storage), &length);
     if (remote_fd != -1 || errno != EINTR) {
       break;
     }
@@ -213,7 +213,7 @@ int TcpAccept(int socket_fd, TcpAddress* const address) {
     RS_LOG_DEBUG("socket options: %s\n", std::strerror(errno));
   }
   if (address != nullptr) {
-    const auto* peer = reinterpret_cast<const sockaddr_in*>(&sa);
+    const auto* peer = reinterpret_cast<const sockaddr_in*>(&storage);
     std::array<char, INET_ADDRSTRLEN> ip{};
     if (inet_ntop(AF_INET, &peer->sin_addr, ip.data(), ip.size()) == nullptr) {
       close(remote_fd);
@@ -268,7 +268,7 @@ bool IsSocketError(int fd) {
   if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &error_length) < 0) {
     return true;
   }
-  RS_LOG_DEBUG("sock err %d\n", socket_error);
+  RS_LOG_DEBUG("socket error %d\n", socket_error);
   return socket_error != 0;
 }
 }  // namespace redis_simple::tcp

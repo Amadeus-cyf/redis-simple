@@ -11,9 +11,13 @@
 #include "containers/reply_chunk.h"
 
 namespace redis_simple::containers {
+// A client's unsent replies: one fixed main buffer, then a list of
+// ReplyChunks for what does not fit, like the `buf` and `reply` list of
+// Redis' client.
 class ReplyBuffer {
  public:
-  // The size of each reply block, as Redis' PROTO_REPLY_CHUNK_BYTES.
+  // The size of the main buffer and of each chunk after it, as Redis'
+  // PROTO_REPLY_CHUNK_BYTES.
   static constexpr size_t kDefaultBufferSize = size_t{16} * 1024;
   static constexpr size_t kDefaultChunkSize = size_t{16} * 1024;
   // Moved replies at least this large are queued without copying; smaller
@@ -42,7 +46,9 @@ class ReplyBuffer {
   // Queues `reply`, which must not be null, without copying it when it is
   // large enough to be moved: the buffer holds the string until it is sent.
   size_t Append(std::shared_ptr<const std::string> reply);
+  // Drops the first `nwritten` unsent bytes, which have been sent.
   void Consume(size_t nwritten);
+  // Replaces `blocks` with the unsent bytes in order, for writev.
   void FillBlocks(std::vector<iovec>* blocks);
   bool Empty() const { return size_ == 0 && node_count_ == 0; }
   // Frees the main buffer of a buffer that is Empty(). The next reply

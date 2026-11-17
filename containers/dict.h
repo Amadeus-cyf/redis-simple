@@ -32,8 +32,9 @@ namespace redis_simple::containers {
 enum class DictResizePolicy { kEnabled, kAvoid, kForbidden };
 
 namespace dict_internal {
-// Atomic because the thread that frees UNLINKed values destroys Dicts while
-// the main thread sets this.
+// Only the main thread sets this, and Dicts are used and freed there too
+// (UNLINKed values are freed in steps on the main thread), so the atomic is
+// a safeguard rather than a requirement.
 inline std::atomic<DictResizePolicy> resize_policy{DictResizePolicy::kEnabled};
 }  // namespace dict_internal
 
@@ -521,7 +522,7 @@ void Dict<K, V, Hash, KeyEqual>::Iterator::SeekToNextEntry() {
     return;
   }
   index_ = index_.has_value() ? std::optional<size_t>(*index_ + 1) : size_t{0};
-  // Find next non empty table entry list.
+  // Find the next non-empty bucket.
   while (*index_ < dict_->tables_[table_].size() &&
          dict_->tables_[table_][*index_] == nullptr) {
     ++*index_;

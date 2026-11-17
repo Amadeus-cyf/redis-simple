@@ -15,10 +15,13 @@ enum class ParseStatus {
 
 struct ParseResult {
   ParseStatus status{ParseStatus::kIncomplete};
+  // Bytes of input the response takes; 0 unless `status` is kComplete.
   size_t consumed{};
 };
 
-// Parse one response and append its rendered values to reply.
+// Parses one response and appends its rendered values to `reply`: one
+// string per scalar, "(nil)" for a null, and a "\n" after each array, map,
+// or set. Leaves `reply` unchanged unless the response is complete.
 ParseResult Parse(std::string_view input, std::vector<std::string>& reply);
 }  // namespace redis_simple::cli::resp_parser
 

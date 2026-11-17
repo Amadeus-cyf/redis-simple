@@ -165,7 +165,7 @@ Status Loop::DeleteFileEvent(int fd, int mask) {
   if (removed_io_mask == 0 ||
       event_poller_->DeleteEvent(fd, removed_io_mask) < 0) {
     RS_LOG_DEBUG(
-        "fail to delete the file event of file descriptor %d with errno: "
+        "failed to delete the file event of file descriptor %d with errno: "
         "%d\n",
         fd, errno);
     return Status::kError;

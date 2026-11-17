@@ -218,9 +218,9 @@ namespace {
 // significant digits and no exponent, without the general parser. Such a
 // number is n / 10^k with n below 2^53 and k at most 15, and both are exact
 // doubles, so the correctly rounded quotient is exactly the value
-// std::from_chars returns (Clinger's fast path). Returns nullopt to fall
-// back to the general parser, never for a valid number it cannot handle.
-// `value` must not be empty.
+// std::from_chars returns (Clinger's fast path). Returns nullopt for any
+// other text, which may still be a number: the caller then tries the
+// general parser. `value` must not be empty.
 std::optional<double> ParsePlainDecimal(std::string_view value) {
   constexpr size_t kMaxDigits = 15;
   static_assert(kMaxDigits < kPowersOfTen.size());
@@ -281,8 +281,8 @@ struct StrtodResult {
 
 // C's strtod over all of `value`, which need not be NUL-terminated.
 StrtodResult ParseWithStrtod(std::string_view value) {
-  // Long inputs are rare; numbers that need more digits than this to
-  // round correctly do not exist.
+  // strtod needs a NUL-terminated copy. Long inputs are rare, so only they
+  // pay for a heap allocation.
   constexpr size_t kInlineBytes = 128;
   std::array<char, kInlineBytes> inline_buffer{};
   std::string heap_buffer;

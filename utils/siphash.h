@@ -51,8 +51,11 @@ inline uint64_t LoadTail(std::span<const uint8_t> tail) {
          (static_cast<uint64_t>(tail[size - 1]) << (8 * (size - 1)));
 }
 
+// SipHash's four state words, v0 to v3 in the paper.
 class State {
  public:
+  // k0 and k1 are the key's halves. The constants are the paper's: the
+  // ASCII bytes of "somepseudorandomlygeneratedbytes".
   State(uint64_t k0, uint64_t k1)
       : v0_(k0 ^ 0x736f6d6570736575ULL),
         v1_(k1 ^ 0x646f72616e646f6dULL),

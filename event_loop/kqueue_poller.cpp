@@ -112,17 +112,17 @@ int KqueuePoller::DeleteEvent(int fd, int mask) {
 const std::vector<ReadyEvent>& KqueuePoller::Poll(
     struct timespec* timeout_spec) {
   ready_events_.clear();
-  int numevents =
+  int ready_count =
       kevent(kqueue_fd_, nullptr, 0, events_.data(), nevents_, timeout_spec);
-  if (numevents < 0) {
+  if (ready_count < 0) {
     if (errno != EINTR) {
       RS_LOG_DEBUG("kevent poll failed: %s\n", std::strerror(errno));
     }
     return ready_events_;
   }
-  RS_LOG_DEBUG("kqueue: poll %d fds from kqueue\n", numevents);
+  RS_LOG_DEBUG("kqueue: poll %d fds from kqueue\n", ready_count);
   int seen_mask = 0;
-  for (int i = 0; i < numevents; i++) {
+  for (int i = 0; i < ready_count; i++) {
     if (events_[i].ident >
         static_cast<uintptr_t>(std::numeric_limits<int>::max())) {
       continue;

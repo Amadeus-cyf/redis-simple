@@ -13,6 +13,9 @@
 #include "utils/check.h"
 
 namespace redis_simple::data_types {
+// A Redis list: one listpack while it fits in `list_max_listpack_bytes`,
+// and a quicklist (a linked list of listpacks) once it does not. It
+// converts back when one node holds at most half that limit.
 class List {
  public:
   enum class Encoding {
@@ -42,10 +45,15 @@ class List {
   // zero, starting from the given end. Returns how many were removed.
   size_t Remove(std::string_view value, size_t limit,
                 RemoveDirection direction);
+  // Keeps the elements at indexes `start` to `stop`, both included, and
+  // removes the rest; an empty or out-of-range interval empties the list.
   bool Trim(size_t start, size_t stop);
   size_t Size() const;
+  // The number of quicklist nodes, 0 for a listpack encoding.
   size_t NodeCount() const;
   std::vector<std::string> Range(size_t start, size_t stop) const;
+  // Call `visitor(std::string_view value)` for the elements at indexes
+  // `start` to `stop`, both included, until it returns false.
   template <typename Visitor>
   bool ForEach(size_t start, size_t stop, Visitor&& visitor) const;
   template <typename Visitor>

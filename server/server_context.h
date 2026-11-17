@@ -18,9 +18,6 @@ class Rdb;
 }
 class IoThread;
 
-// The server-wide state commands reach through their client. The server owns
-// one and every client points to it, so it must outlive them; tests and AOF
-// replay build their own.
 // Redis' fork statistics (INFO stats).
 struct ForkStats {
   // How long the last successful fork took (Redis' stat_fork_time).
@@ -28,6 +25,9 @@ struct ForkStats {
   int64_t total_forks{};
 };
 
+// The server-wide state commands reach through their client. The server owns
+// one and every client points to it, so it must outlive them; tests and AOF
+// replay build their own.
 struct ServerContext {
   // Never null.
   db::RedisDb* db{nullptr};

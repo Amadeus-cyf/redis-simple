@@ -72,7 +72,7 @@ std::optional<size_t> ZSetListpack::FirstMemberAfter(std::string_view member,
         (score == entry->score && member < entry->member)) {
       return offset;
     }
-    offset = NextMemberAfterScore(entry->score_index);
+    offset = NextMemberAfterScore(entry->score_offset);
   }
   return std::nullopt;
 }
@@ -172,7 +172,7 @@ size_t ZSetListpack::Count(const RangeByScoreSpec* spec) const {
     } else if (!LessOrEqual(entry->score, spec)) {
       break;
     }
-    offset = NextMemberAfterScore(entry->score_index);
+    offset = NextMemberAfterScore(entry->score_offset);
   }
   return count;
 }
@@ -239,7 +239,7 @@ void ZSetListpack::ForEachInLexRange(const RangeByLexSpec* spec,
       if (started && (!spec->BelowMax(entry->member) || !visit(*entry))) {
         break;
       }
-      member_offset = NextMemberAfterScore(entry->score_index);
+      member_offset = NextMemberAfterScore(entry->score_offset);
     }
     return;
   }
@@ -257,7 +257,7 @@ void ZSetListpack::ForEachInLexRange(const RangeByLexSpec* spec,
     if (started && (!spec->AboveMin(entry->member) || !visit(*entry))) {
       break;
     }
-    member_offset = PrevMemberBeforeMember(entry->member_index);
+    member_offset = PrevMemberBeforeMember(entry->member_offset);
   }
 }
 
@@ -282,7 +282,7 @@ size_t ZSetListpack::LexCount(const RangeByLexSpec* spec) const {
       }
       ++count;
     }
-    member_offset = NextMemberAfterScore(entry->score_index);
+    member_offset = NextMemberAfterScore(entry->score_offset);
   }
   return count;
 }
@@ -308,7 +308,7 @@ bool ZSetListpack::ForEachEntry(const ZSetEntryVisitor& visitor) const {
     if (!visitor(entry->member, entry->score)) {
       return false;
     }
-    member_offset = NextMemberAfterScore(entry->score_index);
+    member_offset = NextMemberAfterScore(entry->score_offset);
   }
   return true;
 }
@@ -394,7 +394,7 @@ void ZSetListpack::VisitRankRange(const RangeByRankSpec* spec,
         }
       }
     }
-    offset = NextMemberAfterScore(entry->score_index);
+    offset = NextMemberAfterScore(entry->score_offset);
     ++rank;
   }
 }
@@ -409,6 +409,7 @@ void ZSetListpack::VisitRankRangeReversed(
   }
   std::optional<size_t> offset = listpack_.Last();
   size_t visited = 0;
+  // Ranks count from the last entry here, the one with the greatest score.
   size_t rank = 0;
   const size_t size = Size();
   if (size == 0) {
@@ -444,7 +445,7 @@ void ZSetListpack::VisitRankRangeReversed(
         }
       }
     }
-    offset = PrevScoreBeforeMember(entry->member_index);
+    offset = PrevScoreBeforeMember(entry->member_offset);
     ++rank;
   }
 }
@@ -477,7 +478,7 @@ void ZSetListpack::VisitScoreRange(const RangeByScoreSpec* spec,
         break;
       }
     }
-    member_offset = NextMemberAfterScore(entry->score_index);
+    member_offset = NextMemberAfterScore(entry->score_offset);
     ++i;
   }
 }
@@ -510,7 +511,7 @@ void ZSetListpack::VisitScoreRangeReversed(
         break;
       }
     }
-    member_offset = PrevMemberBeforeMember(entry->member_index);
+    member_offset = PrevMemberBeforeMember(entry->member_offset);
     ++i;
   }
 }
@@ -546,7 +547,7 @@ std::optional<size_t> ZSetListpack::FindKeyGreaterOrEqual(
     if (GreaterOrEqual(entry->score, spec)) {
       return member_offset;
     }
-    member_offset = NextMemberAfterScore(entry->score_index);
+    member_offset = NextMemberAfterScore(entry->score_offset);
   }
   return std::nullopt;
 }
@@ -568,7 +569,7 @@ std::optional<size_t> ZSetListpack::FindKeyLessOrEqual(
     if (LessOrEqual(entry->score, spec)) {
       return member_offset;
     }
-    member_offset = PrevMemberBeforeMember(entry->member_index);
+    member_offset = PrevMemberBeforeMember(entry->member_offset);
   }
   return std::nullopt;
 }

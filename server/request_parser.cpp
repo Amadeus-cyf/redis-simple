@@ -23,6 +23,7 @@ constexpr int64_t kMaxBulkBytes = int64_t{512} * 1024 * 1024;
 // Redis' limits for clients that have not authenticated yet.
 constexpr int64_t kMaxUnauthenticatedElements = 10;
 constexpr int64_t kMaxUnauthenticatedBulkBytes = 16384;
+// The shortest encoded bulk string, "$0\r\n\r\n".
 constexpr size_t kMinimumBulkStringBytes = 6;
 constexpr size_t kCrlfSize = 2;
 

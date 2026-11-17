@@ -67,6 +67,9 @@ struct EntryOrder {
 };
 }  // namespace zset_skiplist_internal
 
+// The large sorted set encoding, as Redis' zset struct: a dict from member
+// to score for lookups, and a skiplist ordered by (score, member) for ranks
+// and ranges. Every member is in both.
 class ZSetSkiplist : public ZSetStorage {
  public:
   // `capacity` sizes the member dict for that many members.
@@ -88,6 +91,7 @@ class ZSetSkiplist : public ZSetStorage {
                          const ZSetMemberVisitor& visitor) const override;
   size_t LexCount(const RangeByLexSpec* spec) const override;
   bool ForEachEntry(const ZSetEntryVisitor& visitor) const override;
+  // ForEachEntry from the greatest (score, member) down.
   bool ForEachEntryDescending(const ZSetEntryVisitor& visitor) const;
   size_t Scan(size_t cursor, size_t count,
               const ZSetMemberVisitor& visitor) override;

@@ -71,7 +71,7 @@ TEST(RequestParserTest, ValidatesLengthFieldsLikeRedis) {
               "Protocol error: invalid multibulk length")
         << invalid;
   }
-  // Bulk lengths are at most Redis' proto-max-bulk-len, 512 MB.
+  // Bulk lengths are at most Redis' proto-max-bulk-len, 512 MiB.
   for (const std::string_view invalid :
        {"*1\r\n$\r\n", "*1\r\n$-1\r\n", "*1\r\n$3x\r\nGET\r\n",
         "*1\r\n$003\r\nGET\r\n", "*1\r\n$536870913\r\n",
@@ -87,7 +87,7 @@ TEST(RequestParserTest, ValidatesLengthFieldsLikeRedis) {
   // endings without checking them.
   EXPECT_EQ(parse("*1\rx$3\rxGETxx").status, ParseStatus::kComplete);
   EXPECT_EQ(command, "GET");
-  // Long length lines wait for more bytes, up to 64 KB.
+  // Long length lines wait for more bytes, up to 64 KiB.
   EXPECT_EQ(parse("*" + std::string(1000, '0')).status,
             ParseStatus::kIncomplete);
 }

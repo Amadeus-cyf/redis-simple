@@ -15,6 +15,9 @@ namespace redis_simple::client_connection {
 bool RejectedByProtectedMode(bool protected_mode, std::string_view password,
                              std::string_view client_ip);
 
+// The listening socket's read callback: accepts pending connections on
+// `fd`, a bounded number per call, and creates a client for each, on the
+// server's next I/O thread when it has any.
 event_loop::CallbackStatus AcceptConnectionCallback(event_loop::Loop* loop,
                                                     int fd, Server* server,
                                                     int mask);

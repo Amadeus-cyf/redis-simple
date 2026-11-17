@@ -14,6 +14,9 @@
 #include "utils/check.h"
 
 namespace redis_simple::data_types {
+// A Redis hash: field and value pairs in one listpack while they are few
+// and short, and in a dict once they pass either limit below. It never
+// converts back to a listpack.
 class Hash {
  public:
   enum class Encoding {
@@ -44,6 +47,7 @@ class Hash {
   static std::unique_ptr<Hash> CreateFromListpack(
       std::unique_ptr<containers::Listpack> listpack);
 
+  // Returns true when `field` is new, false when its value was replaced.
   bool Set(std::string_view field, std::string_view value);
   std::optional<std::string> Get(std::string_view field) const;
   bool Delete(std::string_view field);
@@ -55,9 +59,12 @@ class Hash {
   // call and the one that returns true, only destroy the value.
   bool ReleaseSome(size_t max_elements);
   std::vector<Entry> Entries() const;
-  // The value view is valid only during the callback invocation.
+  // Calls `visitor(value)` and returns true when `field` exists. The value
+  // view is valid only during the callback invocation.
   template <typename Visitor>
   bool VisitValue(std::string_view field, Visitor&& visitor) const;
+  // The ForEach functions stop when the visitor returns false, and return
+  // false then. The views are valid only during the callback invocation.
   template <typename Visitor>
   bool ForEachEntry(Visitor&& visitor) const;
   template <typename Visitor>

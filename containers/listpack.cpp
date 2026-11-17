@@ -479,7 +479,6 @@ bool Listpack::Insert(size_t offset, Listpack::Position where,
   if (where == Position::kInsertAfter) {
     offset = Skip(offset);
   }
-  constexpr size_t kMaxStringEncodingOverhead = 10;
   if (element_string != nullptr &&
       element_string->size() >
           std::numeric_limits<uint32_t>::max() - kMaxStringEncodingOverhead) {
@@ -619,8 +618,8 @@ size_t Listpack::Size() const {
   if (element_count != kListpackUnknownElementCount) {
     return element_count;
   }
-  // Too many elements in the listpack, need to scan the entire listpack to get
-  // the total number.
+  // The header's 16-bit count cannot hold the number of elements, so walk
+  // the whole listpack to count them.
   size_t count = 0;
   std::optional<size_t> offset = First();
   while (offset.has_value()) {
@@ -641,9 +640,8 @@ void Listpack::SetNumOfElements(uint16_t element_count) const {
   StoreLittleEndian<2>(element_count, listpack_.get() + 4);
 }
 
-// Return the beginning offset of the next element of the current element at the
-// given offset. If the offset is pointing to the EOF, return the current
-// offset.
+// Return the offset just past the element that starts at `offset`: the next
+// element or the terminator. At the terminator, return `offset` itself.
 size_t Listpack::Skip(size_t offset) const {
   if (listpack_[offset] == kListpackEof) {
     return offset;
@@ -721,8 +719,8 @@ Listpack::EncodingType Listpack::EncodingAt(size_t offset) const {
   }
 }
 
-// Get back length from the given element of the listpack. Note that the offset
-// provided is the beginning of the element.
+// Return the value the backlen field of the element starting at `offset`
+// holds: the element's encoded size, not counting the backlen field itself.
 size_t Listpack::Backlen(size_t offset) const {
   return EncodedBytes(offset, EncodingAt(offset));
 }
@@ -805,7 +803,7 @@ Listpack::DecodedEntry Listpack::DecodeEntry(
   return entry;
 }
 
-// Get number of bytes required to encode the back length.
+// Return the number of bytes required to encode the back length.
 uint8_t Listpack::BacklenBytes(size_t backlen) {
   if (backlen <= BacklenThreshold::kSize1ByteBacklenMax) {
     return 1;
@@ -823,8 +821,8 @@ uint8_t Listpack::BacklenBytes(size_t backlen) {
 }
 
 // Encode the string into the given pointer of the listpack and return the
-// number of bytes needed to encode the element (not include bytes used to
-// encode back length).
+// number of bytes needed to encode the element (not including the bytes used
+// to encode the back length).
 size_t Listpack::EncodeString(unsigned char* const buffer,
                               std::string_view element) {
   const auto* element_string =
@@ -862,8 +860,8 @@ size_t Listpack::EncodeString(unsigned char* const buffer,
 }
 
 // Encode the int64 into the given pointer of the listpack and return the number
-// of bytes needed to encode the element (not include bytes used to encode back
-// length).
+// of bytes needed to encode the element (not including the bytes used to
+// encode the back length). A null `buffer` only computes that size.
 size_t Listpack::EncodeInteger(unsigned char* const buffer, int64_t value) {
   size_t backlen = 0;
   if (value >= 0 && value <= kUint7BitIntMax) {

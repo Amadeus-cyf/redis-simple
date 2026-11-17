@@ -9,6 +9,8 @@
 #include <string_view>
 
 namespace redis_simple::containers {
+// A growable byte buffer that is written at the end and read from the
+// front, such as a client's query buffer.
 class DynamicBuffer {
  public:
   DynamicBuffer();
@@ -29,6 +31,9 @@ class DynamicBuffer {
   // Frees the storage of a buffer with nothing unread. The next write
   // allocates it again.
   void Release();
+  // Consumes the next line and returns it without its "\n" or "\r\n", or
+  // nullopt if no whole line is unread. The view is valid until the next
+  // write or Compact(). ReadLine returns a copy, empty if there is no line.
   std::optional<std::string_view> ReadLineView();
   std::string ReadLine();
   std::string_view View() const {

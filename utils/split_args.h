@@ -77,7 +77,8 @@ bool SplitArgs(std::string_view line, OnArgument&& on_argument) {
     }
     // An argument is plain text, optionally ending in one quoted part that
     // runs to the argument's end: foo"bar baz" is the argument foobar baz.
-    // sdssplitargs ends plain text at these four characters only.
+    // sdssplitargs ends plain text at these four whitespace characters or a
+    // quote, so \v and \f, which separate arguments above, do not end one.
     const size_t start = position;
     while (position < line.size() && line[position] != ' ' &&
            line[position] != '\n' && line[position] != '\r' &&

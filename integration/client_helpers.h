@@ -32,7 +32,7 @@ inline std::vector<std::string> NonEmptyLines(const std::string& reply) {
   return lines;
 }
 
-// Sends the case\'s command and compares the reply with what it expects.
+// Sends the case's command and compares the reply with what it expects.
 // A mismatch is logged as an error, so a failing test says which command
 // failed without a debug log level.
 inline bool ExpectReply(cli::RedisCli* cli, const Case& test_case) {

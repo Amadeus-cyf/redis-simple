@@ -11,6 +11,10 @@
 #include <string>
 
 namespace redis_simple::fuzz {
+// Decodes the bytes libFuzzer supplies into operations and their arguments.
+// It does not own the bytes. Once they run out, every read returns zero or
+// an empty string, so a harness can stop at HasData() without checking each
+// read.
 class FuzzInput {
  public:
   FuzzInput(const uint8_t* data, size_t size) : data_(data), size_(size) {}
@@ -20,12 +24,16 @@ class FuzzInput {
 
   uint8_t ReadByte() { return HasData() ? data_[offset_++] : uint8_t{0}; }
 
+  // Returns a value in [0, bound) from two bytes, or 0 when `bound` is 0.
   size_t ReadIndex(size_t bound) {
     const uint16_t value =
         (static_cast<uint16_t>(ReadByte()) << 8) | ReadByte();
     return bound == 0 ? 0 : value % bound;
   }
 
+  // Returns a boundary value (the extremes of int64_t and int32_t, small
+  // numbers) for a low selector byte, otherwise a number of up to 56 bits
+  // of either sign.
   int64_t ReadInt64() {
     constexpr std::array<int64_t, 8> kBoundaryValues = {
         std::numeric_limits<int64_t>::min(),
@@ -50,6 +58,8 @@ class FuzzInput {
     return (selector & 1U) == 0 ? value : -value;
   }
 
+  // Returns a sorted-set score: an infinity, an extreme, a zero of either
+  // sign, NaN, or a finite number with two decimal places.
   double ReadScore() {
     constexpr std::array<double, 8> kBoundaryValues = {
         -std::numeric_limits<double>::infinity(),
@@ -72,6 +82,8 @@ class FuzzInput {
     return static_cast<double>(ReadInt64()) / kScoreScale;
   }
 
+  // Returns a string of at most `max_bytes` bytes, and no more than remain
+  // after its two-byte length selector. The bytes are arbitrary, not text.
   std::string ReadValue(size_t max_bytes) {
     const uint16_t selector =
         (static_cast<uint16_t>(ReadByte()) << 8) | ReadByte();
@@ -92,12 +104,15 @@ class FuzzInput {
   size_t offset_{};
 };
 
+// Aborts when `condition` is false, so libFuzzer reports the input. Unlike
+// assert, it stays enabled in every build.
 inline void Require(bool condition) {
   if (!condition) {
     std::abort();
   }
 }
 
+// Returns `value` extended with `fill` to at least `size` bytes.
 inline std::string PadToSize(std::string value, size_t size, char fill = 'x') {
   value.resize(std::max(value.size(), size), fill);
   return value;

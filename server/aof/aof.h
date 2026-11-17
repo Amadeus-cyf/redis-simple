@@ -123,11 +123,11 @@ std::string_view ErrorName(AofError error);
 // A multi-part append-only file, as in Redis 8.10: a directory with one base
 // file (the last rewrite's snapshot), incremental files with the mutations
 // since, and a manifest listing them. Every method runs on the event-loop
-// thread. A background thread, like Redis' bio thread, syncs files, closes
-// replaced ones, and deletes retired ones.
+// thread. Background threads, like Redis' bio threads, sync files, close
+// replaced ones, and delete retired ones.
 //
 // Mutations are encoded into a buffer that Flush() writes before their
-// replies are sent. With `always` each write is synced; with `everysec` the
+// replies are sent. With `always` each write is synced; with `everysec` a
 // background thread syncs once a second, and a write waits up to two seconds
 // for a sync still running, as in Redis. A rewrite first switches appends to
 // a new incremental file, then forks a child that writes a snapshot of the
@@ -136,6 +136,9 @@ std::string_view ErrorName(AofError error);
 // are deleted.
 class Aof {
  public:
+  // Loads the manifest, replays its files into `db`, creates a base file if
+  // there is none, and opens the last incremental file for appending.
+  // Returns nullptr if the options or the files are unusable.
   static std::unique_ptr<Aof> Open(const Options& options, db::RedisDb* db);
   Aof(const Aof&) = delete;
   Aof& operator=(const Aof&) = delete;
@@ -170,7 +173,7 @@ class Aof {
   // Redis' rewriteAppendOnlyFileBackground: forks a child that writes the
   // snapshot; Cron() or CheckRewrite() finishes the rewrite once it exits.
   // No other thread may allocate during the fork, or the child could inherit
-  // a held allocator lock: the AOF background thread never does, and
+  // a held allocator lock: the AOF's background threads never do, and
   // `before_fork` must stop any other thread that might, such as the I/O
   // threads, until `after_fork`.
   RewriteResult StartRewrite(db::RedisDb* db);
@@ -205,7 +208,7 @@ class Aof {
   bool SyncNow();
   // For tests: waits for the rewrite child and finishes the rewrite.
   void WaitForRewrite();
-  // For tests: waits until the background thread has finished every job
+  // For tests: waits until the background threads have finished every job
   // queued so far.
   void WaitForBackgroundJobs();
   // The manifest as last persisted.
@@ -292,7 +295,7 @@ class Aof {
   bool rdb_compression_;
   bool rdb_checksum_;
   std::shared_ptr<FileOps> file_ops_;
-  // Syncs, closes, and deletes files on its own thread.
+  // Syncs, closes, and deletes files on its own threads.
   BackgroundJobs jobs_;
   // The current incremental file.
   int fd_{-1};

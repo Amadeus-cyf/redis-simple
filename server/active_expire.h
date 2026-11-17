@@ -34,6 +34,7 @@ class ActiveExpire {
   // and never starts within two milliseconds of the previous fast cycle.
   void RunFastCycle(db::RedisDb* db);
 
+  // Whether the latest cycle stopped because it ran out of time.
   bool HitTimeLimit() const { return hit_time_limit_; }
   // Running estimate of the share of keys with a TTL that are expired but
   // not yet deleted, from 0 to 1 (Redis' stat_expired_stale_perc).

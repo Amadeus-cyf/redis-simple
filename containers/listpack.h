@@ -16,6 +16,9 @@
 namespace redis_simple::containers {
 // Compact Redis-style sequential encoding. See:
 // https://github.com/antirez/listpack/blob/master/listpack.md
+// Elements are addressed by their byte offset in the buffer; any change to
+// the listpack invalidates offsets. Text that is a canonical integer is
+// stored as an integer.
 class Listpack {
  public:
   struct ListpackEntry {
@@ -57,8 +60,14 @@ class Listpack {
                                             IntBuffer* buffer) const;
   std::optional<std::string> Get(size_t offset) const;
   std::optional<int64_t> IntegerAt(size_t offset) const;
+  // The offset of the first element equal to `value`. FindAndSkip passes
+  // over `skip` elements after each one it compares, so a skip of 1 looks
+  // at every other element (the fields of field-value pairs).
   std::optional<size_t> Find(std::string_view value) const;
   std::optional<size_t> FindAndSkip(std::string_view value, size_t skip) const;
+  // Insert places the new element before the one at `offset`. The adding
+  // and replacing functions return false, changing nothing, if the listpack
+  // would grow too large.
   bool Append(std::string_view element_string);
   bool Append(int64_t element_integer);
   bool Prepend(std::string_view element_string);
@@ -72,7 +81,11 @@ class Listpack {
   bool BatchPrepend(const std::vector<ListpackEntry>& entries);
   bool BatchInsert(size_t offset, const std::vector<ListpackEntry>& entries);
   bool BatchInsert(size_t offset, std::initializer_list<ListpackEntry> entries);
+  // The offset of the element at `index`, or nullopt past the end.
   std::optional<size_t> OffsetAt(size_t index) const;
+  // Call `visitor(std::string_view)` for the elements at indexes `start`
+  // to `stop`, both included; ForEachReverse goes from `stop` down. A
+  // visitor that returns false stops the walk, which then returns false.
   // The value view is valid only during the callback invocation.
   template <typename Visitor>
   bool ForEach(size_t start, size_t stop, Visitor&& visitor) const;
@@ -82,7 +95,11 @@ class Listpack {
   template <typename Visitor>
   bool ForEachPair(Visitor&& visitor) const;
   void Delete(size_t offset);
+  // Delete up to `count` elements starting with the one at `offset`, and
+  // return how many were deleted.
   size_t DeleteRange(size_t offset, size_t count);
+  // Delete elements equal to `value`, at most `limit` of them (0 for all),
+  // taken from the tail first if `from_tail`. Returns how many were deleted.
   size_t DeleteMatching(std::string_view value, size_t limit,
                         bool from_tail = false);
   std::optional<size_t> First() const;
@@ -94,9 +111,13 @@ class Listpack {
   std::string_view Bytes() const {
     return {reinterpret_cast<const char*>(listpack_.get()), TotalBytes()};
   }
+  // The number of elements. Walks the whole listpack when there are too
+  // many for the header's 16-bit count.
   size_t Size() const;
   static size_t EstimateEntryBytes(std::string_view value);
   static size_t EstimateBytes(int64_t value, size_t repeat);
+  // Whether `listpack` (null for an empty one) stays within the size limit
+  // of 1 GiB after growing by `bytes`.
   static bool SafeToAdd(const Listpack* listpack, size_t bytes);
   ~Listpack() = default;
 

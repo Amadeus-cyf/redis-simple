@@ -77,7 +77,7 @@ event_loop::CallbackStatus AcceptConnectionCallback(event_loop::Loop* /*loop*/,
                                                     int fd, Server* server,
                                                     int /*mask*/) {
   if (server == nullptr) {
-    RS_LOG_DEBUG("invalid server / event loop\n");
+    RS_LOG_DEBUG("invalid server\n");
     return event_loop::CallbackStatus::kError;
   }
   for (int i = 0; i < kMaxAcceptsPerCall; ++i) {

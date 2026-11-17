@@ -548,17 +548,29 @@ if(REDIS_SIMPLE_BUILD_FUZZERS)
     message(FATAL_ERROR "Fuzz targets require Clang or AppleClang")
   endif()
 
-  add_library(redis_simple_fuzz_core STATIC ${REDIS_SIMPLE_CORE_SOURCES})
-  redis_simple_configure_target(redis_simple_fuzz_core)
-  target_link_libraries(redis_simple_fuzz_core PUBLIC Threads::Threads)
+  # The server's core sources again, compiled with libFuzzer's coverage
+  # instrumentation. It holds no fuzzing code of its own.
+  add_library(
+    redis_simple_core_instrumented
+    STATIC
+    ${REDIS_SIMPLE_CORE_SOURCES}
+  )
+  redis_simple_configure_target(redis_simple_core_instrumented)
+  target_link_libraries(
+    redis_simple_core_instrumented
+    PUBLIC Threads::Threads
+  )
   target_compile_options(
-    redis_simple_fuzz_core
+    redis_simple_core_instrumented
     PRIVATE
       -fsanitize=fuzzer-no-link,address,undefined
       -fno-omit-frame-pointer
   )
 
+  # Adds the fuzzer executable `<name>_fuzzer` and a short fixed-seed run of
+  # it as the test `redis_simple_fuzz_<name>`.
   function(redis_simple_add_fuzzer target source)
+    string(REGEX REPLACE "_fuzzer$" "" fuzzed_name ${target})
     redis_simple_add_executable(${target} "${source}")
     target_compile_options(
       ${target}
@@ -567,9 +579,9 @@ if(REDIS_SIMPLE_BUILD_FUZZERS)
         -fno-omit-frame-pointer
     )
     target_link_options(${target} PRIVATE -fsanitize=fuzzer,address,undefined)
-    target_link_libraries(${target} PRIVATE redis_simple_fuzz_core)
+    target_link_libraries(${target} PRIVATE redis_simple_core_instrumented)
     add_test(
-      NAME redis_simple_fuzz_${target}
+      NAME redis_simple_fuzz_${fuzzed_name}
       COMMAND
         ${target}
         -runs=2000
@@ -578,7 +590,7 @@ if(REDIS_SIMPLE_BUILD_FUZZERS)
         -timeout=5
     )
     set_tests_properties(
-      redis_simple_fuzz_${target}
+      redis_simple_fuzz_${fuzzed_name}
       PROPERTIES
         LABELS fuzz
         TIMEOUT 60
@@ -600,7 +612,7 @@ if(REDIS_SIMPLE_BUILD_FUZZERS)
     handle_set_fuzzer
     dynamic_buffer_fuzzer
     reply_buffer_fuzzer
-    db_expiration_fuzzer
+    db_fuzzer
     aof_fuzzer
     rdb_fuzzer
     event_loop_fuzzer

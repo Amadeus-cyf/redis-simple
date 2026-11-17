@@ -13,7 +13,7 @@
 #include "data_types/zset/zset_range_spec.h"
 #include "utils/floats.h"
 
-// Sorted-set benchmarks. Sizes of 10'000 and more are well above the listpack
+// Sorted-set benchmarks. Sizes of 10,000 and more are well above the listpack
 // limit, so those sets use the skiplist encoding; a size of 100 stays in a
 // listpack. Random sequences use fixed seeds so runs compare.
 namespace redis_simple {

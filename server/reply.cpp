@@ -18,6 +18,7 @@
 #include "utils/floats.h"
 
 namespace redis_simple::reply {
+namespace {
 constexpr std::string_view kCrlf = "\r\n";
 constexpr char kStringPrefix = '+';
 constexpr char kBulkStringPrefix = '$';
@@ -28,7 +29,6 @@ constexpr char kSetPrefix = '~';
 constexpr char kDoublePrefix = ',';
 constexpr char kErrorPrefix = '-';
 
-namespace {
 // Appends `prefix`, the decimal `magnitude` (negated when `negative`), and
 // CRLF with one size update, writing the digits in place instead of
 // formatting them into a buffer and copying.
