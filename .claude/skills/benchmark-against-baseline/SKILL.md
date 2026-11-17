@@ -36,6 +36,7 @@ Pick the tools the change calls for:
 | One component (a container, the parser, reply encoding) | `redis_simple_benchmarks`, below |
 | Freeing, `FLUSHDB`, `UNLINK`, expiry, the server cron, or anything that forks | `scripts/measure_pauses.py build/release/redis_simple "${base}/build/release/redis_simple" redis-server` |
 | Accepting or closing connections, the event loop, socket reads and writes, I/O threads | `scripts/count_syscalls.py build/release/redis_simple "${base}/build/release/redis_simple" redis-server` |
+| A summary for a pull request, or any CPU measurement on macOS, where callgrind does not run | `scripts/compare_builds.py "${base}/build/release/redis_simple" build/release/redis_simple`; for one workload, `scripts/measure_server_cpu.sh` |
 | The RDB writer, `BGSAVE`, AOF rewrites | `scripts/measure_snapshot_io.py build/release/redis_simple "${base}/build/release/redis_simple" redis-server --trace` |
 
 Instruction counts and memory per key only see the request path of

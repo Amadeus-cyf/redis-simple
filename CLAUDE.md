@@ -611,6 +611,10 @@ Before committing, run the relevant build and tests.
   forking, active expiry), system calls with `scripts/count_syscalls.py`
   (connection setup, the event loop, I/O threads), and snapshot disk writes
   with `scripts/measure_snapshot_io.py` (the RDB writer and rewrites).
+  `scripts/compare_builds.py` summarizes throughput, latency, server CPU,
+  and memory for two builds as tables for a pull request, and
+  `scripts/measure_server_cpu.sh` measures server CPU for one workload;
+  both run on macOS, where callgrind does not.
 - Keep `CMakeLists.txt`, `CMakePresets.json`, `.github/workflows/ci.yml`,
   `.clang-format`, `.clang-tidy`, and `.editorconfig` aligned with project
   conventions.
