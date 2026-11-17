@@ -116,15 +116,15 @@ int EpollPoller::DeleteEvent(int fd, int mask) {
 const std::vector<ReadyEvent>& EpollPoller::Poll(
     struct timespec* timeout_spec) {
   ready_events_.clear();
-  const int numevents = epoll_wait(epoll_fd_, events_.data(), nevents_,
-                                   ToTimeoutMilliseconds(timeout_spec));
-  if (numevents < 0) {
+  const int ready_count = epoll_wait(epoll_fd_, events_.data(), nevents_,
+                                     ToTimeoutMilliseconds(timeout_spec));
+  if (ready_count < 0) {
     if (errno != EINTR) {
       RS_LOG_DEBUG("epoll_wait failed: %s\n", std::strerror(errno));
     }
     return ready_events_;
   }
-  for (int i = 0; i < numevents; ++i) {
+  for (int i = 0; i < ready_count; ++i) {
     const int fd = events_[i].data.fd;
     const uint32_t events = events_[i].events;
     if ((events & (EPOLLIN | EPOLLERR | EPOLLHUP)) != 0) {

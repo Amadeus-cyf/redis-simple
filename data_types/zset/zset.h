@@ -18,6 +18,9 @@
 #include "utils/check.h"
 
 namespace redis_simple::data_types {
+// A Redis sorted set: members ordered by (score, member). It is a listpack
+// of member and score pairs while they are few and short, and a skiplist
+// with a member dict past the limits below; it never converts back.
 class ZSet {
  public:
   enum class Encoding {

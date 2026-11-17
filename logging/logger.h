@@ -36,6 +36,7 @@ inline const char* LevelName(Level level) {
   return "UNKNOWN";
 }
 
+// Reads a level name in any letter case. A null or unknown name is kInfo.
 inline Level ParseLevel(const char* value) {
   if (value == nullptr) {
     return Level::kInfo;
@@ -64,6 +65,8 @@ inline Level ParseLevel(const char* value) {
   return Level::kInfo;
 }
 
+// The lowest level that is logged, first read from REDIS_SIMPLE_LOG_LEVEL.
+// It is not synchronized: call SetLevel before other threads start logging.
 inline Level& MinLevel() {
   static Level level = ParseLevel(std::getenv("REDIS_SIMPLE_LOG_LEVEL"));
   return level;
@@ -100,6 +103,8 @@ inline spdlog::level::level_enum ToSpdlogLevel(Level level) {
 }
 #endif
 
+// Formats a printf-style message and writes it as one line, to spdlog or,
+// under LogMutex(), to stderr with a timestamp, the level, and file:line.
 inline void VLogf(Level level, const char* file, int line, const char* fmt,
                   va_list args) {
   if (!Enabled(level)) {

@@ -12,6 +12,9 @@
 #include "containers/listpack.h"
 
 namespace redis_simple::containers {
+// A list stored as a doubly linked chain of Listpack nodes, each kept within
+// `node_max_bytes`, like Redis' quicklist. Unlike Redis, neighboring nodes
+// that fit together are merged after elements are removed or replaced.
 class Quicklist {
  public:
   static constexpr size_t kDefaultNodeMaxBytes = 8192;
@@ -35,6 +38,8 @@ class Quicklist {
   // zero, starting from the given end. Returns how many were removed.
   size_t Remove(std::string_view value, size_t limit,
                 RemoveDirection direction);
+  // Keeps only the elements at indexes `start` to `stop`, both included,
+  // and empties the list when that range holds none.
   bool Trim(size_t start, size_t stop);
   std::vector<std::string> Range(size_t start, size_t stop) const;
   template <typename Visitor>
@@ -57,7 +62,11 @@ class Quicklist {
     }
     return true;
   }
+  // The size in bytes of the listpack ReleaseListpack would return, or
+  // nullopt when the list has more than one node.
   std::optional<size_t> ListpackBytes() const;
+  // Moves the elements out as one listpack, leaving the list empty. The
+  // list must have at most one node.
   Listpack ReleaseListpack();
   // Takes `listpack` as the only node of this empty list without re-encoding
   // its elements, splitting it if it exceeds the node size limit. This is the

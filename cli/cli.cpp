@@ -57,10 +57,10 @@ CliStatus RedisCli::Connect(const std::string& ip, int port) {
   if (ip_.has_value() && port_.has_value()) {
     local.emplace(connection::AddressInfo(*ip_, *port_));
   }
-  connection::ConnectionStatus st =
+  connection::ConnectionStatus status =
       connection_->BindAndBlockingConnect(remote, local, 1000);
-  return st == connection::ConnectionStatus::kError ? CliStatus::kError
-                                                    : CliStatus::kOk;
+  return status == connection::ConnectionStatus::kError ? CliStatus::kError
+                                                        : CliStatus::kOk;
 }
 
 void RedisCli::AddCommand(const std::string& command) {

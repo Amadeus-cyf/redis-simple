@@ -38,11 +38,11 @@ void Verify(const Listpack& listpack, const std::vector<std::string>& model) {
   Require(reverse == expected_reverse);
 
   for (size_t index = 0; index < model.size(); ++index) {
-    const auto listpack_index = listpack.OffsetAt(index);
-    Require(listpack.Get(ValueOrAbort(listpack_index)) == model[index]);
+    const auto offset = listpack.OffsetAt(index);
+    Require(listpack.Get(ValueOrAbort(offset)) == model[index]);
     // An element is stored as an integer exactly when its text is one in
     // canonical form.
-    Require(listpack.IntegerAt(ValueOrAbort(listpack_index)) ==
+    Require(listpack.IntegerAt(ValueOrAbort(offset)) ==
             utils::ToInt64(model[index]));
   }
   Require(!listpack.OffsetAt(model.size()).has_value());
@@ -81,31 +81,31 @@ void RunOperations(FuzzInput* input) {
       }
       case 4:
         if (index < model.size()) {
-          const auto listpack_index = listpack.OffsetAt(index);
-          Require(listpack.Insert(ValueOrAbort(listpack_index), value));
+          const auto offset = listpack.OffsetAt(index);
+          Require(listpack.Insert(ValueOrAbort(offset), value));
           model.insert(model.begin() + static_cast<std::ptrdiff_t>(index),
                        value);
         }
         break;
       case 5:
         if (index < model.size()) {
-          const auto listpack_index = listpack.OffsetAt(index);
-          Require(listpack.Replace(ValueOrAbort(listpack_index), value));
+          const auto offset = listpack.OffsetAt(index);
+          Require(listpack.Replace(ValueOrAbort(offset), value));
           model[index] = value;
         }
         break;
       case 6:
         if (index < model.size()) {
-          const auto listpack_index = listpack.OffsetAt(index);
-          listpack.Delete(ValueOrAbort(listpack_index));
+          const auto offset = listpack.OffsetAt(index);
+          listpack.Delete(ValueOrAbort(offset));
           model.erase(model.begin() + static_cast<std::ptrdiff_t>(index));
         }
         break;
       case 7:
         if (index < model.size()) {
-          const auto listpack_index = listpack.OffsetAt(index);
+          const auto offset = listpack.OffsetAt(index);
           const size_t expected = std::min(limit, model.size() - index);
-          Require(listpack.DeleteRange(ValueOrAbort(listpack_index), limit) ==
+          Require(listpack.DeleteRange(ValueOrAbort(offset), limit) ==
                   expected);
           model.erase(
               model.begin() + static_cast<std::ptrdiff_t>(index),
@@ -143,8 +143,8 @@ void RunOperations(FuzzInput* input) {
           const std::string second = input->ReadValue(96);
           const std::vector<Listpack::ListpackEntry> entries = {
               {value, 0, false}, {second, 0, false}};
-          const auto listpack_index = listpack.OffsetAt(index);
-          Require(listpack.BatchInsert(ValueOrAbort(listpack_index), entries));
+          const auto offset = listpack.OffsetAt(index);
+          Require(listpack.BatchInsert(ValueOrAbort(offset), entries));
           model.insert(model.begin() + static_cast<std::ptrdiff_t>(index),
                        {value, second});
         }

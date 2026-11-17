@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -58,11 +59,11 @@ bool ExpireAtFromTtl(int64_t ttl, int64_t multiplier, int64_t now,
   if (ttl <= 0 || ttl > std::numeric_limits<int64_t>::max() / multiplier) {
     return false;
   }
-  const int64_t ttl_ms = ttl * multiplier;
-  if (ttl_ms > std::numeric_limits<int64_t>::max() - now) {
+  const int64_t ttl_milliseconds = ttl * multiplier;
+  if (ttl_milliseconds > std::numeric_limits<int64_t>::max() - now) {
     return false;
   }
-  *expire = now + ttl_ms;
+  *expire = now + ttl_milliseconds;
   return true;
 }
 

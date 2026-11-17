@@ -115,8 +115,8 @@ void ForEachDifferenceMemberBySubtracting(const Set& first,
 // ends early; subtracting takes one step per member of every set. Unlike
 // Redis, a member of `first` counts as kCopyCostInProbes steps when
 // subtracting: SDIFF here writes its reply while probing, so only
-// subtracting pays for a copy, which SetDifference measures at about two
-// probes.
+// subtracting pays for a copy, which the SetDifference benchmark
+// (benchmarks/set_benchmark.cpp) measures at about two probes.
 inline bool DifferenceProbingIsCheaper(const Set& first,
                                        std::span<const Set* const> others) {
   constexpr size_t kCopyCostInProbes = 2;

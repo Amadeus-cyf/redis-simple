@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string>
@@ -87,6 +88,8 @@ void RunOperations(FuzzInput* input) {
     const uint8_t operation = input->ReadByte() % 6;
     std::string key = input->ReadValue(96);
     const double score = input->ReadScore();
+    // One byte over the compact encoding's 64-byte element limit, so the
+    // value converts to its large encoding.
     if (operation == 5) {
       key = PadToSize(std::move(key), 65);
     }

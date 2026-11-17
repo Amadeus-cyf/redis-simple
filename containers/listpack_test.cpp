@@ -233,10 +233,6 @@ TEST(ListpackTest, Append) {
   ASSERT_TRUE(listpack->Append(s2));
   ASSERT_TRUE(listpack->Append(s3));
 
-  // Insert a string which exceeds the listpack size threshold.
-  // std::string s4(UINT32_MAX, 'f');
-  // ASSERT_FALSE(listpack->Append(s4));
-
   ASSERT_EQ(listpack->Size(), 10);
   offset = RequireIndex(listpack->Next(offset));
   ASSERT_EQ(listpack->IntegerAt(offset), INT16_MAX >> 3);
@@ -566,7 +562,7 @@ TEST(ListpackTest, BatchInsert) {
 
 TEST(ListpackDeathTest, InvalidGetOnEmptyListpack) {
   auto listpack = std::make_unique<Listpack>();
-  // Out of bound
+  // Out of bounds.
   Listpack::IntBuffer buffer;
   EXPECT_DEATH(listpack->ElementAt(0, &buffer), "Check failed");
   EXPECT_DEATH(listpack->ElementAt(listpack->TotalBytes(), &buffer),

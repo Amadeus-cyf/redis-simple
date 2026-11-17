@@ -46,6 +46,9 @@ struct AddressInfo {
   AddressInfo(std::string_view ip, int port) : ip(ip), port(port) {}
 };
 
+// A TCP socket and its read and write callbacks on an event loop. It owns
+// the descriptor and closes it when destroyed. Not thread-safe: use it on
+// the thread that runs its loop.
 class Connection {
  public:
   explicit Connection(const Context& context);
@@ -63,13 +66,19 @@ class Connection {
   bool SetReadCallback(ConnectionCallback callback);
   bool UnsetReadCallback();
   bool HasReadCallback() const { return static_cast<bool>(read_callback_); }
+  // With `barrier`, an iteration that finds the socket readable and writable
+  // runs the write callback before the read callback, not after it.
   bool SetWriteCallback(ConnectionCallback callback, bool barrier = false);
   bool UnsetWriteCallback();
   bool HasWriteCallback() const { return static_cast<bool>(write_callback_); }
   int Descriptor() const { return fd_; }
   ConnectionState State() const { return state_; }
   void SetState(ConnectionState state) { state_ = state; }
-  // Read and write calls update State() when the peer closes or fails.
+  // Read, Write, and WriteVector return -1 with errno EAGAIN when the socket
+  // is not ready. They set State() to kError when the call fails, and Read
+  // sets it to kClosed when the peer has closed. The Sync calls wait up to
+  // timeout_ms for the socket instead; SyncWrite never changes State(), and
+  // SyncRead only when it had to wait.
   ssize_t Read(std::span<char> buffer);
   ssize_t SyncRead(std::span<char> buffer, int64_t timeout_ms);
   ssize_t Write(std::span<const char> data);
@@ -91,6 +100,7 @@ class Connection {
   }
   int Wait(event_loop::EventFlag flag, int64_t timeout_ms) const;
   int fd_;
+  // The event_loop::EventFlag bits this connection has registered with loop_.
   int flags_{};
   ConnectionState state_;
   event_loop::Loop* loop_{nullptr};

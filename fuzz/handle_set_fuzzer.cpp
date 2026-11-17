@@ -39,7 +39,8 @@ void RunOperations(FuzzInput* input) {
   constexpr size_t kItemCount = 512;
   std::array<Item, kItemCount> items{};
   for (Item& item : items) {
-    // A few hash bytes each, so that many items compete for the same slots.
+    // Only eight distinct hashes, so that many items compete for the same
+    // slots.
     item.hash = input->ReadByte() % 8;
   }
   ItemSet set;

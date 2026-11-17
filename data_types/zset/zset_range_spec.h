@@ -8,9 +8,9 @@
 #include <string_view>
 
 namespace redis_simple::data_types {
-// Spec for LIMIT flag
+// A LIMIT option: skip `offset` members of the range, then take `count`.
 struct LimitSpec {
-  // 0-based index
+  // How many members to skip.
   size_t offset;
   // Empty count means an unbounded range.
   std::optional<size_t> count;
@@ -19,7 +19,8 @@ struct LimitSpec {
       : offset(offset), count(count) {}
 };
 
-// Spec for range by rank
+// A range by rank. Negative ranks count from the end, -1 being the last
+// member, until NormalizeRankRange resolves them.
 struct RangeByRankSpec {
   RangeByRankSpec() = default;
   RangeByRankSpec(int64_t min, int64_t max, bool minex, bool maxex,
@@ -31,19 +32,19 @@ struct RangeByRankSpec {
         maxex(maxex),
         limit(limit),
         reverse(reverse) {}
-  // 0-based index
+  // 0-based ranks.
   int64_t min{};
   int64_t max{};
   // Are min or max exclusive?
   bool minex{};
   bool maxex{};
-  // Starting offset and count
+  // Starting offset and count.
   std::optional<LimitSpec> limit;
   // Reverse order?
   bool reverse{};
 };
 
-// Spec for range by score
+// A range by score.
 struct RangeByScoreSpec {
   RangeByScoreSpec() = default;
   RangeByScoreSpec(double min, double max, bool minex, bool maxex,
@@ -60,7 +61,7 @@ struct RangeByScoreSpec {
   // Are min or max exclusive?
   bool minex{};
   bool maxex{};
-  // Starting offset and count
+  // Starting offset and count.
   std::optional<LimitSpec> limit;
   // Reverse order?
   bool reverse{};
@@ -79,7 +80,8 @@ struct LexBound {
   std::string_view value;
 };
 
-// Redis' sdscmplex for a member against a bound.
+// Redis' sdscmplex for a member against a bound: orders them by bytes, with
+// "-" below and "+" above every member.
 inline std::strong_ordering CompareLex(std::string_view member,
                                        const LexBound& bound) {
   switch (bound.kind) {
@@ -126,6 +128,9 @@ struct RangeByLexSpec {
   }
 };
 
+// `spec` with its ranks resolved against a set of `size` members: negative
+// ranks become 0-based ones and the range is clamped to the set. Returns
+// nullopt when the range holds no member.
 std::optional<RangeByRankSpec> NormalizeRankRange(const RangeByRankSpec& spec,
                                                   size_t size);
 }  // namespace redis_simple::data_types

@@ -61,7 +61,7 @@ TEST(ReplyBufferTest, AddToReplyList) {
   ASSERT_EQ(r, 1000);
   ASSERT_EQ(reply_buffer->ReplyCount(), 2);
 
-  // no new node created
+  // No new node is created.
   std::string s3(24, 'c');
   r = reply_buffer->Append(s3.c_str(), 24);
   ASSERT_EQ(r, 24);

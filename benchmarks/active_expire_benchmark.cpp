@@ -11,7 +11,8 @@
 #include "utils/time.h"
 
 // Active expiration: what a cron tick costs when nothing has expired, and how
-// long back-to-back slow cycles take to reclaim a keyspace that all has.
+// long back-to-back slow cycles take to reclaim a keyspace whose keys have
+// all expired.
 namespace redis_simple {
 namespace {
 constexpr int64_t kHourInMilliseconds = 3'600'000;

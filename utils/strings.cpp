@@ -230,7 +230,7 @@ int Uint64ToString(std::span<char> destination, uint64_t value) {
       "4041424344454647484950515253545556575859"
       "6061626364656667686970717273747576777879"
       "8081828384858687888990919293949596979899";
-  // Check length.
+  // The digits and the NUL byte must fit.
   const uint32_t length = Digits10(value);
   if (length >= destination.size()) {
     if (!destination.empty()) {
@@ -238,7 +238,7 @@ int Uint64ToString(std::span<char> destination, uint64_t value) {
     }
     return 0;
   }
-  // Null term.
+  // Write the NUL byte, then the digits from the last one backward.
   uint32_t next = length - 1;
   destination[next + 1] = '\0';
   while (value >= 100) {

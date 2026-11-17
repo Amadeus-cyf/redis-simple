@@ -33,12 +33,19 @@ enum class ClientStatus {
   kError = -1,
 };
 
+// Bounds on a client's unsent reply bytes. The server stops reading from a
+// client with `soft_bytes` pending (0 turns that off) and reads again once
+// at most `resume_bytes` are left. A reply that would take the pending bytes
+// past `hard_bytes` is dropped, and the client is closed.
 struct OutputBufferLimits {
   size_t resume_bytes{size_t{4} * 1024 * 1024};
   size_t soft_bytes{size_t{8} * 1024 * 1024};
   size_t hard_bytes{size_t{64} * 1024 * 1024};
 };
 
+// One connection's state: its query and reply buffers, the request being
+// parsed and run, its RESP version, and its MULTI and WATCH state. A client
+// belongs to one thread at a time (see HandedToMain).
 class Client {
  public:
   // `server` must outlive the client. The client starts authenticated
@@ -59,8 +66,17 @@ class Client {
   db::RedisDb* Db() { return server_->db; }
   // Null when persistence is off.
   aof::Aof* Aof() { return server_->aof; }
+  // Reads once from the socket into the query buffer. Returns the bytes
+  // read, 0 when the peer closed or the read would block, or -1 when the
+  // connection failed or the query buffer passed its size limit.
   ssize_t ReadQuery();
+  // Writes pending reply bytes to the socket once. Returns the bytes written,
+  // or -1 when the write failed or the socket would block; only a failure
+  // changes the connection's State().
   ssize_t SendReply();
+  // The reply functions return the bytes queued, or 0 when the reply would
+  // pass the output buffer's hard limit; the client then closes after the
+  // replies already queued are sent.
   size_t AddReply(std::string_view reply);
   // Encode the value on the stack (0 and 1 are constant replies) and copy
   // it straight into the output buffer. The float is a bulk string in RESP2 and
@@ -76,12 +92,13 @@ class Client {
   // the reply keeps it alive, and unchanged, until it is flushed.
   size_t AddBulkReply(std::shared_ptr<const std::string> value);
   bool HasPendingReplies() const { return !reply_buffer_.Empty(); }
-  // Frees the query and reply buffers, and the argument and reply block
-  // lists, of a client that has read nothing since the previous call and
-  // holds no unparsed input or unsent reply. Otherwise one large request or
-  // reply would keep its memory for as long as the connection lives; Redis'
-  // clientsCron shrinks idle clients' buffers for the same reason. Only the
-  // side that owns the client may call this.
+  // Frees the buffers of a client that has read nothing since the previous
+  // call: the query buffer and argument lists if it holds no unparsed input,
+  // and the reply buffer and block list if it holds no unsent reply.
+  // Otherwise one large request or reply would keep its memory for as long
+  // as the connection lives; Redis' clientsCron shrinks idle clients'
+  // buffers for the same reason. Only the side that owns the client may
+  // call this.
   void ReleaseIdleBuffers();
   // Bytes allocated for the query buffer and the reply buffer's main block.
   size_t BufferCapacity() const {
@@ -117,6 +134,7 @@ class Client {
   // buffer, which neither thread touches in between.
   bool ParseQueries();
   ClientStatus RunParsedQueries();
+  // Closes the connection and marks the client for the server to destroy.
   void Free() {
     connection_->Close();
     freed_ = true;

@@ -56,6 +56,8 @@ void RunOperations(FuzzInput* input) {
     const uint8_t operation = input->ReadByte() % 6;
     std::string field = input->ReadValue(96);
     std::string value = input->ReadValue(96);
+    // One byte over the compact encoding's 64-byte element limit, so the
+    // value converts to its large encoding.
     if (operation == 5) {
       field = PadToSize(std::move(field), 65);
     }

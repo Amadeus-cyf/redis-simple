@@ -29,6 +29,8 @@ bool LoadRdb(int fd, db::RedisDb* db, const LoadOptions& options,
 }  // namespace redis_simple::rdb
 
 namespace redis_simple::db {
+// kError means nothing was changed: the key is missing, or the operation's
+// condition was not met.
 enum class DbStatus {
   kOk = 0,
   kError = -1,
@@ -60,6 +62,9 @@ struct ExpireSampleResult {
   size_t expired{};
 };
 
+// One database: the keyspace with each key's value and expiration time, the
+// index of keys that have a TTL, and the WATCH registrations. Used from the
+// main thread only. Lookups delete a key they find expired.
 class RedisDb {
  public:
   static std::unique_ptr<RedisDb> Create();
@@ -96,6 +101,9 @@ class RedisDb {
   // DeleteKey, but a value of more than 64 elements is freed in steps by
   // FreeLazily, so other clients are not held up.
   DbStatus UnlinkKey(std::string_view key);
+  // Sets the key's expiration to `expire`, an absolute time in milliseconds,
+  // if `condition` holds. A time that has already passed deletes the key,
+  // except while loading.
   DbStatus ExpireKeyAt(std::string_view key, int64_t expire,
                        ExpireCondition condition = ExpireCondition::kNone);
   DbStatus PersistKey(std::string_view key);
@@ -108,6 +116,8 @@ class RedisDb {
     std::optional<int64_t> expire;
   };
   KeyWithExpiration LookupKeyWithExpiration(std::string_view key);
+  // The time the key has left, as TTL and PTTL reply: -2 if the key is
+  // missing, -1 if it has no expiration. Seconds are rounded to the nearest.
   int64_t TimeToLive(std::string_view key, TtlResolution resolution);
   // Sizes the keyspace for `keys` more keys, `keys_with_expiration` of them
   // with a TTL, before they are added (Redis' dbExpand), so that adding them
@@ -140,6 +150,9 @@ class RedisDb {
   // old and the new table, and starts a shrink that was held back while a
   // child ran. Returns whether a rehash is still under way.
   bool RehashIncrementally(int64_t budget_microseconds);
+  // One step of active expiration: samples up to `max_samples` keys that
+  // have a TTL, carrying on from where the previous call stopped, and
+  // deletes those that have expired by `now`, a time in milliseconds.
   ExpireSampleResult ExpireSome(size_t max_samples, int64_t now);
   // Pins the clock while one command (or one EXEC) runs, so expiration
   // checks and relative TTLs all see a single time, as Redis'
@@ -151,9 +164,9 @@ class RedisDb {
     command_time_.reset();
   }
   // Pins a given time, for tests.
-  void SetCommandTime(int64_t now_ms) {
+  void SetCommandTime(int64_t now_milliseconds) {
     time_pinned_ = true;
-    command_time_ = now_ms;
+    command_time_ = now_milliseconds;
   }
   // The time in milliseconds: the pinned time while a command runs.
   int64_t Now() const {

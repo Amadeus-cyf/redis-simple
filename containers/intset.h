@@ -7,7 +7,9 @@
 #include <string>
 
 namespace redis_simple::containers {
-// An in memory set storing integers in ascending order.
+// An in-memory set storing integers in ascending order. As in Redis' intset,
+// all values share one width (16, 32 or 64 bits), which is widened when a
+// larger value is added and never narrowed again.
 class Intset {
  public:
   class Iterator;
@@ -66,7 +68,7 @@ class Intset::Iterator {
   void SeekToLast() { index_ = intset_->Size() - 1; }
   // Advance to the next element.
   void Next() { ++index_; }
-  // Advance to the previous element.
+  // Move back to the previous element.
   void Prev() { --index_; }
   int64_t Value() { return intset_->Get(index_); }
 

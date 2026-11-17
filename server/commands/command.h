@@ -22,6 +22,8 @@ enum class CommandAccess : std::uint8_t {
   kConnection,
 };
 
+// The inclusive range of argument counts a command accepts, not counting the
+// command name.
 struct CommandArity {
   size_t min;
   size_t max;
@@ -31,6 +33,9 @@ struct CommandArity {
   }
 };
 
+// Which arguments are keys: every `step`-th one from `first` to `last`.
+// Positions index the arguments after the command name, so 0 is the first
+// argument. A `step` of 0 means the command takes no keys.
 struct KeySpec {
   static constexpr size_t kAllRemaining = std::numeric_limits<size_t>::max();
 
@@ -60,6 +65,8 @@ struct Command {
   bool refused_on_disk_error{false};
 };
 
+// Looks a command up by name, ignoring ASCII case. Returns nullptr if there
+// is none.
 const Command* Find(std::string_view name);
 }  // namespace redis_simple::commands
 

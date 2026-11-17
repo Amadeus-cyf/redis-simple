@@ -28,7 +28,8 @@ int64_t SignExtend(uint64_t value, unsigned bits) {
   return static_cast<int64_t>(value);
 }
 
-// Redis' lpEncodeBacklenBytes.
+// The number of bytes the backlen field takes for an element whose encoded
+// size is `length`, as Redis' lpEncodeBacklenBytes.
 size_t BacklenBytes(uint64_t length) {
   if (length <= 127) {
     return 1;

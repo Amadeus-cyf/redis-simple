@@ -230,7 +230,8 @@ class ServerTest : public testing::Test {
     }
   }
 
-  // Waits for a server that stops by itself. Whether Run reported success.
+  // Waits for a server that stops by itself. Returns whether Run
+  // reported success.
   bool JoinServer() {
     thread_.join();
     return run_succeeded_;

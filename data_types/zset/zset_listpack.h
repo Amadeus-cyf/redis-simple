@@ -11,6 +11,9 @@
 #include "data_types/zset/zset_storage.h"
 
 namespace redis_simple::data_types {
+// The small sorted set encoding: one listpack of member and score pairs
+// kept in ascending (score, member) order, as Redis' zzl functions keep
+// it. Lookups and ranges walk the pairs, so ZSet bounds its size.
 class ZSetListpack : public ZSetStorage {
  public:
   ZSetListpack();
@@ -42,8 +45,8 @@ class ZSetListpack : public ZSetStorage {
   size_t Scan(size_t cursor, size_t count,
               const ZSetMemberVisitor& visitor) override;
   size_t Size() const override {
-    // Since listpack include both members and scores, the actual size should be
-    // divided by 2.
+    // The listpack holds a member and a score per entry, so two elements
+    // each.
     return listpack_.Size() / 2;
   }
 
@@ -53,8 +56,9 @@ class ZSetListpack : public ZSetStorage {
   struct EntryView {
     std::string_view member;
     double score;
-    size_t member_index;
-    size_t score_index;
+    // Byte offsets of the two elements in the listpack.
+    size_t member_offset;
+    size_t score_offset;
   };
 
   // Inserts the pair at its place in (score, member) order. Returns false,
@@ -95,7 +99,7 @@ class ZSetListpack : public ZSetStorage {
   static bool IsInRange(double score, const RangeByScoreSpec* spec);
   static bool GreaterOrEqual(double score, const RangeByScoreSpec* spec);
   static bool LessOrEqual(double score, const RangeByScoreSpec* spec);
-  // Listpack storing member score pairs
+  // Member and score pairs: each member is followed by its score.
   containers::Listpack listpack_;
 };
 }  // namespace redis_simple::data_types

@@ -1124,6 +1124,7 @@ bool Loader::Load() {
     }
     break;
   }
+  // Files end with a checksum from format version 5 on.
   if (*version >= 5 && !VerifyChecksum()) {
     return false;
   }

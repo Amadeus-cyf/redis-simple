@@ -94,13 +94,13 @@ bool Server::LoadData(const ServerOptions& options) {
     PauseIoThreads();
     containers::SetDictResizePolicy(containers::DictResizePolicy::kForbidden);
     // Timed from here, right before fork(), as Redis' redisFork times it.
-    fork_start_us_ = utils::MonotonicMicroseconds();
+    fork_start_microseconds_ = utils::MonotonicMicroseconds();
   };
   const auto after_fork = [this](bool forked) {
     if (forked) {
       ++fork_stats_.total_forks;
       fork_stats_.latest_fork_usec =
-          utils::MonotonicMicroseconds() - fork_start_us_;
+          utils::MonotonicMicroseconds() - fork_start_microseconds_;
     }
     containers::SetDictResizePolicy(containers::DictResizePolicy::kAvoid);
     ResumeIoThreads();
@@ -271,17 +271,17 @@ void Server::Stop() {
   }
 }
 
-bool Server::RemoveClient(Client* c) {
-  if (c == nullptr) {
+bool Server::RemoveClient(Client* client) {
+  if (client == nullptr) {
     return false;
   }
-  idle_client_sweeper_.Remove(c);
-  if (c->AwaitsFlush()) {
-    std::erase(held_clients_, c);
+  idle_client_sweeper_.Remove(client);
+  if (client->AwaitsFlush()) {
+    std::erase(held_clients_, client);
   }
-  c->Free();
+  client->Free();
   // Destroy the client after the current event, which may still use it.
-  loop_->Defer([this, c] { clients_.erase(c); });
+  loop_->Defer([this, client] { clients_.erase(client); });
   return true;
 }
 
@@ -291,7 +291,7 @@ bool Server::InstallAcceptCallback() {
       event_loop::ToInt(event_loop::EventFlag::kReadable));
   if (loop_->CreateFileEvent(fd_, std::move(file_event)) ==
       event_loop::Status::kError) {
-    RS_LOG_DEBUG("error in adding client creation file event\n");
+    RS_LOG_DEBUG("failed to add the accept file event\n");
     return false;
   }
   return true;

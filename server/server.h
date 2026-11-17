@@ -23,12 +23,18 @@
 #include "server/server_options.h"
 
 namespace redis_simple {
+// The server: the main thread's event loop, the database and its
+// persistence, the listening socket, and every client. Commands run on the
+// thread that calls Run().
 class Server {
  public:
   static std::unique_ptr<Server> Create();
   Server(const Server&) = delete;
   Server& operator=(const Server&) = delete;
+  // Loads the data, then serves clients until Stop() or a stop signal.
+  // Returns false if the server could not start.
   bool Run(const ServerOptions& options);
+  // Makes Run() return after the current event-loop iteration.
   void Stop();
   event_loop::Loop* Loop() { return loop_.get(); }
   db::RedisDb* Db() { return db_.get(); }
@@ -46,7 +52,9 @@ class Server {
       idle_client_sweeper_.Add(key);
     }
   }
-  bool RemoveClient(Client* c);
+  // Closes the client's connection now and destroys the client once the
+  // current event has been handled. Returns false only for a null client.
+  bool RemoveClient(Client* client);
   // Keeps the replies to the commands `client` just ran until the event loop
   // is about to wait for events again. By then every client that was
   // readable has run its commands, so one AOF flush covers them all, and the
@@ -110,7 +118,7 @@ class Server {
   ForkStats fork_stats_;
   ActiveExpire active_expire_;
   // When the fork hooks last let a fork start.
-  int64_t fork_start_us_{};
+  int64_t fork_start_microseconds_{};
   std::string require_pass_;
   bool protected_mode_{true};
   std::vector<std::unique_ptr<IoThread>> io_threads_;

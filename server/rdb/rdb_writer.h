@@ -31,8 +31,8 @@ struct WriteOptions {
   int64_t creation_time{};
 };
 
-// The outcome of WriteRdbFile. A background save's child exits with it,
-// since it cannot log.
+// The outcome of WriteRdbFile. The forked children that call it cannot log,
+// so they report it through their exit status.
 enum class WriteStatus : uint8_t {
   kWritten = 0,
   kWriteFailed = 1,

@@ -38,9 +38,12 @@ enum class OptionsStatus {
 struct OptionsResult {
   ServerOptions options;
   OptionsStatus status{OptionsStatus::kOk};
+  // Why parsing failed, when `status` is kError. Views a string literal.
   std::string_view error;
 };
 
+// Parses the command line, where every option is followed by one value.
+// Stops at the first --help or -h (kHelp) or invalid option (kError).
 OptionsResult ParseServerOptions(int argc, const char* const* argv);
 std::string_view ServerUsage();
 }  // namespace redis_simple

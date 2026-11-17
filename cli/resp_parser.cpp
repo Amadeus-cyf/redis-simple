@@ -19,6 +19,8 @@ constexpr std::string_view kNilReply = "(nil)";
 ParseResult ParseAt(std::string_view input, size_t start,
                     std::vector<std::string>* reply);
 
+// Finds the "\r\n" that ends the line at `start`. On success, `consumed`
+// holds the index of its '\r' in `input`, not a byte count.
 ParseResult FindLineEnd(std::string_view input, size_t start) {
   const size_t end = input.find('\r', start);
   if (end == std::string_view::npos || end + 1 >= input.size()) {
@@ -110,6 +112,8 @@ ParseResult ParseInteger(std::string_view input, size_t start,
   return {ParseStatus::kComplete, line.consumed - start + 2};
 }
 
+// Parses an array, map, or set of `length * element_multiplier` elements
+// (2 for a map's keys and values) and flattens them into `reply`.
 ParseResult ParseAggregate(std::string_view input, size_t start,
                            size_t element_multiplier,
                            std::vector<std::string>* const reply) {

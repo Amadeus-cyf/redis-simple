@@ -203,6 +203,7 @@ RedisObject::Encoding RedisObject::StringEncoding() const {
   }
   utils::Unreachable();
 }
+
 std::string_view TypeName(RedisObject::ObjectType type) {
   switch (type) {
     case RedisObject::ObjectType::kString:

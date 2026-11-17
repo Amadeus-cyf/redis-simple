@@ -745,7 +745,7 @@ TEST(AofTest, ReportsDirectorySyncFailureAfterRewrite) {
 
   ASSERT_TRUE(writer->Flush());
   ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
-  // Let the background thread sync and close the replaced file first.
+  // Let the background threads sync and close the replaced file first.
   writer->WaitForBackgroundJobs();
   // Installing the rewrite syncs the new manifest, then the directory after
   // renaming it; the directory sync fails. The child's syncs happen in its
@@ -868,8 +868,8 @@ TEST(AofTest, SyncsEverySecondUnderSustainedWrites) {
   ASSERT_EQ(
       source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
       db::DbStatus::kOk);
-  // Constant slow writes kept the old background writer busy enough that it
-  // never synced; the sync thread now runs independently of the writes.
+  // The sync thread runs independently of the writes, so constantly slow
+  // writes must not keep it from syncing.
   file_ops->SlowWrites(std::chrono::milliseconds(2));
   const int syncs_before = file_ops->SyncCount();
   const auto end =

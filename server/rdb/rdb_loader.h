@@ -32,10 +32,11 @@ struct LoadStats {
 // Redis 7.0 and later write (and the plain encodings of earlier versions),
 // with their expiration times; refuses streams, modules, hash field
 // expiration, hash templates, ziplists, and databases other than 0, which
-// this server does not have. Values are rebuilt through the data types, so
-// they take this server's encodings. Corrupt data is reported, never
-// trusted: lengths are checked against the file, encoded listpacks and
-// intsets are validated, and duplicates are rejected.
+// this server does not have. A valid set, hash, or sorted set listpack that
+// fits this server's limits is kept as it is; other values are rebuilt
+// through the data types, so they take this server's encodings. Corrupt data
+// is reported, never trusted: lengths are checked against the file, encoded
+// listpacks and intsets are validated, and duplicates are rejected.
 //
 // `db` may hold keys loaded before; a key the data repeats is an error.
 bool LoadRdb(int fd, db::RedisDb* db, const LoadOptions& options,

@@ -23,6 +23,8 @@ struct ZSetRank {
   size_t rank{};
   double score{};
 };
+// Receives each entry of a whole-set walk, in order; returning false stops
+// the walk. The member view is valid only during the call.
 using ZSetEntryVisitor =
     std::function<bool(std::string_view member, double score)>;
 // Receives each member a range or scan step visits, in order. The member
@@ -85,6 +87,8 @@ inline ZSetAddResult ApplyAddRulesToExisting(double current, double score,
           .score = score};
 }
 
+// What one sorted set encoding (listpack or skiplist) implements. ZSet
+// forwards to whichever currently holds the members.
 class ZSetStorage {
  public:
   // Redis' zsetAdd: adds `member`, or changes its score, as `rules` allow,
@@ -106,7 +110,6 @@ class ZSetStorage {
   virtual bool Delete(std::string_view member) = 0;
   // Return the score of the given member.
   virtual std::optional<double> Score(std::string_view member) const = 0;
-  // Return the index of the given member.
   // The member's rank and score from one lookup, as ZRANK ... WITHSCORE
   // needs them.
   virtual std::optional<ZSetRank> RankAndScore(

@@ -25,7 +25,7 @@ std::string_view FormatFloatWith17Digits(double value, FloatBuffer* buffer);
 std::string FloatToString(double value);
 // Parses `value` as Redis' string2d does, for scores and other number
 // arguments: strtod over the whole text, so "inf" and hex work, but no
-// leading space, NaN, or overflow.
+// leading space, NaN, overflow, or underflow to zero.
 std::optional<double> ToDouble(std::string_view value);
 // Parses a score range bound as Redis' zslParseRange does: strtod over the
 // whole text, rejecting only NaN, so leading spaces, "" (0), and overflow

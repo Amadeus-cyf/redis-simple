@@ -12,6 +12,8 @@ enum class Status;
 // File event callbacks report success or failure with the loop's Status.
 using CallbackStatus = Status;
 
+// The callbacks registered for one descriptor and the EventFlag bits they
+// are registered for.
 class FileEvent {
  public:
   using Callback = std::function<CallbackStatus(Loop*, int, int)>;
@@ -54,7 +56,7 @@ class FileEvent {
                      mask);
   }
 
-  FileEvent(int mask) : mask_(mask) {}
+  explicit FileEvent(int mask) : mask_(mask) {}
   int Mask() const { return mask_; }
   void SetMask(int mask) { mask_ = mask; }
   void AddMask(int mask) { mask_ |= mask; }
@@ -66,7 +68,11 @@ class FileEvent {
   }
   bool HasReadCallback() const { return static_cast<bool>(read_callback_); }
   bool HasWriteCallback() const { return static_cast<bool>(write_callback_); }
+  // False when one callback handles both directions; the loop then calls it
+  // once for a descriptor that is readable and writable.
   bool HasSeparateCallbacks() const { return has_separate_callbacks_; }
+  // Adds file_event's mask, and its callback for each direction this event
+  // has none for.
   void Merge(const FileEvent* file_event);
 
  private:

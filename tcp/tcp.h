@@ -26,7 +26,15 @@ struct TcpAddress {
   TcpAddress(std::string_view ip, int port) : ip(ip), port(port) {}
 };
 
+// The functions below return a descriptor or ToInt(TcpStatusCode::kOk) on
+// success and ToInt(TcpStatusCode::kError), which is -1, on failure.
+
+// Creates a close-on-exec stream socket with SO_REUSEADDR set.
 int TcpCreateSocket(int domain, bool non_block);
+// Connects to `remote` over IPv4, from `local` if given. With `non_block`
+// the connection may still be in progress when the descriptor is returned;
+// the socket turns writable when it completes, and IsSocketError tells
+// whether it succeeded.
 int TcpBindAndConnect(const TcpAddress& remote,
                       const std::optional<TcpAddress>& local,
                       bool non_block = true);
@@ -35,8 +43,10 @@ int TcpListen(int socket_fd);
 // Accepts a connection as a nonblocking, close-on-exec socket with Nagle's
 // algorithm off and keepalive probes on, as Redis sets up its clients.
 int TcpAccept(int socket_fd, TcpAddress* address);
+// Make fd blocking or nonblocking.
 int Block(int fd);
 int NonBlock(int fd);
+// Whether the socket has a pending error (SO_ERROR), or cannot be asked.
 bool IsSocketError(int fd);
 }  // namespace redis_simple::tcp
 

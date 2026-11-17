@@ -55,13 +55,16 @@ constexpr std::string_view NullArrayView(ProtocolVersion protocol) {
   return protocol == ProtocolVersion::kResp2 ? kNullArrayResp2 : kNullResp3;
 }
 
+// Encodes `text`, which must hold no CR or LF, as a simple string.
 std::string FromString(std::string_view text);
 std::string FromBulkString(std::string_view value);
 // Encodes `value` as an integer reply in `buffer` and returns the encoded
 // bytes, so a reply needs no string of its own.
 std::string_view EncodeInt64(int64_t value, IntegerBuffer* buffer);
 void AppendInt64(int64_t value, std::string* reply);
+// Builds an array from elements that are already encoded replies.
 std::string FromArray(const std::vector<std::string>& array);
+// Builds an array of bulk strings from raw values.
 std::string FromBulkStringArray(const std::vector<std::string>& values);
 std::string FromArrayHeader(size_t size);
 void AppendArrayHeader(size_t size, std::string* reply);
@@ -89,7 +92,7 @@ inline size_t DecimalDigits(uint64_t value) {
   return digits;
 }
 
-// Copies `s` to `out`. Short values, the common case in collection replies,
+// Copies `text` to `out`. Short values, the common case in collection replies,
 // use fixed-size overlapping copies that compile to a few moves instead of a
 // memcpy call.
 inline void CopyShort(std::string_view text, char* const out) {
@@ -151,6 +154,7 @@ std::string_view EncodeFloat(double value, ProtocolVersion protocol,
                              FloatReplyBuffer* buffer);
 // Appends `value` as a RESP2 bulk string or a RESP3 double.
 void AppendFloat(double value, ProtocolVersion protocol, std::string* reply);
+// Encodes an error from `message`, given without the leading "-" and CRLF.
 std::string FromError(std::string_view message);
 // Redis' arity error, which names the command in lower case.
 std::string WrongNumberOfArguments(std::string_view command);
@@ -161,6 +165,8 @@ std::string UnknownCommand(std::string_view command,
 std::string SyntaxError();
 std::string WrongTypeError();
 std::string Null(ProtocolVersion protocol);
+// Headers for `size` pairs or members. RESP2 has no map or set type, so
+// they become array headers there, the map's counting keys and values.
 std::string FromMapHeader(size_t size, ProtocolVersion protocol);
 std::string FromSetHeader(size_t size, ProtocolVersion protocol);
 }  // namespace redis_simple::reply

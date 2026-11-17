@@ -30,6 +30,8 @@ namespace redis_simple::fuzz {
 namespace {
 using db::RedisObject;
 
+// An expiration time no run reaches: the start of 2100, in Unix
+// milliseconds.
 constexpr int64_t kFuture = int64_t{4102444800000};
 constexpr size_t kMaxKeys = 8;
 constexpr size_t kMaxElements = 160;

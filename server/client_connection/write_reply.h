@@ -18,8 +18,9 @@ connection::ConnectionCallback CreateWriteReplyCallback(Server* server,
 // callback is installed only while the socket cannot take all pending output.
 void WriteToClient(Server* server, Client* client);
 // Writes pending replies, at most one event's worth, and returns the bytes
-// written or -1 on error. It touches only the client's socket and output, so
-// a client's I/O thread uses it too.
+// written, or -1 when a write failed or the socket would block (only a
+// failure changes the connection's state). It touches only the client's
+// socket and output, so a client's I/O thread uses it too.
 ssize_t WritePendingReplies(Client* client);
 }  // namespace redis_simple::client_connection
 

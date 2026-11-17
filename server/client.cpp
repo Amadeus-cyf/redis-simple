@@ -15,6 +15,7 @@
 #include "server/rdb/rdb.h"
 #include "server/reply.h"
 #include "server/request_parser.h"
+#include "utils/check.h"
 
 namespace redis_simple {
 namespace {
@@ -251,7 +252,6 @@ ssize_t Client::SendBufferReply() {
 }
 
 ssize_t Client::SendListReply() {
-  RS_LOG_DEBUG("SendListReply\n");
   reply_buffer_.FillBlocks(&reply_blocks_);
   ssize_t nwritten = connection_->WriteVector(reply_blocks_);
   if (nwritten < 0) {
