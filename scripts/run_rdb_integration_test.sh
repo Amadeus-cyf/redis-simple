@@ -4,6 +4,7 @@ set -u
 
 server="$1"
 client="$2"
+. "$(dirname "$0")/wait_for_server.sh"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/redis_simple_rdb.XXXXXX")"
 rdb_name="snapshot.rdb"
 server_pid=""
@@ -26,10 +27,9 @@ start_server() {
   "$server" --bind 127.0.0.1 --port 18082 --dir "$server_dir" \
     --dbfilename "$rdb_name" ${REDIS_SIMPLE_SERVER_ARGS:-} "$@" &
   server_pid=$!
-  sleep 1
-  if ! kill -0 "$server_pid" 2>/dev/null; then
-    wait "$server_pid"
-    status=$?
+  wait_for_server "$server_pid" 18082
+  status=$?
+  if [ "$status" -ne 0 ]; then
     server_pid=""
     return "$status"
   fi
