@@ -201,7 +201,11 @@ ssize_t Client::ReadQuery() {
   const size_t read_size =
       std::clamp(pending_bulk, kReadBufferSize, kMaxBulkReadSize);
   char* const tail = query_buffer_.WritableTail(read_size);
-  const ssize_t nread = connection_->Read({tail, read_size});
+  // Read into all the room the buffer has, as Redis does to save system
+  // calls: after a large request it keeps room for the next one, which then
+  // arrives in one read instead of a first 16 KiB and the rest.
+  const size_t room = query_buffer_.Capacity() - query_buffer_.Size();
+  const ssize_t nread = connection_->Read({tail, room});
   if (nread == 0) {
     return 0;
   }
@@ -220,10 +224,11 @@ ssize_t Client::ReadQuery() {
   return nread;
 }
 
-void Client::ReleaseIdleBuffers() {
+bool Client::ReleaseIdleBuffers() {
   if (std::exchange(read_since_sweep_, false)) {
-    return;
+    return false;
   }
+  const size_t capacity = BufferCapacity();
   // An empty query buffer holds no partial request, so nothing views it.
   if (query_buffer_.Empty()) {
     query_buffer_.Release();
@@ -235,6 +240,7 @@ void Client::ReleaseIdleBuffers() {
     reply_buffer_.ReleaseBuffer();
     ReleaseStorage(&reply_blocks_);
   }
+  return BufferCapacity() != capacity;
 }
 
 ssize_t Client::SendReply() {

@@ -131,10 +131,26 @@ def snapshot(connection):
             value = sorted(connection.command("HGETALL", key))
         else:
             value = None
-        ttl = connection.command("PTTL", key)
-        # Whole thousands of seconds, so the time the check takes is ignored.
-        result[key] = (kind, value, ttl if ttl < 0 else round(ttl / 1e6))
+        result[key] = (kind, value, connection.command("PTTL", key))
     return result
+
+
+# How far apart two readings of one TTL may be: the time between writing the
+# file and reading the loaded keys, with room for a slow machine. Rounding
+# both to a coarser unit instead fails whenever the clock crosses a unit's
+# boundary between the two readings.
+TTL_TOLERANCE_MS = 60_000
+
+
+def same_key(written, loaded):
+    if written is None or loaded is None:
+        return written is loaded
+    (kind, value, ttl), (loaded_kind, loaded_value, loaded_ttl) = written, loaded
+    if (kind, value) != (loaded_kind, loaded_value):
+        return False
+    if ttl < 0 or loaded_ttl < 0:
+        return ttl == loaded_ttl
+    return abs(ttl - loaded_ttl) <= TTL_TOLERANCE_MS
 
 
 class Server:
@@ -189,7 +205,7 @@ def run_direction(name, source, target, binaries, port, root, configure=()):
     finally:
         reader.stop()
     differences = [k for k in sorted(set(expected) | set(actual))
-                   if expected.get(k) != actual.get(k)]
+                   if not same_key(expected.get(k), actual.get(k))]
     for key in differences[:10]:
         print(f"  {key!r}: wrote {str(expected.get(key))[:120]}, "
               f"loaded {str(actual.get(key))[:120]}")

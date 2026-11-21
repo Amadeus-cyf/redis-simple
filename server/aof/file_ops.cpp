@@ -225,15 +225,4 @@ ssize_t WriteAll(FileOps* const file_ops, int fd, std::string_view data) {
   }
   return static_cast<ssize_t>(written);
 }
-
-size_t MaxIovCount() {
-  static const size_t kMaxIovCount = [] {
-    const int64_t system_limit = sysconf(_SC_IOV_MAX);
-    const size_t limit =
-        system_limit > 0 ? static_cast<size_t>(system_limit) : 1024;
-    return std::min(limit,
-                    static_cast<size_t>(std::numeric_limits<int>::max()));
-  }();
-  return kMaxIovCount;
-}
 }  // namespace redis_simple::aof

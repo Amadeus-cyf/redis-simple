@@ -4,6 +4,7 @@ set -u
 
 server="$1"
 port="18080"
+. "$(dirname "$0")/wait_for_server.sh"
 
 if ! "$server" --help >/dev/null; then
   echo "server --help failed" >&2
@@ -57,11 +58,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-sleep 1
-if ! kill -0 "$server_pid" 2>/dev/null; then
-  wait "$server_pid"
-  exit $?
-fi
+wait_for_server "$server_pid" "$port" || exit $?
 
 kill -TERM "$server_pid"
 attempt=0

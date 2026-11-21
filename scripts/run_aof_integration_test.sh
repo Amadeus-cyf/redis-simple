@@ -4,6 +4,7 @@ set -u
 
 server="$1"
 client="$2"
+. "$(dirname "$0")/wait_for_server.sh"
 aof_dir="$(mktemp -d "${TMPDIR:-/tmp}/redis_simple_aof.XXXXXX")"
 # A multi-part AOF directory, as in Redis 7.
 aof_dirname="${aof_dir}/appendonlydir"
@@ -28,11 +29,7 @@ start_server() {
     --appendfsync everysec \
     ${REDIS_SIMPLE_SERVER_ARGS:-} "$@" &
   server_pid=$!
-  sleep 1
-  if ! kill -0 "$server_pid" 2>/dev/null; then
-    wait "$server_pid"
-    return $?
-  fi
+  wait_for_server "$server_pid" 18081
 }
 
 # Bytes in the AOF's base and incremental files.

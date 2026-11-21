@@ -3,6 +3,7 @@ set -u
 
 server="$1"
 shift
+. "$(dirname "$0")/wait_for_server.sh"
 
 # The server saves an RDB file at shutdown and loads it at startup, so each
 # run gets a directory of its own.
@@ -23,12 +24,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-sleep 1
-
-if ! kill -0 "$server_pid" 2>/dev/null; then
-  wait "$server_pid"
-  exit $?
-fi
+# The default port, which the command clients connect to.
+wait_for_server "$server_pid" 8080 || exit $?
 
 status=0
 for client in "$@"; do
