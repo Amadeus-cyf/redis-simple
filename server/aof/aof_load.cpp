@@ -498,7 +498,7 @@ bool Aof::CreateBaseIfMissing(db::RedisDb* const db) {
   const std::string name =
       BaseFileName(file_name_, sequence, use_rdb_preamble_);
   const std::string temp_path =
-      FilePath(std::string(kTempPrefix) + "rewriteaof-" +
+      FilePath(std::string(kTemporaryPrefix) + "rewriteaof-" +
                std::to_string(getpid()) + ".aof");
   if (WriteBaseFile(db, temp_path) != SnapshotStatus::kWritten) {
     RS_LOG_ERROR("Write error writing append only file on disk: %s\n",

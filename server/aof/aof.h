@@ -238,11 +238,11 @@ class Aof {
 
   // Rewriting (aof_rewrite.cpp).
   [[noreturn]] void RunRewriteChild(db::RedisDb* db) const;
-  std::string RewriteTempPath(pid_t child) const;
+  std::string RewriteTemporaryPath(pid_t child) const;
   void FinishRewrite(int wait_status);
   Failure InstallRewrite(pid_t child);
   void AbandonRewrite();
-  void RemoveRewriteTempFiles(pid_t child);
+  void RemoveRewriteTemporaryFiles(pid_t child);
   bool RewriteLimited();
 
   // Files and the manifest (aof.cpp).

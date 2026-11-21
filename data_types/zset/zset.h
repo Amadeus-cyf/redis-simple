@@ -126,8 +126,8 @@ class ZSet {
   // discarded value can be freed in steps (as RedisDb does for UNLINK).
   // Returns true once the rest is cheap to free at once. Between the first
   // call and the one that returns true, only destroy the value.
-  bool ReleaseSome(size_t max_elements) {
-    return Storage().ReleaseSome(max_elements);
+  bool ClearSome(size_t max_elements) {
+    return Storage().ClearSome(max_elements);
   }
   // A listpack-encoded set's listpack, in Redis' byte format, as RDB files
   // store it; nullopt for a skiplist.

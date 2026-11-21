@@ -22,7 +22,7 @@ TEST(HashTest, ReleasesALargeHashInSteps) {
     ASSERT_TRUE(hash->Set("field:" + std::to_string(i), "value"));
   }
   int steps = 0;
-  while (!hash->ReleaseSome(100)) {
+  while (!hash->ClearSome(100)) {
     ++steps;
   }
   EXPECT_GE(steps, 4);

@@ -134,13 +134,9 @@ class Client {
   // buffer, which neither thread touches in between.
   bool ParseQueries();
   ClientStatus RunParsedQueries();
-  // Closes the connection and marks the client for the server to destroy.
-  void Free() {
-    connection_->Close();
-    freed_ = true;
-  }
-  // Whether the server has removed this client; it is destroyed later.
-  bool Freed() const { return freed_; }
+  // Closes the connection. The server destroys the client after the current
+  // event.
+  void Close() { connection_->Close(); }
   const commands::CommandArgs& Args() const { return args_; }
   bool Authenticated() const { return authenticated_; }
   void SetAuthenticated(bool authenticated) { authenticated_ = authenticated; }
@@ -231,7 +227,6 @@ class Client {
   size_t sweep_index_{kNotSwept};
   bool reads_paused_{};
   bool handed_to_main_{};
-  bool freed_{};
   bool awaits_flush_{};
   bool close_after_reply_{};
   bool modified_{};

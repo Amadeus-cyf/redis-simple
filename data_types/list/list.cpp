@@ -204,7 +204,7 @@ void List::TryConvertQuicklistToListpack() {
   if (!bytes.has_value() || *bytes > list_max_listpack_bytes_ / 2) {
     return;
   }
-  listpack_ = quicklist_->ReleaseListpack();
+  listpack_ = quicklist_->ExtractListpack();
   quicklist_.reset();
 }
 }  // namespace redis_simple::data_types
