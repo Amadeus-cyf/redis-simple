@@ -119,10 +119,11 @@ class Server {
   // The clients this thread reads and writes: all of them without threaded
   // I/O, none with it.
   IdleClientSweeper idle_client_sweeper_;
-  MemoryPurger::PurgeFunction purge_memory_;
+  // Shared with the I/O threads' purgers, which it outlives.
+  MemoryPurger::Shared memory_purge_;
   MemoryPurger memory_purger_;
   // What the cron saw at its previous tick, to tell whether the main thread
-  // has been idle since.
+  // did work since.
   uint64_t cron_file_events_{0};
   size_t cron_key_count_{0};
   std::unique_ptr<db::RedisDb> db_;

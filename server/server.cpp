@@ -27,8 +27,8 @@
 namespace redis_simple {
 Server::Server(const MemoryPurger::PurgeFunction purge_memory)
     : loop_(event_loop::Loop::Create()),
-      purge_memory_(purge_memory),
-      memory_purger_(purge_memory),
+      memory_purge_{.purge = purge_memory},
+      memory_purger_(&memory_purge_),
       db_(db::RedisDb::Create()) {}
 
 std::unique_ptr<Server> Server::Create(
@@ -153,7 +153,7 @@ bool Server::StartIoThreads(size_t thread_count) {
                std::vector<IoThread::Handoff>* const handoffs) {
           RunHandedOverClients(io_thread, handoffs);
         },
-        purge_memory_);
+        &memory_purge_);
     if (thread == nullptr) {
       return false;
     }
@@ -340,10 +340,10 @@ int64_t Server::ServerCron() {
     db_->RehashIncrementally(kRehashBudgetMicroseconds);
   }
   // Freeing idle clients' buffers counts as work, so the memory goes back
-  // to the system a second after the last of them is freed.
+  // to the system within a second.
   const bool released_buffers = idle_client_sweeper_.Sweep();
-  const bool active = MainThreadDidWork(lazy_free_pending);
-  memory_purger_.Tick(active || released_buffers);
+  const bool did_work = MainThreadDidWork(lazy_free_pending);
+  memory_purger_.Tick(did_work || released_buffers);
   return kCronIntervalMs;
 }
 
@@ -352,10 +352,10 @@ bool Server::MainThreadDidWork(const bool lazy_free_pending) {
   // in the key count, or freeing still under way, counts as work too.
   const uint64_t file_events = loop_->FileEventsPolled();
   const size_t key_count = db_->KeyCount();
-  const bool active = lazy_free_pending || file_events != cron_file_events_ ||
-                      key_count != cron_key_count_;
+  const bool did_work = lazy_free_pending || file_events != cron_file_events_ ||
+                        key_count != cron_key_count_;
   cron_file_events_ = file_events;
   cron_key_count_ = key_count;
-  return active;
+  return did_work;
 }
 }  // namespace redis_simple

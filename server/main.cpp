@@ -16,8 +16,9 @@ namespace {
 #ifdef REDIS_SIMPLE_USE_MIMALLOC
 // Collects the calling thread's heap, returning its free pages to the
 // system. mimalloc keeps freed pages for reuse for its purge delay, and
-// returns them only while the thread keeps allocating; the server calls this
-// once a thread has been idle for a second (MemoryPurger).
+// returns them only when the thread allocates or frees near them again; the
+// server calls this on each thread once a second while there is work
+// (MemoryPurger).
 void PurgeFreeMemory() { mi_collect(/*force=*/true); }
 constexpr redis_simple::MemoryPurger::PurgeFunction kPurgeMemory =
     &PurgeFreeMemory;

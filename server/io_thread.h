@@ -71,11 +71,11 @@ class IoThread {
 
   // Starts the thread; `main_loop` runs `on_ready`. Returns nullptr if the
   // thread or its event loop cannot be created.
-  // `purge_memory` is as for Server::Create; this thread calls it for its
-  // own heap once it has been idle for a second.
+  // `memory_purge` is the server's, shared by every thread's MemoryPurger;
+  // this thread purges its own heap with it.
   static std::unique_ptr<IoThread> Create(
       size_t index, event_loop::Loop* main_loop, ReadyCallback on_ready,
-      MemoryPurger::PurgeFunction purge_memory = nullptr);
+      MemoryPurger::Shared* memory_purge = nullptr);
   IoThread(const IoThread&) = delete;
   IoThread& operator=(const IoThread&) = delete;
   IoThread(IoThread&&) = delete;
@@ -116,9 +116,9 @@ class IoThread {
   IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
            std::unique_ptr<Wakeup> inbox_wakeup,
            std::unique_ptr<Wakeup> outbox_wakeup, event_loop::Loop* main_loop,
-           ReadyCallback on_ready, MemoryPurger::PurgeFunction purge_memory);
-  // This thread's cron: sweeps idle clients and, once the thread has been
-  // idle for a second, returns its free memory.
+           ReadyCallback on_ready, MemoryPurger::Shared* memory_purge);
+  // This thread's cron: sweeps idle clients and, once a second after any
+  // thread's work, returns this thread's free memory.
   int64_t Cron();
   void Send(std::span<Client* const> clients, bool returning);
 

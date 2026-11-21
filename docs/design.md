@@ -102,15 +102,25 @@ thread holds, as Redis' `IOThreadClientsCron` does.
 
 ### Returning freed memory
 
-mimalloc keeps freed pages for reuse for a short delay before it returns
-them to the system, and only does so while the thread that owns them keeps
-allocating. Returning them at every free instead cost a system call and a
-page fault for every overwritten large value. So each thread that frees
-memory, the main thread and each I/O thread, ticks a `MemoryPurger`
-from its cron: after a second without work (events, expired keys, or a
-lazy free under way), it collects the thread's heap once, which returns its
-free pages. Redis' allocator similarly returns freed memory from a
-background thread after a delay.
+mimalloc gives each thread its own heap and keeps freed pages for reuse.
+It returns a free page to the system only when the owning thread later
+allocates or frees a page in the same segment, or collects its heap, and a
+page another thread freed into the heap is not even known to be free until
+then. Returning pages at every free instead (a purge delay of 0) cost a
+system call and a page fault for every overwritten large value, and still
+missed the pages other threads free. So the main thread and each I/O
+thread tick a `MemoryPurger` from their 100 ms cron. Every tenth tick, if
+any thread did work since this thread's last purge (events, freed client
+buffers, expired keys, or a lazy free under way), it collects the thread's
+heap, which returns its free pages. Work on any thread counts because the
+threads free each other's memory: the I/O threads free reply buffers the
+main thread allocated, and the main thread frees clients the I/O threads
+read for. A shared atomic count of the ticks with work, which every
+purger reads, tells each thread when to collect. Freed memory goes back
+within about a second, busy or idle, for one collect per second per
+thread while there is work (0.2 to 0.9 ms on heaps up to 3 GiB). Redis'
+allocator similarly returns freed memory from a background thread after a
+delay.
 
 ### What a command can reach
 

@@ -609,14 +609,16 @@ Before committing, run the relevant build and tests.
   through mimalloc.
   mimalloc keeps its default purge delay, so a busy server reuses freed
   pages instead of returning each one with a system call (with a delay of
-  0, a 64 KiB `SET` cost 3.5 times the CPU). mimalloc returns pages only
-  while their thread keeps allocating, so `main` passes `Server::Create` a
-  function that collects the calling thread's heap, and `MemoryPurger`
-  calls it once the main thread or an I/O thread has been idle for a second
-  (no events, no expired or lazily freed keys). Memory then returns to the
-  OS within about a second of going idle, as Redis' allocator returns it
-  from its background thread. A thread that starts freeing memory without
-  events must count as active there.
+  0, a 64 KiB `SET` cost 3.5 times the CPU). mimalloc returns a page only
+  when its thread allocates or frees near it again, so `main` passes
+  `Server::Create` a function that collects the calling thread's heap, and
+  each thread's `MemoryPurger` calls it once a second while any thread did
+  work since its last purge (events, freed client buffers, expired or
+  lazily freed keys), through a count every thread's purger shares, since
+  the threads free each other's memory. Memory then returns to the OS
+  within about a second, busy or idle, as Redis' allocator returns it from
+  its background thread. Work that frees memory without events must count
+  as work there.
 - Measure performance changes to the server with `scripts/measure/profile_server.sh`
   (callgrind instruction counts per workload) and memory changes with
   `scripts/measure/measure_server_memory.sh` (RSS per key), passing the previous build
