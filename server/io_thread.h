@@ -69,10 +69,12 @@ class IoThread {
   using ReadyCallback = std::function<void(IoThread*, std::vector<Handoff>*)>;
 
   // Starts the thread; `main_loop` runs `on_ready`. Returns nullptr if the
-  // thread or its event loop cannot be created.
-  static std::unique_ptr<IoThread> Create(size_t index,
-                                          event_loop::Loop* main_loop,
-                                          ReadyCallback on_ready);
+  // thread or its event loop cannot be created. `main_running`, if given,
+  // is true while the main thread is awake, which then calls TakeHandoffs
+  // before it sleeps, so a handoff made meanwhile needs no wakeup.
+  static std::unique_ptr<IoThread> Create(
+      size_t index, event_loop::Loop* main_loop, ReadyCallback on_ready,
+      const std::atomic<bool>* main_running = nullptr);
   IoThread(const IoThread&) = delete;
   IoThread& operator=(const IoThread&) = delete;
   IoThread(IoThread&&) = delete;
@@ -92,6 +94,11 @@ class IoThread {
   // clients as one list.
   void Assign(Client* client);
   void Return(std::span<Client* const> clients);
+  // Main thread: runs `on_ready` with the clients this thread handed over,
+  // if any, and returns whether there were. With `main_running`, the main
+  // thread calls it before it sleeps, as Redis' beforeSleep calls
+  // processClientsOfAllIOThreads.
+  bool TakeHandoffs();
   // Stops the thread for good; the main thread then owns every client.
   void Stop();
   // Waits until the thread is idle between events, and keeps it there until
@@ -113,12 +120,15 @@ class IoThread {
   IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
            std::unique_ptr<Wakeup> inbox_wakeup,
            std::unique_ptr<Wakeup> outbox_wakeup, event_loop::Loop* main_loop,
-           ReadyCallback on_ready);
+           ReadyCallback on_ready, const std::atomic<bool>* main_running);
   void Send(std::span<Client* const> clients, bool returning);
 
   // I/O thread.
   void Run();
   void HandleInbox();
+  // Handles the messages the main thread sent; returns whether there were.
+  bool ProcessInbox();
+  void BeforeSleep();
   void WaitWhilePaused(std::unique_lock<std::mutex>* lock);
   void StartReading(Client* client);
   void OnReadable(Client* client);
@@ -166,6 +176,12 @@ class IoThread {
 
   std::atomic<uint64_t> reads_processed_{0};
   std::atomic<uint64_t> writes_processed_{0};
+  // Whether this thread is awake, not waiting in its poll, as Redis'
+  // IOThread.running: Send wakes it only when it is not, since it takes its
+  // inbox before it sleeps. The main thread's flag, when given, does the
+  // same for SendHandoffs.
+  std::atomic<bool> running_{true};
+  const std::atomic<bool>* main_running_;
 };
 }  // namespace redis_simple
 

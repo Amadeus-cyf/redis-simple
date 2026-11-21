@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -36,7 +37,8 @@ class MainThread {
   MainThread(MainThread&&) = delete;
   MainThread& operator=(MainThread&&) = delete;
 
-  std::unique_ptr<IoThread> StartThread() {
+  std::unique_ptr<IoThread> StartThread(
+      const std::atomic<bool>* main_running = nullptr) {
     return IoThread::Create(
         1, loop_.get(),
         [this](IoThread* const thread, std::vector<Handoff>* const handoffs) {
@@ -56,8 +58,48 @@ class MainThread {
             ran.push_back(handoff.client);
           }
           thread->Return(ran);
-        });
+        },
+        main_running);
   }
+
+  // Starts a thread that wakes this one only while it sleeps, as the
+  // server's does: the loop takes the thread's handoffs before it sleeps,
+  // says it sleeps, and takes them once more (Server::BeforeSleep).
+  std::unique_ptr<IoThread> StartThreadThatSkipsWakeups() {
+    std::unique_ptr<IoThread> thread = StartThread(&running_);
+    IoThread* const instance = thread.get();
+    loop_->SetBeforeSleep([this, instance] {
+      if (!instance->TakeHandoffs()) {
+        running_.store(false);
+        instance->TakeHandoffs();
+      }
+    });
+    loop_->SetAfterSleep([this] { running_.store(true); });
+    return thread;
+  }
+
+  // Watches `fd` on this loop, so waiting for events returns when it gets
+  // data, which goes to `received`.
+  void Watch(int fd, std::string* const received) {
+    ASSERT_EQ(
+        loop_->CreateFileEvent(
+            fd,
+            event_loop::FileEvent::Create(
+                [received](event_loop::Loop*, int ready_fd, int) {
+                  std::array<char, 4096> buffer{};
+                  const ssize_t size =
+                      recv(ready_fd, buffer.data(), buffer.size(), 0);
+                  if (size > 0) {
+                    received->append(buffer.data(), static_cast<size_t>(size));
+                  }
+                  return event_loop::CallbackStatus::kOk;
+                },
+                nullptr, event_loop::ToInt(event_loop::EventFlag::kReadable))),
+        event_loop::Status::kOk);
+  }
+
+  // One iteration of this loop, waiting for events as the server's does.
+  void ProcessEvents() { loop_->ProcessEvents(); }
 
   // Creates a client on `thread` and returns it with the peer's socket.
   std::pair<std::unique_ptr<Client>, int> Connect(IoThread* const thread) {
@@ -137,6 +179,7 @@ class MainThread {
   std::vector<Client*> held_;
   bool hold_{};
   int handoff_batches_{0};
+  std::atomic<bool> running_{true};
 };
 
 void Send(int fd, std::string_view data) {
@@ -191,6 +234,39 @@ TEST(IoThreadTest, RunsCommandsOnTheMainThreadAndWritesReplies) {
   EXPECT_EQ(info.clients, 1);
   EXPECT_GE(info.reads_processed, 2);
   EXPECT_GE(info.writes_processed, 2);
+  thread->Stop();
+}
+
+TEST(IoThreadTest, NoRoundTripWaitsForATimerWhenWakeupsAreSkipped) {
+  MainThread main;
+  auto thread = main.StartThreadThatSkipsWakeups();
+  ASSERT_NE(thread, nullptr);
+  auto [client, peer] = main.Connect(thread.get());
+  std::string received;
+  main.Watch(peer, &received);
+  // Each side sleeps between requests, so each handoff either finds the
+  // other awake and sends no wakeup, or finds it asleep and wakes it. A
+  // wakeup skipped while the other side was going to sleep would leave the
+  // request waiting for a timer: up to a second for the main loop here, and
+  // 100 ms for the I/O thread's cron. A wrong condition would delay most
+  // round trips; a few slow ones are the machine's scheduling.
+  int slow = 0;
+  for (int i = 1; i <= 300; ++i) {
+    const auto start = std::chrono::steady_clock::now();
+    const std::string expected = ":" + std::to_string(i) + "\r\n";
+    received.clear();
+    Send(peer, "*2\r\n$4\r\nINCR\r\n$1\r\nn\r\n");
+    while (received.size() < expected.size() &&
+           std::chrono::steady_clock::now() - start < std::chrono::seconds(5)) {
+      main.ProcessEvents();
+    }
+    ASSERT_EQ(received, expected);
+    if (std::chrono::steady_clock::now() - start >=
+        std::chrono::milliseconds(90)) {
+      ++slow;
+    }
+  }
+  EXPECT_LE(slow, 3);
   thread->Stop();
 }
 

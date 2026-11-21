@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <memory>
 #include <mutex>
@@ -93,9 +94,9 @@ void Wakeup::Drain() const {
   }
 }
 
-std::unique_ptr<IoThread> IoThread::Create(size_t index,
-                                           event_loop::Loop* const main_loop,
-                                           ReadyCallback on_ready) {
+std::unique_ptr<IoThread> IoThread::Create(
+    size_t index, event_loop::Loop* const main_loop, ReadyCallback on_ready,
+    const std::atomic<bool>* const main_running) {
   std::unique_ptr<event_loop::Loop> loop = event_loop::Loop::Create();
   std::unique_ptr<Wakeup> inbox_wakeup = Wakeup::Create();
   std::unique_ptr<Wakeup> outbox_wakeup = Wakeup::Create();
@@ -103,9 +104,9 @@ std::unique_ptr<IoThread> IoThread::Create(size_t index,
       outbox_wakeup == nullptr) {
     return nullptr;
   }
-  auto thread = std::unique_ptr<IoThread>(
-      new IoThread(index, std::move(loop), std::move(inbox_wakeup),
-                   std::move(outbox_wakeup), main_loop, std::move(on_ready)));
+  auto thread = std::unique_ptr<IoThread>(new IoThread(
+      index, std::move(loop), std::move(inbox_wakeup), std::move(outbox_wakeup),
+      main_loop, std::move(on_ready), main_running));
   // The I/O thread's loop is set up before the thread starts, which orders
   // these writes before its first access.
   if (!Watch(thread->loop_.get(), *thread->inbox_wakeup_,
@@ -114,6 +115,10 @@ std::unique_ptr<IoThread> IoThread::Create(size_t index,
     return nullptr;
   }
   thread->outbox_watched_ = true;
+  thread->loop_->SetBeforeSleep(
+      [instance = thread.get()] { instance->BeforeSleep(); });
+  thread->loop_->SetAfterSleep(
+      [instance = thread.get()] { instance->running_.store(true); });
   thread->loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
       [instance = thread.get()](int64_t /*id*/) {
         instance->idle_client_sweeper_.Sweep();
@@ -135,7 +140,8 @@ std::unique_ptr<IoThread> IoThread::Create(size_t index,
 IoThread::IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
                    std::unique_ptr<Wakeup> inbox_wakeup,
                    std::unique_ptr<Wakeup> outbox_wakeup,
-                   event_loop::Loop* const main_loop, ReadyCallback on_ready)
+                   event_loop::Loop* const main_loop, ReadyCallback on_ready,
+                   const std::atomic<bool>* const main_running)
     : index_(index),
       loop_(std::move(loop)),
       inbox_wakeup_(std::move(inbox_wakeup)),
@@ -143,7 +149,8 @@ IoThread::IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
       main_loop_(main_loop),
       on_ready_(std::move(on_ready)),
       inbox_handler_([this] { HandleInbox(); }),
-      outbox_handler_([this] { HandleOutbox(); }) {}
+      outbox_handler_([this] { HandleOutbox(); }),
+      main_running_(main_running) {}
 
 IoThread::~IoThread() {
   Stop();
@@ -172,9 +179,12 @@ void IoThread::Send(std::span<Client* const> clients, bool returning) {
       inbox_.push_back({client, returning});
     }
   }
-  // The thread takes the whole inbox per wakeup, so only the first message
-  // since then needs to wake it.
-  if (was_empty) {
+  // The thread takes the whole inbox before it sleeps and on each wakeup,
+  // so only the first message since then needs to wake it, and only if it
+  // is asleep, as Redis' sendPendingClientsToIOThreads does. If it went to
+  // sleep after this load, it took the inbox again after saying so
+  // (BeforeSleep), and the lock orders that after the push.
+  if (was_empty && !running_.load()) {
     inbox_wakeup_->Signal();
   }
 }
@@ -224,14 +234,43 @@ void IoThread::Run() { loop_->Run(); }
 
 void IoThread::HandleInbox() {
   inbox_wakeup_->Drain();
-  std::unique_lock<std::mutex> lock(mutex_);
-  WaitWhilePaused(&lock);
-  if (stopping_) {
-    loop_->Stop();
-    return;
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    WaitWhilePaused(&lock);
+    if (stopping_) {
+      loop_->Stop();
+      return;
+    }
   }
-  incoming_.swap(inbox_);
-  lock.unlock();
+  ProcessInbox();
+}
+
+void IoThread::BeforeSleep() {
+  // Messages sent while this thread was awake came without a wakeup, as in
+  // Redis' IOThreadBeforeSleep. If there were some, more may follow soon,
+  // so poll without waiting and stay awake; the main thread then keeps
+  // sending without wakeups.
+  const bool took_messages = ProcessInbox();
+  if (!took_messages) {
+    running_.store(false);
+    // A message sent before Send could see the store came without a wakeup.
+    ProcessInbox();
+  }
+  loop_->SetDontWait(took_messages);
+}
+
+bool IoThread::ProcessInbox() {
+  {
+    const std::scoped_lock lock(mutex_);
+    // Stopping leaves the inbox to the main thread, as HandleInbox does.
+    if (stopping_) {
+      return false;
+    }
+    incoming_.swap(inbox_);
+  }
+  if (incoming_.empty()) {
+    return false;
+  }
   for (const Message& message : incoming_) {
     if (message.returning) {
       // Its commands ran: send the replies, then read again unless the
@@ -245,6 +284,7 @@ void IoThread::HandleInbox() {
     }
   }
   incoming_.clear();
+  return true;
 }
 
 void IoThread::WaitWhilePaused(std::unique_lock<std::mutex>* const lock) {
@@ -363,7 +403,9 @@ void IoThread::SendHandoffs() {
     outbox_.insert(outbox_.end(), handoffs_.begin(), handoffs_.end());
   }
   handoffs_.clear();
-  if (was_empty) {
+  // As Send does: the main thread takes the outbox before it sleeps
+  // (TakeHandoffs), so it needs a wakeup only if it is asleep.
+  if (was_empty && (main_running_ == nullptr || !main_running_->load())) {
     outbox_wakeup_->Signal();
   }
 }
@@ -376,13 +418,19 @@ void IoThread::Close(Client* const client) {
 
 void IoThread::HandleOutbox() {
   outbox_wakeup_->Drain();
+  TakeHandoffs();
+}
+
+bool IoThread::TakeHandoffs() {
   {
     const std::scoped_lock lock(mutex_);
     ready_.swap(outbox_);
   }
-  if (!ready_.empty()) {
-    on_ready_(this, &ready_);
+  if (ready_.empty()) {
+    return false;
   }
+  on_ready_(this, &ready_);
   ready_.clear();
+  return true;
 }
 }  // namespace redis_simple

@@ -145,10 +145,25 @@ ran in that iteration, whichever I/O thread it came from. Then it hands the
 clients back, and the I/O thread writes their replies and resumes reading.
 Without an AOF there is nothing to flush, so each handoff's clients go back
 as soon as their requests have run. Each direction moves a whole
-batch at once: one lock acquisition, and one pipe wakeup only when the
-receiving queue was empty, however many clients the batch holds, as Redis'
-`sendPendingClientsToIOThreads` and `sendPendingClientsToMainThreadIfNeeded`
-join whole lists.
+batch at once: one lock acquisition, and at most one pipe wakeup, however
+many clients the batch holds, as Redis' `sendPendingClientsToIOThreads` and
+`sendPendingClientsToMainThreadIfNeeded` join whole lists.
+
+A batch wakes the receiving side only when its queue was empty and that side
+is asleep, as in Redis 8, whose threads keep an atomic `running` flag. Each
+side's loop sets its flag when its poll returns (`Loop::SetAfterSleep`).
+Before polling, each side takes its queue (`IoThread::BeforeSleep`,
+`Server::BeforeSleep`). If that finds nothing, it clears its flag and takes
+the queue once more: a sender that saw the flag still set sent no wakeup,
+and the queue's lock orders its batch before that second look, or the
+sender sees the flag cleared and sends one. If the first look found
+something, more is likely, so the loop polls without waiting
+(`Loop::SetDontWait`) and keeps its flag set, and a busy pair of threads
+hands batches back and forth without a wakeup's two system calls. The main
+thread takes handoffs at the start of `Server::BeforeSleep`, so their
+commands share that iteration's AOF flush. Clients its second look takes
+run after the flush; the next iteration, which then does not wait, flushes
+them and sends their replies.
 
 So commands, the database, and the AOF stay on the main thread, and an I/O
 thread only touches its clients' sockets, buffers, and parsers. A client is on

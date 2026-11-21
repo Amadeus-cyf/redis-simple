@@ -9,9 +9,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "utils/time.h"
 
 namespace redis_simple::event_loop {
 namespace {
@@ -383,6 +386,52 @@ TEST(LoopTest, CallbackDeferredBeforeSleepRunsInTheSameIteration) {
   loop->ProcessEvents();
 
   EXPECT_EQ(deferred_count, 1);
+}
+
+TEST(LoopTest, AfterSleepRunsAfterThePollBeforeTheFileEvents) {
+  auto loop = Loop::Create();
+  ASSERT_NE(loop, nullptr);
+  auto sockets = CreateSocketPair();
+  ASSERT_GE(sockets[0].Get(), 0);
+  std::vector<std::string> order;
+  auto read_callback = [&order](Loop*, int fd, int) {
+    char byte = '\0';
+    EXPECT_EQ(read(fd, &byte, 1), 1);
+    order.emplace_back("read");
+    return CallbackStatus::kOk;
+  };
+  ASSERT_EQ(loop->CreateFileEvent(
+                sockets[0].Get(),
+                FileEvent::Create(FileEvent::Callback(read_callback), nullptr,
+                                  ToInt(EventFlag::kReadable))),
+            Status::kOk);
+  loop->SetBeforeSleep([&order] { order.emplace_back("before sleep"); });
+  loop->SetAfterSleep([&order] { order.emplace_back("after sleep"); });
+  ASSERT_EQ(write(sockets[1].Get(), "x", 1), 1);
+
+  loop->ProcessEvents();
+
+  EXPECT_EQ(order,
+            (std::vector<std::string>{"before sleep", "after sleep", "read"}));
+}
+
+TEST(LoopTest, DontWaitKeepsThePollFromWaiting) {
+  auto loop = Loop::Create();
+  ASSERT_NE(loop, nullptr);
+  // Nothing is ready, and the only timer is far away, so an ordinary poll
+  // would wait for its whole timeout.
+  std::unique_ptr<TimeEvent> timer =
+      TimeEvent::Create([](int64_t) { return TimeEvent::kNoMore; }, nullptr);
+  timer->SetWhen(utils::MonotonicMilliseconds() + 60'000);
+  loop->CreateTimeEvent(std::move(timer));
+  loop->SetDontWait(true);
+  const int64_t start = utils::MonotonicMilliseconds();
+
+  for (int i = 0; i < 10; ++i) {
+    loop->ProcessEvents();
+  }
+
+  EXPECT_LT(utils::MonotonicMilliseconds() - start, 50);
 }
 
 TEST(LoopTest, EmptyBeforeSleepRemovesTheCallback) {

@@ -216,6 +216,9 @@ void Loop::ProcessFileEvents() {
   timespec timeout_spec = PollTimeout();
   const std::vector<ReadyEvent>& ready_events =
       event_poller_->Poll(&timeout_spec);
+  if (after_sleep_) {
+    after_sleep_();
+  }
   processing_file_events_ = true;
   for (const auto& ready_event : ready_events) {
     const int fd = ready_event.fd;
@@ -277,7 +280,7 @@ void Loop::ProcessDeferredCallbacks() {
 
 timespec Loop::PollTimeout() const {
   int64_t timeout_ms = kDefaultPollTimeoutMs;
-  if (!deferred_callbacks_.empty()) {
+  if (dont_wait_ || !deferred_callbacks_.empty()) {
     timeout_ms = 0;
   } else {
     const int64_t now = utils::MonotonicMilliseconds();
