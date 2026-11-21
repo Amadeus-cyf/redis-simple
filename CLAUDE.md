@@ -96,6 +96,10 @@ Guidance for AI coding agents working in this repository.
   names must be upper-case letters only and at most 16 bytes.
 - When adding or changing supported commands, update the README command
   coverage list and the relevant command-family integration test.
+- Mark a call that clang must inline for speed with `RS_INLINE_CALLS`
+  (`server/reply.h`), as the reply encoders' `resize_and_overwrite` calls
+  are: clang judges libstdc++'s too costly to inline and calls it once per
+  element, which made collection replies a third slower than GCC's build.
 - Keep reply encoding helpers directly under `server/`, database state and
   Redis object wrappers under `server/db/`, the AOF under `server/aof/`, and
   RDB snapshots under `server/rdb/`.
