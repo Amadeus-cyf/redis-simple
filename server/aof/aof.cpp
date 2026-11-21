@@ -395,7 +395,7 @@ std::string Aof::ManifestPath() const {
 
 Aof::Failure Aof::PersistManifest(const Manifest& manifest) {
   const std::string temp_path =
-      FilePath(std::string(kTempPrefix) + ManifestFileName(file_name_));
+      FilePath(std::string(kTemporaryPrefix) + ManifestFileName(file_name_));
   const int fd = OpenFile(temp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (fd < 0) {
     const int open_errno = errno;

@@ -18,7 +18,7 @@ TEST(ZSetTest, ReleasesALargeSortedSetInSteps) {
     zset->InsertOrUpdate("member:" + std::to_string(i), i);
   }
   int steps = 0;
-  while (!zset->ReleaseSome(100)) {
+  while (!zset->ClearSome(100)) {
     ++steps;
   }
   EXPECT_GE(steps, 4);

@@ -78,7 +78,7 @@ class Set {
   // discarded value can be freed in steps (as RedisDb does for UNLINK).
   // Returns true once the rest is cheap to free at once. Between the first
   // call and the one that returns true, only destroy the value.
-  bool ReleaseSome(size_t max_elements);
+  bool ClearSome(size_t max_elements);
   // Which storage the set holds decides its encoding, so no field records it:
   // that keeps a Set within the space RedisObject gives each value.
   Encoding Encoding() const {

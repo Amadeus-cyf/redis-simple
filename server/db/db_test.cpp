@@ -555,7 +555,7 @@ TEST(RedisDbTest, UnlinkFreesSmallValuesAtOnceAndLargeOnesInSteps) {
                              RedisObject::CreateWithSet(std::move(small)), 0),
             DbStatus::kOk);
   EXPECT_EQ(redis_db->UnlinkKey("small"), DbStatus::kOk);
-  EXPECT_FALSE(redis_db->FreeLazily(0));
+  EXPECT_TRUE(redis_db->FreeLazily(0));
 
   for (const std::string key : {"first", "second"}) {
     auto set = data_types::Set::Create();
@@ -570,7 +570,7 @@ TEST(RedisDbTest, UnlinkFreesSmallValuesAtOnceAndLargeOnesInSteps) {
   }
   EXPECT_EQ(redis_db->KeyCount(), 0);
   int steps = 0;
-  while (redis_db->FreeLazily(0)) {
+  while (!redis_db->FreeLazily(0)) {
     ++steps;
   }
   EXPECT_GE(steps, 8);
@@ -666,11 +666,11 @@ TEST(RedisDbTest, FlushStartsEmptyTablesThatKeepWorking) {
   }
   redis_db->Flush();
   int steps = 0;
-  while (redis_db->FreeLazily(0)) {
+  while (!redis_db->FreeLazily(0)) {
     ++steps;
   }
   EXPECT_GT(steps, 2);
-  EXPECT_FALSE(redis_db->FreeLazily(0));
+  EXPECT_TRUE(redis_db->FreeLazily(0));
   EXPECT_EQ(redis_db->KeyCount(), 0);
 }
 

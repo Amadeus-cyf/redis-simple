@@ -73,7 +73,7 @@ TEST(HandleSetTest, DoesNotShrinkWhileResizingIsAvoided) {
 
   SetDictResizePolicy(DictResizePolicy::kAvoid);
   for (size_t index = 2; index < kCount; ++index) {
-    ASSERT_TRUE(set.Erase({items[index].get()}));
+    ASSERT_TRUE(set.Delete({items[index].get()}));
   }
   EXPECT_EQ(Positions(set), positions);
 
@@ -82,7 +82,7 @@ TEST(HandleSetTest, DoesNotShrinkWhileResizingIsAvoided) {
   // slots, a few per call.
   for (size_t index = 0; index < positions; ++index) {
     set.Insert({items[1].get()});
-    set.Erase({items[1].get()});
+    set.Delete({items[1].get()});
   }
   EXPECT_LT(Positions(set), positions);
   EXPECT_TRUE(set.Contains({items[0].get()}));
@@ -100,7 +100,7 @@ TEST(HandleSetTest, ShrinkIfNeededStartsAShrinkThatRebuildSomeFinishes) {
   const size_t positions = Positions(set);
   SetDictResizePolicy(DictResizePolicy::kAvoid);
   for (size_t index = 2; index < kCount; ++index) {
-    ASSERT_TRUE(set.Erase({items[index].get()}));
+    ASSERT_TRUE(set.Delete({items[index].get()}));
   }
   set.ShrinkIfNeeded();
   EXPECT_FALSE(set.IsRebuilding());
@@ -139,7 +139,7 @@ TEST(HandleSetTest, InsertsErasesAndFindsHandles) {
   ItemSet set;
   EXPECT_EQ(set.Size(), 0);
   EXPECT_FALSE(set.Contains({items[0].get()}));
-  EXPECT_FALSE(set.Erase({items[0].get()}));
+  EXPECT_FALSE(set.Delete({items[0].get()}));
   EXPECT_EQ(set.Scan(0, [](ItemRef) { FAIL(); }), std::nullopt);
 
   EXPECT_TRUE(set.Insert({items[0].get()}));
@@ -150,8 +150,8 @@ TEST(HandleSetTest, InsertsErasesAndFindsHandles) {
   EXPECT_TRUE(set.Contains({items[1].get()}));
   EXPECT_FALSE(set.Contains({items[2].get()}));
 
-  EXPECT_TRUE(set.Erase({items[0].get()}));
-  EXPECT_FALSE(set.Erase({items[0].get()}));
+  EXPECT_TRUE(set.Delete({items[0].get()}));
+  EXPECT_FALSE(set.Delete({items[0].get()}));
   EXPECT_FALSE(set.Contains({items[0].get()}));
   EXPECT_TRUE(set.Contains({items[1].get()}));
   EXPECT_EQ(set.Size(), 1);
@@ -175,7 +175,7 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
     if (index % 7 == 3) {
       // Erase an earlier member while tables are being rebuilt.
       const ItemRef earlier{items[index / 2].get()};
-      ASSERT_EQ(set.Erase(earlier), expected.erase(earlier) == 1);
+      ASSERT_EQ(set.Delete(earlier), expected.erase(earlier) == 1);
     }
   }
   EXPECT_EQ(set.Size(), expected.size());
@@ -188,14 +188,14 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
   for (size_t index = 0; index < kCount; ++index) {
     const ItemRef ref{items[index].get()};
     if (index % 500 != 0) {
-      ASSERT_EQ(set.Erase(ref), expected.erase(ref) == 1);
+      ASSERT_EQ(set.Delete(ref), expected.erase(ref) == 1);
     }
   }
   EXPECT_EQ(set.Size(), expected.size());
   // Inserts and erases that change nothing let a running rebuild finish, so
   // one sweep sees each member once.
   for (size_t index = 0; index < kCount; ++index) {
-    set.Erase({items[1].get()});
+    set.Delete({items[1].get()});
   }
   EXPECT_EQ(Members(set), expected);
   // The shrunken table holds few enough slots for a short sweep.
@@ -220,7 +220,7 @@ TEST(HandleSetTest, ReusesErasedSlotsUnderChurn) {
     if ((state >> 20) % 2 == 0) {
       ASSERT_EQ(set.Insert(ref), expected.insert(ref).second);
     } else {
-      ASSERT_EQ(set.Erase(ref), expected.erase(ref) == 1);
+      ASSERT_EQ(set.Delete(ref), expected.erase(ref) == 1);
     }
     ASSERT_EQ(set.Size(), expected.size());
   }

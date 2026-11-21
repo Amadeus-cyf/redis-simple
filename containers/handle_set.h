@@ -51,14 +51,14 @@ class HandleSet {
   // handle must not be the default one.
   bool Insert(Handle handle);
   // Returns whether `handle` was a member.
-  bool Erase(Handle handle);
+  bool Delete(Handle handle);
   bool Contains(Handle handle) const;
   size_t Size() const { return main_.used + old_.used; }
   void Clear();
   // Makes room for `members` members, so that inserting up to that many
   // does not rebuild the table again.
   void Reserve(size_t members);
-  // Starts the shrink that Erase holds back while resizing is avoided.
+  // Starts the shrink that Delete holds back while resizing is avoided.
   void ShrinkIfNeeded();
   bool IsRebuilding() const { return old_.capacity != 0; }
   // Moves up to `max_slots` slots of a rebuild under way, for a caller with
@@ -172,7 +172,7 @@ bool HandleSet<Handle, Hash>::Insert(Handle handle) {
 }
 
 template <typename Handle, typename Hash>
-bool HandleSet<Handle, Hash>::Erase(Handle handle) {
+bool HandleSet<Handle, Hash>::Delete(Handle handle) {
   const uintptr_t bits = Bits(handle);
   const size_t hash = hash_(handle);
   MoveSome(kSlotsMovedPerCall);

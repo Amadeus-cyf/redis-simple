@@ -141,7 +141,8 @@ class RedisDb {
   // FreeLazily, so the flush does not hold up other clients.
   void Flush();
   // Frees what UNLINK and Flush detached, for about `budget_milliseconds`;
-  // the server cron calls it every tick. Returns whether any remains.
+  // the server cron calls it every tick. Returns true once all of it is
+  // freed, as ClearSome does.
   bool FreeLazily(int64_t budget_milliseconds);
   // Hash table upkeep that otherwise only commands drive, for about
   // `budget_microseconds`; the server cron calls it every tick while no

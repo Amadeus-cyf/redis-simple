@@ -142,22 +142,23 @@ void Aof::RunRewriteChild(db::RedisDb* const db) const {
   // The child writes temp-rewriteaof-<pid>.aof and renames it to
   // temp-rewriteaof-bg-<pid>.aof once it is complete and synced.
   const pid_t self = getpid();
-  const std::string path = FilePath(std::string(kTempPrefix) + "rewriteaof-" +
-                                    std::to_string(self) + ".aof");
+  const std::string path =
+      FilePath(std::string(kTemporaryPrefix) + "rewriteaof-" +
+               std::to_string(self) + ".aof");
   SnapshotStatus status = WriteBaseFile(db, path);
   if (status == SnapshotStatus::kWritten &&
-      std::rename(path.c_str(), RewriteTempPath(self).c_str()) < 0) {
+      std::rename(path.c_str(), RewriteTemporaryPath(self).c_str()) < 0) {
     unlink(path.c_str());
     status = SnapshotStatus::kWriteFailed;
   }
   _exit(static_cast<int>(status));
 }
 
-std::string Aof::RewriteTempPath(pid_t child) const {
+std::string Aof::RewriteTemporaryPath(pid_t child) const {
   // Redis' temp-rewriteaof-bg-<pid>.aof, in the AOF directory rather than
   // Redis' working directory, since --appenddirname may name another file
   // system.
-  return FilePath(std::string(kTempPrefix) + "rewriteaof-bg-" +
+  return FilePath(std::string(kTemporaryPrefix) + "rewriteaof-bg-" +
                   std::to_string(child) + ".aof");
 }
 
@@ -215,7 +216,7 @@ void Aof::FinishRewrite(int wait_status) {
     last_rewrite_ok_ = false;
     ++consecutive_rewrite_failures_;
   }
-  RemoveRewriteTempFiles(child);
+  RemoveRewriteTemporaryFiles(child);
   last_rewrite_seconds_ = std::chrono::duration_cast<std::chrono::seconds>(
                               std::chrono::steady_clock::now() - rewrite_start_)
                               .count();
@@ -235,7 +236,7 @@ Aof::Failure Aof::InstallRewrite(pid_t child) {
       BaseFileName(file_name_, base_sequence, use_rdb_preamble_);
   manifest.base =
       MakeManifestFile(base_name, base_sequence, ManifestFile::Type::kBase);
-  if (file_ops_->Rename(RewriteTempPath(child).c_str(),
+  if (file_ops_->Rename(RewriteTemporaryPath(child).c_str(),
                         FilePath(base_name).c_str()) < 0) {
     const int rename_errno = errno;
     RS_LOG_ERROR(
@@ -273,10 +274,10 @@ Aof::Failure Aof::InstallRewrite(pid_t child) {
   return {};
 }
 
-void Aof::RemoveRewriteTempFiles(pid_t child) {
+void Aof::RemoveRewriteTemporaryFiles(pid_t child) {
   // Deletes whatever the child left behind (Redis' aofRemoveTempFile).
-  jobs_.QueueDeletion(RewriteTempPath(child));
-  jobs_.QueueDeletion(FilePath(std::string(kTempPrefix) + "rewriteaof-" +
+  jobs_.QueueDeletion(RewriteTemporaryPath(child));
+  jobs_.QueueDeletion(FilePath(std::string(kTemporaryPrefix) + "rewriteaof-" +
                                std::to_string(child) + ".aof"));
 }
 
@@ -289,7 +290,7 @@ void Aof::AbandonRewrite() {
     int wait_status = 0;
     utils::WaitForChild(rewrite_child_, &wait_status, 0);
   }
-  RemoveRewriteTempFiles(rewrite_child_);
+  RemoveRewriteTemporaryFiles(rewrite_child_);
   rewrite_child_ = -1;
 }
 

@@ -117,7 +117,7 @@ void Set::AppendIntsetBlob(std::string* const out) const {
   intset_->AppendRedisBlob(out);
 }
 
-bool Set::ReleaseSome(size_t max_elements) {
+bool Set::ClearSome(size_t max_elements) {
   if (dict_ == nullptr) {
     return true;
   }

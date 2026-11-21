@@ -368,7 +368,7 @@ Guidance for AI coding agents working in this repository.
 - `UNLINK` frees a value of more than 64 elements, and `FLUSHDB` a keyspace
   of more than 4,096 keys, on the main thread in steps:
   `RedisDb::FreeLazily` runs 10 ms per cron tick through `Dict::ClearSome`,
-  `Skiplist::ClearSome`, and the collections' `ReleaseSome`. Do not move
+  `Skiplist::ClearSome`, and the collections' `ClearSome`. Do not move
   that to a background thread, as Redis' lazyfree does: mimalloc keeps
   memory another thread frees until the thread that allocated it collects,
   and collecting costs about as much as freeing, so the server either keeps

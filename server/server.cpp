@@ -284,7 +284,7 @@ bool Server::RemoveClient(Client* client) {
   if (client->AwaitsFlush()) {
     std::erase(held_clients_, client);
   }
-  client->Free();
+  client->Close();
   // Destroy the client after the current event, which may still use it.
   loop_->Defer([this, client] { clients_.erase(client); });
   return true;
@@ -332,7 +332,7 @@ int64_t Server::ServerCron() {
   active_expire_.RunSlowCycle(db_.get());
   // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
   constexpr int64_t kLazyFreeBudgetMs = 10;
-  const bool lazy_free_pending = db_->FreeLazily(kLazyFreeBudgetMs);
+  const bool lazy_free_pending = !db_->FreeLazily(kLazyFreeBudgetMs);
   if (!child_running) {
     // As in Redis' databasesCron: one millisecond per tick. Skipped while a
     // child runs, since moving entries writes to memory the child shares.

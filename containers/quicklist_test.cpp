@@ -216,7 +216,7 @@ TEST(QuicklistTest, ReleasesSingleListpackWithoutRebuilding) {
   ASSERT_TRUE(quicklist.RPush("two"));
   ASSERT_EQ(quicklist.NodeCount(), 1);
 
-  const Listpack listpack = quicklist.ReleaseListpack();
+  const Listpack listpack = quicklist.ExtractListpack();
 
   EXPECT_TRUE(quicklist.Empty());
   EXPECT_EQ(quicklist.NodeCount(), 0);
