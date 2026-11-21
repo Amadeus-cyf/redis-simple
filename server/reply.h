@@ -11,6 +11,19 @@
 #include <string_view>
 #include <vector>
 
+// Put before a statement whose calls clang should always inline. Clang's
+// inliner finds libstdc++'s std::string::resize_and_overwrite, with the
+// writer passed to it, too costly to inline (cost 425 against a threshold of
+// 250), and calling it for each element made collection replies built with
+// clang a third slower than with GCC, which inlines it.
+#if defined(__clang__) && __has_cpp_attribute(clang::always_inline)
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage): a statement attribute
+#define RS_INLINE_CALLS [[clang::always_inline]]
+#else
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage): a statement attribute
+#define RS_INLINE_CALLS
+#endif
+
 namespace redis_simple::reply {
 enum class ProtocolVersion {
   kResp2 = 2,
@@ -126,24 +139,25 @@ inline void AppendBulkString(std::string_view value, std::string* const reply) {
   if (new_size > reply->capacity()) {
     reply->reserve(std::max(new_size, 2 * reply->capacity()));
   }
-  reply->resize_and_overwrite(new_size, [&](char* const data, size_t) {
-    char* out = data + old_size;
-    *out = '$';
-    // Write the length's digits from the last one back.
-    size_t remaining = length;
-    for (char* digit = out + digits; digit > out; --digit) {
-      *digit = static_cast<char>('0' + (remaining % 10));
-      remaining /= 10;
-    }
-    out += 1 + digits;
-    *out++ = '\r';
-    *out++ = '\n';
-    reply_internal::CopyShort(value, out);
-    out += length;
-    *out++ = '\r';
-    *out = '\n';
-    return new_size;
-  });
+  RS_INLINE_CALLS reply->resize_and_overwrite(
+      new_size, [&](char* const data, size_t) {
+        char* out = data + old_size;
+        *out = '$';
+        // Write the length's digits from the last one back.
+        size_t remaining = length;
+        for (char* digit = out + digits; digit > out; --digit) {
+          *digit = static_cast<char>('0' + (remaining % 10));
+          remaining /= 10;
+        }
+        out += 1 + digits;
+        *out++ = '\r';
+        *out++ = '\n';
+        reply_internal::CopyShort(value, out);
+        out += length;
+        *out++ = '\r';
+        *out = '\n';
+        return new_size;
+      });
 }
 // Writes "$<length>\r\n" to `buffer`, which must hold at least
 // kBulkStringHeaderCapacity bytes, and returns the encoded size.

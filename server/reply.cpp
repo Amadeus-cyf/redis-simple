@@ -41,22 +41,23 @@ void AppendLine(char prefix, bool negative, uint64_t magnitude,
   if (new_size > reply->capacity()) {
     reply->reserve(std::max(new_size, 2 * reply->capacity()));
   }
-  reply->resize_and_overwrite(new_size, [&](char* const data, size_t) {
-    char* out = data + old_size;
-    *out++ = prefix;
-    if (negative) {
-      *out++ = '-';
-    }
-    uint64_t remaining = magnitude;
-    for (char* digit = out + digits; digit > out;) {
-      *--digit = static_cast<char>('0' + (remaining % 10));
-      remaining /= 10;
-    }
-    out += digits;
-    *out++ = '\r';
-    *out = '\n';
-    return new_size;
-  });
+  RS_INLINE_CALLS reply->resize_and_overwrite(
+      new_size, [&](char* const data, size_t) {
+        char* out = data + old_size;
+        *out++ = prefix;
+        if (negative) {
+          *out++ = '-';
+        }
+        uint64_t remaining = magnitude;
+        for (char* digit = out + digits; digit > out;) {
+          *--digit = static_cast<char>('0' + (remaining % 10));
+          remaining /= 10;
+        }
+        out += digits;
+        *out++ = '\r';
+        *out = '\n';
+        return new_size;
+      });
 }
 
 void AppendSizeLine(char prefix, size_t size, std::string* const reply) {
