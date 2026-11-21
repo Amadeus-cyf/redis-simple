@@ -765,31 +765,9 @@ size_t Listpack::Seek(size_t position, size_t size) const {
   return offset;
 }
 
-Listpack::DecodedEntry Listpack::DecodeEntry(
-    size_t offset, unsigned char* const int_buffer) const {
-  const unsigned char* const buffer = listpack_.get() + offset;
-  // Short strings are the common case: read their length from the encoding
-  // byte once instead of classifying the encoding for each field. Their
-  // encoded size is at most 64 bytes, so the backlen is one byte.
-  if ((buffer[0] & EncodingTypeMask::kType6BitStrMask) ==
-      EncodingType::k6BitString) {
-    const size_t length = buffer[0] & 0x3f;
-    static_assert(1 + 0x3f <= BacklenThreshold::kSize1ByteBacklenMax);
-    return {buffer + 1, length, offset + 1 + length + 1};
-  }
-  if ((buffer[0] & EncodingTypeMask::kType12BitStrMask) ==
-      EncodingType::k12BitString) {
-    const size_t length =
-        (static_cast<size_t>(buffer[0] & 0xf) << 8) | buffer[1];
-    const size_t encoded_bytes = 2 + length;
-    return {buffer + 2, length,
-            offset + encoded_bytes + BacklenBytes(encoded_bytes)};
-  }
-  return DecodeLongOrIntegerEntry(offset, int_buffer);
-}
-
-// Out of line, so that the short strings above, the common case, do not pay
-// for the registers and stack that decoding and formatting an integer need.
+// Out of line, so that the short strings DecodeEntry decodes inline, the
+// common case, do not pay for the registers and stack that decoding and
+// formatting an integer need.
 [[gnu::noinline]] Listpack::DecodedEntry Listpack::DecodeLongOrIntegerEntry(
     size_t offset, unsigned char* const int_buffer) const {
   const EncodingType encoding_type = EncodingAt(offset);

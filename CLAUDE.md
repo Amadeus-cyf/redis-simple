@@ -591,7 +591,13 @@ Before committing, run the relevant build and tests.
 - The `release` preset builds with link-time optimization
   (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`), as Redis' release build does. Keep
   it on for that preset only, so debug, sanitizer, and fuzz builds stay fast
-  to link.
+  to link. With LTO, GCC shares one inlining budget across the program
+  (`--param inline-unit-growth`) and, once it runs out, stops inlining small
+  hot helpers it inlines within a single file, which made list edits 27%
+  slower; `-fopt-info-inline-missed` at link time names them. Mark such a
+  helper `[[gnu::always_inline]]` (the request parser's, `SeededHash`,
+  `Listpack::DecodeEntry`, the RDB encoder's `Length` and `Raw`), and
+  compare an LTO build with one without it when adding hot-path code.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
