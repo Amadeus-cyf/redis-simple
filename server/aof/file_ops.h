@@ -13,6 +13,8 @@
 #include <string_view>
 #include <vector>
 
+#include "utils/posix.h"
+
 namespace redis_simple::aof {
 // The file system calls the AOF makes where tests inject failures.
 class FileOps {
@@ -110,14 +112,11 @@ std::optional<std::string> ReadWholeFile(const std::string& path);
 // when the file took no more without an error).
 ssize_t WriteAll(FileOps* file_ops, int fd, std::string_view data);
 
-// The most iovecs one writev() accepts.
-size_t MaxIovCount();
-
 // Writes every block (anything with data() and size()) with vectored writes,
 // retrying short and interrupted writes.
 template <typename Blocks>
 bool WriteBlocks(FileOps* const file_ops, int fd, Blocks& blocks) {
-  const size_t max_iov_count = MaxIovCount();
+  const size_t max_iov_count = utils::MaxIovCount();
   std::vector<iovec> vectors;
   auto block = std::begin(blocks);
   while (block != std::end(blocks)) {

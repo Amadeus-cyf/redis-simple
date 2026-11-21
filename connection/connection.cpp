@@ -15,6 +15,7 @@
 #include "event_loop/file_event.h"
 #include "logging/logger.h"
 #include "tcp/tcp.h"
+#include "utils/posix.h"
 
 namespace redis_simple::connection {
 namespace {
@@ -50,16 +51,6 @@ int BindAndConnectTcp(const AddressInfo& remote,
 
 bool WouldBlock(int error) { return error == EAGAIN || error == EWOULDBLOCK; }
 
-size_t MaxIovCount() {
-  static const size_t kMaxIovCount = [] {
-    const int64_t system_limit = sysconf(_SC_IOV_MAX);
-    const size_t limit =
-        system_limit > 0 ? static_cast<size_t>(system_limit) : 1024;
-    return std::min(limit,
-                    static_cast<size_t>(std::numeric_limits<int>::max()));
-  }();
-  return kMaxIovCount;
-}
 }  // namespace
 
 Connection::Connection(const Context& context)
@@ -342,7 +333,7 @@ ssize_t Connection::WriteVector(std::span<const iovec> blocks) {
     return 0;
   }
   const auto block_count =
-      static_cast<int>(std::min(blocks.size(), MaxIovCount()));
+      static_cast<int>(std::min(blocks.size(), utils::MaxIovCount()));
   ssize_t n = -1;
   n = writev(fd_, blocks.data(), block_count);
   while (n < 0 && errno == EINTR) {

@@ -172,6 +172,7 @@ target_link_libraries(
 )
 
 redis_simple_add_gtest_suite(StringsTest)
+redis_simple_add_gtest_suite(PosixTest)
 redis_simple_add_gtest_suite(Crc64Test)
 redis_simple_add_gtest_suite(LzfTest)
 redis_simple_add_gtest_suite(RdbTest)
