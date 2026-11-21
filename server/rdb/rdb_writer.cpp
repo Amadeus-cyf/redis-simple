@@ -60,8 +60,10 @@ class Encoder {
     MaybeFlush();
   }
 
-  // Redis' rdbSaveLen.
-  void Length(uint64_t length) {
+  // Redis' rdbSaveLen. Length and Raw run for every value written, and are
+  // always inlined: with link-time optimization, GCC otherwise calls them
+  // once its inlining budget for the program runs out.
+  [[gnu::always_inline]] void Length(uint64_t length) {
     if (length < (1U << 6)) {
       Byte(static_cast<uint8_t>(length | (kLength6Bit << 6)));
     } else if (length < (1U << 14)) {
@@ -116,7 +118,7 @@ class Encoder {
     Raw(value);
   }
 
-  void Raw(std::string_view bytes) {
+  [[gnu::always_inline]] void Raw(std::string_view bytes) {
     if (bytes.size() >= kDirectWriteBytes) {
       Flush();
       UpdateCrc(bytes);

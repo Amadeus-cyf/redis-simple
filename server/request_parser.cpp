@@ -78,9 +78,12 @@ constexpr unsigned DigitValue(char c) {
 // The common case in one pass: a canonical non-negative length of at most
 // 18 digits, then a CR with a byte after it. Anything else, including a
 // line not fully received, takes the slow path, which applies Redis' rules.
-inline LengthLine ParseLengthLine(std::string_view input, size_t start,
-                                  ProtocolError too_long,
-                                  ProtocolError invalid) {
+// This and the other helpers of the hot path are always inlined: with
+// link-time optimization, GCC shares one inlining budget across the whole
+// program and, once it runs out, calls them instead.
+[[gnu::always_inline]] inline LengthLine ParseLengthLine(
+    std::string_view input, size_t start, ProtocolError too_long,
+    ProtocolError invalid) {
   // Request lengths are almost always one or two digits. When the bytes
   // through a two-digit length's line ending are buffered, read them
   // without the loop; the cases below accept exactly what the loop does.
@@ -134,9 +137,10 @@ struct BulkString {
   size_t end{};
 };
 
-// Parses the bulk string at `start`.
-inline BulkString ParseBulkString(std::string_view input, size_t start,
-                                  bool authenticated) {
+// Parses the bulk string at `start`. Always inlined, like ParseLengthLine.
+[[gnu::always_inline]] inline BulkString ParseBulkString(std::string_view input,
+                                                         size_t start,
+                                                         bool authenticated) {
   if (start >= input.size()) {
     return {.status = ParseStatus::kIncomplete};
   }
@@ -208,10 +212,10 @@ size_t ReservableElements(std::string_view input, size_t count) {
 // go straight into `command` and `args`. Otherwise the progress so far is
 // saved in `state` as offsets, since views would dangle once the caller's
 // buffer moves, and ResumeResp continues from there after more bytes arrive.
-inline ParseResult ParseFreshResp(std::string_view input,
-                                  ParseState* const state,
-                                  std::string_view* const command,
-                                  commands::CommandArgs* const args) {
+// Always inlined, like ParseLengthLine.
+[[gnu::always_inline]] inline ParseResult ParseFreshResp(
+    std::string_view input, ParseState* const state,
+    std::string_view* const command, commands::CommandArgs* const args) {
   const LengthLine header =
       ParseLengthLine(input, 1, ProtocolError::kTooBigMultibulkCount,
                       ProtocolError::kInvalidMultibulkLength);
