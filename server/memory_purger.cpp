@@ -1,11 +1,11 @@
-#include "server/idle_memory_releaser.h"
+#include "server/memory_purger.h"
 
 namespace redis_simple {
-void IdleMemoryReleaser::Tick(const bool active) {
-  if (release_ == nullptr) {
+void MemoryPurger::Tick(const bool did_work) {
+  if (purge_ == nullptr) {
     return;
   }
-  if (active) {
+  if (did_work) {
     pending_ = true;
     quiet_ticks_ = 0;
     return;
@@ -15,6 +15,6 @@ void IdleMemoryReleaser::Tick(const bool active) {
   }
   pending_ = false;
   quiet_ticks_ = 0;
-  release_();
+  purge_();
 }
 }  // namespace redis_simple

@@ -17,13 +17,12 @@ namespace {
 // Collects the calling thread's heap, returning its free pages to the
 // system. mimalloc keeps freed pages for reuse for its purge delay, and
 // returns them only while the thread keeps allocating; the server calls this
-// once a thread has been idle for a second (IdleMemoryReleaser).
-void ReleaseFreeMemory() { mi_collect(/*force=*/true); }
-constexpr redis_simple::IdleMemoryReleaser::ReleaseFunction kReleaseMemory =
-    &ReleaseFreeMemory;
+// once a thread has been idle for a second (MemoryPurger).
+void PurgeFreeMemory() { mi_collect(/*force=*/true); }
+constexpr redis_simple::MemoryPurger::PurgeFunction kPurgeMemory =
+    &PurgeFreeMemory;
 #else
-constexpr redis_simple::IdleMemoryReleaser::ReleaseFunction kReleaseMemory =
-    nullptr;
+constexpr redis_simple::MemoryPurger::PurgeFunction kPurgeMemory = nullptr;
 #endif
 }  // namespace
 
@@ -39,6 +38,6 @@ int main(int argc, char* argv[]) {
               << redis_simple::ServerUsage();
     return EXIT_FAILURE;
   }
-  const auto server = redis_simple::Server::Create(kReleaseMemory);
+  const auto server = redis_simple::Server::Create(kPurgeMemory);
   return server->Run(result.options) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

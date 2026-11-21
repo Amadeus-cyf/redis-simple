@@ -1,5 +1,5 @@
-#ifndef REDIS_SIMPLE_SERVER_IDLE_MEMORY_RELEASER_H_
-#define REDIS_SIMPLE_SERVER_IDLE_MEMORY_RELEASER_H_
+#ifndef REDIS_SIMPLE_SERVER_MEMORY_PURGER_H_
+#define REDIS_SIMPLE_SERVER_MEMORY_PURGER_H_
 
 #include <cstdint>
 
@@ -15,30 +15,30 @@ namespace redis_simple {
 // the delay, a busy server reuses freed pages, but one that deletes a large
 // value and then idles would keep the memory indefinitely, so each thread
 // that frees memory runs one of these from its cron: after a second without
-// activity it calls `release` once, which collects that thread's heap. Like
+// activity it calls `purge` once, which collects that thread's heap. Like
 // Redis' allocator, whose background thread returns freed memory after a
 // delay, the server gives memory back within seconds of going idle.
-class IdleMemoryReleaser {
+class MemoryPurger {
  public:
   // Collects the calling thread's heap and returns its free pages to the
   // system. Null when the server does not allocate with mimalloc.
-  using ReleaseFunction = void (*)();
+  using PurgeFunction = void (*)();
   // How many quiet ticks of the owner's cron make the thread idle.
   static constexpr int kQuietTicks = 10;
 
-  explicit IdleMemoryReleaser(ReleaseFunction release) : release_(release) {}
+  explicit MemoryPurger(PurgeFunction purge) : purge_(purge) {}
   // Called by the thread's cron on each tick, with whether the thread did
-  // any work since the previous tick. Calls `release` once after the first
+  // any work since the previous tick. Calls `purge` once after the first
   // kQuietTicks quiet ticks that follow work.
-  void Tick(bool active);
+  void Tick(bool did_work);
 
  private:
-  ReleaseFunction release_;
-  // Whether there was work since the last release, and how many quiet ticks
+  PurgeFunction purge_;
+  // Whether there was work since the last purge, and how many quiet ticks
   // have passed since it.
   bool pending_{false};
   int quiet_ticks_{0};
 };
 }  // namespace redis_simple
 
-#endif  // REDIS_SIMPLE_SERVER_IDLE_MEMORY_RELEASER_H_
+#endif  // REDIS_SIMPLE_SERVER_MEMORY_PURGER_H_

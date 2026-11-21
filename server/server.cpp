@@ -25,15 +25,15 @@
 #include "utils/time.h"
 
 namespace redis_simple {
-Server::Server(const IdleMemoryReleaser::ReleaseFunction release_memory)
+Server::Server(const MemoryPurger::PurgeFunction purge_memory)
     : loop_(event_loop::Loop::Create()),
-      release_memory_(release_memory),
-      idle_memory_releaser_(release_memory),
+      purge_memory_(purge_memory),
+      memory_purger_(purge_memory),
       db_(db::RedisDb::Create()) {}
 
 std::unique_ptr<Server> Server::Create(
-    const IdleMemoryReleaser::ReleaseFunction release_memory) {
-  return std::unique_ptr<Server>(new Server(release_memory));
+    const MemoryPurger::PurgeFunction purge_memory) {
+  return std::unique_ptr<Server>(new Server(purge_memory));
 }
 
 bool Server::Run(const ServerOptions& options) {
@@ -153,7 +153,7 @@ bool Server::StartIoThreads(size_t thread_count) {
                std::vector<IoThread::Handoff>* const handoffs) {
           RunHandedOverClients(io_thread, handoffs);
         },
-        release_memory_);
+        purge_memory_);
     if (thread == nullptr) {
       return false;
     }
@@ -342,15 +342,15 @@ int64_t Server::ServerCron() {
   // Freeing idle clients' buffers counts as work, so the memory goes back
   // to the system a second after the last of them is freed.
   const bool released_buffers = idle_client_sweeper_.Sweep();
-  const bool active = MainThreadWasActive(lazy_free_pending);
-  idle_memory_releaser_.Tick(active || released_buffers);
+  const bool active = MainThreadDidWork(lazy_free_pending);
+  memory_purger_.Tick(active || released_buffers);
   return kCronIntervalMs;
 }
 
-bool Server::MainThreadWasActive(const bool lazy_free_pending) {
+bool Server::MainThreadDidWork(const bool lazy_free_pending) {
   // Expiry and the lazy free release memory without any event, so a change
   // in the key count, or freeing still under way, counts as work too.
-  const uint64_t file_events = loop_->FileEventsProcessed();
+  const uint64_t file_events = loop_->FileEventsPolled();
   const size_t key_count = db_->KeyCount();
   const bool active = lazy_free_pending || file_events != cron_file_events_ ||
                       key_count != cron_key_count_;

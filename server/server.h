@@ -17,8 +17,8 @@
 #include "server/aof/aof.h"
 #include "server/client.h"
 #include "server/idle_client_sweeper.h"
-#include "server/idle_memory_releaser.h"
 #include "server/io_thread.h"
+#include "server/memory_purger.h"
 #include "server/rdb/rdb.h"
 #include "server/server_context.h"
 #include "server/server_options.h"
@@ -29,10 +29,10 @@ namespace redis_simple {
 // thread that calls Run().
 class Server {
  public:
-  // `release_memory`, when given, returns the calling thread's free heap
-  // memory to the system; see IdleMemoryReleaser. main passes mimalloc's.
+  // `purge_memory`, when given, returns the calling thread's free heap
+  // memory to the system; see MemoryPurger. main passes mimalloc's.
   static std::unique_ptr<Server> Create(
-      IdleMemoryReleaser::ReleaseFunction release_memory = nullptr);
+      MemoryPurger::PurgeFunction purge_memory = nullptr);
   Server(const Server&) = delete;
   Server& operator=(const Server&) = delete;
   // Loads the data, then serves clients until Stop() or a stop signal.
@@ -80,10 +80,10 @@ class Server {
   ~Server() = default;
 
  private:
-  explicit Server(IdleMemoryReleaser::ReleaseFunction release_memory);
+  explicit Server(MemoryPurger::PurgeFunction purge_memory);
   // Whether the main thread did any work since the previous cron tick:
   // handled an event, deleted keys, or freed a detached value.
-  bool MainThreadWasActive(bool lazy_free_pending);
+  bool MainThreadDidWork(bool lazy_free_pending);
   // The steps of Run(). LoadData: enters the working directory, loads the
   // RDB file or opens and replays the AOF. StartServing: listens on
   // `listener`, starts the I/O threads, and accepts connections. Both
@@ -119,8 +119,8 @@ class Server {
   // The clients this thread reads and writes: all of them without threaded
   // I/O, none with it.
   IdleClientSweeper idle_client_sweeper_;
-  IdleMemoryReleaser::ReleaseFunction release_memory_;
-  IdleMemoryReleaser idle_memory_releaser_;
+  MemoryPurger::PurgeFunction purge_memory_;
+  MemoryPurger memory_purger_;
   // What the cron saw at its previous tick, to tell whether the main thread
   // has been idle since.
   uint64_t cron_file_events_{0};

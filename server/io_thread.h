@@ -14,7 +14,7 @@
 
 #include "event_loop/loop.h"
 #include "server/idle_client_sweeper.h"
-#include "server/idle_memory_releaser.h"
+#include "server/memory_purger.h"
 
 namespace redis_simple {
 class Client;
@@ -71,11 +71,11 @@ class IoThread {
 
   // Starts the thread; `main_loop` runs `on_ready`. Returns nullptr if the
   // thread or its event loop cannot be created.
-  // `release_memory` is as for Server::Create; this thread calls it for its
+  // `purge_memory` is as for Server::Create; this thread calls it for its
   // own heap once it has been idle for a second.
   static std::unique_ptr<IoThread> Create(
       size_t index, event_loop::Loop* main_loop, ReadyCallback on_ready,
-      IdleMemoryReleaser::ReleaseFunction release_memory = nullptr);
+      MemoryPurger::PurgeFunction purge_memory = nullptr);
   IoThread(const IoThread&) = delete;
   IoThread& operator=(const IoThread&) = delete;
   IoThread(IoThread&&) = delete;
@@ -116,8 +116,7 @@ class IoThread {
   IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
            std::unique_ptr<Wakeup> inbox_wakeup,
            std::unique_ptr<Wakeup> outbox_wakeup, event_loop::Loop* main_loop,
-           ReadyCallback on_ready,
-           IdleMemoryReleaser::ReleaseFunction release_memory);
+           ReadyCallback on_ready, MemoryPurger::PurgeFunction purge_memory);
   // This thread's cron: sweeps idle clients and, once the thread has been
   // idle for a second, returns its free memory.
   int64_t Cron();
@@ -166,7 +165,7 @@ class IoThread {
   // I/O thread only: the clients assigned to this thread and not closed.
   // A time event on this thread's loop sweeps them.
   IdleClientSweeper idle_client_sweeper_;
-  IdleMemoryReleaser idle_memory_releaser_;
+  MemoryPurger memory_purger_;
   // The loop's event count at the previous cron tick.
   uint64_t cron_file_events_{0};
   // Main thread only.

@@ -106,7 +106,7 @@ mimalloc keeps freed pages for reuse for a short delay before it returns
 them to the system, and only does so while the thread that owns them keeps
 allocating. Returning them at every free instead cost a system call and a
 page fault for every overwritten large value. So each thread that frees
-memory, the main thread and each I/O thread, ticks an `IdleMemoryReleaser`
+memory, the main thread and each I/O thread, ticks a `MemoryPurger`
 from its cron: after a second without work (events, expired keys, or a
 lazy free under way), it collects the thread's heap once, which returns its
 free pages. Redis' allocator similarly returns freed memory from a

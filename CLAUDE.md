@@ -611,7 +611,7 @@ Before committing, run the relevant build and tests.
   pages instead of returning each one with a system call (with a delay of
   0, a 64 KiB `SET` cost 3.5 times the CPU). mimalloc returns pages only
   while their thread keeps allocating, so `main` passes `Server::Create` a
-  function that collects the calling thread's heap, and `IdleMemoryReleaser`
+  function that collects the calling thread's heap, and `MemoryPurger`
   calls it once the main thread or an I/O thread has been idle for a second
   (no events, no expired or lazily freed keys). Memory then returns to the
   OS within about a second of going idle, as Redis' allocator returns it

@@ -95,7 +95,7 @@ void Wakeup::Drain() const {
 
 std::unique_ptr<IoThread> IoThread::Create(
     size_t index, event_loop::Loop* const main_loop, ReadyCallback on_ready,
-    const IdleMemoryReleaser::ReleaseFunction release_memory) {
+    const MemoryPurger::PurgeFunction purge_memory) {
   std::unique_ptr<event_loop::Loop> loop = event_loop::Loop::Create();
   std::unique_ptr<Wakeup> inbox_wakeup = Wakeup::Create();
   std::unique_ptr<Wakeup> outbox_wakeup = Wakeup::Create();
@@ -105,7 +105,7 @@ std::unique_ptr<IoThread> IoThread::Create(
   }
   auto thread = std::unique_ptr<IoThread>(new IoThread(
       index, std::move(loop), std::move(inbox_wakeup), std::move(outbox_wakeup),
-      main_loop, std::move(on_ready), release_memory));
+      main_loop, std::move(on_ready), purge_memory));
   // The I/O thread's loop is set up before the thread starts, which orders
   // these writes before its first access.
   if (!Watch(thread->loop_.get(), *thread->inbox_wakeup_,
@@ -133,7 +133,7 @@ IoThread::IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
                    std::unique_ptr<Wakeup> inbox_wakeup,
                    std::unique_ptr<Wakeup> outbox_wakeup,
                    event_loop::Loop* const main_loop, ReadyCallback on_ready,
-                   const IdleMemoryReleaser::ReleaseFunction release_memory)
+                   const MemoryPurger::PurgeFunction purge_memory)
     : index_(index),
       loop_(std::move(loop)),
       inbox_wakeup_(std::move(inbox_wakeup)),
@@ -142,14 +142,13 @@ IoThread::IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
       on_ready_(std::move(on_ready)),
       inbox_handler_([this] { HandleInbox(); }),
       outbox_handler_([this] { HandleOutbox(); }),
-      idle_memory_releaser_(release_memory) {}
+      memory_purger_(purge_memory) {}
 
 int64_t IoThread::Cron() {
   // Freeing idle clients' buffers counts as work, like an event.
   const bool released_buffers = idle_client_sweeper_.Sweep();
-  const uint64_t file_events = loop_->FileEventsProcessed();
-  idle_memory_releaser_.Tick(released_buffers ||
-                             file_events != cron_file_events_);
+  const uint64_t file_events = loop_->FileEventsPolled();
+  memory_purger_.Tick(released_buffers || file_events != cron_file_events_);
   cron_file_events_ = file_events;
   return IdleClientSweeper::kIntervalMs;
 }
