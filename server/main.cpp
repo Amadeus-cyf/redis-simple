@@ -12,17 +12,22 @@
 #include <mimalloc.h>
 #endif
 
-int main(int argc, char* argv[]) {
+namespace {
 #ifdef REDIS_SIMPLE_USE_MIMALLOC
-  // Return freed memory to the OS as soon as it is freed, as Redis'
-  // allocator does. With mimalloc's default delay, freed pages are only
-  // returned during later allocations on the same thread, so a server that
-  // deletes a large value and then idles kept the memory indefinitely. The
-  // environment variable still overrides this.
-  if (std::getenv("MIMALLOC_PURGE_DELAY") == nullptr) {
-    mi_option_set(mi_option_purge_delay, 0);
-  }
+// Collects the calling thread's heap, returning its free pages to the
+// system. mimalloc keeps freed pages for reuse for its purge delay, and
+// returns them only while the thread keeps allocating; the server calls this
+// once a thread has been idle for a second (IdleMemoryReleaser).
+void ReleaseFreeMemory() { mi_collect(/*force=*/true); }
+constexpr redis_simple::IdleMemoryReleaser::ReleaseFunction kReleaseMemory =
+    &ReleaseFreeMemory;
+#else
+constexpr redis_simple::IdleMemoryReleaser::ReleaseFunction kReleaseMemory =
+    nullptr;
 #endif
+}  // namespace
+
+int main(int argc, char* argv[]) {
   const redis_simple::OptionsResult result =
       redis_simple::ParseServerOptions(argc, argv);
   if (result.status == redis_simple::OptionsStatus::kHelp) {
@@ -34,6 +39,6 @@ int main(int argc, char* argv[]) {
               << redis_simple::ServerUsage();
     return EXIT_FAILURE;
   }
-  const auto server = redis_simple::Server::Create();
+  const auto server = redis_simple::Server::Create(kReleaseMemory);
   return server->Run(result.options) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

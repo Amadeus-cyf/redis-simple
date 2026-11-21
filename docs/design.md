@@ -52,7 +52,10 @@ like `Dict` it does not shrink while a snapshot child shares its pages.
 
 1. **Read.** The event loop reports a readable socket, and the client reads
    once into its query buffer (`Client::ReadQuery`). Reading once per event
-   keeps one busy client from starving the others.
+   keeps one busy client from starving the others. The read fills all the
+   room the buffer has, and an empty buffer keeps up to 1 MiB between
+   requests, so after one large request the next arrives in a single read,
+   as in Redis, instead of a first 16 KiB and the rest.
 2. **Frame.** `request_parser::Parse` finds one complete request in the
    buffer without copying it: the command name and arguments are
    `std::string_view`s into the buffer (`CommandArgs`). It frames RESP arrays
@@ -96,6 +99,18 @@ is the job of Redis' `clientsCronResizeQueryBuffer` and
 the sweeper. With it, each I/O thread runs its own, from a timer on its
 event loop, over the clients assigned to it, and skips clients the main
 thread holds, as Redis' `IOThreadClientsCron` does.
+
+### Returning freed memory
+
+mimalloc keeps freed pages for reuse for a short delay before it returns
+them to the system, and only does so while the thread that owns them keeps
+allocating. Returning them at every free instead cost a system call and a
+page fault for every overwritten large value. So each thread that frees
+memory, the main thread and each I/O thread, ticks an `IdleMemoryReleaser`
+from its cron: after a second without work (events, expired keys, or a
+lazy free under way), it collects the thread's heap once, which returns its
+free pages. Redis' allocator similarly returns freed memory from a
+background thread after a delay.
 
 ### What a command can reach
 

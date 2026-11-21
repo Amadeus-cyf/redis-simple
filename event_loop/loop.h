@@ -82,6 +82,10 @@ class Loop {
   // Runs one iteration: the before-sleep callback, a poll and its file
   // events, the deferred callbacks, then the time events that are due.
   void ProcessEvents();
+  // How many ready file events the loop has handled since it was created.
+  // It changes whenever a descriptor had work, so a caller comparing two
+  // readings learns whether the loop was idle in between.
+  uint64_t FileEventsProcessed() const { return file_events_processed_; }
   ~Loop() = default;
 
  private:
@@ -101,6 +105,7 @@ class Loop {
   std::vector<std::function<void()>> running_deferred_callbacks_;
   std::function<void()> before_sleep_;
   std::unique_ptr<EventPoller> event_poller_;
+  uint64_t file_events_processed_{0};
   bool processing_file_events_{false};
   bool stop_requested_{false};
 };

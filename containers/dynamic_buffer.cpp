@@ -14,11 +14,14 @@
 namespace redis_simple::containers {
 namespace {
 constexpr size_t kInitialCapacity = 4096;
-// The most capacity an empty buffer keeps. Without a limit, one large
-// request would hold its size for as long as its connection lives; Redis
-// shrinks idle query buffers for the same reason
-// (clientsCronResizeQueryBuffer).
-constexpr size_t kMaxIdleCapacity = size_t{64} * 1024;
+// The most capacity an empty buffer keeps. A client that sends large values
+// keeps room for the next one, so it arrives in one read, as a Redis client
+// keeps its private query buffer for the next big argument. Larger buffers
+// are freed at once: without a limit, one huge request would hold its size
+// for as long as its connection lives. The server also frees an idle
+// client's buffer (IdleClientSweeper), as Redis' clientsCronResizeQueryBuffer
+// does.
+constexpr size_t kMaxIdleCapacity = size_t{1024} * 1024;
 }  // namespace
 
 DynamicBuffer::DynamicBuffer()

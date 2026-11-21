@@ -25,11 +25,15 @@
 #include "utils/time.h"
 
 namespace redis_simple {
-Server::Server()
-    : loop_(event_loop::Loop::Create()), db_(db::RedisDb::Create()) {}
+Server::Server(const IdleMemoryReleaser::ReleaseFunction release_memory)
+    : loop_(event_loop::Loop::Create()),
+      release_memory_(release_memory),
+      idle_memory_releaser_(release_memory),
+      db_(db::RedisDb::Create()) {}
 
-std::unique_ptr<Server> Server::Create() {
-  return std::unique_ptr<Server>(new Server());
+std::unique_ptr<Server> Server::Create(
+    const IdleMemoryReleaser::ReleaseFunction release_memory) {
+  return std::unique_ptr<Server>(new Server(release_memory));
 }
 
 bool Server::Run(const ServerOptions& options) {
@@ -148,7 +152,8 @@ bool Server::StartIoThreads(size_t thread_count) {
         [this](IoThread* const io_thread,
                std::vector<IoThread::Handoff>* const handoffs) {
           RunHandedOverClients(io_thread, handoffs);
-        });
+        },
+        release_memory_);
     if (thread == nullptr) {
       return false;
     }
@@ -327,14 +332,30 @@ int64_t Server::ServerCron() {
   active_expire_.RunSlowCycle(db_.get());
   // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
   constexpr int64_t kLazyFreeBudgetMs = 10;
-  db_->FreeLazily(kLazyFreeBudgetMs);
+  const bool lazy_free_pending = db_->FreeLazily(kLazyFreeBudgetMs);
   if (!child_running) {
     // As in Redis' databasesCron: one millisecond per tick. Skipped while a
     // child runs, since moving entries writes to memory the child shares.
     constexpr int64_t kRehashBudgetMicroseconds = 1000;
     db_->RehashIncrementally(kRehashBudgetMicroseconds);
   }
-  idle_client_sweeper_.Sweep();
+  // Freeing idle clients' buffers counts as work, so the memory goes back
+  // to the system a second after the last of them is freed.
+  const bool released_buffers = idle_client_sweeper_.Sweep();
+  const bool active = MainThreadWasActive(lazy_free_pending);
+  idle_memory_releaser_.Tick(active || released_buffers);
   return kCronIntervalMs;
+}
+
+bool Server::MainThreadWasActive(const bool lazy_free_pending) {
+  // Expiry and the lazy free release memory without any event, so a change
+  // in the key count, or freeing still under way, counts as work too.
+  const uint64_t file_events = loop_->FileEventsProcessed();
+  const size_t key_count = db_->KeyCount();
+  const bool active = lazy_free_pending || file_events != cron_file_events_ ||
+                      key_count != cron_key_count_;
+  cron_file_events_ = file_events;
+  cron_key_count_ = key_count;
+  return active;
 }
 }  // namespace redis_simple
