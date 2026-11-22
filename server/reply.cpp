@@ -41,7 +41,8 @@ void AppendLine(char prefix, bool negative, uint64_t magnitude,
   if (new_size > reply->capacity()) {
     reply->reserve(std::max(new_size, 2 * reply->capacity()));
   }
-  RS_INLINE_CALLS reply->resize_and_overwrite(
+  // As in AppendBulkString: clang 18 left this libstdc++ call out of line.
+  RS_INLINE_LIBSTDCXX_CALLS reply->resize_and_overwrite(
       new_size, [&](char* const data, size_t) {
         char* out = data + old_size;
         *out++ = prefix;
