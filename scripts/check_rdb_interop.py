@@ -131,26 +131,40 @@ def snapshot(connection):
             value = sorted(connection.command("HGETALL", key))
         else:
             value = None
-        result[key] = (kind, value, connection.command("PTTL", key))
+        result[key] = (kind, value, expiration(connection, key))
     return result
 
 
-# How far apart two readings of one TTL may be: the time between writing the
-# file and reading the loaded keys, with room for a slow machine. Rounding
-# both to a coarser unit instead fails whenever the clock crosses a unit's
-# boundary between the two readings.
-TTL_TOLERANCE_MS = 60_000
+def expiration(connection, key):
+    """The key's expiration time: PTTL's reply if negative (no TTL, or no
+    key), else the range of Unix milliseconds the time must lie in.
+
+    The servers and this script read one clock, so the time is PTTL's reply
+    plus the clock at some moment between sending the command and reading
+    the reply. Comparing times instead of remaining TTLs needs no allowance
+    for how long the save and the load took, which would hide an error
+    smaller than the allowance.
+    """
+    before = time.time_ns() // 1_000_000
+    ttl = connection.command("PTTL", key)
+    after = time.time_ns() // 1_000_000
+    if ttl < 0:
+        return ttl
+    # A millisecond each side, for a server that rounds its clock otherwise.
+    return (before + ttl - 1, after + ttl + 1)
 
 
 def same_key(written, loaded):
     if written is None or loaded is None:
         return written is loaded
-    (kind, value, ttl), (loaded_kind, loaded_value, loaded_ttl) = written, loaded
+    kind, value, expires = written
+    loaded_kind, loaded_value, loaded_expires = loaded
     if (kind, value) != (loaded_kind, loaded_value):
         return False
-    if ttl < 0 or loaded_ttl < 0:
-        return ttl == loaded_ttl
-    return abs(ttl - loaded_ttl) <= TTL_TOLERANCE_MS
+    if isinstance(expires, int) or isinstance(loaded_expires, int):
+        return expires == loaded_expires
+    # The same time if the two ranges overlap.
+    return expires[0] <= loaded_expires[1] and loaded_expires[0] <= expires[1]
 
 
 class Server:

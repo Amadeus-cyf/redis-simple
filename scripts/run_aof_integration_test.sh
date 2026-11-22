@@ -23,6 +23,7 @@ trap cleanup EXIT INT TERM
 # REDIS_SIMPLE_SERVER_ARGS adds server flags, such as "--io-threads 4"; it is
 # split on spaces on purpose.
 start_server() {
+  require_free_port 18081 || exit $?
   # shellcheck disable=SC2086
   "$server" --bind 127.0.0.1 --port 18081 --dir "$aof_dir" --appendonly yes \
     --appenddirname "$aof_dirname" --appendfilename "$aof_name" \

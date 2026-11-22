@@ -369,7 +369,7 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
   // budget is kept to within a fraction of a millisecond.
   constexpr size_t kEntriesPerStep = 1024;
   if (unlinked_.empty() && flushed_.empty()) {
-    return true;
+    return false;
   }
   const int64_t start = utils::MonotonicMilliseconds();
   while (!unlinked_.empty() || !flushed_.empty()) {
@@ -384,7 +384,7 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
       break;
     }
   }
-  return unlinked_.empty() && flushed_.empty();
+  return true;
 }
 
 bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
@@ -404,7 +404,7 @@ bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
       break;
     }
   }
-  return dict_->IsRehashing() || expires_.IsRebuilding();
+  return true;
 }
 
 ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {

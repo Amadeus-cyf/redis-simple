@@ -5,6 +5,7 @@ set -u
 server="$1"
 port="18080"
 . "$(dirname "$0")/wait_for_server.sh"
+require_free_port "$port" || exit $?
 
 if ! "$server" --help >/dev/null; then
   echo "server --help failed" >&2

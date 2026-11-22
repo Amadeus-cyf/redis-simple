@@ -134,7 +134,7 @@ TEST(HandleSetTest, ReserveMakesRoomSoInsertsDoNotRebuild) {
   EXPECT_EQ(Members(set).size(), kCount);
 }
 
-TEST(HandleSetTest, InsertsErasesAndFindsHandles) {
+TEST(HandleSetTest, InsertsDeletesAndFindsHandles) {
   const auto items = MakeItems(3, 3);
   ItemSet set;
   EXPECT_EQ(set.Size(), 0);
@@ -207,7 +207,7 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
   EXPECT_LE(positions, 16 * (expected.size() + 1));
 }
 
-TEST(HandleSetTest, ReusesErasedSlotsUnderChurn) {
+TEST(HandleSetTest, ReusesDeletedSlotsUnderChurn) {
   // The same few members inserted and erased many times must not grow the
   // table without bound or lose anyone.
   const auto items = MakeItems(64, 8);

@@ -20,7 +20,9 @@
 namespace redis_simple {
 namespace {
 constexpr size_t kReadBufferSize = size_t{16} * 1024;
-// Upper bound for one read while receiving a large bulk argument.
+// The most room one read asks the query buffer for while a large bulk
+// argument arrives. Not a bound on the read itself, which fills whatever
+// room the buffer already has.
 constexpr size_t kMaxBulkReadSize = size_t{1024} * 1024;
 // Redis' default client-query-buffer-limit.
 constexpr size_t kMaxQueryBufferSize = size_t{1024} * 1024 * 1024;

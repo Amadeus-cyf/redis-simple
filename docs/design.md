@@ -111,7 +111,8 @@ system call and a page fault for every overwritten large value, and still
 missed the pages other threads free. So the main thread and each I/O
 thread tick a `MemoryPurger` from their 100 ms cron. Every tenth tick, if
 any thread did work since this thread's last purge (events, freed client
-buffers, expired keys, or a lazy free under way), it collects the thread's
+buffers, expired keys, or a cron tick that freed detached values or moved a
+rehash along, the last such tick included), it collects the thread's
 heap, which returns its free pages. Work on any thread counts because the
 threads free each other's memory: the I/O threads free reply buffers the
 main thread allocated, and the main thread frees clients the I/O threads
