@@ -82,8 +82,9 @@ class Server {
  private:
   explicit Server(MemoryPurger::PurgeFunction purge_memory);
   // Whether the main thread did any work since the previous cron tick:
-  // handled an event, deleted keys, or freed a detached value.
-  bool MainThreadDidWork(bool lazy_free_pending);
+  // handled an event, deleted keys, or, as `cron_freed_memory` says of this
+  // tick, freed detached values or moved a rehash along.
+  bool MainThreadDidWork(bool cron_freed_memory);
   // The steps of Run(). LoadData: enters the working directory, loads the
   // RDB file or opens and replays the AOF. StartServing: listens on
   // `listener`, starts the I/O threads, and accepts connections. Both

@@ -332,27 +332,30 @@ int64_t Server::ServerCron() {
   active_expire_.RunSlowCycle(db_.get());
   // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
   constexpr int64_t kLazyFreeBudgetMs = 10;
-  const bool lazy_free_pending = db_->FreeLazily(kLazyFreeBudgetMs);
+  const bool freed_lazily = db_->FreeLazily(kLazyFreeBudgetMs);
+  bool rehashed = false;
   if (!child_running) {
     // As in Redis' databasesCron: one millisecond per tick. Skipped while a
     // child runs, since moving entries writes to memory the child shares.
     constexpr int64_t kRehashBudgetMicroseconds = 1000;
-    db_->RehashIncrementally(kRehashBudgetMicroseconds);
+    rehashed = db_->RehashIncrementally(kRehashBudgetMicroseconds);
   }
   // Freeing idle clients' buffers counts as work, so the memory goes back
   // to the system within a second.
   const bool released_buffers = idle_client_sweeper_.Sweep();
-  const bool did_work = MainThreadDidWork(lazy_free_pending);
+  const bool did_work = MainThreadDidWork(freed_lazily || rehashed);
   memory_purger_.Tick(did_work || released_buffers);
   return kCronIntervalMs;
 }
 
-bool Server::MainThreadDidWork(const bool lazy_free_pending) {
-  // Expiry and the lazy free release memory without any event, so a change
-  // in the key count, or freeing still under way, counts as work too.
+bool Server::MainThreadDidWork(const bool cron_freed_memory) {
+  // Expiry, the lazy free and a finished rehash release memory without any
+  // event, so a change in the key count, or this tick having freed detached
+  // values or moved a rehash along, counts as work too. The tick that frees
+  // the last of it counts: its memory is the last to go back to the system.
   const uint64_t file_events = loop_->FileEventsPolled();
   const size_t key_count = db_->KeyCount();
-  const bool did_work = lazy_free_pending || file_events != cron_file_events_ ||
+  const bool did_work = cron_freed_memory || file_events != cron_file_events_ ||
                         key_count != cron_key_count_;
   cron_file_events_ = file_events;
   cron_key_count_ = key_count;

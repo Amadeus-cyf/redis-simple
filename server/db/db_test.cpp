@@ -577,6 +577,38 @@ TEST(RedisDbTest, UnlinkFreesSmallValuesAtOnceAndLargeOnesInSteps) {
   EXPECT_EQ(redis_db->UnlinkKey("first"), DbStatus::kError);
 }
 
+TEST(RedisDbTest, FreeLazilyReportsTheCallThatFreesTheLastOfIt) {
+  auto redis_db = RedisDb::Create();
+  auto set = data_types::Set::Create();
+  for (int i = 0; i < 5000; ++i) {
+    ASSERT_TRUE(set->Add("member:" + std::to_string(i)));
+  }
+  ASSERT_EQ(
+      redis_db->SetKey("large", RedisObject::CreateWithSet(std::move(set)), 0),
+      DbStatus::kOk);
+  ASSERT_EQ(redis_db->UnlinkKey("large"), DbStatus::kOk);
+  // A budget that frees all of it in one call, as the cron's usually does:
+  // that call still reports work, so the cron's memory purge follows it.
+  EXPECT_TRUE(redis_db->FreeLazily(60'000));
+  EXPECT_FALSE(redis_db->FreeLazily(60'000));
+}
+
+TEST(RedisDbTest, RehashIncrementallyReportsTheCallThatFinishesARehash) {
+  auto redis_db = RedisDb::Create();
+  // As below: the keyspace table is part of the way through doubling.
+  constexpr int kKeys = 100'000;
+  for (int i = 0; i < kKeys; ++i) {
+    ASSERT_EQ(redis_db->SetKey("key:" + std::to_string(i),
+                               RedisObject::CreateWithString("v"), 0),
+              DbStatus::kOk);
+  }
+  // A budget that finishes the rehash in one call, which frees the old
+  // table: that call still reports work.
+  EXPECT_TRUE(redis_db->RehashIncrementally(60'000'000));
+  EXPECT_FALSE(redis_db->RehashIncrementally(60'000'000));
+  EXPECT_EQ(redis_db->KeyCount(), static_cast<size_t>(kKeys));
+}
+
 TEST(RedisDbTest, RehashIncrementallyFinishesARehashWithoutCommands) {
   auto redis_db = RedisDb::Create();
   EXPECT_FALSE(redis_db->RehashIncrementally(0));

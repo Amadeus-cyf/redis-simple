@@ -614,11 +614,14 @@ Before committing, run the relevant build and tests.
   `Server::Create` a function that collects the calling thread's heap, and
   each thread's `MemoryPurger` calls it once a second while any thread did
   work since its last purge (events, freed client buffers, expired or
-  lazily freed keys), through a count every thread's purger shares, since
-  the threads free each other's memory. Memory then returns to the OS
-  within about a second, busy or idle, as Redis' allocator returns it from
-  its background thread. Work that frees memory without events must count
-  as work there.
+  lazily freed keys, a rehash the cron moved along), through a count every
+  thread's purger shares, since the threads free each other's memory.
+  Memory then returns to the OS within about a second, busy or idle, as
+  Redis' allocator returns it from its background thread. Work that frees
+  memory without events must count as work there, up to and including the
+  tick that frees the last of it: `RedisDb::FreeLazily` and
+  `RehashIncrementally` return whether the call had work, not whether any
+  remains.
 - Measure performance changes to the server with `scripts/measure/profile_server.sh`
   (callgrind instruction counts per workload) and memory changes with
   `scripts/measure/measure_server_memory.sh` (RSS per key), passing the previous build
