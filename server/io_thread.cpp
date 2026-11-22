@@ -4,8 +4,8 @@
 #include <unistd.h>
 
 #include <array>
-#include <atomic>
 #include <cerrno>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -96,7 +96,7 @@ void Wakeup::Drain() const {
 
 std::unique_ptr<IoThread> IoThread::Create(
     size_t index, event_loop::Loop* const main_loop, ReadyCallback on_ready,
-    const std::atomic<bool>* const main_running) {
+    const RunningFlag* const main_running, const int64_t cron_interval_ms) {
   std::unique_ptr<event_loop::Loop> loop = event_loop::Loop::Create();
   std::unique_ptr<Wakeup> inbox_wakeup = Wakeup::Create();
   std::unique_ptr<Wakeup> outbox_wakeup = Wakeup::Create();
@@ -118,11 +118,11 @@ std::unique_ptr<IoThread> IoThread::Create(
   thread->loop_->SetBeforeSleep(
       [instance = thread.get()] { instance->BeforeSleep(); });
   thread->loop_->SetAfterSleep(
-      [instance = thread.get()] { instance->running_.store(true); });
+      [instance = thread.get()] { instance->running_.SetRunning(); });
   thread->loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
-      [instance = thread.get()](int64_t /*id*/) {
+      [instance = thread.get(), cron_interval_ms](int64_t /*id*/) {
         instance->idle_client_sweeper_.Sweep();
-        return IdleClientSweeper::kIntervalMs;
+        return cron_interval_ms;
       },
       nullptr));
   // The project does not throw, but std::thread reports a failure to start
@@ -141,7 +141,7 @@ IoThread::IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
                    std::unique_ptr<Wakeup> inbox_wakeup,
                    std::unique_ptr<Wakeup> outbox_wakeup,
                    event_loop::Loop* const main_loop, ReadyCallback on_ready,
-                   const std::atomic<bool>* const main_running)
+                   const RunningFlag* const main_running)
     : index_(index),
       loop_(std::move(loop)),
       inbox_wakeup_(std::move(inbox_wakeup)),
@@ -182,9 +182,9 @@ void IoThread::Send(std::span<Client* const> clients, bool returning) {
   // The thread takes the whole inbox before it sleeps and on each wakeup,
   // so only the first message since then needs to wake it, and only if it
   // is asleep, as Redis' sendPendingClientsToIOThreads does. If it went to
-  // sleep after this load, it took the inbox again after saying so
-  // (BeforeSleep), and the lock orders that after the push.
-  if (was_empty && !running_.load()) {
+  // sleep after this read of its flag, it took the inbox again after
+  // saying so (BeforeSleep), and the lock orders that after the push.
+  if (was_empty && !running_.Running()) {
     inbox_wakeup_->Signal();
   }
 }
@@ -252,9 +252,9 @@ void IoThread::BeforeSleep() {
   // sending without wakeups.
   const bool took_messages = ProcessInbox();
   if (!took_messages) {
-    running_.store(false);
-    // A message sent before Send could see the store came without a wakeup.
-    ProcessInbox();
+    // A message sent before Send could see the flag cleared came without a
+    // wakeup, so the inbox is taken again once it is.
+    running_.SleepAndTake([this] { return ProcessInbox(); });
   }
   loop_->SetDontWait(took_messages);
 }
@@ -405,7 +405,7 @@ void IoThread::SendHandoffs() {
   handoffs_.clear();
   // As Send does: the main thread takes the outbox before it sleeps
   // (TakeHandoffs), so it needs a wakeup only if it is asleep.
-  if (was_empty && (main_running_ == nullptr || !main_running_->load())) {
+  if (was_empty && (main_running_ == nullptr || !main_running_->Running())) {
     outbox_wakeup_->Signal();
   }
 }

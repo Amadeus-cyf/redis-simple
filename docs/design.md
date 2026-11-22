@@ -150,13 +150,15 @@ many clients the batch holds, as Redis' `sendPendingClientsToIOThreads` and
 `sendPendingClientsToMainThreadIfNeeded` join whole lists.
 
 A batch wakes the receiving side only when its queue was empty and that side
-is asleep, as in Redis 8, whose threads keep an atomic `running` flag. Each
-side's loop sets its flag when its poll returns (`Loop::SetAfterSleep`).
-Before polling, each side takes its queue (`IoThread::BeforeSleep`,
-`Server::BeforeSleep`). If that finds nothing, it clears its flag and takes
-the queue once more: a sender that saw the flag still set sent no wakeup,
-and the queue's lock orders its batch before that second look, or the
-sender sees the flag cleared and sends one. If the first look found
+is asleep, as in Redis 8, whose threads keep an atomic `running` flag
+(`RunningFlag` here, on cache lines of its own, since the other side reads
+it for every batch). Each side's loop sets its flag when its poll returns
+(`Loop::SetAfterSleep`). Before polling, each side takes its queue
+(`IoThread::BeforeSleep`, `Server::BeforeSleep`). If that finds nothing, it
+clears its flag and takes the queue once more (`RunningFlag::SleepAndTake`):
+a sender that saw the flag still set sent no wakeup, and the queue's lock
+orders its batch before that second look, or the sender sees the flag
+cleared and sends one. If the first look found
 something, more is likely, so the loop polls without waiting
 (`Loop::SetDontWait`) and keeps its flag set, and a busy pair of threads
 hands batches back and forth without a wakeup's two system calls. The main

@@ -10,10 +10,12 @@
 #include <mutex>
 #include <span>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "event_loop/loop.h"
 #include "server/idle_client_sweeper.h"
+#include "utils/cache_line.h"
 
 namespace redis_simple {
 class Client;
@@ -38,6 +40,37 @@ class Wakeup {
   int read_fd_;
   int write_fd_;
 };
+
+// Whether a thread is awake, not waiting in its poll, as Redis' `running`
+// flags: a thread that sends to it signals its wakeup only when it is not,
+// since the thread takes its queue before it sleeps. That is safe only with
+// this order on both sides. The sender queues, then reads the flag. The
+// thread clears the flag, then takes its queue once more (SleepAndTake), so
+// what a sender queued without a wakeup is taken before the thread waits.
+//
+// The flag has cache lines of its own. Senders read it for every batch, and
+// beside data its thread keeps writing each of those reads would miss.
+class alignas(utils::kCacheLineBytes) RunningFlag {
+ public:
+  // Any thread.
+  [[nodiscard]] bool Running() const { return running_.load(); }
+  // The thread itself, when its poll returns.
+  void SetRunning() { running_.store(true); }
+  // The thread itself, before a poll that may wait and after it took its
+  // queue and found nothing: clears the flag, then runs `take_queue`, which
+  // takes the queue again, and returns what that returns: whether the queue
+  // held anything.
+  template <typename TakeQueue>
+  bool SleepAndTake(TakeQueue&& take_queue) {
+    running_.store(false);
+    return std::forward<TakeQueue>(take_queue)();
+  }
+
+ private:
+  std::atomic<bool> running_{true};
+};
+static_assert(alignof(RunningFlag) == utils::kCacheLineBytes &&
+              sizeof(RunningFlag) == utils::kCacheLineBytes);
 
 // Counters for INFO, like Redis' per-thread "io_thread_<n>" lines.
 struct IoThreadInfo {
@@ -70,11 +103,15 @@ class IoThread {
 
   // Starts the thread; `main_loop` runs `on_ready`. Returns nullptr if the
   // thread or its event loop cannot be created. `main_running`, if given,
-  // is true while the main thread is awake, which then calls TakeHandoffs
-  // before it sleeps, so a handoff made meanwhile needs no wakeup.
+  // is the main thread's flag; that thread then calls TakeHandoffs before
+  // it sleeps, so a handoff made while it is awake needs no wakeup.
+  // `cron_interval_ms` is how often the thread's timer runs, which sweeps
+  // its idle clients; a test lengthens it so that only a wakeup ends the
+  // thread's poll.
   static std::unique_ptr<IoThread> Create(
       size_t index, event_loop::Loop* main_loop, ReadyCallback on_ready,
-      const std::atomic<bool>* main_running = nullptr);
+      const RunningFlag* main_running = nullptr,
+      int64_t cron_interval_ms = IdleClientSweeper::kIntervalMs);
   IoThread(const IoThread&) = delete;
   IoThread& operator=(const IoThread&) = delete;
   IoThread(IoThread&&) = delete;
@@ -120,7 +157,7 @@ class IoThread {
   IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
            std::unique_ptr<Wakeup> inbox_wakeup,
            std::unique_ptr<Wakeup> outbox_wakeup, event_loop::Loop* main_loop,
-           ReadyCallback on_ready, const std::atomic<bool>* main_running);
+           ReadyCallback on_ready, const RunningFlag* main_running);
   void Send(std::span<Client* const> clients, bool returning);
 
   // I/O thread.
@@ -176,12 +213,11 @@ class IoThread {
 
   std::atomic<uint64_t> reads_processed_{0};
   std::atomic<uint64_t> writes_processed_{0};
-  // Whether this thread is awake, not waiting in its poll, as Redis'
-  // IOThread.running: Send wakes it only when it is not, since it takes its
-  // inbox before it sleeps. The main thread's flag, when given, does the
-  // same for SendHandoffs.
-  std::atomic<bool> running_{true};
-  const std::atomic<bool>* main_running_;
+  // This thread's flag, as Redis' IOThread.running: Send wakes it only
+  // when it is not awake, since it takes its inbox before it sleeps. The
+  // main thread's flag, when given, does the same for SendHandoffs.
+  RunningFlag running_;
+  const RunningFlag* main_running_;
 };
 }  // namespace redis_simple
 

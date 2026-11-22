@@ -3,7 +3,6 @@
 
 #include <sys/types.h>
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -125,10 +124,10 @@ class Server {
   int64_t fork_start_microseconds_{};
   std::string require_pass_;
   bool protected_mode_{true};
-  // Whether this thread is awake, as Redis' server.running: the I/O threads
-  // wake it only when it is not, since BeforeSleep takes their handoffs.
+  // This thread's flag, as Redis' server.running: the I/O threads wake it
+  // only when it is not awake, since BeforeSleep takes their handoffs.
   // Declared before io_threads_, which read it, so it outlives them.
-  std::atomic<bool> main_running_{true};
+  RunningFlag main_running_;
   std::vector<std::unique_ptr<IoThread>> io_threads_;
   ServerContext context_;
   // Clients whose replies wait for the AOF flush in BeforeSleep: those the

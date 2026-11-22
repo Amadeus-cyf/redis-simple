@@ -5,9 +5,9 @@
 #include <unistd.h>
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -20,6 +20,7 @@
 #include "event_loop/loop.h"
 #include "server/client.h"
 #include "server/db/db.h"
+#include "server/idle_client_sweeper.h"
 #include "tcp/tcp.h"
 
 namespace redis_simple {
@@ -38,7 +39,8 @@ class MainThread {
   MainThread& operator=(MainThread&&) = delete;
 
   std::unique_ptr<IoThread> StartThread(
-      const std::atomic<bool>* main_running = nullptr) {
+      const RunningFlag* main_running = nullptr,
+      int64_t cron_interval_ms = IdleClientSweeper::kIntervalMs) {
     return IoThread::Create(
         1, loop_.get(),
         [this](IoThread* const thread, std::vector<Handoff>* const handoffs) {
@@ -59,22 +61,23 @@ class MainThread {
           }
           thread->Return(ran);
         },
-        main_running);
+        main_running, cron_interval_ms);
   }
 
   // Starts a thread that wakes this one only while it sleeps, as the
   // server's does: the loop takes the thread's handoffs before it sleeps,
-  // says it sleeps, and takes them once more (Server::BeforeSleep).
-  std::unique_ptr<IoThread> StartThreadThatSkipsWakeups() {
-    std::unique_ptr<IoThread> thread = StartThread(&running_);
+  // says it sleeps, and takes them once more (Server::BeforeSleep). The
+  // thread's timer runs every `cron_interval_ms`.
+  std::unique_ptr<IoThread> StartThreadThatSkipsWakeups(
+      int64_t cron_interval_ms) {
+    std::unique_ptr<IoThread> thread = StartThread(&running_, cron_interval_ms);
     IoThread* const instance = thread.get();
     loop_->SetBeforeSleep([this, instance] {
       if (!instance->TakeHandoffs()) {
-        running_.store(false);
-        instance->TakeHandoffs();
+        running_.SleepAndTake([instance] { return instance->TakeHandoffs(); });
       }
     });
-    loop_->SetAfterSleep([this] { running_.store(true); });
+    loop_->SetAfterSleep([this] { running_.SetRunning(); });
     return thread;
   }
 
@@ -179,7 +182,7 @@ class MainThread {
   std::vector<Client*> held_;
   bool hold_{};
   int handoff_batches_{0};
-  std::atomic<bool> running_{true};
+  RunningFlag running_;
 };
 
 void Send(int fd, std::string_view data) {
@@ -237,19 +240,42 @@ TEST(IoThreadTest, RunsCommandsOnTheMainThreadAndWritesReplies) {
   thread->Stop();
 }
 
+TEST(IoThreadTest, RunningFlagIsClearedBeforeTheQueueIsTakenAgain) {
+  RunningFlag flag;
+  EXPECT_TRUE(flag.Running());
+  // A sender that queued while the flag was set sent no wakeup, so the
+  // thread must look at its queue after the flag is cleared, not before.
+  bool running_when_taken = true;
+
+  const bool took = flag.SleepAndTake([&flag, &running_when_taken] {
+    running_when_taken = flag.Running();
+    return true;
+  });
+
+  EXPECT_TRUE(took);
+  EXPECT_FALSE(running_when_taken);
+  EXPECT_FALSE(flag.Running());
+  EXPECT_FALSE(flag.SleepAndTake([] { return false; }));
+  flag.SetRunning();
+  EXPECT_TRUE(flag.Running());
+}
+
 TEST(IoThreadTest, NoRoundTripWaitsForATimerWhenWakeupsAreSkipped) {
   MainThread main;
-  auto thread = main.StartThreadThatSkipsWakeups();
+  // Each side sleeps between requests, so each handoff either finds the
+  // other awake and sends no wakeup, or finds it asleep and wakes it. A
+  // wakeup skipped while the other side was going to sleep leaves the
+  // request waiting until that side's poll gives up. With no timer due, a
+  // poll waits a second: the main loop here has no timer, and the I/O
+  // thread's is put a minute away instead of its usual 100 ms. A second is
+  // far longer than any delay the machine's scheduling adds, so a round
+  // trip that takes half of one lost a wakeup.
+  constexpr int64_t kCronIntervalMs = 60'000;
+  auto thread = main.StartThreadThatSkipsWakeups(kCronIntervalMs);
   ASSERT_NE(thread, nullptr);
   auto [client, peer] = main.Connect(thread.get());
   std::string received;
   main.Watch(peer, &received);
-  // Each side sleeps between requests, so each handoff either finds the
-  // other awake and sends no wakeup, or finds it asleep and wakes it. A
-  // wakeup skipped while the other side was going to sleep would leave the
-  // request waiting for a timer: up to a second for the main loop here, and
-  // 100 ms for the I/O thread's cron. A wrong condition would delay most
-  // round trips; a few slow ones are the machine's scheduling.
   int slow = 0;
   for (int i = 1; i <= 300; ++i) {
     const auto start = std::chrono::steady_clock::now();
@@ -262,11 +288,11 @@ TEST(IoThreadTest, NoRoundTripWaitsForATimerWhenWakeupsAreSkipped) {
     }
     ASSERT_EQ(received, expected);
     if (std::chrono::steady_clock::now() - start >=
-        std::chrono::milliseconds(90)) {
+        std::chrono::milliseconds(500)) {
       ++slow;
     }
   }
-  EXPECT_LE(slow, 3);
+  EXPECT_EQ(slow, 0);
   thread->Stop();
 }
 

@@ -4,7 +4,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -66,7 +65,7 @@ bool Server::Run(const ServerOptions& options) {
   if (!io_threads_.empty()) {
     // Only the I/O threads read the flag, so a server without them skips
     // the call on every iteration.
-    loop_->SetAfterSleep([this] { main_running_.store(true); });
+    loop_->SetAfterSleep([this] { main_running_.SetRunning(); });
   }
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
@@ -248,6 +247,10 @@ void Server::BeforeSleep() {
     held_clients_.clear();
     returning_clients_.clear();
     returning_batches_.clear();
+    // The loop polls once more before it stops. This thread's flag stays
+    // set, so the I/O threads send it no wakeups, and that poll must not
+    // wait for one.
+    loop_->SetDontWait(true);
     Stop();
     return;
   }
@@ -262,8 +265,8 @@ void Server::BeforeSleep() {
   // iteration, which therefore does not wait either.
   bool dont_wait = took_handoffs;
   if (!dont_wait) {
-    main_running_.store(false);
-    dont_wait = TakeIoThreadHandoffs();
+    dont_wait =
+        main_running_.SleepAndTake([this] { return TakeIoThreadHandoffs(); });
   }
   loop_->SetDontWait(dont_wait);
 }
