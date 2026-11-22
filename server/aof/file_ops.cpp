@@ -131,6 +131,15 @@ int OpenFile(const std::string& path, int flags, mode_t mode) {
   return open(path.c_str(), flags, mode);
 }
 
+void AdviseSequentialReads(int fd) {
+#ifdef __linux__
+  // A hint: loading goes on without it.
+  posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+#else
+  static_cast<void>(fd);
+#endif
+}
+
 bool SyncFile(FileOps* const file_ops, int fd) {
   while (file_ops->Sync(fd) < 0) {
     if (errno != EINTR) {
@@ -155,7 +164,7 @@ bool SyncDirectory(FileOps* const file_ops, const std::string& directory) {
 }
 
 std::optional<size_t> FileSize(int fd) {
-  struct stat file_info{};
+  struct stat file_info {};
   if (fstat(fd, &file_info) < 0 || file_info.st_size < 0 ||
       static_cast<uintmax_t>(file_info.st_size) >
           std::numeric_limits<size_t>::max()) {
@@ -165,7 +174,7 @@ std::optional<size_t> FileSize(int fd) {
 }
 
 std::optional<size_t> PathSize(const std::string& path) {
-  struct stat info{};
+  struct stat info {};
   if (stat(path.c_str(), &info) < 0) {
     return std::nullopt;
   }
@@ -173,12 +182,12 @@ std::optional<size_t> PathSize(const std::string& path) {
 }
 
 bool PathExists(const std::string& path) {
-  struct stat info{};
+  struct stat info {};
   return stat(path.c_str(), &info) == 0;
 }
 
 bool IsDirectory(const std::string& path) {
-  struct stat info{};
+  struct stat info {};
   return stat(path.c_str(), &info) == 0 && S_ISDIR(info.st_mode);
 }
 

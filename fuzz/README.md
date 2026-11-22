@@ -40,7 +40,7 @@ similar names, so the table gives the layer.
 | `set_fuzzer` | data type | `Set` across its encodings |
 | `hash_fuzzer` | data type | `Hash`, including scanning |
 | `zset_fuzzer` | data type | `ZSet` scores, ranks, and ranges |
-| `listpack_fuzzer` | container | `Listpack` edits against a vector |
+| `listpack_fuzzer` | container | `Listpack` edits against a vector, and widening the short backlens Redis 8.8 to 8.10 wrote |
 | `quicklist_fuzzer` | container | `Quicklist` with a fuzzed node size against a vector |
 | `dict_fuzzer` | container | `Dict` scan, stepwise clear, resize policy, and rehash |
 | `skiplist_fuzzer` | container | `Skiplist` ranks, ranges, and updates |

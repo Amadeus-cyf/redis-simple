@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace redis_simple::containers {
@@ -45,6 +46,14 @@ class ListpackReader {
   uint16_t header_count_{};
   bool header_read_{};
 };
+// Redis 8.8 to 8.10 wrote the backlen of an element whose encoded size is
+// 16383, 2097151, or 268435455 bytes one byte shorter than every other
+// release, and earlier builds of this server did too. Rewrites those
+// backlens in `*listpack` in the usual width, which ListpackReader and
+// Listpack read, as Redis 8.12's lpUpgradeCompactBacklen does, and returns
+// whether it changed anything. Bytes that do not read as a listpack
+// throughout are left as they are, for ListpackReader to reject.
+bool WidenCompactBacklens(std::string* listpack);
 }  // namespace redis_simple::containers
 
 #endif  // REDIS_SIMPLE_CONTAINERS_LISTPACK_READER_H_

@@ -81,11 +81,17 @@ RewriteResult Aof::StartRewrite(db::RedisDb* const db) {
   }
   // Every mutation applied to `db` must be in the current incremental file
   // before the switch: the snapshot covers them, and the next file must
-  // not. Redis carries bytes a failed write left in the buffer into the new
-  // file, where replay would apply them twice; wait them out instead.
+  // not, or replay would apply them twice. So a rewrite does not start while
+  // a failed write leaves them in the buffer, and counts as a failure, which
+  // backs automatic rewrites off, as in Redis 8.12's
+  // rewriteAppendOnlyFileBackground.
   Flush(true);
   if (!batch_.empty()) {
+    RS_LOG_ERROR(
+        "Can't flush the AOF buffer to disk. Background AOF rewrite "
+        "aborted.\n");
     last_rewrite_ok_ = false;
+    ++consecutive_rewrite_failures_;
     return RewriteResult::kError;
   }
   // Redis resets aof_selected_db before switching files, so the new file

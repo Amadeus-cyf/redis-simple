@@ -124,7 +124,7 @@ enum class ValueStatus : uint8_t {
   kFailed,
 };
 
-std::string_view TypeName(int type) {
+std::string_view TypeName(int type, int version) {
   switch (type) {
     case kTypeModulePreGa:
     case kTypeModule2:
@@ -153,6 +153,11 @@ std::string_view TypeName(int type) {
       return "a hash template";
     case kTypeArray:
       return "an array";
+    case kTypeGcraOrBitmap:
+      return version <= 15 ? "a GCRA rate limiter" : "a bitmap";
+    case kTypeSetListpackEx:
+    case kTypeSetMetadata:
+      return "a set with member expiration";
     case kTypeGcra:
       return "a GCRA rate limiter";
     default:
@@ -439,6 +444,9 @@ class Loader {
   ValueStatus ReadZSet(int type, db::RedisObjectPtr* out);
   ValueStatus ReadHash(int type, db::RedisObjectPtr* out);
   ValueStatus ReadZSetListpack(db::RedisObjectPtr* out);
+  // ReadString for a listpack, whose short backlens, as Redis 8.8 to 8.10
+  // and earlier builds of this server wrote them, it widens.
+  bool ReadListpack(std::string* blob);
   bool InsertZSetEntry(std::string_view member, double score,
                        data_types::ZSet* zset);
   bool ReadIntset(const std::string& blob, data_types::Set* set);
@@ -455,6 +463,8 @@ class Loader {
   db::RedisDb* db_;
   const LoadOptions* options_;
   LoadStats* stats_;
+  // The file's format version, from its header.
+  int version_{};
   std::string compressed_;
   // CheckCompactListpack's duplicate checks, kept to reuse their capacity.
   std::vector<std::string_view> strings_;
@@ -622,6 +632,9 @@ ValueStatus Loader::ReadList(int type, db::RedisObjectPtr* const out) {
       if (!ReadString(&node)) {
         return ValueStatus::kFailed;
       }
+      if (container == kContainerPacked) {
+        containers::WidenCompactBacklens(&node);
+      }
       if (node.empty()) {
         Corrupt("an empty quicklist node");
         return ValueStatus::kFailed;
@@ -711,7 +724,7 @@ ValueStatus Loader::ReadSet(int type, db::RedisObjectPtr* const out) {
       return ValueStatus::kFailed;
     }
   } else {
-    if (!ReadString(&element)) {
+    if (!ReadListpack(&element)) {
       return ValueStatus::kFailed;
     }
     switch (CheckCompactListpack(element, kSetKind)) {
@@ -793,7 +806,7 @@ ValueStatus Loader::ReadZSet(int type, db::RedisObjectPtr* const out) {
 // the listpack may store as an integer.
 ValueStatus Loader::ReadZSetListpack(db::RedisObjectPtr* const out) {
   std::string blob;
-  if (!ReadString(&blob)) {
+  if (!ReadListpack(&blob)) {
     return ValueStatus::kFailed;
   }
   switch (CheckCompactListpack(blob, kZSetKind)) {
@@ -851,7 +864,7 @@ ValueStatus Loader::ReadHash(int type, db::RedisObjectPtr* const out) {
     }
   } else {
     std::string blob;
-    if (!ReadString(&blob)) {
+    if (!ReadListpack(&blob)) {
       return ValueStatus::kFailed;
     }
     switch (CheckCompactListpack(blob, kHashKind)) {
@@ -910,7 +923,7 @@ ValueStatus Loader::ReadValue(int type, db::RedisObjectPtr* const out) {
     case kTypeHashListpack:
       return ReadHash(type, out);
     default: {
-      const std::string_view name = TypeName(type);
+      const std::string_view name = TypeName(type, version_);
       RS_LOG_ERROR(
           "The RDB data holds %.*s (RDB type %d), which this server does not "
           "support\n",
@@ -918,6 +931,18 @@ ValueStatus Loader::ReadValue(int type, db::RedisObjectPtr* const out) {
       return ValueStatus::kFailed;
     }
   }
+}
+
+// Redis 8.12 widens the short backlens only in RDB versions 14 and 15, which
+// Redis 8.8 to 8.10 wrote, but earlier builds of this server wrote them in
+// version 11, so they are widened in every version: the two widths cannot be
+// mistaken for each other.
+bool Loader::ReadListpack(std::string* const blob) {
+  if (!ReadString(blob)) {
+    return false;
+  }
+  containers::WidenCompactBacklens(blob);
+  return true;
 }
 
 // An aux field: a key and a value. Redis logs a few; none change loading.
@@ -1016,6 +1041,7 @@ bool Loader::Load() {
   if (!version.has_value()) {
     return false;
   }
+  version_ = *version;
   // Set by an expiration opcode, for the key that follows it.
   std::optional<int64_t> expire;
   while (true) {
@@ -1055,6 +1081,9 @@ bool Loader::Load() {
         }
         continue;
       }
+      case kOpcodeKeyNoEvict:
+        // Exempts the next key from eviction, which this server does not do.
+        continue;
       case kOpcodeEof:
         break;
       case kOpcodeSelectDb: {
@@ -1142,6 +1171,7 @@ bool LoadRdb(int fd, db::RedisDb* const db, const LoadOptions& options,
     return false;
   }
   *stats = {};
+  aof::AdviseSequentialReads(fd);
   // Keys load as they were, even if logically expired, until loading ends.
   db->SetLoading(true);
   auto loader = std::make_unique<Loader>(

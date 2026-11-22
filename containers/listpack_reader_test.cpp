@@ -71,7 +71,7 @@ TEST(ListpackReaderTest, ReadsWhatListpackWrites) {
 }
 
 TEST(ListpackReaderTest, ReadsRedisBytes) {
-  // RPUSH l 0 -4097 5000-byte-string, as Redis 8.10 encodes it.
+  // RPUSH l 0 -4097 5000-byte-string, as Redis 8.12 encodes it.
   std::string blob = {'\0', '\0', '\0', '\0', '\x03', '\0'};
   blob += std::string("\x00\x01", 2);              // 0
   blob += std::string("\xf1\xff\xef\x03", 4);      // -4097
@@ -117,6 +117,107 @@ TEST(ListpackReaderTest, NeverReadsOutsideCorruptedBytes) {
     }
     // Any result is fine; sanitizers catch reads outside the buffer.
     ReadAll(corrupted);
+  }
+}
+// A listpack Redis wrote for HSET h f <value> with a raised
+// hash-max-listpack-value, where `value` is a 32-bit-length string of
+// `length` bytes of `fill`, so its encoded size is `length` + 5, followed by
+// the value's backlen `backlen`.
+std::string HashListpack(size_t length, char fill, std::string_view backlen) {
+  std::string body("\x81\x66\x02\xf0", 4);
+  for (int shift = 0; shift < 32; shift += 8) {
+    body.push_back(static_cast<char>((length >> shift) & 0xff));
+  }
+  body.append(length, fill);
+  body.append(backlen);
+  const size_t total = 6 + body.size() + 1;
+  std::string listpack;
+  for (int shift = 0; shift < 32; shift += 8) {
+    listpack.push_back(static_cast<char>((total >> shift) & 0xff));
+  }
+  listpack.append("\x02\x00", 2);
+  return listpack + body + '\xff';
+}
+
+TEST(WidenCompactBacklensTest, WidensTheBacklensRedis810Wrote) {
+  struct Case {
+    size_t length;
+    std::string_view compact;
+    std::string_view usual;
+  };
+  for (const Case& test : {Case{16378, std::string_view("\x7f\xff", 2),
+                                std::string_view("\x00\xff\xff", 3)},
+                           Case{2097146, std::string_view("\x7f\xff\xff", 3),
+                                std::string_view("\x00\xff\xff\xff", 4)}}) {
+    // Redis 8.10's bytes, which a reader of the usual width rejects.
+    std::string listpack = HashListpack(test.length, 'v', test.compact);
+    EXPECT_FALSE(ReadAll(listpack).has_value());
+    ASSERT_TRUE(WidenCompactBacklens(&listpack));
+    // Redis 8.12's bytes.
+    EXPECT_EQ(listpack, HashListpack(test.length, 'v', test.usual));
+    EXPECT_EQ(ReadAll(listpack),
+              (std::vector<std::string>{"f", std::string(test.length, 'v')}));
+  }
+}
+
+TEST(WidenCompactBacklensTest, WidensEveryShortBacklenAmongOtherEntries) {
+  // Two short backlens among usual ones, as Listpack would write the
+  // elements but for those two bytes.
+  const std::string big(16378, 'x');
+  Listpack expected;
+  for (const std::string& element :
+       std::vector<std::string>{"a", big, "12345", big, "z"}) {
+    ASSERT_TRUE(expected.Append(element));
+  }
+  std::string listpack(expected.Bytes());
+  const std::string usual("\x00\xff\xff", 3);
+  const std::string compact("\x7f\xff", 2);
+  int replaced = 0;
+  for (size_t at = listpack.find(usual); at != std::string::npos;
+       at = listpack.find(usual, at + compact.size())) {
+    listpack.replace(at, usual.size(), compact);
+    ++replaced;
+  }
+  ASSERT_EQ(replaced, 2);
+  for (int shift = 0; shift < 32; shift += 8) {
+    listpack[shift / 8] = static_cast<char>((listpack.size() >> shift) & 0xff);
+  }
+  ASSERT_TRUE(WidenCompactBacklens(&listpack));
+  EXPECT_EQ(listpack, expected.Bytes());
+}
+
+TEST(WidenCompactBacklensTest, LeavesOtherBytesAlone) {
+  // The usual widths, and a listpack too small for a short backlen.
+  for (std::string listpack :
+       {HashListpack(16378, 'v', std::string_view("\x00\xff\xff", 3)),
+        HashListpack(100, 'v', "i")}) {
+    const std::string before = listpack;
+    EXPECT_FALSE(WidenCompactBacklens(&listpack));
+    EXPECT_EQ(listpack, before);
+  }
+}
+
+TEST(WidenCompactBacklensTest, DoesNotRepairCorruption) {
+  const std::string compact("\x7f\xff", 2);
+  const std::string good = HashListpack(16378, 'v', compact);
+  std::vector<std::string> corrupt;
+  // A wrong total size in the header.
+  corrupt.push_back(good);
+  corrupt.back()[0] = static_cast<char>(corrupt.back()[0] + 1);
+  // No terminator.
+  corrupt.push_back(good.substr(0, good.size() - 1));
+  // A byte too many before the terminator.
+  corrupt.push_back(HashListpack(16378, 'v', std::string("\x7f\xff\x00", 3)));
+  // Not quite the short form: 7f fe.
+  corrupt.push_back(HashListpack(16378, 'v', std::string("\x7f\xfe", 2)));
+  // A string length that runs past the end: 65536 bytes more.
+  corrupt.push_back(good);
+  corrupt.back()[12] = '\x01';
+  for (std::string& listpack : corrupt) {
+    const std::string before = listpack;
+    EXPECT_FALSE(WidenCompactBacklens(&listpack));
+    EXPECT_EQ(listpack, before);
+    EXPECT_FALSE(ReadAll(listpack).has_value());
   }
 }
 }  // namespace

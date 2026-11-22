@@ -386,8 +386,16 @@ TEST_F(RdbTest, RejectsUnsupportedTypesAndDatabases) {
             zero_checksum);
   EXPECT_FALSE(Load(db.get()));
   // A newer format version.
-  WriteFile("REDIS0016\xff" + zero_checksum);
+  WriteFile("REDIS0018\xff" + zero_checksum);
   EXPECT_FALSE(Load(db.get()));
+  // Redis 8.12's mark that the next key is exempt from eviction (opcode
+  // 241), which is ignored.
+  WriteFile(std::string("REDIS0017\xfe\x00\xf1\x00\x01k\x01v\xff", 18) +
+            zero_checksum);
+  ASSERT_TRUE(Load(db.get()));
+  EXPECT_EQ(DescribeAll(db.get()),
+            (std::map<std::string, std::string>{{"k", "string:v"}}));
+  db = db::RedisDb::Create();
   // A version this server reads, with a string key in database 0.
   WriteFile(header + std::string("\xfe\x00\x00\x01k\x01v\xff", 8) +
             zero_checksum);
@@ -493,9 +501,17 @@ std::string FileWithValue(uint8_t type, const std::string& blob) {
   file.append("\xfe\x00", 2);
   file.push_back(static_cast<char>(type));
   file.append("\x01k");
-  // A 14-bit RDB length.
-  file.push_back(static_cast<char>(0x40 | (blob.size() >> 8)));
-  file.push_back(static_cast<char>(blob.size() & 0xff));
+  if (blob.size() < 16384) {
+    // A 14-bit RDB length.
+    file.push_back(static_cast<char>(0x40 | (blob.size() >> 8)));
+    file.push_back(static_cast<char>(blob.size() & 0xff));
+  } else {
+    // A 32-bit one, big-endian.
+    file.push_back('\x80');
+    for (int shift = 24; shift >= 0; shift -= 8) {
+      file.push_back(static_cast<char>((blob.size() >> shift) & 0xff));
+    }
+  }
   file += blob;
   file.push_back('\xff');
   return file + std::string(8, '\0');
@@ -595,20 +611,44 @@ TEST_F(RdbTest, RejectsInvalidCompactValues) {
   }
 }
 
-// A file Redis 8.10 wrote with SAVE, holding every type in each of its
-// encodings, LZF-compressed strings, expirations, and a key that had
-// expired.
-TEST_F(RdbTest, LoadsAFileRedisWrote) {
-  const std::string fixture = (std::filesystem::path(__FILE__).parent_path() /
-                               "testdata" / "redis_8_10.rdb")
-                                  .string();
+// A hash listpack as Redis 8.10 wrote it for HSET h f <16378 bytes> with a
+// raised hash-max-listpack-value: the value's encoded size is 16383 bytes,
+// and its backlen 7f ff instead of 00 ff ff.
+std::string ShortBacklenListpack() {
+  std::string listpack("\x0b\x40\x00\x00\x02\x00\x81\x66\x02", 9);
+  listpack.append("\xf0\xfa\x3f\x00\x00", 5);
+  listpack.append(16378, 'a');
+  listpack.append("\x7f\xff\xff", 3);
+  return listpack;
+}
+
+// Earlier builds of this server wrote the short backlens Redis 8.8 to 8.10
+// did, in RDB version 11, where Redis 8.12 does not widen them; this server
+// does, in every version.
+TEST_F(RdbTest, WidensShortBacklensInEveryVersion) {
+  WriteFile(FileWithValue(kHashListpackType, ShortBacklenListpack()));
+  auto db = db::RedisDb::Create();
+  ASSERT_TRUE(Load(db.get()));
+  // Too long for this server's listpacks, so rebuilt.
+  EXPECT_EQ(DescribeAll(db.get()).at("k"),
+            "hash(dict):f=" + std::string(16378, 'a') + ",");
+}
+
+// Loads `name` from testdata/, a file scripts/make_rdb_fixture.py made with
+// a redis-server: every type in each of its encodings, LZF-compressed
+// strings, expirations, a key that had expired, and a hash listpack whose
+// values sit at backlen boundaries.
+void ExpectTheFixture(std::string_view name) {
+  const std::string fixture =
+      (std::filesystem::path(__FILE__).parent_path() / "testdata" / name)
+          .string();
   const int fd = aof::OpenFile(fixture, O_RDONLY);
   ASSERT_GE(fd, 0) << fixture;
   auto db = db::RedisDb::Create();
   LoadStats stats;
   ASSERT_TRUE(LoadRdb(fd, db.get(), {.now_ms = kFuture - 1}, &stats));
   close(fd);
-  EXPECT_EQ(stats.keys_loaded, 19);
+  EXPECT_EQ(stats.keys_loaded, 20);
   EXPECT_EQ(stats.keys_expired, 1);
 
   const std::map<std::string, std::string> keys = DescribeAll(db.get());
@@ -623,7 +663,7 @@ TEST_F(RdbTest, LoadsAFileRedisWrote) {
   EXPECT_EQ(keys.at("str:compressible"), "string:" + compressible);
   const std::string random = keys.at("str:random").substr(7);
   EXPECT_EQ(random.size(), 300);
-  EXPECT_TRUE(random.starts_with("ieqh524yng5by1a2rogubbb8ayn1b7o2"));
+  EXPECT_TRUE(random.starts_with("29326ml64lg2tjf8cz2ka7edcmpb3u2m"));
   EXPECT_EQ(keys.at("list:small"), "list(listpack):a,1,-5,300,bbb,");
   std::string big_list = "list(quicklist):";
   for (int i = 1; i <= 600; ++i) {
@@ -648,7 +688,17 @@ TEST_F(RdbTest, LoadsAFileRedisWrote) {
   EXPECT_EQ(keys.at("expiring:hash"),
             "hash(listpack):a=b, expire=4102444800000");
   EXPECT_EQ(keys.count("expired:past"), 0);
+  // Too long for this server's listpacks, so rebuilt.
+  EXPECT_EQ(keys.at("hash:boundary"),
+            "hash(dict):first=" + std::string(16378, 'a') +
+                ",second=" + std::string(2097146, 'b') + ",");
 }
+
+// Redis 8.10 wrote RDB version 15, with the short backlens in the hash.
+TEST_F(RdbTest, LoadsAFileRedis810Wrote) { ExpectTheFixture("redis_8_10.rdb"); }
+
+// Redis 8.12 writes RDB version 17, with backlens of the usual width.
+TEST_F(RdbTest, LoadsAFileRedis812Wrote) { ExpectTheFixture("redis_8_12.rdb"); }
 
 // File operations whose renames fail on request, to make saves fail.
 class FailableRenames final : public aof::FileOps {

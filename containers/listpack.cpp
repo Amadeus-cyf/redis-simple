@@ -808,13 +808,13 @@ uint8_t Listpack::BacklenBytes(size_t backlen) {
   if (backlen <= BacklenThreshold::kSize1ByteBacklenMax) {
     return 1;
   }
-  if (backlen <= BacklenThreshold::kSize2BytesBacklenMax) {
+  if (backlen < BacklenThreshold::kSize2BytesBacklenLimit) {
     return 2;
   }
-  if (backlen <= BacklenThreshold::kSize3BytesBacklenMax) {
+  if (backlen < BacklenThreshold::kSize3BytesBacklenLimit) {
     return 3;
   }
-  if (backlen <= BacklenThreshold::kSize4BytesBacklenMax) {
+  if (backlen < BacklenThreshold::kSize4BytesBacklenLimit) {
     return 4;
   }
   return 5;
