@@ -319,8 +319,11 @@ TEST(RedisDbTest, ExpirationTimesBeyondTheObjectFieldAreKeptExactly) {
   EXPECT_EQ(redis_db->Expiration("far"), std::optional<int64_t>(kLatest));
   EXPECT_EQ(redis_db->LookupKeyWithExpiration("far").expire,
             std::optional<int64_t>(kLatest));
+  // Pinned, so both sides read the same millisecond.
+  redis_db->PinCommandTime();
   EXPECT_EQ(redis_db->TimeToLive("far", TtlResolution::kMilliseconds),
             kLatest - redis_db->Now());
+  redis_db->UnpinCommandTime();
   EXPECT_EQ(expirations(), (std::map<std::string, int64_t>{
                                {"far", kLatest},
                                {"edge", RedisObject::kMaxExpire},
