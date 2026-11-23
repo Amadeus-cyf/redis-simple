@@ -177,6 +177,7 @@ bool Aof::Replay(db::RedisDb* const db) {
           files[index]->name.c_str(), std::strerror(errno));
       return false;
     }
+    AdviseSequentialReads(fd);
     if (files[index]->type == ManifestFile::Type::kBase) {
       base_size_ = FileSize(fd).value_or(0);
     }

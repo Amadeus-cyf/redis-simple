@@ -18,7 +18,7 @@ Enable AOF persistence with Redis-style fsync policies:
 
 ## Files
 
-AOF is disabled by default. When enabled, it follows Redis 8.10's multi-part
+AOF is disabled by default. When enabled, it follows Redis 8.12's multi-part
 AOF (`src/aof.c`), and Redis loads its files and it loads Redis', with the
 base file in either of Redis' formats. The AOF is a directory
 (`--appenddirname`, default `appendonlydir`) holding one base file, the
@@ -124,11 +124,18 @@ writes the same way until the next fsync succeeds. With `always`, which
 promises that every acknowledged write is synced, a failed write or sync stops
 the server instead.
 
+A rewrite does not start while a failed write is still pending, since the
+snapshot and the next incremental file would both hold those commands and
+replay would apply them twice; it counts as a failed rewrite, as in Redis 8.12.
+
 ## Differences from Redis
 
-Two failure cases differ from Redis on purpose, where Redis can lose data. When
+One failure case differs from Redis on purpose, where Redis can lose data. When
 a new manifest is renamed into place but syncing the directory fails, Redis
 deletes the new files the live manifest lists; this server keeps them, rejects
 writes, and keeps the replaced files until a later manifest persists safely.
-And a rewrite does not start while a failed write is still pending, since
-Redis would then replay those commands twice.
+
+`INFO persistence` has no `aof_cmd_duration`, Redis 8.12's estimate of how
+long replaying the AOF would take, which it adds up from each command's
+measured run time. This server does not time commands, and would need two
+clock reads per write command to.

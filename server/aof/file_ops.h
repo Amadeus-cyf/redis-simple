@@ -94,6 +94,10 @@ std::shared_ptr<FileOps> DefaultFileOps();
 // open() with O_CLOEXEC, so the files never leak into a forked child that
 // execs. Returns the descriptor, or -1 with errno set.
 int OpenFile(const std::string& path, int flags, mode_t mode = 0);
+// Tells the kernel that `fd` will be read from start to end, so it reads
+// further ahead (posix_fadvise's SEQUENTIAL), as Redis 8.12 does for the RDB
+// and AOF files it loads. Does nothing where that is not available.
+void AdviseSequentialReads(int fd);
 // fsync, retried when interrupted.
 bool SyncFile(FileOps* file_ops, int fd);
 // Opens the directory and syncs it, so renames inside it survive a crash.

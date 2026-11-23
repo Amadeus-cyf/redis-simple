@@ -106,12 +106,13 @@ Guidance for AI coding agents working in this repository.
   snapshots.
   Read the relevant part before changing them, and update it with them.
 - The AOF lives in `server/aof/` (see its file table in `docs/design.md`).
-  Keep its logic aligned with the latest Redis release's `src/aof.c` (8.10 at
+  Keep its logic aligned with the latest Redis release's `src/aof.c` (8.12 at
   the time of writing): manifest format and parsing, file naming and sequence
   numbers, startup, upgrade, loading, flushing, fsync errors, rewrite
   scheduling and limiting, and `INFO` fields. Document any deliberate
-  difference in `server/aof/README.md` and `docs/design.md`; two exist, where
-  Redis can lose data. Check interoperability with a `redis-server` when one is
+  difference in `server/aof/README.md` and `docs/design.md`; one exists where
+  Redis can lose data, and `INFO` lacks `aof_cmd_duration`, which would need
+  commands timed. Check interoperability with a `redis-server` when one is
   available: each must load the other's AOF directory, with the base file
   as RDB (`aof-use-rdb-preamble yes`, the default) and as commands. Detect a
   base's format by its content (`REDIS`), as Redis does, never by its name.
@@ -159,7 +160,9 @@ Guidance for AI coding agents working in this repository.
 - The RDB loader never trusts the file: it checks every length against the
   bytes left before allocating, validates encoded listpacks and intsets with
   `containers::ListpackReader` and the intset checks, and rejects duplicates and
-  NaN scores. Like Redis, it keeps a set, hash, or sorted set listpack's bytes
+  NaN scores. Before validating a listpack it widens the one-byte-shorter
+  backlens Redis 8.8 to 8.10 and earlier builds of this server wrote
+  (`containers::WidenCompactBacklens`), in every RDB version. Like Redis, it keeps a set, hash, or sorted set listpack's bytes
   (`CreateFromListpack`), but only after one pass proves it is valid, fits
   this server's limits, holds sorted set pairs in order, and encodes each
   element as `Listpack` would; anything else is rebuilt through the data

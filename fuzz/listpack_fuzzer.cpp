@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "containers/listpack.h"
+#include "containers/listpack_reader.h"
 #include "fuzz/fuzz_input.h"
 #include "fuzz/sequence_model.h"
 #include "utils/strings.h"
@@ -165,11 +166,73 @@ void RunOperations(FuzzInput* input) {
     Verify(listpack, model);
   }
 }
+
+// Redis 8.8 to 8.10 wrote the backlen of an element whose encoded size is
+// 16383 bytes as 7f ff where Listpack writes 00 ff ff. Shortening them and
+// widening them again gives back the listpack's bytes, widening leaves a
+// listpack without them alone, and changed bytes never crash it.
+void CheckBacklenWidening(FuzzInput* input) {
+  constexpr size_t kBoundaryLength = 16378;  // Plus a 5-byte string header.
+  Listpack listpack;
+  std::vector<bool> boundary;
+  for (size_t count = 1 + input->ReadIndex(4); count > 0; --count) {
+    const bool big = input->ReadByte() % 2 == 0;
+    const std::string value =
+        big ? std::string(kBoundaryLength, static_cast<char>(input->ReadByte()))
+            : input->ReadValue(96);
+    Require(listpack.Append(value));
+    boundary.push_back(big);
+  }
+  const std::string usual(listpack.Bytes());
+  std::string bytes = usual;
+  Require(!containers::WidenCompactBacklens(&bytes) && bytes == usual);
+
+  // Shorten from the last element back, so earlier offsets stay valid.
+  bool shortened = false;
+  for (size_t index = boundary.size(); index > 0; --index) {
+    if (!boundary[index - 1]) {
+      continue;
+    }
+    const size_t backlen =
+        ValueOrAbort(listpack.OffsetAt(index - 1)) + kBoundaryLength + 5;
+    Require(bytes.compare(backlen, 3, std::string_view("\x00\xff\xff", 3)) ==
+            0);
+    bytes.replace(backlen, 3, std::string_view("\x7f\xff", 2));
+    shortened = true;
+  }
+  for (size_t i = 0; i < 4; ++i) {
+    bytes[i] = static_cast<char>((bytes.size() >> (8 * i)) & 0xff);
+  }
+  std::string widened = bytes;
+  Require(containers::WidenCompactBacklens(&widened) == shortened);
+  Require(widened == usual);
+  if (!input->HasData()) {
+    return;
+  }
+  // A changed byte: anything may happen but a crash.
+  const size_t offset = input->ReadIndex(bytes.size());
+  bytes[offset] =
+      static_cast<char>(bytes[offset] ^ (1 + (input->ReadByte() % 255)));
+  if (containers::WidenCompactBacklens(&bytes)) {
+    containers::ListpackReader reader(bytes);
+    containers::ListpackReader::Element element;
+    while (reader.Next(&element) ==
+           containers::ListpackReader::Status::kElement) {
+    }
+  }
+}
 }  // namespace
 }  // namespace redis_simple::fuzz
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   redis_simple::fuzz::FuzzInput input(data, size);
+  // One input in 16 checks backlen widening, whose 16 KB elements would
+  // slow the operations below.
+  if (size > 0 && data[0] % 16 == 0) {
+    input.ReadByte();
+    redis_simple::fuzz::CheckBacklenWidening(&input);
+    return 0;
+  }
   redis_simple::fuzz::RunOperations(&input);
   return 0;
 }
