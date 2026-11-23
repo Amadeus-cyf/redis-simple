@@ -192,10 +192,12 @@ Guidance for AI coding agents working in this repository.
 - Reply from `Server::BeforeSleep` in the iteration that processed the
   client's input, without waiting for a writable event; install a write
   callback only while output remains unsent. Read once per readable event,
-  into all the room the query buffer has: an empty buffer keeps up to 1 MiB
-  between requests (`DynamicBuffer::Compact`), so a client sending large
-  values reads each in one call, as Redis reads into a client's private
-  query buffer.
+  into all the room the query buffer has, as Redis does: an empty buffer
+  keeps up to 64 KiB between requests (`DynamicBuffer::Compact`), so a
+  request that fits arrives in one read. Redis keeps a buffer of any size
+  after a large argument, but under mimalloc one past 64 KiB costs a span
+  of 64 KiB slices per client until the idle sweep, so a larger buffer is
+  freed once it is empty.
 - An idle client keeps no buffers: `IdleClientSweeper` calls
   `Client::ReleaseIdleBuffers` on each client once a second, from the server
   cron without threaded I/O and otherwise from the client's I/O thread,

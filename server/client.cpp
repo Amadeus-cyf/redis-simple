@@ -204,8 +204,9 @@ ssize_t Client::ReadQuery() {
       std::clamp(pending_bulk, kReadBufferSize, kMaxBulkReadSize);
   char* const tail = query_buffer_.WritableTail(read_size);
   // Read into all the room the buffer has, as Redis does to save system
-  // calls: after a large request it keeps room for the next one, which then
-  // arrives in one read instead of a first 16 KiB and the rest.
+  // calls: after a request of up to 64 KiB the buffer keeps room for the
+  // next one (DynamicBuffer::Compact), which then arrives in one read
+  // instead of a first 16 KiB and the rest.
   const size_t room = query_buffer_.Capacity() - query_buffer_.Size();
   const ssize_t nread = connection_->Read({tail, room});
   if (nread == 0) {

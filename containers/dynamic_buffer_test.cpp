@@ -154,9 +154,9 @@ TEST(DynamicBufferTest, ReusesConsumedCapacityBeforeGrowing) {
   EXPECT_EQ(buffer.View(), std::string(500, 'a') + second);
 }
 
-TEST(DynamicBufferTest, CompactKeepsABufferOfUpToOneMebibyte) {
+TEST(DynamicBufferTest, CompactKeepsABufferOfUpToTheLargestSizeClass) {
   DynamicBuffer buffer;
-  const std::string value(size_t{64} * 1024, 'x');
+  const std::string value(size_t{32} * 1024, 'x');
   buffer.Append(value.data(), value.size());
   const size_t capacity = buffer.Capacity();
   ASSERT_GE(capacity, value.size());
@@ -168,7 +168,7 @@ TEST(DynamicBufferTest, CompactKeepsABufferOfUpToOneMebibyte) {
 
 TEST(DynamicBufferTest, CompactReleasesALargeBufferOnceItIsEmpty) {
   DynamicBuffer buffer;
-  const std::string large(size_t{2} << 20, 'x');
+  const std::string large(size_t{1} << 20, 'x');
   buffer.Append(large.data(), large.size());
   ASSERT_GE(buffer.Capacity(), large.size());
 
@@ -180,7 +180,7 @@ TEST(DynamicBufferTest, CompactReleasesALargeBufferOnceItIsEmpty) {
 
   buffer.Consume(3);
   buffer.Compact();
-  EXPECT_LE(buffer.Capacity(), size_t{1} << 20);
+  EXPECT_LE(buffer.Capacity(), size_t{64} * 1024);
   EXPECT_TRUE(buffer.Empty());
 
   // It still grows again as needed.
