@@ -190,7 +190,7 @@ after they return. Connections close on their I/O thread; the main thread only f
 
 ## The append-only file
 
-`server/aof/` follows Redis 8.10's `src/aof.c`. Its files:
+`server/aof/` follows Redis 8.12's `src/aof.c`. Its files:
 
 | File | What it holds |
 | --- | --- |
@@ -308,19 +308,23 @@ every command fits the replay limit (`Limits`).
 
 ### Deliberate differences from Redis
 
-Two, both where Redis can lose data:
-
 - When a manifest was renamed into place but the directory sync failed, the
   manifest is live but may not survive a crash. Redis treats it as a failure
-  and deletes the files it lists; this server adopts it, rejects writes, and
-  keeps the replaced files until a later manifest persists safely.
-- A rewrite does not start while a failed write is pending, since Redis would
-  carry the unwritten bytes into the new incremental file, where replay
-  applies them twice.
+  and deletes the files it lists, where it can lose data; this server adopts
+  it, rejects writes, and keeps the replaced files until a later manifest
+  persists safely.
+- `INFO persistence` has no `aof_cmd_duration`, Redis 8.12's estimate of the
+  AOF's replay time, which Redis adds up from each command's measured run
+  time: this server does not time commands.
+
+Until Redis 8.12, a rewrite that started while a failed write was pending was
+a third difference: Redis carried the unwritten bytes into the new
+incremental file, where replay applied them twice. Redis 8.12 refuses that
+rewrite and counts it as a failure, as this server does.
 
 ## RDB snapshots
 
-`server/rdb/` follows Redis 8.10's `src/rdb.c`. Its files:
+`server/rdb/` follows Redis 8.12's `src/rdb.c`. Its files:
 
 | File | What it holds |
 | --- | --- |
@@ -379,7 +383,12 @@ left. Every length the file claims is checked against those bytes before
 anything is allocated, an LZF string's expanded size against the 512 MiB
 string limit, and listpacks and intsets are validated as they are read
 (`containers::ListpackReader` checks each entry's encoding, size, and backlen, as
-Redis' deep validation does). As Redis does, a set, hash, or sorted set
+Redis' deep validation does). A listpack's backlens are widened first where
+Redis 8.8 to 8.10, or an earlier build of this server, wrote them a byte
+shorter than other releases (`containers::WidenCompactBacklens`, Redis 8.12's
+`lpUpgradeCompactBacklen`); unlike Redis, which does so only in RDB versions 14
+and 15, this server does it in every version, since its own files are
+version 11. As Redis does, a set, hash, or sorted set
 listpack is then kept as stored, so loading it is one copy: one pass over it
 checks every element, that keys are distinct (by sorting their views), and
 that scores are numbers, and it is kept only if it also fits this server's
