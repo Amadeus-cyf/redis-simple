@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "containers/listpack.h"
+#include "containers/listpack_test_util.h"
 #include "data_types/hash/hash.h"
 #include "data_types/list/list.h"
 #include "data_types/set/set.h"
@@ -39,6 +40,7 @@
 
 namespace redis_simple::rdb {
 namespace {
+using containers::listpack_test::HashListpack;
 using db::RedisObject;
 
 // A far-future expiration, so keys do not expire during the test.
@@ -611,22 +613,16 @@ TEST_F(RdbTest, RejectsInvalidCompactValues) {
   }
 }
 
-// A hash listpack as Redis 8.10 wrote it for HSET h f <16378 bytes> with a
-// raised hash-max-listpack-value: the value's encoded size is 16383 bytes,
-// and its backlen 7f ff instead of 00 ff ff.
-std::string ShortBacklenListpack() {
-  std::string listpack("\x0b\x40\x00\x00\x02\x00\x81\x66\x02", 9);
-  listpack.append("\xf0\xfa\x3f\x00\x00", 5);
-  listpack.append(16378, 'a');
-  listpack.append("\x7f\xff\xff", 3);
-  return listpack;
-}
-
 // Earlier builds of this server wrote the short backlens Redis 8.8 to 8.10
 // did, in RDB version 11, where Redis 8.12 does not widen them; this server
 // does, in every version.
 TEST_F(RdbTest, WidensShortBacklensInEveryVersion) {
-  WriteFile(FileWithValue(kHashListpackType, ShortBacklenListpack()));
+  // A hash listpack as Redis 8.10 wrote it for HSET h f <16378 bytes>: the
+  // value's encoded size is 16383 bytes, and its backlen 7f ff instead of
+  // 00 ff ff.
+  const std::string listpack =
+      HashListpack(16378, 'a', std::string_view("\x7f\xff", 2));
+  WriteFile(FileWithValue(kHashListpackType, listpack));
   auto db = db::RedisDb::Create();
   ASSERT_TRUE(Load(db.get()));
   // Too long for this server's listpacks, so rebuilt.

@@ -135,25 +135,26 @@ EntryHeader DecodeEntryHeader(const unsigned char* const entry,
 }
 
 // Whether the `available` bytes at `backlen` start with the shorter backlen
-// Redis 8.8 to 8.10 wrote for an element of encoded size `encoded`.
+// Redis 8.8 to 8.10 wrote for an element of encoded size `encoded_bytes`.
 bool IsCompactBacklen(const unsigned char* const backlen, size_t available,
-                      uint64_t encoded) {
-  if (std::ranges::find(kBacklenLimits, encoded) == kBacklenLimits.end()) {
+                      uint64_t encoded_bytes) {
+  if (std::ranges::find(kBacklenLimits, encoded_bytes) ==
+      kBacklenLimits.end()) {
     return false;
   }
   // 7f followed by ff bytes, one byte shorter than the usual width. The
   // whole form must match, so corruption is never "repaired".
-  const size_t width = BacklenBytes(encoded) - 1;
+  const size_t width = BacklenBytes(encoded_bytes) - 1;
   if (available < width || backlen[0] != 0x7f) {
     return false;
   }
-  return std::all_of(backlen + 1, backlen + width,
-                     [](unsigned char byte) { return byte == 0xff; });
+  return std::ranges::all_of(backlen + 1, backlen + width,
+                             [](unsigned char byte) { return byte == 0xff; });
 }
 
 // Appends Redis' lpEncodeBacklen of `length`: the most significant 7 bits
 // first, and the high bit set on every later byte.
-void AppendBacklen(std::string* const out, uint64_t length) {
+void AppendBacklen(uint64_t length, std::string* const out) {
   const size_t width = BacklenBytes(length);
   for (size_t i = 0; i < width; ++i) {
     auto byte =
@@ -182,7 +183,7 @@ bool WidenCompactBacklens(std::string* const listpack) {
   const size_t end = size - 1;
   // The first pass checks every entry, taking each backlen in whichever
   // width it has, and counts the short ones.
-  size_t compact = 0;
+  size_t compact_count = 0;
   size_t offset = kHeaderBytes;
   while (offset < end) {
     const size_t available = end - offset;
@@ -191,40 +192,40 @@ bool WidenCompactBacklens(std::string* const listpack) {
         header.payload_bytes >= available - header.header_bytes) {
       return false;
     }
-    const size_t encoded = header.header_bytes + header.payload_bytes;
-    size_t backlen_bytes = BacklenBytes(encoded);
-    if (IsCompactBacklen(bytes + offset + encoded, available - encoded,
-                         encoded)) {
+    const size_t encoded_bytes = header.header_bytes + header.payload_bytes;
+    size_t backlen_bytes = BacklenBytes(encoded_bytes);
+    if (IsCompactBacklen(bytes + offset + encoded_bytes,
+                         available - encoded_bytes, encoded_bytes)) {
       --backlen_bytes;
-      ++compact;
+      ++compact_count;
     }
-    if (backlen_bytes > available - encoded) {
+    if (backlen_bytes > available - encoded_bytes) {
       return false;
     }
-    offset += encoded + backlen_bytes;
+    offset += encoded_bytes + backlen_bytes;
   }
-  if (offset != end || compact == 0 ||
-      size + compact > std::numeric_limits<uint32_t>::max()) {
+  if (offset != end || compact_count == 0 ||
+      size + compact_count > std::numeric_limits<uint32_t>::max()) {
     return false;
   }
   // The second pass copies the entries, writing the short backlens in full.
   std::string widened;
-  widened.reserve(size + compact);
+  widened.reserve(size + compact_count);
   widened.append(listpack->data(), kHeaderBytes);
   offset = kHeaderBytes;
   while (offset < end) {
     const EntryHeader header = DecodeEntryHeader(bytes + offset, end - offset);
-    const size_t encoded = header.header_bytes + header.payload_bytes;
-    widened.append(listpack->data() + offset, encoded);
-    size_t backlen_bytes = BacklenBytes(encoded);
-    if (IsCompactBacklen(bytes + offset + encoded, end - offset - encoded,
-                         encoded)) {
+    const size_t encoded_bytes = header.header_bytes + header.payload_bytes;
+    widened.append(listpack->data() + offset, encoded_bytes);
+    size_t backlen_bytes = BacklenBytes(encoded_bytes);
+    if (IsCompactBacklen(bytes + offset + encoded_bytes,
+                         end - offset - encoded_bytes, encoded_bytes)) {
       --backlen_bytes;
-      AppendBacklen(&widened, encoded);
+      AppendBacklen(encoded_bytes, &widened);
     } else {
-      widened.append(listpack->data() + offset + encoded, backlen_bytes);
+      widened.append(listpack->data() + offset + encoded_bytes, backlen_bytes);
     }
-    offset += encoded + backlen_bytes;
+    offset += encoded_bytes + backlen_bytes;
   }
   widened.push_back(static_cast<char>(kEnd));
   const size_t total = widened.size();
