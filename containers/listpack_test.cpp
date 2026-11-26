@@ -709,6 +709,49 @@ TEST(ListpackTest, IteratorsDecodeEveryEncoding) {
   EXPECT_EQ(calls, 3);
 }
 
+TEST(ListpackTest, IteratorsStepPastStringsWithOneAndTwoByteBacklens) {
+  // A string of 64 to 4095 bytes is encoded in two bytes more than its
+  // length, so its backlen takes one byte up to a length of 125 and two from
+  // 126 on. Each is followed by a short element, which an iterator only
+  // finds if it steps past the right number of backlen bytes.
+  const std::vector<size_t> lengths = {64, 125, 126, 127, 4095};
+  std::vector<std::string> expected;
+  for (const size_t length : lengths) {
+    expected.emplace_back(length, 'm');
+    expected.push_back("after:" + std::to_string(length));
+  }
+  Listpack listpack;
+  for (const std::string& value : expected) {
+    ASSERT_TRUE(listpack.Append(value));
+  }
+
+  std::vector<std::string> forward;
+  ASSERT_TRUE(
+      listpack.ForEach(0, expected.size() - 1, [&](std::string_view value) {
+        forward.emplace_back(value);
+        return true;
+      }));
+  EXPECT_EQ(forward, expected);
+
+  std::vector<std::string> reverse;
+  ASSERT_TRUE(listpack.ForEachReverse(0, expected.size() - 1,
+                                      [&](std::string_view value) {
+                                        reverse.emplace_back(value);
+                                        return true;
+                                      }));
+  std::ranges::reverse(reverse);
+  EXPECT_EQ(reverse, expected);
+
+  std::vector<std::string> paired;
+  ASSERT_TRUE(listpack.ForEachPair(
+      [&](std::string_view first, std::string_view second) {
+        paired.emplace_back(first);
+        paired.emplace_back(second);
+        return true;
+      }));
+  EXPECT_EQ(paired, expected);
+}
+
 TEST(ListpackTest, IntegersRoundTripAtEveryWidthBoundary) {
   // The smallest and largest value of each integer encoding, and the values
   // just outside, which take the next one.

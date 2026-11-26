@@ -612,7 +612,21 @@ Before committing, run the relevant build and tests.
 - The `release` preset builds with link-time optimization
   (`CMAKE_INTERPROCEDURAL_OPTIMIZATION`), as Redis' release build does. Keep
   it on for that preset only, so debug, sanitizer, and fuzz builds stay fast
-  to link.
+  to link. With LTO, GCC shares one inlining budget across the program
+  (`--param inline-unit-growth`) and, once it runs out, stops inlining small
+  hot helpers it inlines within a single file, which made list edits 27%
+  slower; `-fopt-info-inline-missed` at link time names them. Mark such a
+  helper `[[gnu::always_inline]]` (the request parser's, `SeededHash`,
+  `Listpack::DecodeEntry`, the RDB encoder's `Length` and `Raw`), and
+  compare an LTO build with one without it when adding hot-path code. The
+  attribute goes on a function this repository defines, and what it inlines
+  must not itself call a small helper out of line. A standard library call
+  that a compiler leaves out of line is a different problem: the library's
+  definition cannot carry the attribute. For clang that takes an attribute
+  on the statement that makes the call. GCC has no inlining attribute for a
+  statement, so there the code avoids the call: string-keyed Dicts compare
+  keys with `dict_internal::SameBytes`, not `==`, whose
+  `std::string_view::compare` call GCC left out of line in every lookup.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
