@@ -59,7 +59,9 @@ the usual width, as this server has, and widens the short ones when it loads
 RDB version 14 or 15, which Redis 8.8 to 8.10 wrote. This server widens them
 in every version, since its earlier builds wrote version 11
 (`containers::WidenCompactBacklens`). Redis 8.12 cannot read such a file from
-an earlier build of this server: save it again with this one. Keys whose time has passed are dropped while loading. Every
+an earlier build of this server: save it again with this one.
+
+Keys whose time has passed are dropped while loading. Every
 length, encoded listpack and intset, and duplicate is checked, so a corrupt
 file is refused, never trusted. As in Redis, a set, hash, or sorted set
 listpack that passes those checks and fits this server's limits is kept as

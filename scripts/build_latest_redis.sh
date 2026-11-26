@@ -52,7 +52,10 @@ if [[ ! -x "${directory}/src/redis-server" ]] ||
   make -C "${directory}/src" -j"${jobs}" BUILD_TLS=no MALLOC=libc \
     redis-server redis-cli >"${directory}/build.log" 2>&1 || {
     # With parallel jobs, the error may be well before the end.
-    grep -n -E "error|Error [0-9]" "${directory}/build.log" | head -n 20 >&2
+    # grep finds nothing in some failed builds, which must not end the
+    # script before the tail below.
+    grep -n -E "error|Error [0-9]" "${directory}/build.log" |
+      head -n 20 >&2 || true
     tail -n 40 "${directory}/build.log" >&2
     exit 1
   }

@@ -162,7 +162,8 @@ Guidance for AI coding agents working in this repository.
   `containers::ListpackReader` and the intset checks, and rejects duplicates and
   NaN scores. Before validating a listpack it widens the one-byte-shorter
   backlens Redis 8.8 to 8.10 and earlier builds of this server wrote
-  (`containers::WidenCompactBacklens`), in every RDB version. Like Redis, it keeps a set, hash, or sorted set listpack's bytes
+  (`containers::WidenCompactBacklens`), in every RDB version. Like Redis, it
+  keeps a set, hash, or sorted set listpack's bytes
   (`CreateFromListpack`), but only after one pass proves it is valid, fits
   this server's limits, holds sorted set pairs in order, and encodes each
   element as `Listpack` would; anything else is rebuilt through the data
