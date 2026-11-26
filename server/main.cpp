@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "server/memory_purger.h"
 #include "server/server.h"
 #include "server/server_options.h"
 

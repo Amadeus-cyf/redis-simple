@@ -44,10 +44,11 @@ ZSetAddResult ZSetListpack::Add(std::string_view member, double score,
   // Like Redis, move the member by deleting its pair and inserting it again.
   // A listpack insert fails only past the 4 GiB a listpack can address, and
   // this one adds back a pair a few bytes longer than the one it replaces in
-  // a sorted set of at most 128 short members. Were it to fail, the member
+  // a sorted set small enough to be a listpack. Were it to fail, the member
   // would be lost, so stop instead.
   DeleteMemberScorePair(*member_offset);
-  RS_CHECK(InsertSorted(member, result.score));
+  const bool inserted = InsertSorted(member, result.score);
+  RS_CHECK(inserted);
   return result;
 }
 

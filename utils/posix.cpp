@@ -11,9 +11,11 @@
 namespace redis_simple::utils {
 size_t MaxIovCount() {
   static const size_t kMaxIovCount = [] {
+    // IOV_MAX on Linux and macOS, for a system that reports no limit.
+    constexpr size_t kFallbackIovCount = 1024;
     const int64_t system_limit = sysconf(_SC_IOV_MAX);
-    const size_t limit =
-        system_limit > 0 ? static_cast<size_t>(system_limit) : 1024;
+    const size_t limit = system_limit > 0 ? static_cast<size_t>(system_limit)
+                                          : kFallbackIovCount;
     return std::min(limit,
                     static_cast<size_t>(std::numeric_limits<int>::max()));
   }();

@@ -83,7 +83,8 @@ class Server {
   explicit Server(MemoryPurger::PurgeFunction purge_memory);
   // Whether the main thread did any work since the previous cron tick:
   // handled an event, deleted keys, or, as `cron_freed_memory` says of this
-  // tick, freed detached values or moved a rehash along.
+  // tick, freed detached values or moved a rehash along. Records the event
+  // and key counts for the next tick, so the cron calls it once per tick.
   bool MainThreadDidWork(bool cron_freed_memory);
   // The steps of Run(). LoadData: enters the working directory, loads the
   // RDB file or opens and replays the AOF. StartServing: listens on
@@ -121,7 +122,7 @@ class Server {
   // I/O, none with it.
   IdleClientSweeper idle_client_sweeper_;
   // Shared with the I/O threads' purgers, which it outlives.
-  MemoryPurger::Shared memory_purge_;
+  MemoryPurger::Shared purge_state_;
   MemoryPurger memory_purger_;
   // What the cron saw at its previous tick, to tell whether the main thread
   // did work since.
