@@ -803,7 +803,9 @@ Listpack::DecodedEntry Listpack::DecodeEntry(
   return entry;
 }
 
-// Return the number of bytes required to encode the back length.
+// The number of bytes the backlen of an element of encoded size `backlen`
+// takes. As in Redis, a size equal to one of BacklenThreshold's limits takes
+// a byte more than it needs.
 uint8_t Listpack::BacklenBytes(size_t backlen) {
   if (backlen <= BacklenThreshold::kSize1ByteBacklenMax) {
     return 1;

@@ -172,7 +172,11 @@ void RunOperations(FuzzInput* input) {
 // widening them again gives back the listpack's bytes, widening leaves a
 // listpack without them alone, and changed bytes never crash it.
 void CheckBacklenWidening(FuzzInput* input) {
-  constexpr size_t kBoundaryLength = 16378;  // Plus a 5-byte string header.
+  // The value's length and, with its 5-byte string header, its encoded size.
+  constexpr size_t kBoundaryLength = 16378;
+  constexpr size_t kBoundaryBytes = kBoundaryLength + 5;
+  constexpr std::string_view kUsualBacklen("\x00\xff\xff", 3);
+  constexpr std::string_view kShortBacklen("\x7f\xff", 2);
   Listpack listpack;
   std::vector<bool> boundary;
   for (size_t count = 1 + input->ReadIndex(4); count > 0; --count) {
@@ -193,11 +197,11 @@ void CheckBacklenWidening(FuzzInput* input) {
     if (!boundary[index - 1]) {
       continue;
     }
-    const size_t backlen =
-        ValueOrAbort(listpack.OffsetAt(index - 1)) + kBoundaryLength + 5;
-    Require(bytes.compare(backlen, 3, std::string_view("\x00\xff\xff", 3)) ==
-            0);
-    bytes.replace(backlen, 3, std::string_view("\x7f\xff", 2));
+    const size_t backlen_offset =
+        ValueOrAbort(listpack.OffsetAt(index - 1)) + kBoundaryBytes;
+    Require(bytes.compare(backlen_offset, kUsualBacklen.size(),
+                          kUsualBacklen) == 0);
+    bytes.replace(backlen_offset, kUsualBacklen.size(), kShortBacklen);
     shortened = true;
   }
   for (size_t i = 0; i < 4; ++i) {
