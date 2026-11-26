@@ -41,9 +41,11 @@ Read the release notes and the changed code in Redis (`src/t_*.c`,
 ## 3. File formats
 
 - RDB: if the release writes a newer RDB version, raise the newest version
-  the loader accepts in `server/rdb/rdb_format.h`, and load a file the new
-  release wrote, as `server/rdb/testdata/` and `RdbTest` do for the current
-  one. Keep writing the oldest version that covers what is written.
+  the loader accepts in `server/rdb/rdb_format.h`, and add a file the new
+  release wrote to `server/rdb/testdata/` with `scripts/make_rdb_fixture.py`
+  and a test that loads it, as `RdbTest` does for the earlier ones. Keep
+  writing the oldest version that covers what is written. Check new opcodes
+  and renumbered types in the release's `src/rdb.h`.
 - Listpack and intset bytes: the unit tests compare with bytes Redis
   produced. Regenerate a vector only if the release changed the encoding.
 - AOF: check the manifest format and `INFO persistence` fields against the

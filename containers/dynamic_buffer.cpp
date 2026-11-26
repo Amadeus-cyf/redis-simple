@@ -10,15 +10,22 @@
 #include <utility>
 
 #include "utils/check.h"
+#include "utils/size_class.h"
 
 namespace redis_simple::containers {
 namespace {
 constexpr size_t kInitialCapacity = 4096;
-// The most capacity an empty buffer keeps. Without a limit, one large
-// request would hold its size for as long as its connection lives; Redis
-// shrinks idle query buffers for the same reason
-// (clientsCronResizeQueryBuffer).
-constexpr size_t kMaxIdleCapacity = size_t{64} * 1024;
+// The most capacity an empty buffer keeps: mimalloc's largest size class. A
+// client that sends values smaller than that keeps room for the next one, so
+// it arrives in one read. Redis keeps a private query buffer of any size
+// after a big argument, and frees it once the client is idle. This server
+// does not: mimalloc gives an allocation past 64 KiB a span of 64 KiB slices,
+// so the 65,568-byte buffer a 64 KiB SET needs would hold 128 KiB per client
+// (jemalloc, Redis' allocator, reserves 80 KiB). A larger buffer is freed as
+// soon as it is empty, so the next large request is read as a first 16 KiB
+// and then the rest. The server also frees an idle client's buffer
+// (IdleClientSweeper), as Redis' clientsCronResizeQueryBuffer does.
+constexpr size_t kMaxIdleCapacity = utils::kMaxAllocationSizeClassBytes;
 }  // namespace
 
 DynamicBuffer::DynamicBuffer()

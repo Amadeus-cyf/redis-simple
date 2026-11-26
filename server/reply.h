@@ -11,6 +11,8 @@
 #include <string_view>
 #include <vector>
 
+#include "utils/inlining.h"
+
 namespace redis_simple::reply {
 enum class ProtocolVersion {
   kResp2 = 2,
@@ -126,24 +128,29 @@ inline void AppendBulkString(std::string_view value, std::string* const reply) {
   if (new_size > reply->capacity()) {
     reply->reserve(std::max(new_size, 2 * reply->capacity()));
   }
-  reply->resize_and_overwrite(new_size, [&](char* const data, size_t) {
-    char* out = data + old_size;
-    *out = '$';
-    // Write the length's digits from the last one back.
-    size_t remaining = length;
-    for (char* digit = out + digits; digit > out; --digit) {
-      *digit = static_cast<char>('0' + (remaining % 10));
-      remaining /= 10;
-    }
-    out += 1 + digits;
-    *out++ = '\r';
-    *out++ = '\n';
-    reply_internal::CopyShort(value, out);
-    out += length;
-    *out++ = '\r';
-    *out = '\n';
-    return new_size;
-  });
+  // Clang 18 left libstdc++'s resize_and_overwrite, with the writer passed
+  // to it, out of line here (cost 425 against its threshold of 250) and
+  // called it for each element, which cost collection replies a third more
+  // instructions than GCC's build.
+  RS_INLINE_LIBSTDCXX_CALLS reply->resize_and_overwrite(
+      new_size, [&](char* const data, size_t) {
+        char* out = data + old_size;
+        *out = '$';
+        // Write the length's digits from the last one back.
+        size_t remaining = length;
+        for (char* digit = out + digits; digit > out; --digit) {
+          *digit = static_cast<char>('0' + (remaining % 10));
+          remaining /= 10;
+        }
+        out += 1 + digits;
+        *out++ = '\r';
+        *out++ = '\n';
+        reply_internal::CopyShort(value, out);
+        out += length;
+        *out++ = '\r';
+        *out = '\n';
+        return new_size;
+      });
 }
 // Writes "$<length>\r\n" to `buffer`, which must hold at least
 // kBulkStringHeaderCapacity bytes, and returns the encoded size.

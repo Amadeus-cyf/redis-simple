@@ -25,11 +25,15 @@
 #include "utils/time.h"
 
 namespace redis_simple {
-Server::Server()
-    : loop_(event_loop::Loop::Create()), db_(db::RedisDb::Create()) {}
+Server::Server(const MemoryPurger::PurgeFunction purge_memory)
+    : loop_(event_loop::Loop::Create()),
+      purge_state_{.purge = purge_memory},
+      memory_purger_(&purge_state_),
+      db_(db::RedisDb::Create()) {}
 
-std::unique_ptr<Server> Server::Create() {
-  return std::unique_ptr<Server>(new Server());
+std::unique_ptr<Server> Server::Create(
+    const MemoryPurger::PurgeFunction purge_memory) {
+  return std::unique_ptr<Server>(new Server(purge_memory));
 }
 
 bool Server::Run(const ServerOptions& options) {
@@ -148,7 +152,8 @@ bool Server::StartIoThreads(size_t thread_count) {
         [this](IoThread* const io_thread,
                std::vector<IoThread::Handoff>* const handoffs) {
           RunHandedOverClients(io_thread, handoffs);
-        });
+        },
+        &purge_state_);
     if (thread == nullptr) {
       return false;
     }
@@ -279,7 +284,7 @@ bool Server::RemoveClient(Client* client) {
   if (client->AwaitsFlush()) {
     std::erase(held_clients_, client);
   }
-  client->Free();
+  client->Close();
   // Destroy the client after the current event, which may still use it.
   loop_->Defer([this, client] { clients_.erase(client); });
   return true;
@@ -299,6 +304,8 @@ bool Server::InstallAcceptCallback() {
 
 int64_t Server::ServerCron() {
   constexpr int64_t kCronIntervalMs = IdleClientSweeper::kIntervalMs;
+  static_assert(kCronIntervalMs * MemoryPurger::kTicksPerPurge == 1000,
+                "kTicksPerPurge cron ticks must take one second");
   if (shutdown::StopRequested()) {
     // Redis' prepareForShutdown: when the final save fails, the server keeps
     // running.
@@ -327,14 +334,33 @@ int64_t Server::ServerCron() {
   active_expire_.RunSlowCycle(db_.get());
   // A tenth of each tick, as UNLINK and FLUSHDB have already replied.
   constexpr int64_t kLazyFreeBudgetMs = 10;
-  db_->FreeLazily(kLazyFreeBudgetMs);
+  const bool freed_lazily = db_->FreeLazily(kLazyFreeBudgetMs);
+  bool rehashed = false;
   if (!child_running) {
     // As in Redis' databasesCron: one millisecond per tick. Skipped while a
     // child runs, since moving entries writes to memory the child shares.
     constexpr int64_t kRehashBudgetMicroseconds = 1000;
-    db_->RehashIncrementally(kRehashBudgetMicroseconds);
+    rehashed = db_->RehashIncrementally(kRehashBudgetMicroseconds);
   }
-  idle_client_sweeper_.Sweep();
+  // Freeing idle clients' buffers counts as work, so the memory goes back
+  // to the system within a second.
+  const bool released_buffers = idle_client_sweeper_.Sweep();
+  const bool did_work = MainThreadDidWork(freed_lazily || rehashed);
+  memory_purger_.Tick(did_work || released_buffers);
   return kCronIntervalMs;
+}
+
+bool Server::MainThreadDidWork(const bool cron_freed_memory) {
+  // Expiry, the lazy free and a finished rehash release memory without any
+  // event, so a change in the key count, or this tick having freed detached
+  // values or moved a rehash along, counts as work too. The tick that frees
+  // the last of it counts: its memory is the last to go back to the system.
+  const uint64_t file_events = loop_->FileEventsPolled();
+  const size_t key_count = db_->KeyCount();
+  const bool did_work = cron_freed_memory || file_events != cron_file_events_ ||
+                        key_count != cron_key_count_;
+  cron_file_events_ = file_events;
+  cron_key_count_ = key_count;
+  return did_work;
 }
 }  // namespace redis_simple

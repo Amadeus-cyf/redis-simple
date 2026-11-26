@@ -160,12 +160,15 @@ class Listpack {
     kInsertBefore = 1,
     kReplace = 2,
   };
+  // Redis' lpEncodeBacklen: a backlen of at most 127 takes one byte, one
+  // below each limit two, three, or four bytes, and any other five. A
+  // backlen equal to a limit takes a byte more than it needs, as in every
+  // Redis release but 8.8 to 8.10.
   enum BacklenThreshold : uint64_t {
     kSize1ByteBacklenMax = (1ULL << 7) - 1,
-    kSize2BytesBacklenMax = (1ULL << 14) - 1,
-    kSize3BytesBacklenMax = (1ULL << 21) - 1,
-    kSize4BytesBacklenMax = (1ULL << 28) - 1,
-    kSize5BytesBacklenMax = (1ULL << 35) - 1,
+    kSize2BytesBacklenLimit = (1ULL << 14) - 1,
+    kSize3BytesBacklenLimit = (1ULL << 21) - 1,
+    kSize4BytesBacklenLimit = (1ULL << 28) - 1,
   };
   struct Encoding {
     std::string_view string_value;

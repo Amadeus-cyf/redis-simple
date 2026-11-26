@@ -781,18 +781,20 @@ size_t Listpack::Seek(size_t position, size_t size) const {
   return entry;
 }
 
-// Return the number of bytes required to encode the back length.
+// The number of bytes the backlen of an element of encoded size `backlen`
+// takes. As in Redis, a size equal to one of BacklenThreshold's limits takes
+// a byte more than it needs.
 uint8_t Listpack::BacklenBytes(size_t backlen) {
   if (backlen <= BacklenThreshold::kSize1ByteBacklenMax) {
     return 1;
   }
-  if (backlen <= BacklenThreshold::kSize2BytesBacklenMax) {
+  if (backlen < BacklenThreshold::kSize2BytesBacklenLimit) {
     return 2;
   }
-  if (backlen <= BacklenThreshold::kSize3BytesBacklenMax) {
+  if (backlen < BacklenThreshold::kSize3BytesBacklenLimit) {
     return 3;
   }
-  if (backlen <= BacklenThreshold::kSize4BytesBacklenMax) {
+  if (backlen < BacklenThreshold::kSize4BytesBacklenLimit) {
     return 4;
   }
   return 5;

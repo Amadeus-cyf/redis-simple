@@ -1,10 +1,13 @@
 #include "containers/listpack_reader.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <string_view>
+#include <utility>
 
 namespace redis_simple::containers {
 namespace {
@@ -28,19 +31,25 @@ int64_t SignExtend(uint64_t value, unsigned bits) {
   return static_cast<int64_t>(value);
 }
 
+// Encoded sizes whose backlen Redis 8.8 to 8.10 wrote one byte shorter than
+// every other release: 7f ff, 7f ff ff, and 7f ff ff ff, where the others
+// write 00 ff ff, 00 ff ff ff, and 00 ff ff ff ff.
+constexpr std::array<uint64_t, 3> kBacklenLimits = {16383, 2097151, 268435455};
+
 // The number of bytes the backlen field takes for an element whose encoded
-// size is `length`, as Redis' lpEncodeBacklenBytes.
+// size is `length`, as Redis' lpEncodeBacklenBytes: a size equal to one of
+// kBacklenLimits takes a byte more than it needs.
 size_t BacklenBytes(uint64_t length) {
   if (length <= 127) {
     return 1;
   }
-  if (length <= 16383) {
+  if (length < kBacklenLimits[0]) {
     return 2;
   }
-  if (length <= 2097151) {
+  if (length < kBacklenLimits[1]) {
     return 3;
   }
-  if (length <= 268435455) {
+  if (length < kBacklenLimits[2]) {
     return 4;
   }
   return 5;
@@ -124,7 +133,108 @@ EntryHeader DecodeEntryHeader(const unsigned char* const entry,
   }
   return header;
 }
+
+// Whether the `available` bytes at `backlen` start with the shorter backlen
+// Redis 8.8 to 8.10 wrote for an element of encoded size `encoded_bytes`.
+bool IsCompactBacklen(const unsigned char* const backlen, size_t available,
+                      uint64_t encoded_bytes) {
+  if (std::ranges::find(kBacklenLimits, encoded_bytes) ==
+      kBacklenLimits.end()) {
+    return false;
+  }
+  // 7f followed by ff bytes, one byte shorter than the usual width. The
+  // whole form must match, so corruption is never "repaired".
+  const size_t width = BacklenBytes(encoded_bytes) - 1;
+  if (available < width || backlen[0] != 0x7f) {
+    return false;
+  }
+  return std::ranges::all_of(backlen + 1, backlen + width,
+                             [](unsigned char byte) { return byte == 0xff; });
+}
+
+// Appends Redis' lpEncodeBacklen of `length`: the most significant 7 bits
+// first, and the high bit set on every later byte.
+void AppendBacklen(uint64_t length, std::string* const out) {
+  const size_t width = BacklenBytes(length);
+  for (size_t i = 0; i < width; ++i) {
+    auto byte =
+        static_cast<unsigned char>((length >> (7 * (width - 1 - i))) & 127);
+    if (i > 0) {
+      byte |= 128;
+    }
+    out->push_back(static_cast<char>(byte));
+  }
+}
 }  // namespace
+
+bool WidenCompactBacklens(std::string* const listpack) {
+  // The smallest listpack that can hold an element of encoded size 16383:
+  // the header, the element, a two-byte backlen, and the terminator.
+  constexpr size_t kMinBytes = kHeaderBytes + kBacklenLimits[0] + 2 + 1;
+  const size_t size = listpack->size();
+  if (size < kMinBytes) {
+    return false;
+  }
+  const auto* const bytes =
+      reinterpret_cast<const unsigned char*>(listpack->data());
+  if (LoadLittleEndian(bytes, 4) != size || bytes[size - 1] != kEnd) {
+    return false;
+  }
+  const size_t end = size - 1;
+  // The first pass checks every entry, taking each backlen in whichever
+  // width it has, and counts the short ones.
+  size_t compact_count = 0;
+  size_t offset = kHeaderBytes;
+  while (offset < end) {
+    const size_t available = end - offset;
+    const EntryHeader header = DecodeEntryHeader(bytes + offset, available);
+    if (!header.valid || header.header_bytes >= available ||
+        header.payload_bytes >= available - header.header_bytes) {
+      return false;
+    }
+    const size_t encoded_bytes = header.header_bytes + header.payload_bytes;
+    size_t backlen_bytes = BacklenBytes(encoded_bytes);
+    if (IsCompactBacklen(bytes + offset + encoded_bytes,
+                         available - encoded_bytes, encoded_bytes)) {
+      --backlen_bytes;
+      ++compact_count;
+    }
+    if (backlen_bytes > available - encoded_bytes) {
+      return false;
+    }
+    offset += encoded_bytes + backlen_bytes;
+  }
+  if (offset != end || compact_count == 0 ||
+      size + compact_count > std::numeric_limits<uint32_t>::max()) {
+    return false;
+  }
+  // The second pass copies the entries, writing the short backlens in full.
+  std::string widened;
+  widened.reserve(size + compact_count);
+  widened.append(listpack->data(), kHeaderBytes);
+  offset = kHeaderBytes;
+  while (offset < end) {
+    const EntryHeader header = DecodeEntryHeader(bytes + offset, end - offset);
+    const size_t encoded_bytes = header.header_bytes + header.payload_bytes;
+    widened.append(listpack->data() + offset, encoded_bytes);
+    size_t backlen_bytes = BacklenBytes(encoded_bytes);
+    if (IsCompactBacklen(bytes + offset + encoded_bytes,
+                         end - offset - encoded_bytes, encoded_bytes)) {
+      --backlen_bytes;
+      AppendBacklen(encoded_bytes, &widened);
+    } else {
+      widened.append(listpack->data() + offset + encoded_bytes, backlen_bytes);
+    }
+    offset += encoded_bytes + backlen_bytes;
+  }
+  widened.push_back(static_cast<char>(kEnd));
+  const size_t total = widened.size();
+  for (size_t i = 0; i < 4; ++i) {
+    widened[i] = static_cast<char>((total >> (8 * i)) & 0xff);
+  }
+  *listpack = std::move(widened);
+  return true;
+}
 
 bool ListpackReader::ReadHeader() {
   header_read_ = true;

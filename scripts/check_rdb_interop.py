@@ -131,10 +131,40 @@ def snapshot(connection):
             value = sorted(connection.command("HGETALL", key))
         else:
             value = None
-        ttl = connection.command("PTTL", key)
-        # Whole thousands of seconds, so the time the check takes is ignored.
-        result[key] = (kind, value, ttl if ttl < 0 else round(ttl / 1e6))
+        result[key] = (kind, value, expiration(connection, key))
     return result
+
+
+def expiration(connection, key):
+    """The key's expiration time: PTTL's reply if negative (no TTL, or no
+    key), else the range of Unix milliseconds the time must lie in.
+
+    The servers and this script read one clock, so the time is PTTL's reply
+    plus the clock at some moment between sending the command and reading
+    the reply. Comparing times instead of remaining TTLs needs no allowance
+    for how long the save and the load took, which would hide an error
+    smaller than the allowance.
+    """
+    before = time.time_ns() // 1_000_000
+    ttl = connection.command("PTTL", key)
+    after = time.time_ns() // 1_000_000
+    if ttl < 0:
+        return ttl
+    # A millisecond each side, for a server that rounds its clock otherwise.
+    return (before + ttl - 1, after + ttl + 1)
+
+
+def same_key(written, loaded):
+    if written is None or loaded is None:
+        return written is loaded
+    kind, value, expires = written
+    loaded_kind, loaded_value, loaded_expires = loaded
+    if (kind, value) != (loaded_kind, loaded_value):
+        return False
+    if isinstance(expires, int) or isinstance(loaded_expires, int):
+        return expires == loaded_expires
+    # The same time if the two ranges overlap.
+    return expires[0] <= loaded_expires[1] and loaded_expires[0] <= expires[1]
 
 
 class Server:
@@ -189,7 +219,7 @@ def run_direction(name, source, target, binaries, port, root, configure=()):
     finally:
         reader.stop()
     differences = [k for k in sorted(set(expected) | set(actual))
-                   if expected.get(k) != actual.get(k)]
+                   if not same_key(expected.get(k), actual.get(k))]
     for key in differences[:10]:
         print(f"  {key!r}: wrote {str(expected.get(key))[:120]}, "
               f"loaded {str(actual.get(key))[:120]}")

@@ -60,7 +60,7 @@ std::string BaseFileName(std::string_view prefix, int64_t sequence,
                          bool rdb_format);
 std::string IncrementFileName(std::string_view prefix, int64_t sequence);
 std::string ManifestFileName(std::string_view prefix);
-inline constexpr std::string_view kTempPrefix = "temp-";
+inline constexpr std::string_view kTemporaryPrefix = "temp-";
 // A name without a directory part, as Redis' pathIsBaseName requires of
 // appendfilename.
 bool ValidFileName(std::string_view name);
