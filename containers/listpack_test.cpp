@@ -596,9 +596,7 @@ TEST(ListpackTest, Iterate) {
   ASSERT_EQ(length, listpack->Size());
 }
 
-namespace {
 using listpack_test::HashListpack;
-}  // namespace
 
 // Redis 8.12 gives a backlen equal to one of lpEncodeBacklen's limits a byte
 // more than it needs. Redis 8.12 wrote the first of these vectors; Redis
