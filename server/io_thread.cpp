@@ -268,7 +268,8 @@ void IoThread::BeforeSleep() {
   const bool took_messages = ProcessInbox();
   if (!took_messages) {
     // A message sent before Send could see the flag cleared came without a
-    // wakeup, so the inbox is taken again once it is.
+    // wakeup, so the inbox is taken again once it is. ProcessInbox finishes
+    // what it takes, so the poll may wait whether or not there was any.
     running_.SleepAndTake([this] { return ProcessInbox(); });
   }
   loop_->SetDontWait(took_messages);
@@ -278,13 +279,10 @@ bool IoThread::ProcessInbox() {
   {
     const std::scoped_lock lock(mutex_);
     // Stopping leaves the inbox to the main thread, as HandleInbox does.
-    if (stopping_) {
+    if (stopping_ || inbox_.empty()) {
       return false;
     }
     incoming_.swap(inbox_);
-  }
-  if (incoming_.empty()) {
-    return false;
   }
   for (const Message& message : incoming_) {
     if (message.returning) {
@@ -439,10 +437,10 @@ void IoThread::HandleOutbox() {
 bool IoThread::TakeHandoffs() {
   {
     const std::scoped_lock lock(mutex_);
+    if (outbox_.empty()) {
+      return false;
+    }
     ready_.swap(outbox_);
-  }
-  if (ready_.empty()) {
-    return false;
   }
   on_ready_(this, &ready_);
   ready_.clear();

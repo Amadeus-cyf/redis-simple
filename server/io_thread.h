@@ -55,8 +55,15 @@ class alignas(utils::kCacheLineBytes) RunningFlag {
  public:
   // Any thread.
   [[nodiscard]] bool Running() const { return running_.load(); }
-  // The thread itself, when its poll returns.
-  void SetRunning() { running_.store(true); }
+  // The thread itself, when its poll returns. A poll that did not follow
+  // SleepAndTake finds the flag set and leaves it, since a store would take
+  // the cache line from the senders that read it. Only this thread writes
+  // the flag, so its own read needs no ordering.
+  void SetRunning() {
+    if (!running_.load(std::memory_order_relaxed)) {
+      running_.store(true);
+    }
+  }
   // The thread itself, before a poll that may wait and after it took its
   // queue and found nothing: clears the flag, then runs `take_queue`, which
   // takes the queue again, and returns what that returns: whether the queue
