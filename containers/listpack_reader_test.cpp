@@ -171,11 +171,11 @@ TEST(WidenCompactBacklensTest, WidensEveryShortBacklenAmongOtherEntries) {
 }
 
 TEST(WidenCompactBacklensTest, LeavesOtherBytesAlone) {
-  // The usual widths: three bytes at the limit, and one byte (69, for an
-  // encoded size of 105) in a listpack too small for a short backlen.
+  // The usual widths: three bytes at the limit, and one byte ('i' is 105,
+  // the value's encoded size) in a listpack too small for a short backlen.
   for (std::string listpack :
        {HashListpack(16378, 'v', std::string_view("\x00\xff\xff", 3)),
-        HashListpack(100, 'v', "\x69")}) {
+        HashListpack(100, 'v', "i")}) {
     const std::string before = listpack;
     EXPECT_FALSE(WidenCompactBacklens(&listpack));
     EXPECT_EQ(listpack, before);
