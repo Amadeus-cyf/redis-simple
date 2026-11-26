@@ -232,15 +232,15 @@ std::optional<RedisObject::ObjectType> TypeFromName(std::string_view name) {
   return std::nullopt;
 }
 
-bool RedisObject::ReleaseSome(size_t max_elements) {
+bool RedisObject::ClearSome(size_t max_elements) {
   if (data_types::Set* const set = Set(); set != nullptr) {
-    return set->ReleaseSome(max_elements);
+    return set->ClearSome(max_elements);
   }
   if (data_types::Hash* const hash = Hash(); hash != nullptr) {
-    return hash->ReleaseSome(max_elements);
+    return hash->ClearSome(max_elements);
   }
   if (data_types::ZSet* const zset = ZSet(); zset != nullptr) {
-    return zset->ReleaseSome(max_elements);
+    return zset->ClearSome(max_elements);
   }
   // Strings are one block; a list's quicklist nodes hold up to 8 KiB each,
   // so even a long list has few to free.

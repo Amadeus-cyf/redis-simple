@@ -45,14 +45,22 @@ sample only keys that have a TTL, so the database also keeps an index of
 those entries (`containers::HandleSet`): an open-addressed array of 8-byte
 entry handles, which costs a key with a TTL one slot and no allocation,
 where Redis' expires dict costs it a pointer in a bucket. The index is
-rebuilt a few slots per insert or erase when it fills up or empties, and
+rebuilt a few slots per insert or delete when it fills up or empties, and
 like `Dict` it does not shrink while a snapshot child shares its pages.
 
 ## A request's path
 
 1. **Read.** The event loop reports a readable socket, and the client reads
    once into its query buffer (`Client::ReadQuery`). Reading once per event
-   keeps one busy client from starving the others.
+   keeps one busy client from starving the others. The read fills all the
+   room the buffer has, as in Redis, and an empty buffer keeps up to 64 KiB
+   between requests, so after a request that fits the next one arrives in a
+   single read instead of a first 16 KiB and the rest. Redis keeps a buffer
+   of any size after a large argument, until the client is idle. This
+   server frees a larger one as soon as it is empty, because mimalloc gives
+   each allocation past 64 KiB a span of 64 KiB slices: a client that sent
+   one 64 KiB value would hold 128 KiB, where Redis' jemalloc holds 80 KiB.
+   A larger request is read as a first 16 KiB and then the rest.
 2. **Frame.** `request_parser::Parse` finds one complete request in the
    buffer without copying it: the command name and arguments are
    `std::string_view`s into the buffer (`CommandArgs`). It frames RESP arrays
@@ -96,6 +104,29 @@ is the job of Redis' `clientsCronResizeQueryBuffer` and
 the sweeper. With it, each I/O thread runs its own, from a timer on its
 event loop, over the clients assigned to it, and skips clients the main
 thread holds, as Redis' `IOThreadClientsCron` does.
+
+### Returning freed memory
+
+mimalloc gives each thread its own heap and keeps freed pages for reuse.
+It returns a free page to the system only when the owning thread later
+allocates or frees a page in the same segment, or collects its heap, and a
+page another thread freed into the heap is not even known to be free until
+then. Returning pages at every free instead (a purge delay of 0) cost a
+system call and a page fault for every overwritten large value, and still
+missed the pages other threads free. So the main thread and each I/O
+thread tick a `MemoryPurger` from their 100 ms cron. Every tenth tick, if
+any thread did work since this thread's last purge (events, freed client
+buffers, expired keys, or a cron tick that freed detached values or moved a
+rehash along, the last such tick included), it collects the thread's
+heap, which returns its free pages. Work on any thread counts because the
+threads free each other's memory: the I/O threads free reply buffers the
+main thread allocated, and the main thread frees clients the I/O threads
+read for. A shared atomic count of the ticks with work, which every
+purger reads, tells each thread when to collect. Freed memory goes back
+within about a second, busy or idle, for one collect per second per
+thread while there is work (0.2 to 0.9 ms on heaps up to 3 GiB). Redis'
+allocator similarly returns freed memory from a background thread after a
+delay.
 
 ### What a command can reach
 
@@ -181,7 +212,7 @@ after they return. Connections close on their I/O thread; the main thread only f
 
 ## The append-only file
 
-`server/aof/` follows Redis 8.10's `src/aof.c`. Its files:
+`server/aof/` follows Redis 8.12's `src/aof.c`. Its files:
 
 | File | What it holds |
 | --- | --- |
@@ -299,19 +330,23 @@ every command fits the replay limit (`Limits`).
 
 ### Deliberate differences from Redis
 
-Two, both where Redis can lose data:
-
 - When a manifest was renamed into place but the directory sync failed, the
   manifest is live but may not survive a crash. Redis treats it as a failure
-  and deletes the files it lists; this server adopts it, rejects writes, and
-  keeps the replaced files until a later manifest persists safely.
-- A rewrite does not start while a failed write is pending, since Redis would
-  carry the unwritten bytes into the new incremental file, where replay
-  applies them twice.
+  and deletes the files it lists, where it can lose data; this server adopts
+  it, rejects writes, and keeps the replaced files until a later manifest
+  persists safely.
+- `INFO persistence` has no `aof_cmd_duration`, Redis 8.12's estimate of the
+  AOF's replay time, which Redis adds up from each command's measured run
+  time: this server does not time commands.
+
+Until Redis 8.12, a rewrite that started while a failed write was pending was
+a third difference: Redis carried the unwritten bytes into the new
+incremental file, where replay applied them twice. Redis 8.12 refuses that
+rewrite and counts it as a failure, as this server does.
 
 ## RDB snapshots
 
-`server/rdb/` follows Redis 8.10's `src/rdb.c`. Its files:
+`server/rdb/` follows Redis 8.12's `src/rdb.c`. Its files:
 
 | File | What it holds |
 | --- | --- |
@@ -370,7 +405,12 @@ left. Every length the file claims is checked against those bytes before
 anything is allocated, an LZF string's expanded size against the 512 MiB
 string limit, and listpacks and intsets are validated as they are read
 (`containers::ListpackReader` checks each entry's encoding, size, and backlen, as
-Redis' deep validation does). As Redis does, a set, hash, or sorted set
+Redis' deep validation does). A listpack's backlens are widened first where
+Redis 8.8 to 8.10, or an earlier build of this server, wrote them a byte
+shorter than other releases (`containers::WidenCompactBacklens`, Redis 8.12's
+`lpUpgradeCompactBacklen`); unlike Redis, which does so only in RDB versions 14
+and 15, this server does it in every version, since its own files are
+version 11. As Redis does, a set, hash, or sorted set
 listpack is then kept as stored, so loading it is one copy: one pass over it
 checks every element, that keys are distinct (by sorting their views), and
 that scores are numbers, and it is kept only if it also fits this server's

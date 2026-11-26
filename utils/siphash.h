@@ -143,7 +143,9 @@ const SipHashKey& HashSeed();
 
 // Seeded SipHash-1-2, the variant Redis uses for its dictionaries. The keyed
 // starting state is computed once, so each hash starts from a copy of it.
-inline uint64_t SeededHash(std::string_view data) {
+// Always inlined, since every key lookup hashes: with link-time
+// optimization, GCC otherwise calls it once its inlining budget runs out.
+[[gnu::always_inline]] inline uint64_t SeededHash(std::string_view data) {
   static const siphash_internal::State kSeededState =
       siphash_internal::KeyedState(HashSeed());
   return siphash_internal::HashFrom<1, 2>(kSeededState, data);

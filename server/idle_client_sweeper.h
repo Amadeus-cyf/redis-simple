@@ -28,7 +28,8 @@ class IdleClientSweeper {
   // that read nothing since its previous visit, a second earlier, releases
   // its buffers (Client::ReleaseIdleBuffers). Clients handed to the main
   // thread are skipped: their buffers are not this side's to touch.
-  void Sweep();
+  // Returns whether any client freed a buffer.
+  bool Sweep();
   static constexpr size_t kSweepsPerRound = 1000 / kIntervalMs;
 
  private:

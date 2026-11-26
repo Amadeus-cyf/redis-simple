@@ -153,6 +153,9 @@ Not bugs; leave them unless the task is about them.
   on.
 - `BGREWRITEAOF` with the AOF off replies with an error instead of writing a
   one-off file.
+- `INFO persistence` has no `aof_cmd_duration` (Redis 8.12's estimate of the
+  AOF's replay time), and loading an RDB file ignores Redis 8.12's
+  no-eviction mark (`BLESS`), since this server evicts nothing.
 
 Anything else that differs from the latest Redis is a bug, unless a README
 (`server/README.md`, `server/aof/README.md`, `server/rdb/README.md`) lists

@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "containers/listpack_test_util.h"
 #include "utils/crc64.h"
 
 namespace redis_simple::containers {
@@ -595,6 +596,35 @@ TEST(ListpackTest, Iterate) {
   ASSERT_EQ(length, listpack->Size());
 }
 
+using listpack_test::HashListpack;
+
+// Redis 8.12 gives a backlen equal to one of lpEncodeBacklen's limits a byte
+// more than it needs. Redis 8.12 wrote the first of these vectors; Redis
+// 8.8 to 8.10 wrote 7f ff and 7f ff ff instead.
+TEST(ListpackTest, WritesBacklensAtTheirLimitsAsRedisDoes) {
+  struct Case {
+    size_t length;
+    std::string_view backlen;
+  };
+  // Encoded sizes 16382, 16383, and 2097151.
+  for (const Case& test :
+       {Case{16377, std::string_view("\x7f\xfe", 2)},
+        Case{16378, std::string_view("\x00\xff\xff", 3)},
+        Case{2097146, std::string_view("\x00\xff\xff\xff", 4)}}) {
+    Listpack listpack;
+    ASSERT_TRUE(listpack.Append("f"));
+    ASSERT_TRUE(listpack.Append(std::string(test.length, 'a')));
+    EXPECT_EQ(listpack.Bytes(), HashListpack(test.length, 'a', test.backlen))
+        << test.length;
+    // Stepping back over the backlen finds the element before it.
+    const std::optional<size_t> last = listpack.Last();
+    ASSERT_TRUE(last.has_value());
+    const std::optional<size_t> first = listpack.Prev(last.value_or(0));
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(StringAt(listpack, first.value_or(0)), "f");
+  }
+}
+
 TEST(ListpackTest, IteratorsDecodeEveryEncoding) {
   // One element per encoding: 7-, 13-, 16-, 24-, 32-, and 64-bit integers,
   // and 6-, 12-, and 32-bit strings, including backlens of more than one byte.
@@ -677,6 +707,49 @@ TEST(ListpackTest, IteratorsDecodeEveryEncoding) {
   EXPECT_FALSE(listpack.ForEachReverse(0, expected.size() - 1, stop_now));
   EXPECT_FALSE(listpack.ForEachPair(stop_now));
   EXPECT_EQ(calls, 3);
+}
+
+TEST(ListpackTest, IteratorsStepPastStringsWithOneAndTwoByteBacklens) {
+  // A string of 64 to 4095 bytes is encoded in two bytes more than its
+  // length, so its backlen takes one byte up to a length of 125 and two from
+  // 126 on. Each is followed by a short element, which an iterator only
+  // finds if it steps past the right number of backlen bytes.
+  const std::vector<size_t> lengths = {64, 125, 126, 127, 4095};
+  std::vector<std::string> expected;
+  for (const size_t length : lengths) {
+    expected.emplace_back(length, 'm');
+    expected.push_back("after:" + std::to_string(length));
+  }
+  Listpack listpack;
+  for (const std::string& value : expected) {
+    ASSERT_TRUE(listpack.Append(value));
+  }
+
+  std::vector<std::string> forward;
+  ASSERT_TRUE(
+      listpack.ForEach(0, expected.size() - 1, [&](std::string_view value) {
+        forward.emplace_back(value);
+        return true;
+      }));
+  EXPECT_EQ(forward, expected);
+
+  std::vector<std::string> reverse;
+  ASSERT_TRUE(listpack.ForEachReverse(0, expected.size() - 1,
+                                      [&](std::string_view value) {
+                                        reverse.emplace_back(value);
+                                        return true;
+                                      }));
+  std::ranges::reverse(reverse);
+  EXPECT_EQ(reverse, expected);
+
+  std::vector<std::string> paired;
+  ASSERT_TRUE(listpack.ForEachPair(
+      [&](std::string_view first, std::string_view second) {
+        paired.emplace_back(first);
+        paired.emplace_back(second);
+        return true;
+      }));
+  EXPECT_EQ(paired, expected);
 }
 
 TEST(ListpackTest, IntegersRoundTripAtEveryWidthBoundary) {
@@ -1028,7 +1101,7 @@ TEST(ListpackDeathTest, RejectsOutOfBoundsIndexes) {
   EXPECT_DEATH(listpack->Delete(end), "Check failed");
 }
 
-// Bytes Redis 8.10 produces for the same elements (from DUMP with
+// Bytes Redis 8.12 produces for the same elements (from DUMP with
 // rdbcompression off), so RDB files can store listpacks as they are.
 std::string Hex(std::string_view bytes) {
   std::string hex;

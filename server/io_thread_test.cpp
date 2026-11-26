@@ -61,7 +61,7 @@ class MainThread {
           }
           thread->Return(ran);
         },
-        main_running, cron_interval_ms);
+        nullptr, main_running, cron_interval_ms);
   }
 
   // Starts a thread that wakes this one only while it sleeps, as the

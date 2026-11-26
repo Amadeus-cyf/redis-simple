@@ -120,7 +120,7 @@ struct AofState {
 
 std::string_view ErrorName(AofError error);
 
-// A multi-part append-only file, as in Redis 8.10: a directory with one base
+// A multi-part append-only file, as in Redis 8.12: a directory with one base
 // file (the last rewrite's snapshot), incremental files with the mutations
 // since, and a manifest listing them. Every method runs on the event-loop
 // thread. Background threads, like Redis' bio threads, sync files, close
@@ -238,11 +238,11 @@ class Aof {
 
   // Rewriting (aof_rewrite.cpp).
   [[noreturn]] void RunRewriteChild(db::RedisDb* db) const;
-  std::string RewriteTempPath(pid_t child) const;
+  std::string RewriteTemporaryPath(pid_t child) const;
   void FinishRewrite(int wait_status);
   Failure InstallRewrite(pid_t child);
   void AbandonRewrite();
-  void RemoveRewriteTempFiles(pid_t child);
+  void RemoveRewriteTemporaryFiles(pid_t child);
   bool RewriteLimited();
 
   // Files and the manifest (aof.cpp).

@@ -57,7 +57,7 @@ void RunOperations(FuzzInput* input) {
         Require(set.Insert(ref) == model.insert(item).second);
         break;
       case 2:
-        Require(set.Erase(ref) == (model.erase(item) != 0));
+        Require(set.Delete(ref) == (model.erase(item) != 0));
         break;
       case 3:
         Require(set.Contains(ref) == model.contains(item));

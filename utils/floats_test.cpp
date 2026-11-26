@@ -93,7 +93,7 @@ TEST(FloatsTest, FormatsWholeNumbersAsPlainIntegers) {
 }
 
 TEST(FloatsTest, FormatsLikeRedisFpconv) {
-  // Outputs of Redis 8.10's fpconv_dtoa (deps/fpconv), run on these inputs.
+  // Outputs of Redis 8.12's fpconv_dtoa (deps/fpconv), run on these inputs.
   const std::vector<std::pair<double, std::string_view>> cases = {
       {694867.4738744653, "6.948674738744653e+5"},
       {1e-05, "0.00001"},

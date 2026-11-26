@@ -170,7 +170,7 @@ TEST(IntsetTest, AppendsRedisBlob) {
   }
   std::string blob;
   intset.AppendRedisBlob(&blob);
-  // The bytes Redis 8.10's DUMP holds for SADD s 1 2 300 -70000: 32-bit
+  // The bytes Redis 8.12's DUMP holds for SADD s 1 2 300 -70000: 32-bit
   // encoding, four values, ascending, little-endian.
   const std::string expected(
       "\x04\0\0\0\x04\0\0\0\x90\xee\xfe\xff\x01\0\0\0\x02\0\0\0\x2c\x01\0\0",

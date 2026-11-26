@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "containers/listpack.h"
+#include "utils/check.h"
 #include "utils/floats.h"
 
 namespace redis_simple::data_types {
@@ -41,8 +42,14 @@ ZSetAddResult ZSetListpack::Add(std::string_view member, double score,
     return result;
   }
   // Like Redis, move the member by deleting its pair and inserting it again.
+  // A listpack insert fails only past the 4 GiB a listpack can address, and
+  // this one adds back a pair a few bytes longer than the one it replaces in
+  // a sorted set small enough to be a listpack. Were it to fail, the member
+  // would be lost, so stop instead.
   DeleteMemberScorePair(*member_offset);
-  return InsertSorted(member, result.score) ? result : skipped;
+  const bool inserted = InsertSorted(member, result.score);
+  RS_CHECK(inserted);
+  return result;
 }
 
 bool ZSetListpack::InsertSorted(std::string_view member, double score) {

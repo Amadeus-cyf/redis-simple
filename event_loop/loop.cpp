@@ -219,6 +219,7 @@ void Loop::ProcessFileEvents() {
   if (after_sleep_) {
     after_sleep_();
   }
+  file_events_polled_ += ready_events.size();
   processing_file_events_ = true;
   for (const auto& ready_event : ready_events) {
     const int fd = ready_event.fd;

@@ -762,10 +762,12 @@ TEST(ClientTest, ReleasesBuffersOnceIdleBetweenTwoSweeps) {
   ASSERT_GT(client->BufferCapacity(), 0);
 
   // The first sweep after a read only notes that the client was active.
-  client->ReleaseIdleBuffers();
+  EXPECT_FALSE(client->ReleaseIdleBuffers());
   EXPECT_GT(client->BufferCapacity(), 0);
-  client->ReleaseIdleBuffers();
+  EXPECT_TRUE(client->ReleaseIdleBuffers());
   EXPECT_EQ(client->BufferCapacity(), 0);
+  // Nothing is left to free.
+  EXPECT_FALSE(client->ReleaseIdleBuffers());
 
   // The buffers come back with the next request.
   EXPECT_EQ(Roundtrip(client.get(), peer.Get(), EncodeRequest({"PING"})),

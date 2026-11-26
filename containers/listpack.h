@@ -160,12 +160,15 @@ class Listpack {
     kInsertBefore = 1,
     kReplace = 2,
   };
+  // Redis' lpEncodeBacklen: a backlen of at most 127 takes one byte, one
+  // below each limit two, three, or four bytes, and any other five. A
+  // backlen equal to a limit takes a byte more than it needs, as in every
+  // Redis release but 8.8 to 8.10.
   enum BacklenThreshold : uint64_t {
     kSize1ByteBacklenMax = (1ULL << 7) - 1,
-    kSize2BytesBacklenMax = (1ULL << 14) - 1,
-    kSize3BytesBacklenMax = (1ULL << 21) - 1,
-    kSize4BytesBacklenMax = (1ULL << 28) - 1,
-    kSize5BytesBacklenMax = (1ULL << 35) - 1,
+    kSize2BytesBacklenLimit = (1ULL << 14) - 1,
+    kSize3BytesBacklenLimit = (1ULL << 21) - 1,
+    kSize4BytesBacklenLimit = (1ULL << 28) - 1,
   };
   struct Encoding {
     std::string_view string_value;
@@ -210,8 +213,11 @@ class Listpack {
   // encoding once for both the value and the next offset. Integers are rendered
   // into `int_buffer`, which must hold kListpackIntBufferSize bytes. Iterators
   // use this instead of Get() followed by Next(), which decode each element
-  // twice.
-  DecodedEntry DecodeEntry(size_t offset, unsigned char* int_buffer) const;
+  // twice. Always inlined, since it runs once per element of every
+  // iteration: GCC's link-time optimization otherwise calls it once its
+  // budget for inlining across the program runs out.
+  [[gnu::always_inline]] DecodedEntry DecodeEntry(
+      size_t offset, unsigned char* int_buffer) const;
   // DecodeEntry for everything but strings under 4096 bytes.
   DecodedEntry DecodeLongOrIntegerEntry(size_t offset,
                                         unsigned char* int_buffer) const;
@@ -246,6 +252,35 @@ class Listpack {
   // Allocated bytes of listpack_; at least TotalBytes().
   size_t capacity_;
 };
+
+inline Listpack::DecodedEntry Listpack::DecodeEntry(
+    size_t offset, unsigned char* const int_buffer) const {
+  const unsigned char* const buffer = listpack_.get() + offset;
+  // Short strings are the common case: read their length from the encoding
+  // byte once instead of classifying the encoding for each field. Their
+  // encoded size is at most 64 bytes, so the backlen is one byte.
+  if ((buffer[0] & EncodingTypeMask::kType6BitStrMask) ==
+      EncodingType::k6BitString) {
+    const size_t length = buffer[0] & 0x3f;
+    static_assert(1 + 0x3f <= BacklenThreshold::kSize1ByteBacklenMax);
+    return {buffer + 1, length, offset + 1 + length + 1};
+  }
+  if ((buffer[0] & EncodingTypeMask::kType12BitStrMask) ==
+      EncodingType::k12BitString) {
+    const size_t length =
+        (static_cast<size_t>(buffer[0] & 0xf) << 8) | buffer[1];
+    const size_t encoded_bytes = 2 + length;
+    // Their encoded size is at most 4097 bytes, well under the 16383 where
+    // a backlen takes a third byte, so the backlen is one byte or two.
+    // Worked out here instead of with BacklenBytes, which is out of line
+    // and would cost a call for each such string.
+    static_assert(2 + 0xfff < BacklenThreshold::kSize2BytesBacklenLimit);
+    const size_t backlen_bytes =
+        encoded_bytes <= BacklenThreshold::kSize1ByteBacklenMax ? 1 : 2;
+    return {buffer + 2, length, offset + encoded_bytes + backlen_bytes};
+  }
+  return DecodeLongOrIntegerEntry(offset, int_buffer);
+}
 
 template <typename Visitor>
 bool Listpack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {

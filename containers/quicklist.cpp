@@ -250,7 +250,7 @@ std::optional<size_t> Quicklist::ListpackBytes() const {
              : std::optional<size_t>(head_->listpack.TotalBytes());
 }
 
-Listpack Quicklist::ReleaseListpack() {
+Listpack Quicklist::ExtractListpack() {
   RS_CHECK(node_count_ <= 1);
   Listpack listpack =
       head_ == nullptr ? Listpack() : std::move(head_->listpack);

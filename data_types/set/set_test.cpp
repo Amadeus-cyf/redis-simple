@@ -10,17 +10,17 @@
 #include <vector>
 
 namespace redis_simple::data_types {
-TEST(SetTest, ReleasesALargeSetInSteps) {
+TEST(SetTest, ClearsALargeSetInSteps) {
   auto small = Set::Create();
   ASSERT_TRUE(small->Add("a"));
-  EXPECT_TRUE(small->ReleaseSome(0));
+  EXPECT_TRUE(small->ClearSome(0));
 
   auto set = Set::Create();
   for (int i = 0; i < 1000; ++i) {
     ASSERT_TRUE(set->Add("member:" + std::to_string(i)));
   }
   int steps = 0;
-  while (!set->ReleaseSome(100)) {
+  while (!set->ClearSome(100)) {
     ++steps;
   }
   EXPECT_GE(steps, 4);

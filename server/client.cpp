@@ -19,9 +19,12 @@
 
 namespace redis_simple {
 namespace {
-constexpr size_t kReadBufferSize = size_t{16} * 1024;
-// Upper bound for one read while receiving a large bulk argument.
-constexpr size_t kMaxBulkReadSize = size_t{1024} * 1024;
+// The least room a read asks the query buffer for.
+constexpr size_t kMinReadRoom = size_t{16} * 1024;
+// The most room one read asks the query buffer for while a large bulk
+// argument arrives. Not a bound on the read itself, which fills whatever
+// room the buffer already has.
+constexpr size_t kMaxBulkReadRoom = size_t{1024} * 1024;
 // Redis' default client-query-buffer-limit.
 constexpr size_t kMaxQueryBufferSize = size_t{1024} * 1024 * 1024;
 constexpr std::string_view kQueued = "+QUEUED\r\n";
@@ -198,10 +201,15 @@ ssize_t Client::ReadQuery() {
   // Large bulk arguments are read in bigger steps to save syscalls.
   const size_t pending_bulk =
       parse_state_.PendingBulkBytes(query_buffer_.View().size());
-  const size_t read_size =
-      std::clamp(pending_bulk, kReadBufferSize, kMaxBulkReadSize);
-  char* const tail = query_buffer_.WritableTail(read_size);
-  const ssize_t nread = connection_->Read({tail, read_size});
+  const size_t min_room =
+      std::clamp(pending_bulk, kMinReadRoom, kMaxBulkReadRoom);
+  char* const tail = query_buffer_.WritableTail(min_room);
+  // Read into all the room the buffer has, as Redis does to save system
+  // calls: after a request of up to 64 KiB the buffer keeps room for the
+  // next one (DynamicBuffer::Compact), which then arrives in one read
+  // instead of a first 16 KiB and the rest.
+  const size_t room = query_buffer_.Capacity() - query_buffer_.Size();
+  const ssize_t nread = connection_->Read({tail, room});
   if (nread == 0) {
     return 0;
   }
@@ -220,10 +228,11 @@ ssize_t Client::ReadQuery() {
   return nread;
 }
 
-void Client::ReleaseIdleBuffers() {
+bool Client::ReleaseIdleBuffers() {
   if (std::exchange(read_since_sweep_, false)) {
-    return;
+    return false;
   }
+  const size_t capacity = BufferCapacity();
   // An empty query buffer holds no partial request, so nothing views it.
   if (query_buffer_.Empty()) {
     query_buffer_.Release();
@@ -235,6 +244,7 @@ void Client::ReleaseIdleBuffers() {
     reply_buffer_.ReleaseBuffer();
     ReleaseStorage(&reply_blocks_);
   }
+  return BufferCapacity() != capacity;
 }
 
 ssize_t Client::SendReply() {

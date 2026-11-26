@@ -15,6 +15,7 @@
 
 #include "event_loop/loop.h"
 #include "server/idle_client_sweeper.h"
+#include "server/memory_purger.h"
 #include "utils/cache_line.h"
 
 namespace redis_simple {
@@ -102,14 +103,16 @@ class IoThread {
   using ReadyCallback = std::function<void(IoThread*, std::vector<Handoff>*)>;
 
   // Starts the thread; `main_loop` runs `on_ready`. Returns nullptr if the
-  // thread or its event loop cannot be created. `main_running`, if given,
-  // is the main thread's flag; that thread then calls TakeHandoffs before
-  // it sleeps, so a handoff made while it is awake needs no wakeup.
-  // `cron_interval_ms` is how often the thread's timer runs, which sweeps
-  // its idle clients; a test lengthens it so that only a wakeup ends the
-  // thread's poll.
+  // thread or its event loop cannot be created.
+  // `purge_state` is the server's, shared by every thread's MemoryPurger;
+  // this thread purges its own heap with it. `main_running`, if given, is
+  // the main thread's flag; that thread then calls TakeHandoffs before it
+  // sleeps, so a handoff made while it is awake needs no wakeup.
+  // `cron_interval_ms` is how often the thread's cron runs; a test lengthens
+  // it so that only a wakeup ends the thread's poll.
   static std::unique_ptr<IoThread> Create(
       size_t index, event_loop::Loop* main_loop, ReadyCallback on_ready,
+      MemoryPurger::Shared* purge_state = nullptr,
       const RunningFlag* main_running = nullptr,
       int64_t cron_interval_ms = IdleClientSweeper::kIntervalMs);
   IoThread(const IoThread&) = delete;
@@ -157,11 +160,15 @@ class IoThread {
   IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
            std::unique_ptr<Wakeup> inbox_wakeup,
            std::unique_ptr<Wakeup> outbox_wakeup, event_loop::Loop* main_loop,
-           ReadyCallback on_ready, const RunningFlag* main_running);
+           ReadyCallback on_ready, MemoryPurger::Shared* purge_state,
+           const RunningFlag* main_running, int64_t cron_interval_ms);
   void Send(std::span<Client* const> clients, bool returning);
 
   // I/O thread.
   void Run();
+  // This thread's cron: sweeps idle clients and, once a second after any
+  // thread's work, returns this thread's free memory.
+  int64_t Cron();
   void HandleInbox();
   // Handles the messages the main thread sent; returns whether there were.
   bool ProcessInbox();
@@ -183,6 +190,7 @@ class IoThread {
   std::unique_ptr<Wakeup> outbox_wakeup_;
   event_loop::Loop* main_loop_;
   ReadyCallback on_ready_;
+  int64_t cron_interval_ms_;
   // Registered with the two loops; they run HandleInbox and HandleOutbox.
   std::function<void()> inbox_handler_;
   std::function<void()> outbox_handler_;
@@ -206,6 +214,10 @@ class IoThread {
   // I/O thread only: the clients assigned to this thread and not closed.
   // A time event on this thread's loop sweeps them.
   IdleClientSweeper idle_client_sweeper_;
+  // I/O thread only: returns this thread's free memory, and the loop's event
+  // count at the previous cron tick.
+  MemoryPurger memory_purger_;
+  uint64_t cron_file_events_{0};
   // Main thread only.
   std::vector<Handoff> ready_;
   size_t clients_{};
