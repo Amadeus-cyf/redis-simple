@@ -498,19 +498,19 @@ bool Aof::CreateBaseIfMissing(db::RedisDb* const db) {
   const int64_t sequence = manifest_.base_sequence + 1;
   const std::string name =
       BaseFileName(file_name_, sequence, use_rdb_preamble_);
-  const std::string temp_path =
-      FilePath(std::string(kTempPrefix) + "rewriteaof-" +
+  const std::string temporary_path =
+      FilePath(std::string(kTemporaryPrefix) + "rewriteaof-" +
                std::to_string(getpid()) + ".aof");
-  if (WriteBaseFile(db, temp_path) != SnapshotStatus::kWritten) {
+  if (WriteBaseFile(db, temporary_path) != SnapshotStatus::kWritten) {
     RS_LOG_ERROR("Write error writing append only file on disk: %s\n",
                  std::strerror(errno));
     return false;
   }
-  if (std::rename(temp_path.c_str(), FilePath(name).c_str()) < 0) {
+  if (std::rename(temporary_path.c_str(), FilePath(name).c_str()) < 0) {
     RS_LOG_ERROR(
         "Error moving temp append only file on the final destination: %s\n",
         std::strerror(errno));
-    unlink(temp_path.c_str());
+    unlink(temporary_path.c_str());
     return false;
   }
   manifest_.base = MakeManifestFile(name, sequence, ManifestFile::Type::kBase);

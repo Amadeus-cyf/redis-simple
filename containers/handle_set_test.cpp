@@ -73,16 +73,16 @@ TEST(HandleSetTest, DoesNotShrinkWhileResizingIsAvoided) {
 
   SetDictResizePolicy(DictResizePolicy::kAvoid);
   for (size_t index = 2; index < kCount; ++index) {
-    ASSERT_TRUE(set.Erase({items[index].get()}));
+    ASSERT_TRUE(set.Delete({items[index].get()}));
   }
   EXPECT_EQ(Positions(set), positions);
 
   SetDictResizePolicy(DictResizePolicy::kEnabled);
-  // The first erase starts the rebuild and the rest move the old table's
+  // The first delete starts the rebuild and the rest move the old table's
   // slots, a few per call.
   for (size_t index = 0; index < positions; ++index) {
     set.Insert({items[1].get()});
-    set.Erase({items[1].get()});
+    set.Delete({items[1].get()});
   }
   EXPECT_LT(Positions(set), positions);
   EXPECT_TRUE(set.Contains({items[0].get()}));
@@ -100,7 +100,7 @@ TEST(HandleSetTest, ShrinkIfNeededStartsAShrinkThatRebuildSomeFinishes) {
   const size_t positions = Positions(set);
   SetDictResizePolicy(DictResizePolicy::kAvoid);
   for (size_t index = 2; index < kCount; ++index) {
-    ASSERT_TRUE(set.Erase({items[index].get()}));
+    ASSERT_TRUE(set.Delete({items[index].get()}));
   }
   set.ShrinkIfNeeded();
   EXPECT_FALSE(set.IsRebuilding());
@@ -134,12 +134,12 @@ TEST(HandleSetTest, ReserveMakesRoomSoInsertsDoNotRebuild) {
   EXPECT_EQ(Members(set).size(), kCount);
 }
 
-TEST(HandleSetTest, InsertsErasesAndFindsHandles) {
+TEST(HandleSetTest, InsertsDeletesAndFindsHandles) {
   const auto items = MakeItems(3, 3);
   ItemSet set;
   EXPECT_EQ(set.Size(), 0);
   EXPECT_FALSE(set.Contains({items[0].get()}));
-  EXPECT_FALSE(set.Erase({items[0].get()}));
+  EXPECT_FALSE(set.Delete({items[0].get()}));
   EXPECT_EQ(set.Scan(0, [](ItemRef) { FAIL(); }), std::nullopt);
 
   EXPECT_TRUE(set.Insert({items[0].get()}));
@@ -150,8 +150,8 @@ TEST(HandleSetTest, InsertsErasesAndFindsHandles) {
   EXPECT_TRUE(set.Contains({items[1].get()}));
   EXPECT_FALSE(set.Contains({items[2].get()}));
 
-  EXPECT_TRUE(set.Erase({items[0].get()}));
-  EXPECT_FALSE(set.Erase({items[0].get()}));
+  EXPECT_TRUE(set.Delete({items[0].get()}));
+  EXPECT_FALSE(set.Delete({items[0].get()}));
   EXPECT_FALSE(set.Contains({items[0].get()}));
   EXPECT_TRUE(set.Contains({items[1].get()}));
   EXPECT_EQ(set.Size(), 1);
@@ -173,9 +173,9 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
     ASSERT_TRUE(set.Insert({items[index].get()}));
     expected.insert({items[index].get()});
     if (index % 7 == 3) {
-      // Erase an earlier member while tables are being rebuilt.
+      // Delete an earlier member while tables are being rebuilt.
       const ItemRef earlier{items[index / 2].get()};
-      ASSERT_EQ(set.Erase(earlier), expected.erase(earlier) == 1);
+      ASSERT_EQ(set.Delete(earlier), expected.erase(earlier) == 1);
     }
   }
   EXPECT_EQ(set.Size(), expected.size());
@@ -184,18 +184,18 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
     EXPECT_EQ(set.Contains(ref), expected.contains(ref));
   }
 
-  // Erase all but a few, which shrinks the table step by step.
+  // Delete all but a few, which shrinks the table step by step.
   for (size_t index = 0; index < kCount; ++index) {
     const ItemRef ref{items[index].get()};
     if (index % 500 != 0) {
-      ASSERT_EQ(set.Erase(ref), expected.erase(ref) == 1);
+      ASSERT_EQ(set.Delete(ref), expected.erase(ref) == 1);
     }
   }
   EXPECT_EQ(set.Size(), expected.size());
-  // Inserts and erases that change nothing let a running rebuild finish, so
+  // Inserts and deletes that change nothing let a running rebuild finish, so
   // one sweep sees each member once.
   for (size_t index = 0; index < kCount; ++index) {
-    set.Erase({items[1].get()});
+    set.Delete({items[1].get()});
   }
   EXPECT_EQ(Members(set), expected);
   // The shrunken table holds few enough slots for a short sweep.
@@ -207,8 +207,8 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
   EXPECT_LE(positions, 16 * (expected.size() + 1));
 }
 
-TEST(HandleSetTest, ReusesErasedSlotsUnderChurn) {
-  // The same few members inserted and erased many times must not grow the
+TEST(HandleSetTest, ReusesDeletedSlotsUnderChurn) {
+  // The same few members inserted and deleted many times must not grow the
   // table without bound or lose anyone.
   const auto items = MakeItems(64, 8);
   ItemSet set;
@@ -220,7 +220,7 @@ TEST(HandleSetTest, ReusesErasedSlotsUnderChurn) {
     if ((state >> 20) % 2 == 0) {
       ASSERT_EQ(set.Insert(ref), expected.insert(ref).second);
     } else {
-      ASSERT_EQ(set.Erase(ref), expected.erase(ref) == 1);
+      ASSERT_EQ(set.Delete(ref), expected.erase(ref) == 1);
     }
     ASSERT_EQ(set.Size(), expected.size());
   }

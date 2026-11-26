@@ -284,7 +284,7 @@ bool Server::RemoveClient(Client* client) {
   if (client->AwaitsFlush()) {
     std::erase(held_clients_, client);
   }
-  client->Free();
+  client->Close();
   // Destroy the client after the current event, which may still use it.
   loop_->Defer([this, client] { clients_.erase(client); });
   return true;

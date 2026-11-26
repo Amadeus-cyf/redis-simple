@@ -16,13 +16,13 @@ bool EntryLess(const Hash::Entry& lhs, const Hash::Entry& rhs) {
 }
 }  // namespace
 
-TEST(HashTest, ReleasesALargeHashInSteps) {
+TEST(HashTest, ClearsALargeHashInSteps) {
   auto hash = Hash::Create();
   for (int i = 0; i < 1000; ++i) {
     ASSERT_TRUE(hash->Set("field:" + std::to_string(i), "value"));
   }
   int steps = 0;
-  while (!hash->ReleaseSome(100)) {
+  while (!hash->ClearSome(100)) {
     ++steps;
   }
   EXPECT_GE(steps, 4);
