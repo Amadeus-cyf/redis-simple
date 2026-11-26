@@ -96,6 +96,17 @@ Guidance for AI coding agents working in this repository.
   names must be upper-case letters only and at most 16 bytes.
 - When adding or changing supported commands, update the README command
   coverage list and the relevant command-family integration test.
+- Mark a libstdc++ call that clang must inline for speed with
+  `RS_INLINE_LIBSTDCXX_CALLS` (`utils/inlining.h`), as the reply encoders'
+  `resize_and_overwrite` calls are: clang 18 judged libstdc++'s too costly to
+  inline and called it once per element, which cost collection replies a
+  third more instructions than GCC's build. The macro goes on the statement
+  that makes the call, since a library's definition cannot carry an
+  attribute, and does nothing with libc++, where forcing the same calls made
+  bulk string replies slower. Measure with the compiler and library in
+  question before adding one.
+  A helper this repository defines that must be inlined takes
+  `[[gnu::always_inline]]` on its definition instead.
 - Keep reply encoding helpers directly under `server/`, database state and
   Redis object wrappers under `server/db/`, the AOF under `server/aof/`, and
   RDB snapshots under `server/rdb/`.
