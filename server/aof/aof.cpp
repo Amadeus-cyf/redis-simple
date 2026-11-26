@@ -394,13 +394,13 @@ std::string Aof::ManifestPath() const {
 }
 
 Aof::Failure Aof::PersistManifest(const Manifest& manifest) {
-  const std::string temp_path =
+  const std::string temporary_path =
       FilePath(std::string(kTemporaryPrefix) + ManifestFileName(file_name_));
-  const int fd = OpenFile(temp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  const int fd = OpenFile(temporary_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (fd < 0) {
     const int open_errno = errno;
     RS_LOG_ERROR("Can't open the temporary manifest file %s: %s\n",
-                 temp_path.c_str(), std::strerror(open_errno));
+                 temporary_path.c_str(), std::strerror(open_errno));
     return {AofError::kWrite, open_errno};
   }
   const std::string text = manifest.Encode();
@@ -411,16 +411,17 @@ Aof::Failure Aof::PersistManifest(const Manifest& manifest) {
   close(fd);
   if (!synced) {
     RS_LOG_ERROR("Error writing the temporary manifest file %s: %s\n",
-                 temp_path.c_str(), std::strerror(write_errno));
-    unlink(temp_path.c_str());
+                 temporary_path.c_str(), std::strerror(write_errno));
+    unlink(temporary_path.c_str());
     return {written ? AofError::kSync : AofError::kWrite, write_errno};
   }
-  if (file_ops_->Rename(temp_path.c_str(), ManifestPath().c_str()) < 0) {
+  if (file_ops_->Rename(temporary_path.c_str(), ManifestPath().c_str()) < 0) {
     const int rename_errno = errno;
     RS_LOG_ERROR(
         "Error trying to rename the temporary manifest file %s into %s: %s\n",
-        temp_path.c_str(), ManifestPath().c_str(), std::strerror(rename_errno));
-    unlink(temp_path.c_str());
+        temporary_path.c_str(), ManifestPath().c_str(),
+        std::strerror(rename_errno));
+    unlink(temporary_path.c_str());
     return {AofError::kRename, rename_errno};
   }
   if (!SyncDirectory(file_ops_.get(), directory_)) {

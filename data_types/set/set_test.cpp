@@ -10,7 +10,7 @@
 #include <vector>
 
 namespace redis_simple::data_types {
-TEST(SetTest, ReleasesALargeSetInSteps) {
+TEST(SetTest, ClearsALargeSetInSteps) {
   auto small = Set::Create();
   ASSERT_TRUE(small->Add("a"));
   EXPECT_TRUE(small->ClearSome(0));

@@ -12,7 +12,7 @@
 #include <vector>
 
 namespace redis_simple::data_types {
-TEST(ZSetTest, ReleasesALargeSortedSetInSteps) {
+TEST(ZSetTest, ClearsALargeSortedSetInSteps) {
   auto zset = ZSet::Create();
   for (int i = 0; i < 1000; ++i) {
     zset->InsertOrUpdate("member:" + std::to_string(i), i);

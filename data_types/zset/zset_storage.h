@@ -139,7 +139,7 @@ class ZSetStorage {
   // A listpack storage's listpack, in Redis' byte format; nullopt for a
   // skiplist.
   virtual std::optional<std::string_view> ListpackBytes() const = 0;
-  // See ZSet::ClearSome. A listpack frees at once.
+  // See ZSet::ClearSome. A listpack frees at once, so it is left as it is.
   virtual bool ClearSome(size_t /*max_elements*/) { return true; }
   virtual ~ZSetStorage() = default;
 

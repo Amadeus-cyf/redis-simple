@@ -22,12 +22,12 @@ namespace redis_simple::containers {
 // expires dict stores a pointer to each key's object in the bucket itself.
 //
 // Looking a handle up compares slots and never reads what it refers to.
-// `Hash` is called only to place a handle: when it is inserted or erased,
+// `Hash` is called only to place a handle: when it is inserted or deleted,
 // and when a table is rebuilt.
 //
 // A table is rebuilt into a new one when it fills up or empties. The call
 // that starts a rebuild allocates the new, zeroed table; members then move a
-// few slots per insert or erase, so no single call moves every member. A
+// few slots per insert or delete, so no single call moves every member. A
 // table kept at most three-quarters full costs a member 11 to 21 bytes, and
 // more while both tables are alive.
 //
@@ -73,10 +73,10 @@ class HandleSet {
   std::optional<size_t> Scan(size_t cursor, Visitor&& visitor) const;
 
  private:
-  // A slot holds a handle's bits, kEmpty, or kErased. No handle has kErased's
+  // A slot holds a handle's bits, kEmpty, or kDeleted. No handle has kDeleted's
   // bits, since the objects handles point to are aligned.
   static constexpr uintptr_t kEmpty = 0;
-  static constexpr uintptr_t kErased = 1;
+  static constexpr uintptr_t kDeleted = 1;
   static constexpr size_t kInitialCapacity = 16;
   static constexpr size_t kSlotsMovedPerCall = 16;
 
@@ -85,15 +85,15 @@ class HandleSet {
     // Zero or a power of two.
     size_t capacity{};
     size_t used{};
-    // Erased slots still count against the table's capacity until it is
+    // Deleted slots still count against the table's capacity until it is
     // rebuilt, because a search has to walk past them.
-    size_t erased{};
+    size_t deleted{};
   };
 
   static uintptr_t Bits(Handle handle) {
     return std::bit_cast<uintptr_t>(handle);
   }
-  static bool Holds(uintptr_t slot) { return slot > kErased; }
+  static bool Holds(uintptr_t slot) { return slot > kDeleted; }
   // The slot holding `bits`, or null. Probes linearly from the slot the
   // hash names until an empty one.
   static uintptr_t* Find(const Table& table, uintptr_t bits, size_t hash);
@@ -144,8 +144,8 @@ void HandleSet<Handle, Hash>::Place(Table* table, uintptr_t bits, size_t hash) {
   while (Holds(table->slots[index])) {
     index = (index + 1) & mask;
   }
-  if (table->slots[index] == kErased) {
-    --table->erased;
+  if (table->slots[index] == kDeleted) {
+    --table->deleted;
   }
   table->slots[index] = bits;
   ++table->used;
@@ -161,7 +161,7 @@ bool HandleSet<Handle, Hash>::Insert(Handle handle) {
     return false;
   }
   // Every member ends up in main_, so its load counts those still in old_.
-  if (!Fits(Size() + main_.erased + 1, main_.capacity)) {
+  if (!Fits(Size() + main_.deleted + 1, main_.capacity)) {
     // A rebuild normally finishes long before main_ fills again; if it has
     // not, finish it now, since only one can run at a time.
     MoveSome(old_.capacity);
@@ -177,11 +177,11 @@ bool HandleSet<Handle, Hash>::Delete(Handle handle) {
   const size_t hash = hash_(handle);
   MoveSome(kSlotsMovedPerCall);
   if (uintptr_t* const slot = Find(main_, bits, hash)) {
-    *slot = kErased;
+    *slot = kDeleted;
     --main_.used;
-    ++main_.erased;
+    ++main_.deleted;
   } else if (uintptr_t* const old_slot = Find(old_, bits, hash)) {
-    *old_slot = kErased;
+    *old_slot = kDeleted;
     --old_.used;
   } else {
     return false;
@@ -192,7 +192,7 @@ bool HandleSet<Handle, Hash>::Delete(Handle handle) {
 
 template <typename Handle, typename Hash>
 void HandleSet<Handle, Hash>::Reserve(size_t members) {
-  if (Fits(members + main_.erased, main_.capacity)) {
+  if (Fits(members + main_.deleted, main_.capacity)) {
     return;
   }
   MoveSome(old_.capacity);
@@ -283,9 +283,9 @@ void HandleSet<Handle, Hash>::MoveOldSlot(size_t index) {
   if (!Holds(bits)) {
     return;
   }
-  // The slot is marked erased rather than emptied, so searches for members
+  // The slot is marked deleted rather than emptied, so searches for members
   // still in old_ keep walking past it.
-  old_.slots[index] = kErased;
+  old_.slots[index] = kDeleted;
   --old_.used;
   Place(&main_, bits, hash_(std::bit_cast<Handle>(bits)));
 }

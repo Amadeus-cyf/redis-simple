@@ -210,7 +210,7 @@ TEST(QuicklistTest, RemoveFromTailWithinOneNode) {
             (std::vector<std::string>{"x", "keep", "x", "keep"}));
 }
 
-TEST(QuicklistTest, ReleasesSingleListpackWithoutRebuilding) {
+TEST(QuicklistTest, ExtractsSingleListpackWithoutRebuilding) {
   Quicklist quicklist(256);
   ASSERT_TRUE(quicklist.RPush("one"));
   ASSERT_TRUE(quicklist.RPush("two"));

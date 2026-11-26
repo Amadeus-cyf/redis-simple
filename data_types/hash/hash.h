@@ -55,8 +55,10 @@ class Hash {
   size_t Size() const;
   // Frees up to about `max_elements` elements of a large encoding, so a
   // discarded value can be freed in steps (as RedisDb does for UNLINK).
-  // Returns true once the rest is cheap to free at once. Between the first
-  // call and the one that returns true, only destroy the value.
+  // Returns true once the rest is cheap to free at once, which, unlike
+  // Dict::ClearSome's true, does not mean it is empty: a small encoding is
+  // left as it is. Between the first call and the one that returns true,
+  // only destroy the value.
   bool ClearSome(size_t max_elements);
   std::vector<Entry> Entries() const;
   // Calls `visitor(value)` and returns true when `field` exists. The value

@@ -78,7 +78,7 @@ TEST(HandleSetTest, DoesNotShrinkWhileResizingIsAvoided) {
   EXPECT_EQ(Positions(set), positions);
 
   SetDictResizePolicy(DictResizePolicy::kEnabled);
-  // The first erase starts the rebuild and the rest move the old table's
+  // The first delete starts the rebuild and the rest move the old table's
   // slots, a few per call.
   for (size_t index = 0; index < positions; ++index) {
     set.Insert({items[1].get()});
@@ -173,7 +173,7 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
     ASSERT_TRUE(set.Insert({items[index].get()}));
     expected.insert({items[index].get()});
     if (index % 7 == 3) {
-      // Erase an earlier member while tables are being rebuilt.
+      // Delete an earlier member while tables are being rebuilt.
       const ItemRef earlier{items[index / 2].get()};
       ASSERT_EQ(set.Delete(earlier), expected.erase(earlier) == 1);
     }
@@ -184,7 +184,7 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
     EXPECT_EQ(set.Contains(ref), expected.contains(ref));
   }
 
-  // Erase all but a few, which shrinks the table step by step.
+  // Delete all but a few, which shrinks the table step by step.
   for (size_t index = 0; index < kCount; ++index) {
     const ItemRef ref{items[index].get()};
     if (index % 500 != 0) {
@@ -192,7 +192,7 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
     }
   }
   EXPECT_EQ(set.Size(), expected.size());
-  // Inserts and erases that change nothing let a running rebuild finish, so
+  // Inserts and deletes that change nothing let a running rebuild finish, so
   // one sweep sees each member once.
   for (size_t index = 0; index < kCount; ++index) {
     set.Delete({items[1].get()});
@@ -208,7 +208,7 @@ TEST(HandleSetTest, KeepsEveryMemberWhileGrowingAndShrinking) {
 }
 
 TEST(HandleSetTest, ReusesDeletedSlotsUnderChurn) {
-  // The same few members inserted and erased many times must not grow the
+  // The same few members inserted and deleted many times must not grow the
   // table without bound or lose anyone.
   const auto items = MakeItems(64, 8);
   ItemSet set;
