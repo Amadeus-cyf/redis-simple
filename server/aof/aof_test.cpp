@@ -34,9 +34,9 @@
 namespace redis_simple::aof {
 namespace {
 // A temporary directory holding an AOF directory, removed afterwards.
-class TempAof {
+class TemporaryAof {
  public:
-  TempAof() {
+  TemporaryAof() {
     constexpr std::string_view kTemplate = "/tmp/redis_simple_aof_XXXXXX";
     std::array<char, kTemplate.size() + 1> path{};
     std::ranges::copy(kTemplate, path.begin());
@@ -44,11 +44,11 @@ class TempAof {
     root_ = path.data();
     directory_ = root_ + "/appendonlydir";
   }
-  TempAof(const TempAof&) = delete;
-  TempAof& operator=(const TempAof&) = delete;
-  TempAof(TempAof&&) = delete;
-  TempAof& operator=(TempAof&&) = delete;
-  ~TempAof() {
+  TemporaryAof(const TemporaryAof&) = delete;
+  TemporaryAof& operator=(const TemporaryAof&) = delete;
+  TemporaryAof(TemporaryAof&&) = delete;
+  TemporaryAof& operator=(TemporaryAof&&) = delete;
+  ~TemporaryAof() {
     std::error_code error;
     std::filesystem::remove_all(root_, error);
   }
@@ -240,25 +240,26 @@ std::string Encode(std::string_view command,
 // Redis selects the database before the first command of each file.
 constexpr std::string_view kSelect = "*2\r\n$6\r\nSELECT\r\n$1\r\n0\r\n";
 
-Options Always(const TempAof& file) {
+Options Always(const TemporaryAof& file) {
   return file.MakeOptions(FsyncPolicy::kAlways);
 }
 
-Options Always(const TempAof& file, const std::shared_ptr<FileOps>& file_ops) {
+Options Always(const TemporaryAof& file,
+               const std::shared_ptr<FileOps>& file_ops) {
   Options options = Always(file);
   options.file_ops = file_ops;
   return options;
 }
 
 // Options writing an RDB base file, Redis' default.
-Options WithRdbPreamble(const TempAof& file) {
+Options WithRdbPreamble(const TemporaryAof& file) {
   Options options = Always(file);
   options.use_rdb_preamble = true;
   return options;
 }
 
 // `db` as an AOF base RDB file's bytes, written next to the AOF directory.
-std::string RdbBytes(db::RedisDb* db, const TempAof& file) {
+std::string RdbBytes(db::RedisDb* db, const TemporaryAof& file) {
   const std::string path = file.Root() + "/snapshot.rdb";
   if (rdb::WriteRdbFile(db, path, {.aof_base = true}, DefaultFileOps().get()) !=
       rdb::WriteStatus::kWritten) {
@@ -271,8 +272,8 @@ std::string RdbBytes(db::RedisDb* db, const TempAof& file) {
 
 // Writes an old single-file AOF, which Redis may have started with an RDB
 // preamble, where Aof::Open looks for one, and opens it.
-std::unique_ptr<Aof> OpenSingleFile(const TempAof& file, std::string_view data,
-                                    db::RedisDb* db) {
+std::unique_ptr<Aof> OpenSingleFile(const TemporaryAof& file,
+                                    std::string_view data, db::RedisDb* db) {
   const std::filesystem::path previous = std::filesystem::current_path();
   std::filesystem::current_path(file.Root());
   {
@@ -288,7 +289,7 @@ std::unique_ptr<Aof> OpenSingleFile(const TempAof& file, std::string_view data,
 }  // namespace
 
 TEST(AofTest, ReplaysCanonicalSetAndExpiration) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   const int64_t expire = utils::NowInMilliseconds() + 60'000;
   ASSERT_EQ(
@@ -311,7 +312,7 @@ TEST(AofTest, ReplaysCanonicalSetAndExpiration) {
 }
 
 TEST(AofTest, ReplaysCanonicalConditionalExpiration) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
       source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
@@ -336,7 +337,7 @@ TEST(AofTest, ReplaysCanonicalConditionalExpiration) {
 }
 
 TEST(AofTest, DoesNotResurrectExpiredKeysDuringReplay) {
-  TempAof file;
+  TemporaryAof file;
   std::string commands = Encode("SET", {"key", "value"});
   commands.append(Encode("PEXPIREAT", {"key", "1"}));
   commands.append(Encode("APPEND", {"key", "suffix"}));
@@ -350,7 +351,7 @@ TEST(AofTest, DoesNotResurrectExpiredKeysDuringReplay) {
 }
 
 TEST(AofTest, TruncatesIncompleteFinalCommand) {
-  TempAof file;
+  TemporaryAof file;
   const std::string complete = Encode("SET", {"key", "value"});
   ASSERT_TRUE(file.Append(complete));
   ASSERT_TRUE(file.Append("*2\r\n$3\r\nDEL\r\n$4\r\npar"));
@@ -366,7 +367,7 @@ TEST(AofTest, TruncatesIncompleteFinalCommand) {
 }
 
 TEST(AofTest, RejectsCorruptInput) {
-  TempAof file;
+  TemporaryAof file;
   ASSERT_TRUE(file.Append("not-resp\r\n"));
   auto database = db::RedisDb::Create();
 
@@ -374,7 +375,7 @@ TEST(AofTest, RejectsCorruptInput) {
 }
 
 TEST(AofTest, FlushesThePendingBatchOnShutdown) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
       source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
@@ -395,7 +396,7 @@ TEST(AofTest, FlushesThePendingBatchOnShutdown) {
 }
 
 TEST(AofTest, RewritesAllObjectTypesAndPreservesConcurrentWrites) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   const int64_t expire = utils::NowInMilliseconds() + 60'000;
   ASSERT_EQ(source->SetKey("string", db::RedisObject::CreateWithString("old"),
@@ -470,7 +471,7 @@ TEST(AofTest, RewritesAllObjectTypesAndPreservesConcurrentWrites) {
 }
 
 TEST(AofTest, RewriteCompactsCommandHistory) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   auto writer = Aof::Open(Always(file), source.get());
   ASSERT_NE(writer, nullptr);
@@ -500,7 +501,7 @@ TEST(AofTest, RewriteCompactsCommandHistory) {
 }
 
 TEST(AofTest, RewritesLargeValuesAsReplayableChunks) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   const std::string value(1024, 'x');
   ASSERT_EQ(
@@ -525,7 +526,7 @@ TEST(AofTest, RewritesLargeValuesAsReplayableChunks) {
 }
 
 TEST(AofTest, BoundsCollectionSnapshotCommandsByBytes) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   auto values = data_types::List::Create();
   for (int index = 0; index < 8; ++index) {
@@ -554,7 +555,7 @@ TEST(AofTest, BoundsCollectionSnapshotCommandsByBytes) {
 }
 
 TEST(AofTest, HandlesShortWritesWithoutLosingCommands) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   file_ops->LimitWrites(3);
   auto source = db::RedisDb::Create();
@@ -575,7 +576,7 @@ TEST(AofTest, HandlesShortWritesWithoutLosingCommands) {
 }
 
 TEST(AofTest, HandlesShortWritesDuringRewrite) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   file_ops->LimitWrites(3);
   auto source = db::RedisDb::Create();
@@ -611,7 +612,7 @@ TEST(AofTest, HandlesShortWritesDuringRewrite) {
 
 TEST(AofTest, OpensFileCloseOnExec) {
   // A child started with exec() must not inherit a writable AOF descriptor.
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto db = db::RedisDb::Create();
   auto aof = Aof::Open(Always(file, file_ops), db.get());
@@ -625,7 +626,7 @@ TEST(AofTest, OpensFileCloseOnExec) {
 }
 
 TEST(AofTest, ReportsAppendSyncFailures) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
@@ -641,7 +642,7 @@ TEST(AofTest, ReportsAppendSyncFailures) {
 }
 
 TEST(AofTest, ReportsAppendWriteFailures) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
@@ -657,7 +658,7 @@ TEST(AofTest, ReportsAppendWriteFailures) {
 }
 
 TEST(AofTest, KeepsOriginalFileWhenRewriteRenameFails) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
@@ -701,7 +702,7 @@ TEST(AofTest, KeepsOriginalFileWhenRewriteRenameFails) {
 }
 
 TEST(AofTest, ReportsRewriteWriteFailuresWithoutStoppingAppends) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
@@ -733,7 +734,7 @@ TEST(AofTest, ReportsRewriteWriteFailuresWithoutStoppingAppends) {
 }
 
 TEST(AofTest, ReportsDirectorySyncFailureAfterRewrite) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
@@ -772,7 +773,7 @@ TEST(AofTest, ReportsDirectorySyncFailureAfterRewrite) {
 }
 
 TEST(AofTest, RewriteStartsANewIncrementFileAndRetiresTheOldFiles) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   auto writer = Aof::Open(Always(file), source.get());
   ASSERT_NE(writer, nullptr);
@@ -821,7 +822,7 @@ TEST(AofTest, WritesTheBatchBeforeFlushReturns) {
   // the write, whatever the fsync policy.
   for (const FsyncPolicy policy :
        {FsyncPolicy::kEverySecond, FsyncPolicy::kNo}) {
-    TempAof file;
+    TemporaryAof file;
     auto source = db::RedisDb::Create();
     auto writer = Aof::Open(file.MakeOptions(policy), source.get());
     ASSERT_NE(writer, nullptr);
@@ -836,7 +837,7 @@ TEST(AofTest, WritesTheBatchBeforeFlushReturns) {
 }
 
 TEST(AofTest, HoldsSyncsBackWhileABackgroundSaveRuns) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   Options options = Always(file, file_ops);
@@ -858,7 +859,7 @@ TEST(AofTest, HoldsSyncsBackWhileABackgroundSaveRuns) {
 }
 
 TEST(AofTest, SyncsEverySecondUnderSustainedWrites) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   Options options = file.MakeOptions(FsyncPolicy::kEverySecond);
@@ -882,7 +883,7 @@ TEST(AofTest, SyncsEverySecondUnderSustainedWrites) {
 }
 
 TEST(AofTest, RetriesFailedWritesAndRejectsWritesUntilTheyRecover) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   Options options = file.MakeOptions(FsyncPolicy::kEverySecond);
@@ -916,7 +917,7 @@ TEST(AofTest, RetriesFailedWritesAndRejectsWritesUntilTheyRecover) {
 TEST(AofTest, AFailedBackgroundSyncClearsWithTheNextSuccessfulOne) {
   // As in Redis, the last background sync's result decides whether writes
   // are rejected.
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   Options options = file.MakeOptions(FsyncPolicy::kEverySecond);
@@ -943,7 +944,7 @@ TEST(AofTest, AFailedBackgroundSyncClearsWithTheNextSuccessfulOne) {
 }
 
 TEST(AofTest, ShutdownStopsARunningRewrite) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   auto writer = Aof::Open(Always(file), source.get());
   ASSERT_NE(writer, nullptr);
@@ -967,7 +968,7 @@ TEST(AofTest, ShutdownStopsARunningRewrite) {
 }
 
 TEST(AofTest, BatchesAppendsUntilFlush) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
       source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
@@ -987,7 +988,7 @@ TEST(AofTest, BatchesAppendsUntilFlush) {
 }
 
 TEST(AofTest, DetectsWhenAutomaticRewriteIsDue) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   Options options = Always(file);
   options.auto_rewrite_min_bytes = 0;
@@ -1013,7 +1014,7 @@ TEST(AofTest, DetectsWhenAutomaticRewriteIsDue) {
 }
 
 TEST(AofTest, StartsAScheduledRewriteFromTheCron) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   auto writer = Aof::Open(Always(file), source.get());
   ASSERT_NE(writer, nullptr);
@@ -1028,7 +1029,7 @@ TEST(AofTest, StartsAScheduledRewriteFromTheCron) {
 }
 
 TEST(AofTest, ReplaysCompleteTransactions) {
-  TempAof file;
+  TemporaryAof file;
   std::string commands = Encode("SET", {"before", "1"});
   commands.append(Encode("MULTI", {}));
   commands.append(Encode("SET", {"counter", "1"}));
@@ -1047,7 +1048,7 @@ TEST(AofTest, ReplaysCompleteTransactions) {
 }
 
 TEST(AofTest, DiscardsTransactionCutOffByEndOfFile) {
-  TempAof file;
+  TemporaryAof file;
   const std::string complete = Encode("SET", {"before", "1"});
   std::string commands = complete;
   commands.append(Encode("MULTI", {}));
@@ -1070,7 +1071,7 @@ TEST(AofTest, RejectsUnbalancedTransactionRecords) {
   for (const std::string& contents :
        {Encode("EXEC", {}), Encode("MULTI", {}) + Encode("MULTI", {}),
         Encode("MULTI", {}) + Encode("GET", {"key"}) + Encode("EXEC", {})}) {
-    TempAof file;
+    TemporaryAof file;
     ASSERT_TRUE(file.Append(contents));
     auto database = db::RedisDb::Create();
     EXPECT_EQ(Aof::Open(Always(file), database.get()), nullptr);
@@ -1078,7 +1079,7 @@ TEST(AofTest, RejectsUnbalancedTransactionRecords) {
 }
 
 TEST(AofTest, WrapsMultiRecordTransactions) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   auto writer = Aof::Open(Always(file), source.get());
   ASSERT_NE(writer, nullptr);
@@ -1115,7 +1116,7 @@ TEST(AofTest, WrapsMultiRecordTransactions) {
 }
 
 TEST(AofTest, UpgradesASingleFileAof) {
-  TempAof file;
+  TemporaryAof file;
   // Like Redis, the old file is looked up in the working directory.
   const std::filesystem::path previous = std::filesystem::current_path();
   std::filesystem::current_path(file.Root());
@@ -1142,7 +1143,7 @@ TEST(AofTest, UpgradesASingleFileAof) {
 TEST(AofTest, FinishesAnUpgradeCutOffAfterItsManifest) {
   // Redis writes the manifest before moving the old file, so a crash in
   // between repeats the move on the next start.
-  TempAof file;
+  TemporaryAof file;
   const std::filesystem::path previous = std::filesystem::current_path();
   std::filesystem::current_path(file.Root());
   {
@@ -1165,7 +1166,7 @@ TEST(AofTest, FinishesAnUpgradeCutOffAfterItsManifest) {
 }
 
 TEST(AofTest, AListedFileThatIsMissingIsFatal) {
-  TempAof file;
+  TemporaryAof file;
   ASSERT_TRUE(file.Append(Encode("SET", {"key", "value"})));
   {
     std::ofstream manifest(file.ManifestPath(),
@@ -1177,7 +1178,7 @@ TEST(AofTest, AListedFileThatIsMissingIsFatal) {
 }
 
 TEST(AofTest, SkipsAnnotationsAndWritesTimestamps) {
-  TempAof file;
+  TemporaryAof file;
   std::string commands = "#TS:1700000000\r\n";
   commands.append(Encode("SET", {"key", "value"}));
   commands.append("#any annotation\r\n");
@@ -1207,7 +1208,7 @@ TEST(AofTest, SkipsAnnotationsAndWritesTimestamps) {
 
 TEST(AofTest, LoadsRedisSelectRecordsForTheOnlyDatabase) {
   {
-    TempAof file;
+    TemporaryAof file;
     std::string commands(kSelect);
     commands.append(Encode("SET", {"key", "value"}));
     ASSERT_TRUE(file.Append(commands));
@@ -1215,14 +1216,14 @@ TEST(AofTest, LoadsRedisSelectRecordsForTheOnlyDatabase) {
     ASSERT_NE(Aof::Open(Always(file), restored.get()), nullptr);
     EXPECT_NE(restored->LookupKey("key"), nullptr);
   }
-  TempAof file;
+  TemporaryAof file;
   ASSERT_TRUE(file.Append(Encode("SELECT", {"1"}) + Encode("SET", {"k", "v"})));
   auto restored = db::RedisDb::Create();
   EXPECT_EQ(Aof::Open(Always(file), restored.get()), nullptr);
 }
 
 TEST(AofTest, RefusesATornTailWithoutAofLoadTruncated) {
-  TempAof file;
+  TemporaryAof file;
   ASSERT_TRUE(file.Append(Encode("SET", {"key", "value"})));
   ASSERT_TRUE(file.Append("*2\r\n$3\r\nDEL"));
   Options options = Always(file);
@@ -1234,7 +1235,7 @@ TEST(AofTest, RefusesATornTailWithoutAofLoadTruncated) {
 TEST(AofTest, CutsAPartialWriteOffAndRetriesTheWholeBuffer) {
   // Redis' flushAppendOnlyFile: a short write is truncated back, so a crash
   // leaves no torn record, and the buffer is retried whole.
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   Options options = file.MakeOptions(FsyncPolicy::kNo);
@@ -1264,7 +1265,7 @@ TEST(AofTest, RefusesToRewriteWhileAFailedWriteIsPending) {
   // The snapshot would hold the INCR still in the buffer, and the next
   // incremental file too, so replay would apply it twice. Redis 8.12 refuses
   // the rewrite and counts it as a failure, as this server does.
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   Options options = file.MakeOptions(FsyncPolicy::kNo);
@@ -1302,7 +1303,7 @@ TEST(AofTest, RefusesToRewriteWhileAFailedWriteIsPending) {
 TEST(AofTest, WaitsForARunningSyncBeforeWriting) {
   // Redis' `everysec`: a write waits, up to two seconds, while a background
   // sync of the file runs; a forced flush does not wait.
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   Options options = file.MakeOptions(FsyncPolicy::kEverySecond);
@@ -1332,7 +1333,7 @@ TEST(AofTest, WaitsForARunningSyncBeforeWriting) {
 }
 
 TEST(AofTest, KeepsAppendingToTheLastIncrementAcrossRestarts) {
-  TempAof file;
+  TemporaryAof file;
   for (int round = 0; round < 3; ++round) {
     auto db = db::RedisDb::Create();
     auto writer = Aof::Open(Always(file), db.get());
@@ -1351,7 +1352,7 @@ TEST(AofTest, KeepsAppendingToTheLastIncrementAcrossRestarts) {
 }
 
 TEST(AofTest, OnlyTheLastFileMayEndInATornRecord) {
-  TempAof file;
+  TemporaryAof file;
   {
     auto db = db::RedisDb::Create();
     auto writer = Aof::Open(Always(file), db.get());
@@ -1386,7 +1387,7 @@ TEST(AofTest, OnlyTheLastFileMayEndInATornRecord) {
 }
 
 TEST(AofTest, BacksOffAutomaticRewritesAfterRepeatedFailures) {
-  TempAof file;
+  TemporaryAof file;
   auto file_ops = std::make_shared<TestFileOps>();
   auto source = db::RedisDb::Create();
   Options options = Always(file, file_ops);
@@ -1420,7 +1421,7 @@ TEST(AofTest, CutsOffASmallCorruptTailWhenAllowed) {
   // the last complete command.
   const std::string garbage = "not-resp-at-all";
   for (const size_t limit : {size_t{0}, garbage.size(), garbage.size() + 1}) {
-    TempAof file;
+    TemporaryAof file;
     ASSERT_TRUE(file.Append(Encode("SET", {"key", "value"})));
     ASSERT_TRUE(file.Append(garbage));
     Options options = Always(file);
@@ -1441,7 +1442,7 @@ TEST(AofTest, CutsOffASmallCorruptTailWhenAllowed) {
 }
 
 TEST(AofTest, NeverCutsOffCorruptionInAnEarlierFile) {
-  TempAof file;
+  TemporaryAof file;
   {
     auto db = db::RedisDb::Create();
     auto writer = Aof::Open(Always(file), db.get());
@@ -1464,7 +1465,7 @@ TEST(AofTest, NeverCutsOffCorruptionInAnEarlierFile) {
   EXPECT_EQ(Aof::Open(options, restored.get()), nullptr);
 }
 TEST(AofTest, RewritesTheBaseAsAnRdbFile) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   auto writer = Aof::Open(WithRdbPreamble(file), source.get());
   ASSERT_NE(writer, nullptr);
@@ -1511,7 +1512,7 @@ TEST(AofTest, RewritesTheBaseAsAnRdbFile) {
 
 TEST(AofTest, LoadsAnRdbPreambleAndTheCommandsAfterIt) {
   // An old single file Redis wrote with aof-use-rdb-preamble.
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
       source->SetKey("snapshot", db::RedisObject::CreateWithString("1"), 0),
@@ -1530,7 +1531,7 @@ TEST(AofTest, LoadsAnRdbPreambleAndTheCommandsAfterIt) {
 TEST(AofTest, KeepsKeysThatExpiredInTheRdbBaseWhileLoading) {
   // Redis loads them, since the commands after the base were written while
   // they existed; here PERSIST saves the key.
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   ASSERT_EQ(source->SetKey("key", db::RedisObject::CreateWithString("v"),
                            utils::NowInMilliseconds() + 50),
@@ -1548,7 +1549,7 @@ TEST(AofTest, KeepsKeysThatExpiredInTheRdbBaseWhileLoading) {
 
 TEST(AofTest, CutsATornCommandAfterAnRdbPreamble) {
   // The valid prefix counts from the start of the file, preamble included.
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
       source->SetKey("snapshot", db::RedisObject::CreateWithString("1"), 0),
@@ -1565,7 +1566,7 @@ TEST(AofTest, CutsATornCommandAfterAnRdbPreamble) {
 }
 
 TEST(AofTest, RefusesADamagedRdbBase) {
-  TempAof file;
+  TemporaryAof file;
   auto source = db::RedisDb::Create();
   ASSERT_EQ(
       source->SetKey("key", db::RedisObject::CreateWithString("value"), 0),
