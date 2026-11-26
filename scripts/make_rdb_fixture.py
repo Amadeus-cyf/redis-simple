@@ -96,6 +96,15 @@ def fill(connection):
     time.sleep(0.05)
 
 
+def info_field(info, name):
+    """The value of `name` in an INFO reply, or None if it has no such line."""
+    for line in info.split(b"\r\n"):
+        key, _, value = line.partition(b":")
+        if key == name.encode():
+            return value.decode()
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("redis_server")
@@ -104,13 +113,17 @@ def main():
     args = parser.parse_args()
 
     directory = tempfile.mkdtemp(prefix="redis_simple_rdb_fixture.")
-    server = subprocess.Popen(
-        [args.redis_server, "--port", str(args.port), "--bind", "127.0.0.1",
-         "--dir", directory, "--save", "", "--appendonly", "no",
-         "--enable-debug-command", "local"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    server = None
     try:
+        server = subprocess.Popen(
+            [args.redis_server, "--port", str(args.port),
+             "--bind", "127.0.0.1", "--dir", directory, "--save", "",
+             "--appendonly", "no", "--enable-debug-command", "local"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(200):
+            if server.poll() is not None:
+                sys.exit(f"redis-server exited with status {server.returncode}"
+                         f": is port {args.port} in use?")
             try:
                 connection = Connection(args.port)
                 break
@@ -118,16 +131,23 @@ def main():
                 time.sleep(0.05)
         else:
             sys.exit("redis-server did not start")
-        version = connection.command("INFO", "server").split(b"redis_version:")
+        # A server that was already listening on the port answers in place of
+        # the one started above, which cannot bind it. Nothing below may reach
+        # that one: it would get these keys, and SAVE would replace its file.
+        info = connection.command("INFO", "server")
+        if info_field(info, "process_id") != str(server.pid):
+            sys.exit(f"port {args.port} belongs to another server: "
+                     "pass a free one with --port")
         fill(connection)
         if connection.command("SAVE") != b"OK":
             sys.exit("SAVE failed")
         shutil.copyfile(os.path.join(directory, "dump.rdb"), args.output)
-        print(f"wrote {args.output} with redis-server "
-              f"{version[1].split(b'\r\n')[0].decode()}")
+        version = info_field(info, "redis_version")
+        print(f"wrote {args.output} with redis-server {version}")
     finally:
-        server.terminate()
-        server.wait()
+        if server is not None:
+            server.terminate()
+            server.wait()
         shutil.rmtree(directory, ignore_errors=True)
 
 
