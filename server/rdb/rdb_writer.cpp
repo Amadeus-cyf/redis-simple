@@ -118,6 +118,7 @@ class Encoder {
     Raw(value);
   }
 
+  // The bytes as they are. Always inlined, for the reason given at Length.
   [[gnu::always_inline]] void Raw(std::string_view bytes) {
     if (bytes.size() >= kDirectWriteBytes) {
       Flush();

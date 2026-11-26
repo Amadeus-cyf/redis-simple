@@ -274,7 +274,7 @@ inline Listpack::DecodedEntry Listpack::DecodeEntry(
     // a backlen takes a third byte, so the backlen is one byte or two.
     // Worked out here instead of with BacklenBytes, which is out of line
     // and would cost a call for each such string.
-    static_assert(2 + 0xfff < (1ULL << 14) - 1);
+    static_assert(2 + 0xfff < BacklenThreshold::kSize2BytesBacklenLimit);
     const size_t backlen_bytes =
         encoded_bytes <= BacklenThreshold::kSize1ByteBacklenMax ? 1 : 2;
     return {buffer + 2, length, offset + encoded_bytes + backlen_bytes};
