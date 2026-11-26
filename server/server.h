@@ -109,10 +109,13 @@ class Server {
   // or at once when there is no AOF.
   void RunHandedOverClients(IoThread* thread,
                             std::vector<IoThread::Handoff>* handoffs);
-  // Runs each time the event loop is about to wait for events: flushes the
-  // AOF once for every command run since the last time, then lets the
-  // replies to those commands go out.
+  // Runs each time the event loop is about to wait for events: runs the
+  // clients the I/O threads handed over, flushes the AOF once for every
+  // command run since the last time, then lets the replies to those
+  // commands go out.
   void BeforeSleep();
+  // Runs every I/O thread's handed-over clients; returns whether there were.
+  bool TakeIoThreadHandoffs();
   void ReleaseHeldReplies();
   void ReturnClientsToIoThreads();
   int fd_{-1};
@@ -137,6 +140,10 @@ class Server {
   int64_t fork_start_microseconds_{};
   std::string require_pass_;
   bool protected_mode_{true};
+  // This thread's flag, as Redis' server.running: the I/O threads wake it
+  // only when it is not awake, since BeforeSleep takes their handoffs.
+  // Declared before io_threads_, which read it, so it outlives them.
+  RunningFlag main_running_;
   std::vector<std::unique_ptr<IoThread>> io_threads_;
   ServerContext context_;
   // Clients whose replies wait for the AOF flush in BeforeSleep: those the

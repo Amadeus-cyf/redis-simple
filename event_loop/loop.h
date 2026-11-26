@@ -79,8 +79,17 @@ class Loop {
   void SetBeforeSleep(std::function<void()> callback) {
     before_sleep_ = std::move(callback);
   }
-  // Runs one iteration: the before-sleep callback, a poll and its file
-  // events, the deferred callbacks, then the time events that are due.
+  // Sets the callback the loop runs right after each poll returns, before
+  // the ready events (Redis' afterSleep). An empty function removes it.
+  void SetAfterSleep(std::function<void()> callback) {
+    after_sleep_ = std::move(callback);
+  }
+  // While set, polls return at once instead of waiting for events (Redis'
+  // aeSetDontWait), for a before-sleep callback that expects more work.
+  void SetDontWait(bool dont_wait) { dont_wait_ = dont_wait; }
+  // Runs one iteration: the before-sleep callback, a poll, the after-sleep
+  // callback and the poll's file events, the deferred callbacks, then the
+  // time events that are due.
   void ProcessEvents();
   // How many ready file events the loop has handled since it was created.
   // It changes whenever a descriptor had work, so a caller comparing two
@@ -104,10 +113,12 @@ class Loop {
   std::vector<std::function<void()>> deferred_callbacks_;
   std::vector<std::function<void()>> running_deferred_callbacks_;
   std::function<void()> before_sleep_;
+  std::function<void()> after_sleep_;
   std::unique_ptr<EventPoller> event_poller_;
   uint64_t file_events_polled_{0};
   bool processing_file_events_{false};
   bool stop_requested_{false};
+  bool dont_wait_{false};
 };
 }  // namespace redis_simple::event_loop
 

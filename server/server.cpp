@@ -66,6 +66,11 @@ bool Server::Run(const ServerOptions& options) {
   loop_->CreateTimeEvent(event_loop::TimeEvent::Create(
       [this](int64_t /*id*/) { return ServerCron(); }, nullptr));
   loop_->SetBeforeSleep([this] { BeforeSleep(); });
+  if (!io_threads_.empty()) {
+    // Only the I/O threads read the flag, so a server without them skips
+    // the call on every iteration.
+    loop_->SetAfterSleep([this] { main_running_.SetRunning(); });
+  }
   loop_->Run();
   loop_->DeleteFileEvent(fd_, event_loop::EventFlag::kReadable);
   fd_ = -1;
@@ -153,7 +158,7 @@ bool Server::StartIoThreads(size_t thread_count) {
                std::vector<IoThread::Handoff>* const handoffs) {
           RunHandedOverClients(io_thread, handoffs);
         },
-        &purge_state_);
+        &purge_state_, &main_running_);
     if (thread == nullptr) {
       return false;
     }
@@ -232,6 +237,10 @@ void Server::HoldReplies(Client* const client) {
 }
 
 void Server::BeforeSleep() {
+  // Clients the I/O threads handed over while this thread was awake came
+  // without a wakeup, as in Redis' beforeSleep. Their commands run now, so
+  // the flush below covers them.
+  const bool took_handoffs = TakeIoThreadHandoffs();
   active_expire_.RunFastCycle(db_.get());
   // One write, and one fsync with `always`, persists the commands of every
   // client that ran in this iteration, as Redis' beforeSleep does. Only then
@@ -242,10 +251,36 @@ void Server::BeforeSleep() {
     held_clients_.clear();
     returning_clients_.clear();
     returning_batches_.clear();
+    // The loop polls once more before it stops. This thread's flag stays
+    // set, so the I/O threads send it no wakeups, and that poll must not
+    // wait for one.
+    loop_->SetDontWait(true);
     Stop();
     return;
   }
   ReleaseHeldReplies();
+  if (io_threads_.empty()) {
+    return;
+  }
+  // With handoffs taken, more are likely: poll without waiting and stay
+  // awake, so the I/O threads keep handing over without wakeups. Otherwise
+  // say this thread sleeps, then take what came before that was visible.
+  // Commands that run then are flushed, and their replies sent, by the next
+  // iteration, which therefore does not wait either.
+  bool dont_wait = took_handoffs;
+  if (!dont_wait) {
+    dont_wait =
+        main_running_.SleepAndTake([this] { return TakeIoThreadHandoffs(); });
+  }
+  loop_->SetDontWait(dont_wait);
+}
+
+bool Server::TakeIoThreadHandoffs() {
+  bool took = false;
+  for (const std::unique_ptr<IoThread>& io_thread : io_threads_) {
+    took |= io_thread->TakeHandoffs();
+  }
+  return took;
 }
 
 void Server::ReleaseHeldReplies() {

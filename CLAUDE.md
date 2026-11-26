@@ -221,12 +221,18 @@ Guidance for AI coding agents working in this repository.
   `docs/design.md`. Keep commands, the database, and the AOF on the main
   thread, and I/O threads to the client's socket, buffers, and parser. A
   client belongs to one side at a time, and is handed over only after the
-  current loop iteration. Connections close on their I/O thread; the main
-  thread only frees them. Stop the I/O threads before freeing clients at
-  shutdown, and pause them (`Server::PauseIoThreads`) around anything that
-  must not race their allocations, such as `fork`. Run the threaded
-  integration variants (`*_io_threads`) and the `thread-sanitizer` preset's
-  suite after changing this path; CI runs that suite too.
+  current loop iteration. A handoff wakes the other side only while it
+  sleeps: each side takes its queue before polling and, if it found
+  nothing, clears its running flag and takes the queue again
+  (`RunningFlag::SleepAndTake`, from `IoThread::BeforeSleep` and
+  `Server::BeforeSleep`). Keep that second look on every path to a poll
+  that waits, or a batch sent in between waits for a timer. Connections
+  close on their I/O thread; the main thread only frees them. Stop the I/O
+  threads before freeing clients at shutdown, and pause them
+  (`Server::PauseIoThreads`) around anything that must not race their
+  allocations, such as `fork`. Run the threaded integration variants
+  (`*_io_threads`) and the `thread-sanitizer` preset's suite after changing
+  this path; CI runs that suite too.
 - Commands reach server-wide state (the database, the AOF, the password, the
   I/O threads) through `Client::Server()`, the `ServerContext` the server
   owns. Add server-wide state there, not to `Client`.

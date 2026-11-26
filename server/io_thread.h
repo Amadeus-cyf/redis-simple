@@ -10,11 +10,13 @@
 #include <mutex>
 #include <span>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "event_loop/loop.h"
 #include "server/idle_client_sweeper.h"
 #include "server/memory_purger.h"
+#include "utils/cache_line.h"
 
 namespace redis_simple {
 class Client;
@@ -39,6 +41,44 @@ class Wakeup {
   int read_fd_;
   int write_fd_;
 };
+
+// Whether a thread is awake, not waiting in its poll, as Redis' `running`
+// flags: a thread that sends to it signals its wakeup only when it is not,
+// since the thread takes its queue before it sleeps. That is safe only with
+// this order on both sides. The sender queues, then reads the flag. The
+// thread clears the flag, then takes its queue once more (SleepAndTake), so
+// what a sender queued without a wakeup is taken before the thread waits.
+//
+// The flag has cache lines of its own. Senders read it for every batch, and
+// beside data its thread keeps writing each of those reads would miss.
+class alignas(utils::kCacheLineBytes) RunningFlag {
+ public:
+  // Any thread.
+  [[nodiscard]] bool Running() const { return running_.load(); }
+  // The thread itself, when its poll returns. A poll that did not follow
+  // SleepAndTake finds the flag set and leaves it, since a store would take
+  // the cache line from the senders that read it. Only this thread writes
+  // the flag, so its own read needs no ordering.
+  void SetRunning() {
+    if (!running_.load(std::memory_order_relaxed)) {
+      running_.store(true);
+    }
+  }
+  // The thread itself, before a poll that may wait and after it took its
+  // queue and found nothing: clears the flag, then runs `take_queue`, which
+  // takes the queue again, and returns what that returns: whether the queue
+  // held anything.
+  template <typename TakeQueue>
+  bool SleepAndTake(TakeQueue&& take_queue) {
+    running_.store(false);
+    return std::forward<TakeQueue>(take_queue)();
+  }
+
+ private:
+  std::atomic<bool> running_{true};
+};
+static_assert(alignof(RunningFlag) == utils::kCacheLineBytes &&
+              sizeof(RunningFlag) == utils::kCacheLineBytes);
 
 // Counters for INFO, like Redis' per-thread "io_thread_<n>" lines.
 struct IoThreadInfo {
@@ -72,10 +112,16 @@ class IoThread {
   // Starts the thread; `main_loop` runs `on_ready`. Returns nullptr if the
   // thread or its event loop cannot be created.
   // `purge_state` is the server's, shared by every thread's MemoryPurger;
-  // this thread purges its own heap with it.
+  // this thread purges its own heap with it. `main_running`, if given, is
+  // the main thread's flag; that thread then calls TakeHandoffs before it
+  // sleeps, so a handoff made while it is awake needs no wakeup.
+  // `cron_interval_ms` is how often the thread's cron runs; a test lengthens
+  // it so that only a wakeup ends the thread's poll.
   static std::unique_ptr<IoThread> Create(
       size_t index, event_loop::Loop* main_loop, ReadyCallback on_ready,
-      MemoryPurger::Shared* purge_state = nullptr);
+      MemoryPurger::Shared* purge_state = nullptr,
+      const RunningFlag* main_running = nullptr,
+      int64_t cron_interval_ms = IdleClientSweeper::kIntervalMs);
   IoThread(const IoThread&) = delete;
   IoThread& operator=(const IoThread&) = delete;
   IoThread(IoThread&&) = delete;
@@ -95,6 +141,11 @@ class IoThread {
   // clients as one list.
   void Assign(Client* client);
   void Return(std::span<Client* const> clients);
+  // Main thread: runs `on_ready` with the clients this thread handed over,
+  // if any, and returns whether there were. With `main_running`, the main
+  // thread calls it before it sleeps, as Redis' beforeSleep calls
+  // processClientsOfAllIOThreads.
+  bool TakeHandoffs();
   // Stops the thread for good; the main thread then owns every client.
   void Stop();
   // Waits until the thread is idle between events, and keeps it there until
@@ -116,7 +167,8 @@ class IoThread {
   IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
            std::unique_ptr<Wakeup> inbox_wakeup,
            std::unique_ptr<Wakeup> outbox_wakeup, event_loop::Loop* main_loop,
-           ReadyCallback on_ready, MemoryPurger::Shared* purge_state);
+           ReadyCallback on_ready, MemoryPurger::Shared* purge_state,
+           const RunningFlag* main_running, int64_t cron_interval_ms);
   void Send(std::span<Client* const> clients, bool returning);
 
   // I/O thread.
@@ -125,6 +177,9 @@ class IoThread {
   // thread's work, returns this thread's free memory.
   int64_t Cron();
   void HandleInbox();
+  // Handles the messages the main thread sent; returns whether there were.
+  bool ProcessInbox();
+  void BeforeSleep();
   void WaitWhilePaused(std::unique_lock<std::mutex>* lock);
   void StartReading(Client* client);
   void OnReadable(Client* client);
@@ -142,6 +197,7 @@ class IoThread {
   std::unique_ptr<Wakeup> outbox_wakeup_;
   event_loop::Loop* main_loop_;
   ReadyCallback on_ready_;
+  int64_t cron_interval_ms_;
   // Registered with the two loops; they run HandleInbox and HandleOutbox.
   std::function<void()> inbox_handler_;
   std::function<void()> outbox_handler_;
@@ -176,6 +232,11 @@ class IoThread {
 
   std::atomic<uint64_t> reads_processed_{0};
   std::atomic<uint64_t> writes_processed_{0};
+  // This thread's flag, as Redis' IOThread.running: Send wakes it only
+  // when it is not awake, since it takes its inbox before it sleeps. The
+  // main thread's flag, when given, does the same for SendHandoffs.
+  RunningFlag running_;
+  const RunningFlag* main_running_;
 };
 }  // namespace redis_simple
 
