@@ -60,6 +60,18 @@ namespace dict_internal {
 // entry. Dict truncates every hash it computes, so a hash read back from an
 // entry finds the same key in another Dict.
 using EntryHash = uint32_t;
+
+// Whether two string keys hold the same bytes: what `left == right` means,
+// without the call to std::string_view::compare that libstdc++'s operator==
+// makes. With link-time optimization GCC leaves that call out of line once
+// its inlining budget runs out, and since the call takes a view's address, a
+// build with stack protection then guards the frame of every lookup too.
+[[gnu::always_inline]] inline bool SameBytes(std::string_view left,
+                                             std::string_view right) {
+  return left.size() == right.size() &&
+         std::char_traits<char>::compare(left.data(), right.data(),
+                                         left.size()) == 0;
+}
 }  // namespace dict_internal
 
 // A string key with its DictHash<std::string> hash. Every Dict using that
@@ -102,10 +114,10 @@ struct DictKeyEqual {
 template <>
 struct DictKeyEqual<std::string> {
   bool operator()(std::string_view left, std::string_view right) const {
-    return left == right;
+    return dict_internal::SameBytes(left, right);
   }
   bool operator()(const HashedKey& left, std::string_view right) const {
-    return left.key == right;
+    return dict_internal::SameBytes(left.key, right);
   }
 };
 

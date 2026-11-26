@@ -52,6 +52,39 @@ TEST(DictStringTest, UsesCustomHashAndEqualityPolicies) {
   EXPECT_EQ(*dict->FindValue(std::string_view("kEy")), 1);
 }
 
+namespace {
+// Puts every key in one bucket with one stored hash, so each lookup has to
+// tell the keys apart by comparing them.
+struct CollidingHash {
+  size_t operator()(std::string_view /*key*/) const { return 7; }
+};
+}  // namespace
+
+TEST(DictStringTest, DefaultEqualityTellsCollidingKeysApartByLengthAndBytes) {
+  auto dict = Dict<std::string, size_t, CollidingHash>::Create();
+  const std::vector<std::string> keys = {"",
+                                         "a",
+                                         "ab",
+                                         "ac",
+                                         std::string("nul\0a", 5),
+                                         std::string("nul\0b", 5),
+                                         std::string(64, 'k'),
+                                         std::string(63, 'k') + "j"};
+  for (size_t i = 0; i < keys.size(); ++i) {
+    ASSERT_TRUE(dict->Insert(keys[i], i)) << i;
+  }
+  ASSERT_EQ(dict->Size(), keys.size());
+  for (size_t i = 0; i < keys.size(); ++i) {
+    EXPECT_FALSE(dict->Insert(keys[i], keys.size())) << i;
+    const size_t* const value = dict->FindValue(std::string_view(keys[i]));
+    ASSERT_NE(value, nullptr) << i;
+    EXPECT_EQ(*value, i);
+  }
+  EXPECT_EQ(dict->FindValue(std::string_view("abc")), nullptr);
+  EXPECT_EQ(dict->FindValue(std::string_view("nul")), nullptr);
+  EXPECT_EQ(dict->FindValue(std::string_view(std::string(65, 'k'))), nullptr);
+}
+
 TEST(DictStringTest, ClearSomeFreesInStepsAcrossBothTables) {
   auto dict = Dict<std::string, int>::Create(1024);
   // The 1025th insert begins a rehash, so entries sit in both tables.

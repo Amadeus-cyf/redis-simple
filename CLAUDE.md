@@ -622,8 +622,11 @@ Before committing, run the relevant build and tests.
   attribute goes on a function this repository defines, and what it inlines
   must not itself call a small helper out of line. A standard library call
   that a compiler leaves out of line is a different problem: the library's
-  definition cannot carry the attribute, so that takes an attribute on the
-  statement that makes the call.
+  definition cannot carry the attribute. For clang that takes an attribute
+  on the statement that makes the call. GCC has no inlining attribute for a
+  statement, so there the code avoids the call: string-keyed Dicts compare
+  keys with `dict_internal::SameBytes`, not `==`, whose
+  `std::string_view::compare` call GCC left out of line in every lookup.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and
