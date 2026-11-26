@@ -597,7 +597,12 @@ Before committing, run the relevant build and tests.
   slower; `-fopt-info-inline-missed` at link time names them. Mark such a
   helper `[[gnu::always_inline]]` (the request parser's, `SeededHash`,
   `Listpack::DecodeEntry`, the RDB encoder's `Length` and `Raw`), and
-  compare an LTO build with one without it when adding hot-path code.
+  compare an LTO build with one without it when adding hot-path code. The
+  attribute goes on a function this repository defines, and what it inlines
+  must not itself call a small helper out of line. A standard library call
+  that a compiler leaves out of line is a different problem: the library's
+  definition cannot carry the attribute, so that takes an attribute on the
+  statement that makes the call.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
 - The `redis_simple` executable links the bundled mimalloc submodule and

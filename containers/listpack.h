@@ -267,8 +267,14 @@ inline Listpack::DecodedEntry Listpack::DecodeEntry(
     const size_t length =
         (static_cast<size_t>(buffer[0] & 0xf) << 8) | buffer[1];
     const size_t encoded_bytes = 2 + length;
-    return {buffer + 2, length,
-            offset + encoded_bytes + BacklenBytes(encoded_bytes)};
+    // Their encoded size is at most 4097 bytes, well under the 16383 where
+    // a backlen takes a third byte, so the backlen is one byte or two.
+    // Worked out here instead of with BacklenBytes, which is out of line
+    // and would cost a call for each such string.
+    static_assert(2 + 0xfff < (1ULL << 14) - 1);
+    const size_t backlen_bytes =
+        encoded_bytes <= BacklenThreshold::kSize1ByteBacklenMax ? 1 : 2;
+    return {buffer + 2, length, offset + encoded_bytes + backlen_bytes};
   }
   return DecodeLongOrIntegerEntry(offset, int_buffer);
 }
