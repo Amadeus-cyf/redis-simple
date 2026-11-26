@@ -192,7 +192,13 @@ Guidance for AI coding agents working in this repository.
   so `Flush` never runs inside a transaction.
 - Reply from `Server::BeforeSleep` in the iteration that processed the
   client's input, without waiting for a writable event; install a write
-  callback only while output remains unsent. Read once per readable event.
+  callback only while output remains unsent. Read once per readable event,
+  into all the room the query buffer has, as Redis does: an empty buffer
+  keeps up to 64 KiB between requests (`DynamicBuffer::Compact`), so a
+  request that fits arrives in one read. Redis keeps a buffer of any size
+  after a large argument, but under mimalloc one past 64 KiB costs a span
+  of 64 KiB slices per client until the idle sweep, so a larger buffer is
+  freed once it is empty.
 - An idle client keeps no buffers: `IdleClientSweeper` calls
   `Client::ReleaseIdleBuffers` on each client once a second, from the server
   cron without threaded I/O and otherwise from the client's I/O thread,
@@ -607,9 +613,21 @@ Before committing, run the relevant build and tests.
   default allocator, and keep `REDIS_SIMPLE_USE_MIMALLOC=OFF` building. Allocate
   with `new` (containers, `std::make_unique`), never `malloc`, so allocations go
   through mimalloc.
-  `main` sets mimalloc's purge delay to 0 (unless `MIMALLOC_PURGE_DELAY` is
-  set), so freed memory returns to the OS when it is freed, as with Redis'
-  allocator; with the default delay an idle server kept it indefinitely.
+  mimalloc keeps its default purge delay, so a busy server reuses freed
+  pages instead of returning each one with a system call (with a delay of
+  0, a 64 KiB `SET` cost 3.5 times the CPU). mimalloc returns a page only
+  when its thread allocates or frees near it again, so `main` passes
+  `Server::Create` a function that collects the calling thread's heap, and
+  each thread's `MemoryPurger` calls it once a second while any thread did
+  work since its last purge (events, freed client buffers, expired or
+  lazily freed keys, a rehash the cron moved along), through a count every
+  thread's purger shares, since the threads free each other's memory.
+  Memory then returns to the OS within about a second, busy or idle, as
+  Redis' allocator returns it from its background thread. Work that frees
+  memory without events must count as work there, up to and including the
+  tick that frees the last of it: `RedisDb::FreeLazily` and
+  `RehashIncrementally` return whether the call had work, not whether any
+  remains.
 - Measure performance changes to the server with `scripts/measure/profile_server.sh`
   (callgrind instruction counts per workload) and memory changes with
   `scripts/measure/measure_server_memory.sh` (RSS per key), passing the previous build

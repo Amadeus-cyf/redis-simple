@@ -20,6 +20,7 @@
 #include "server/db/db.h"
 #include "server/rdb/rdb_loader.h"
 #include "server/rdb/rdb_writer.h"
+#include "utils/posix.h"
 #include "utils/time.h"
 
 namespace redis_simple::rdb {
@@ -34,14 +35,6 @@ std::string TemporaryFileName(pid_t pid) {
   return "temp-" + std::to_string(pid) + ".rdb";
 }
 
-pid_t WaitForChild(pid_t child, int* const wait_status, int options) {
-  while (true) {
-    const pid_t result = waitpid(child, wait_status, options);
-    if (result >= 0 || errno != EINTR) {
-      return result;
-    }
-  }
-}
 }  // namespace
 
 Rdb::Rdb(Options options)
@@ -228,7 +221,7 @@ const SavePoint* Rdb::ReachedSavePoint(int64_t now) const {
 
 void Rdb::CheckBackgroundSave() {
   int wait_status = 0;
-  const pid_t result = WaitForChild(child_, &wait_status, WNOHANG);
+  const pid_t result = utils::WaitForChild(child_, &wait_status, WNOHANG);
   if (result != 0) {
     FinishBackgroundSave(result < 0 ? -1 : wait_status);
   }
@@ -282,7 +275,7 @@ void Rdb::WaitForBackgroundJobs() {
 void Rdb::AbandonBackgroundSave() {
   if (kill(child_, SIGUSR1) == 0) {
     int wait_status = 0;
-    WaitForChild(child_, &wait_status, 0);
+    utils::WaitForChild(child_, &wait_status, 0);
   }
   RemoveTemporaryFile(child_);
   child_ = -1;

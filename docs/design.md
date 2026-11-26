@@ -52,7 +52,15 @@ like `Dict` it does not shrink while a snapshot child shares its pages.
 
 1. **Read.** The event loop reports a readable socket, and the client reads
    once into its query buffer (`Client::ReadQuery`). Reading once per event
-   keeps one busy client from starving the others.
+   keeps one busy client from starving the others. The read fills all the
+   room the buffer has, as in Redis, and an empty buffer keeps up to 64 KiB
+   between requests, so after a request that fits the next one arrives in a
+   single read instead of a first 16 KiB and the rest. Redis keeps a buffer
+   of any size after a large argument, until the client is idle. This
+   server frees a larger one as soon as it is empty, because mimalloc gives
+   each allocation past 64 KiB a span of 64 KiB slices: a client that sent
+   one 64 KiB value would hold 128 KiB, where Redis' jemalloc holds 80 KiB.
+   A larger request is read as a first 16 KiB and then the rest.
 2. **Frame.** `request_parser::Parse` finds one complete request in the
    buffer without copying it: the command name and arguments are
    `std::string_view`s into the buffer (`CommandArgs`). It frames RESP arrays
@@ -96,6 +104,29 @@ is the job of Redis' `clientsCronResizeQueryBuffer` and
 the sweeper. With it, each I/O thread runs its own, from a timer on its
 event loop, over the clients assigned to it, and skips clients the main
 thread holds, as Redis' `IOThreadClientsCron` does.
+
+### Returning freed memory
+
+mimalloc gives each thread its own heap and keeps freed pages for reuse.
+It returns a free page to the system only when the owning thread later
+allocates or frees a page in the same segment, or collects its heap, and a
+page another thread freed into the heap is not even known to be free until
+then. Returning pages at every free instead (a purge delay of 0) cost a
+system call and a page fault for every overwritten large value, and still
+missed the pages other threads free. So the main thread and each I/O
+thread tick a `MemoryPurger` from their 100 ms cron. Every tenth tick, if
+any thread did work since this thread's last purge (events, freed client
+buffers, expired keys, or a cron tick that freed detached values or moved a
+rehash along, the last such tick included), it collects the thread's
+heap, which returns its free pages. Work on any thread counts because the
+threads free each other's memory: the I/O threads free reply buffers the
+main thread allocated, and the main thread frees clients the I/O threads
+read for. A shared atomic count of the ticks with work, which every
+purger reads, tells each thread when to collect. Freed memory goes back
+within about a second, busy or idle, for one collect per second per
+thread while there is work (0.2 to 0.9 ms on heaps up to 3 GiB). Redis'
+allocator similarly returns freed memory from a background thread after a
+delay.
 
 ### What a command can reach
 

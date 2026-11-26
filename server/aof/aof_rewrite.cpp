@@ -24,6 +24,7 @@
 #include "server/aof/snapshot.h"
 #include "server/rdb/rdb_writer.h"
 #include "utils/check.h"
+#include "utils/posix.h"
 #include "utils/time.h"
 
 // The Aof's rewrite: a forked child writes a snapshot as the next base file,
@@ -35,15 +36,6 @@ namespace {
 // AOF_REWRITE_LIMITE_MAX_MINUTES).
 constexpr size_t kFailuresBeforeBackoff = 3;
 constexpr int64_t kMaxBackoffMinutes = 60;
-
-pid_t WaitForChild(pid_t child, int* const wait_status, int options) {
-  while (true) {
-    const pid_t result = waitpid(child, wait_status, options);
-    if (result >= 0 || errno != EINTR) {
-      return result;
-    }
-  }
-}
 
 AofError ChildError(int wait_status) {
   if (!WIFEXITED(wait_status)) {
@@ -180,7 +172,8 @@ void Aof::CheckRewrite() {
     return;
   }
   int wait_status = 0;
-  const pid_t result = WaitForChild(rewrite_child_, &wait_status, WNOHANG);
+  const pid_t result =
+      utils::WaitForChild(rewrite_child_, &wait_status, WNOHANG);
   if (result != 0) {
     FinishRewrite(result < 0 ? -1 : wait_status);
   }
@@ -191,7 +184,7 @@ void Aof::WaitForRewrite() {
     return;
   }
   int wait_status = 0;
-  const pid_t result = WaitForChild(rewrite_child_, &wait_status, 0);
+  const pid_t result = utils::WaitForChild(rewrite_child_, &wait_status, 0);
   FinishRewrite(result < 0 ? -1 : wait_status);
 }
 
@@ -300,7 +293,7 @@ void Aof::AbandonRewrite() {
               static_cast<int>(rewrite_child_));
   if (kill(rewrite_child_, SIGUSR1) == 0) {
     int wait_status = 0;
-    WaitForChild(rewrite_child_, &wait_status, 0);
+    utils::WaitForChild(rewrite_child_, &wait_status, 0);
   }
   RemoveRewriteTempFiles(rewrite_child_);
   rewrite_child_ = -1;

@@ -3,7 +3,13 @@
 Run every script from the repository root.
 
 - `run_*.sh`: CTest and CI runners (integration tests, leak check,
-  clang-tidy, the Linux Docker check).
+  clang-tidy, the Linux Docker check). The integration runners source
+  `wait_for_server.sh`, which waits until a started server accepts
+  connections (polling with `nc -z`, or one second where that is missing)
+  instead of a fixed sleep, and stops a server that never does. Before
+  starting a server, the runners call its `require_free_port`, which fails
+  when another process, such as a server left from an earlier run, already
+  holds the port.
 - `format.sh`: clang-format wrapper.
 - `compare_with_redis.py`, `compare_side_effects.py`, `check_*`,
   `run_redis_compatibility_check.sh`, `build_latest_redis.sh`: comparisons

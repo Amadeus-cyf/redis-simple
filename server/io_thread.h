@@ -14,6 +14,7 @@
 
 #include "event_loop/loop.h"
 #include "server/idle_client_sweeper.h"
+#include "server/memory_purger.h"
 
 namespace redis_simple {
 class Client;
@@ -70,9 +71,11 @@ class IoThread {
 
   // Starts the thread; `main_loop` runs `on_ready`. Returns nullptr if the
   // thread or its event loop cannot be created.
-  static std::unique_ptr<IoThread> Create(size_t index,
-                                          event_loop::Loop* main_loop,
-                                          ReadyCallback on_ready);
+  // `purge_state` is the server's, shared by every thread's MemoryPurger;
+  // this thread purges its own heap with it.
+  static std::unique_ptr<IoThread> Create(
+      size_t index, event_loop::Loop* main_loop, ReadyCallback on_ready,
+      MemoryPurger::Shared* purge_state = nullptr);
   IoThread(const IoThread&) = delete;
   IoThread& operator=(const IoThread&) = delete;
   IoThread(IoThread&&) = delete;
@@ -113,11 +116,14 @@ class IoThread {
   IoThread(size_t index, std::unique_ptr<event_loop::Loop> loop,
            std::unique_ptr<Wakeup> inbox_wakeup,
            std::unique_ptr<Wakeup> outbox_wakeup, event_loop::Loop* main_loop,
-           ReadyCallback on_ready);
+           ReadyCallback on_ready, MemoryPurger::Shared* purge_state);
   void Send(std::span<Client* const> clients, bool returning);
 
   // I/O thread.
   void Run();
+  // This thread's cron: sweeps idle clients and, once a second after any
+  // thread's work, returns this thread's free memory.
+  int64_t Cron();
   void HandleInbox();
   void WaitWhilePaused(std::unique_lock<std::mutex>* lock);
   void StartReading(Client* client);
@@ -159,6 +165,10 @@ class IoThread {
   // I/O thread only: the clients assigned to this thread and not closed.
   // A time event on this thread's loop sweeps them.
   IdleClientSweeper idle_client_sweeper_;
+  // I/O thread only: returns this thread's free memory, and the loop's event
+  // count at the previous cron tick.
+  MemoryPurger memory_purger_;
+  uint64_t cron_file_events_{0};
   // Main thread only.
   std::vector<Handoff> ready_;
   size_t clients_{};

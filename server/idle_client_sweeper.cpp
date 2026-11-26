@@ -29,7 +29,7 @@ void IdleClientSweeper::Clear() {
   sweeps_left_ = 0;
 }
 
-void IdleClientSweeper::Sweep() {
+bool IdleClientSweeper::Sweep() {
   if (sweeps_left_ == 0) {
     next_ = 0;
     sweeps_left_ = kSweepsPerRound;
@@ -39,11 +39,13 @@ void IdleClientSweeper::Sweep() {
   // Rounded up, so the round's last call reaches the last client.
   const size_t visits = (unvisited + sweeps_left_ - 1) / sweeps_left_;
   --sweeps_left_;
+  bool released = false;
   for (size_t visit = 0; visit < visits; ++visit) {
     Client* const client = clients_[next_++];
-    if (!client->HandedToMain()) {
-      client->ReleaseIdleBuffers();
+    if (!client->HandedToMain() && client->ReleaseIdleBuffers()) {
+      released = true;
     }
   }
+  return released;
 }
 }  // namespace redis_simple

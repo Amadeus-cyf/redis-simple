@@ -98,8 +98,8 @@ class Client {
   // Otherwise one large request or reply would keep its memory for as long
   // as the connection lives; Redis' clientsCron shrinks idle clients'
   // buffers for the same reason. Only the side that owns the client may
-  // call this.
-  void ReleaseIdleBuffers();
+  // call this. Returns whether it freed a buffer.
+  bool ReleaseIdleBuffers();
   // Bytes allocated for the query buffer and the reply buffer's main block.
   size_t BufferCapacity() const {
     return query_buffer_.Capacity() + reply_buffer_.BufferCapacity();

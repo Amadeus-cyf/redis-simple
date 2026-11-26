@@ -384,7 +384,7 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
       break;
     }
   }
-  return !unlinked_.empty() || !flushed_.empty();
+  return true;
 }
 
 bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
@@ -404,7 +404,7 @@ bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
       break;
     }
   }
-  return dict_->IsRehashing() || expires_.IsRebuilding();
+  return true;
 }
 
 ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {
