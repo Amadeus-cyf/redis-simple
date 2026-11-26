@@ -27,8 +27,8 @@
 namespace redis_simple {
 Server::Server(const MemoryPurger::PurgeFunction purge_memory)
     : loop_(event_loop::Loop::Create()),
-      memory_purge_{.purge = purge_memory},
-      memory_purger_(&memory_purge_),
+      purge_state_{.purge = purge_memory},
+      memory_purger_(&purge_state_),
       db_(db::RedisDb::Create()) {}
 
 std::unique_ptr<Server> Server::Create(
@@ -153,7 +153,7 @@ bool Server::StartIoThreads(size_t thread_count) {
                std::vector<IoThread::Handoff>* const handoffs) {
           RunHandedOverClients(io_thread, handoffs);
         },
-        &memory_purge_);
+        &purge_state_);
     if (thread == nullptr) {
       return false;
     }
@@ -304,6 +304,8 @@ bool Server::InstallAcceptCallback() {
 
 int64_t Server::ServerCron() {
   constexpr int64_t kCronIntervalMs = IdleClientSweeper::kIntervalMs;
+  static_assert(kCronIntervalMs * MemoryPurger::kTicksPerPurge == 1000,
+                "kTicksPerPurge cron ticks must take one second");
   if (shutdown::StopRequested()) {
     // Redis' prepareForShutdown: when the final save fails, the server keeps
     // running.

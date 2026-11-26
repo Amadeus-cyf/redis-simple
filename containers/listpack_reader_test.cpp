@@ -157,9 +157,9 @@ TEST(WidenCompactBacklensTest, WidensEveryShortBacklenAmongOtherEntries) {
   const std::string usual("\x00\xff\xff", 3);
   const std::string compact("\x7f\xff", 2);
   int replaced = 0;
-  for (size_t at = listpack.find(usual); at != std::string::npos;
-       at = listpack.find(usual, at + compact.size())) {
-    listpack.replace(at, usual.size(), compact);
+  for (size_t offset = listpack.find(usual); offset != std::string::npos;
+       offset = listpack.find(usual, offset + compact.size())) {
+    listpack.replace(offset, usual.size(), compact);
     ++replaced;
   }
   ASSERT_EQ(replaced, 2);
@@ -171,10 +171,11 @@ TEST(WidenCompactBacklensTest, WidensEveryShortBacklenAmongOtherEntries) {
 }
 
 TEST(WidenCompactBacklensTest, LeavesOtherBytesAlone) {
-  // The usual widths, and a listpack too small for a short backlen.
+  // The usual widths: three bytes at the limit, and one byte (69, for an
+  // encoded size of 105) in a listpack too small for a short backlen.
   for (std::string listpack :
        {HashListpack(16378, 'v', std::string_view("\x00\xff\xff", 3)),
-        HashListpack(100, 'v', "i")}) {
+        HashListpack(100, 'v', "\x69")}) {
     const std::string before = listpack;
     EXPECT_FALSE(WidenCompactBacklens(&listpack));
     EXPECT_EQ(listpack, before);
