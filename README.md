@@ -46,7 +46,7 @@ it, `redis-cli -p 8080` included.
 | Access | Protected mode as in Redis: without a password, only loopback clients are accepted. | [server/README.md](server/README.md) |
 | Protocol | RESP2 by default, RESP3 through `HELLO 3`, inline commands, Redis' limits and error wording. | [server/README.md](server/README.md#protocol) |
 | Threaded I/O | Off by default; `--io-threads N` reads and writes sockets on N-1 threads while commands stay on the main thread. | [server/README.md](server/README.md#threaded-io) |
-| AOF | Off by default; Redis 8.10's multi-part format with an RDB or command base file, background rewrites, and three fsync policies. | [server/aof/README.md](server/aof/README.md) |
+| AOF | Off by default; Redis 8.12's multi-part format with an RDB or command base file, background rewrites, and three fsync policies. | [server/aof/README.md](server/aof/README.md) |
 | RDB | `SAVE`, `BGSAVE`, and save points; files load in Redis 7.2+ and Redis' files load here. | [server/rdb/README.md](server/rdb/README.md) |
 | Design | How a request flows through the code, thread handoff, and file layouts. | [docs/design.md](docs/design.md) |
 
