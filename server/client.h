@@ -134,8 +134,8 @@ class Client {
   // buffer, which neither thread touches in between.
   bool ParseQueries();
   ClientStatus RunParsedQueries();
-  // Closes the connection. The server destroys the client after the current
-  // event.
+  // Closes the connection, for Server::RemoveClient, which destroys the
+  // client after the current event.
   void Close() { connection_->Close(); }
   const commands::CommandArgs& Args() const { return args_; }
   bool Authenticated() const { return authenticated_; }
