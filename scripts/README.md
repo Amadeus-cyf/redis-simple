@@ -3,11 +3,19 @@
 Run every script from the repository root.
 
 - `run_*.sh`: CTest and CI runners (integration tests, leak check,
-  clang-tidy, the Linux Docker check).
+  clang-tidy, the Linux Docker check). The integration runners source
+  `wait_for_server.sh`, which waits until a started server accepts
+  connections (polling with `nc -z`, or one second where that is missing)
+  instead of a fixed sleep, and stops a server that never does. Before
+  starting a server, the runners call its `require_free_port`, which fails
+  when another process, such as a server left from an earlier run, already
+  holds the port.
 - `format.sh`: clang-format wrapper.
 - `compare_with_redis.py`, `compare_side_effects.py`, `check_*`,
   `run_redis_compatibility_check.sh`, `build_latest_redis.sh`: comparisons
   with a real Redis.
+- `make_rdb_fixture.py`: writes the RDB files in `server/rdb/testdata/` with
+  a real Redis.
 - [`measure/`](measure/README.md): performance and memory measurement,
   not used by CTest or CI.
 
@@ -76,6 +84,18 @@ It fills one server with every type in each of its encodings, with edge
 cases such as entries at listpack size limits, saves, loads the file in the
 other server, and compares every key, in both directions and without Redis'
 compression and checksum.
+
+`RdbTest` loads files Redis itself wrote, from `server/rdb/testdata/`. When
+a Redis release changes what it writes, add its file:
+
+```sh
+scripts/make_rdb_fixture.py build/reference-redis/src/redis-server \
+    server/rdb/testdata/redis_8_12.rdb
+```
+
+It fills a fresh `redis-server` with the keyspace `RdbTest` expects (every
+type in each of its encodings, expirations, a key that has expired, and
+listpack values at backlen boundaries) and saves it.
 
 ## Formatting and clang-tidy
 

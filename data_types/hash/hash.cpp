@@ -87,7 +87,7 @@ std::string_view Hash::ListpackBytes() const {
   return ListpackStorage().Bytes();
 }
 
-bool Hash::ReleaseSome(size_t max_elements) {
+bool Hash::ClearSome(size_t max_elements) {
   if (encoding_ != Encoding::kDict || dict_ == nullptr) {
     return true;
   }

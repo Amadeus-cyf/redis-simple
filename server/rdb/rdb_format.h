@@ -7,8 +7,8 @@
 // Constants of Redis' RDB file format (src/rdb.h).
 namespace redis_simple::rdb {
 inline constexpr std::string_view kMagic = "REDIS";
-// The newest format version this server loads: Redis 8.10's.
-inline constexpr int kMaxLoadVersion = 15;
+// The newest format version this server loads: Redis 8.12's.
+inline constexpr int kMaxLoadVersion = 17;
 // The version this server writes: the oldest that covers every type it
 // writes (SET_LISTPACK came in version 11, with Redis 7.2), so Redis 7.2 and
 // later can load its files. Redis writes its own newest version instead.
@@ -61,11 +61,18 @@ enum ObjectType : uint8_t {
   kTypeHashTemplateListpackRef = 30,
   kTypeHashTemplateArray = 31,
   kTypeHashTemplateArrayRef = 32,
-  kTypeGcra = 33,
+  // A GCRA rate limiter in RDB version 15 (Redis 8.10), and a bitmap in
+  // later versions (Redis 8.12), which number the rate limiter 36.
+  kTypeGcraOrBitmap = 33,
+  kTypeSetListpackEx = 34,
+  kTypeSetMetadata = 35,
+  kTypeGcra = 36,
 };
 
 // Opcodes, which share the type byte's space.
 enum Opcode : uint8_t {
+  // Marks the key that follows as exempt from eviction (BLESS).
+  kOpcodeKeyNoEvict = 241,
   kOpcodeHashTemplate = 242,
   kOpcodeKeyMeta = 243,
   kOpcodeSlotInfo = 244,

@@ -13,6 +13,8 @@
 #include <string_view>
 #include <vector>
 
+#include "utils/posix.h"
+
 namespace redis_simple::aof {
 // The file system calls the AOF makes where tests inject failures.
 class FileOps {
@@ -92,6 +94,10 @@ std::shared_ptr<FileOps> DefaultFileOps();
 // open() with O_CLOEXEC, so the files never leak into a forked child that
 // execs. Returns the descriptor, or -1 with errno set.
 int OpenFile(const std::string& path, int flags, mode_t mode = 0);
+// Tells the kernel that `fd` will be read from start to end, so it reads
+// further ahead (posix_fadvise's SEQUENTIAL), as Redis 8.12 does for the RDB
+// and AOF files it loads. Does nothing where that is not available.
+void AdviseSequentialReads(int fd);
 // fsync, retried when interrupted.
 bool SyncFile(FileOps* file_ops, int fd);
 // Opens the directory and syncs it, so renames inside it survive a crash.
@@ -110,14 +116,11 @@ std::optional<std::string> ReadWholeFile(const std::string& path);
 // when the file took no more without an error).
 ssize_t WriteAll(FileOps* file_ops, int fd, std::string_view data);
 
-// The most iovecs one writev() accepts.
-size_t MaxIovCount();
-
 // Writes every block (anything with data() and size()) with vectored writes,
 // retrying short and interrupted writes.
 template <typename Blocks>
 bool WriteBlocks(FileOps* const file_ops, int fd, Blocks& blocks) {
-  const size_t max_iov_count = MaxIovCount();
+  const size_t max_iov_count = utils::MaxIovCount();
   std::vector<iovec> vectors;
   auto block = std::begin(blocks);
   while (block != std::end(blocks)) {

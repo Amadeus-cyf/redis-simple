@@ -185,7 +185,7 @@ bool RedisDb::RemoveExpire(KeyRef entry) {
   if (object.Expire() == RedisObject::kMaxExpire) {
     far_expires_->Delete(&object);
   }
-  expires_.Erase(entry);
+  expires_.Delete(entry);
   object.SetExpire(0);
   return true;
 }
@@ -205,7 +205,7 @@ DbStatus RedisDb::UnlinkKey(std::string_view key) {
   // Free a small value now, as Redis frees values with at most 64 elements
   // (LAZYFREE_THRESHOLD) at once; queue a larger one for FreeLazily.
   constexpr size_t kFreeAtOnceElements = 64;
-  if (!object->ReleaseSome(kFreeAtOnceElements)) {
+  if (!object->ClearSome(kFreeAtOnceElements)) {
     unlinked_.push_back(std::move(*object));
   }
   return DbStatus::kOk;
@@ -374,7 +374,7 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
   const int64_t start = utils::MonotonicMilliseconds();
   while (!unlinked_.empty() || !flushed_.empty()) {
     if (!unlinked_.empty()) {
-      if (unlinked_.front().ReleaseSome(kEntriesPerStep)) {
+      if (unlinked_.front().ClearSome(kEntriesPerStep)) {
         unlinked_.pop_front();
       }
     } else if (flushed_.front()->ClearSome(kEntriesPerStep)) {
@@ -384,7 +384,7 @@ bool RedisDb::FreeLazily(int64_t budget_milliseconds) {
       break;
     }
   }
-  return !unlinked_.empty() || !flushed_.empty();
+  return true;
 }
 
 bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
@@ -404,7 +404,7 @@ bool RedisDb::RehashIncrementally(int64_t budget_microseconds) {
       break;
     }
   }
-  return dict_->IsRehashing() || expires_.IsRebuilding();
+  return true;
 }
 
 ExpireSampleResult RedisDb::ExpireSome(size_t max_samples, int64_t now) {

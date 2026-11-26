@@ -46,8 +46,16 @@ if [[ ! -x "${directory}/src/redis-server" ]] ||
   git clone --quiet --depth 1 --branch "${version}" "${repository}" \
     "${directory}"
   jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
-  make -C "${directory}" -j"${jobs}" BUILD_TLS=no MALLOC=libc \
+  # One make in src/ for both programs: the top-level Makefile runs a make
+  # per goal, and two at once build the same dependencies in deps/ at the
+  # same time, which sometimes fails.
+  make -C "${directory}/src" -j"${jobs}" BUILD_TLS=no MALLOC=libc \
     redis-server redis-cli >"${directory}/build.log" 2>&1 || {
+    # With parallel jobs, the error may be well before the end.
+    # grep finds nothing in some failed builds, which must not end the
+    # script before the tail below.
+    grep -n -E "error|Error [0-9]" "${directory}/build.log" |
+      head -n 20 >&2 || true
     tail -n 40 "${directory}/build.log" >&2
     exit 1
   }

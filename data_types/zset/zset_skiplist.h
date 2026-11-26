@@ -100,7 +100,7 @@ class ZSetSkiplist : public ZSetStorage {
   }
   size_t Size() const override { return skiplist_->Size(); }
   // Frees skiplist nodes before the dict entries whose names they view.
-  bool ReleaseSome(size_t max_elements) override {
+  bool ClearSome(size_t max_elements) override {
     return skiplist_->ClearSome(max_elements) && dict_->ClearSome(max_elements);
   }
 

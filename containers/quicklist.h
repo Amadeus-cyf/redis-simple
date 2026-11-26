@@ -62,15 +62,15 @@ class Quicklist {
     }
     return true;
   }
-  // The size in bytes of the listpack ReleaseListpack would return, or
+  // The size in bytes of the listpack ExtractListpack would return, or
   // nullopt when the list has more than one node.
   std::optional<size_t> ListpackBytes() const;
   // Moves the elements out as one listpack, leaving the list empty. The
   // list must have at most one node.
-  Listpack ReleaseListpack();
+  Listpack ExtractListpack();
   // Takes `listpack` as the only node of this empty list without re-encoding
   // its elements, splitting it if it exceeds the node size limit. This is the
-  // inverse of ReleaseListpack, like Redis' quicklistAppendListpack.
+  // inverse of ExtractListpack, like Redis' quicklistAppendListpack.
   bool AdoptListpack(Listpack listpack);
 
  private:

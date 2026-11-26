@@ -115,7 +115,7 @@ class TempAof {
   [[nodiscard]] off_t Size() const {
     off_t total = 0;
     for (const std::string& path : Files()) {
-      struct stat info{};
+      struct stat info = {};
       if (stat(path.c_str(), &info) != 0) {
         return -1;
       }
@@ -1258,6 +1258,45 @@ TEST(AofTest, CutsAPartialWriteOffAndRetriesTheWholeBuffer) {
   EXPECT_TRUE(writer->Flush());
   EXPECT_TRUE(writer->AcceptingWrites());
   EXPECT_EQ(file.Size(), static_cast<off_t>(record_size));
+}
+
+TEST(AofTest, RefusesToRewriteWhileAFailedWriteIsPending) {
+  // The snapshot would hold the INCR still in the buffer, and the next
+  // incremental file too, so replay would apply it twice. Redis 8.12 refuses
+  // the rewrite and counts it as a failure, as this server does.
+  TempAof file;
+  auto file_ops = std::make_shared<TestFileOps>();
+  auto source = db::RedisDb::Create();
+  Options options = file.MakeOptions(FsyncPolicy::kNo);
+  options.file_ops = file_ops;
+  auto writer = Aof::Open(options, source.get());
+  ASSERT_NE(writer, nullptr);
+  ASSERT_EQ(
+      source->SetKey("counter", db::RedisObject::CreateWithString("1"), 0),
+      db::DbStatus::kOk);
+  ASSERT_TRUE(writer->Append("INCR", {"counter"}, source.get()));
+  file_ops->FailWrites();
+  ASSERT_TRUE(writer->Flush());
+  ASSERT_GT(writer->State().buffer_length, 0);
+
+  EXPECT_EQ(writer->StartRewrite(source.get()), RewriteResult::kError);
+  EXPECT_EQ(writer->CurrentManifest().increments.size(), 1);
+  EXPECT_FALSE(writer->State().last_rewrite_ok);
+  EXPECT_EQ(writer->State().consecutive_rewrite_failures, 1);
+
+  // Once the write goes through, the rewrite starts.
+  file_ops->RestoreWrites();
+  ASSERT_EQ(writer->StartRewrite(source.get()), RewriteResult::kStarted);
+  writer->WaitForRewrite();
+  EXPECT_TRUE(writer->State().last_rewrite_ok);
+  EXPECT_EQ(writer->State().consecutive_rewrite_failures, 0);
+  writer.reset();
+
+  auto restored = db::RedisDb::Create();
+  auto reader = Aof::Open(file.MakeOptions(FsyncPolicy::kNo), restored.get());
+  ASSERT_NE(reader, nullptr);
+  ASSERT_NE(restored->LookupKey("counter"), nullptr);
+  EXPECT_EQ(restored->LookupKey("counter")->String(), "1");
 }
 
 TEST(AofTest, WaitsForARunningSyncBeforeWriting) {

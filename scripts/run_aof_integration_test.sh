@@ -4,6 +4,7 @@ set -u
 
 server="$1"
 client="$2"
+. "$(dirname "$0")/wait_for_server.sh"
 aof_dir="$(mktemp -d "${TMPDIR:-/tmp}/redis_simple_aof.XXXXXX")"
 # A multi-part AOF directory, as in Redis 7.
 aof_dirname="${aof_dir}/appendonlydir"
@@ -22,17 +23,14 @@ trap cleanup EXIT INT TERM
 # REDIS_SIMPLE_SERVER_ARGS adds server flags, such as "--io-threads 4"; it is
 # split on spaces on purpose.
 start_server() {
+  require_free_port 18081 || exit $?
   # shellcheck disable=SC2086
   "$server" --bind 127.0.0.1 --port 18081 --dir "$aof_dir" --appendonly yes \
     --appenddirname "$aof_dirname" --appendfilename "$aof_name" \
     --appendfsync everysec \
     ${REDIS_SIMPLE_SERVER_ARGS:-} "$@" &
   server_pid=$!
-  sleep 1
-  if ! kill -0 "$server_pid" 2>/dev/null; then
-    wait "$server_pid"
-    return $?
-  fi
+  wait_for_server "$server_pid" 18081
 }
 
 # Bytes in the AOF's base and incremental files.

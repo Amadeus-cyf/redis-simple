@@ -202,8 +202,9 @@ class RedisObject {
   const data_types::Hash* Hash() const { return GetIf<data_types::Hash>(); }
   // Frees up to about `max_elements` elements of a large collection, so a
   // discarded value can be freed in steps. Returns true once the rest is
-  // cheap to free at once; until then, only destroy the object.
-  bool ReleaseSome(size_t max_elements);
+  // cheap to free at once, which does not mean the object is empty: a small
+  // collection is left as it is. Until then, only destroy the object.
+  bool ClearSome(size_t max_elements);
   ObjectType Type() const {
     const Tag tag = CurrentTag();
     // The tags from kInt on are other encodings of a string; the ones before
