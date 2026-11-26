@@ -130,8 +130,8 @@ inline void AppendBulkString(std::string_view value, std::string* const reply) {
   }
   // Clang 18 left libstdc++'s resize_and_overwrite, with the writer passed
   // to it, out of line here (cost 425 against its threshold of 250) and
-  // called it for each element, which made collection replies a third slower
-  // than GCC's build.
+  // called it for each element, which cost collection replies a third more
+  // instructions than GCC's build.
   RS_INLINE_LIBSTDCXX_CALLS reply->resize_and_overwrite(
       new_size, [&](char* const data, size_t) {
         char* out = data + old_size;
