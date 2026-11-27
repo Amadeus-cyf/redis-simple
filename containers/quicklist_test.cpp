@@ -475,6 +475,7 @@ TEST(QuicklistTest, TrimMergesTheNodeItShrankAtEitherEnd) {
   // fifth finds the first node full, and the long one shares a node with
   // nothing else here.
   std::vector<std::string> pushed;
+  pushed.reserve(10);
   for (int index = 0; index < 9; ++index) {
     pushed.push_back("keep-" + std::to_string(10000 + index));
   }
