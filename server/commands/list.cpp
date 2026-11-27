@@ -19,12 +19,8 @@
 namespace redis_simple::commands::list {
 namespace {
 using List = ::redis_simple::data_types::List;
+using ListEnd = ::redis_simple::containers::ListEnd;
 constexpr auto kList = db::RedisObject::ObjectType::kList;
-
-enum class Side : std::uint8_t {
-  kLeft,
-  kRight,
-};
 
 // Looks up the list at `key`, replying WRONGTYPE when another type is there.
 // Returns false when the command must stop.
@@ -103,18 +99,17 @@ std::optional<std::pair<size_t, size_t>> NormalizeRange(int64_t start,
                                    static_cast<size_t>(stop));
 }
 
-std::pair<size_t, List::RemoveDirection> NormalizeRemoveCount(int64_t count) {
+std::pair<size_t, ListEnd> NormalizeRemoveCount(int64_t count) {
   if (count >= 0) {
-    return {static_cast<size_t>(count), List::RemoveDirection::kFromHead};
+    return {static_cast<size_t>(count), ListEnd::kHead};
   }
   if (count == std::numeric_limits<int64_t>::min()) {
-    return {std::numeric_limits<size_t>::max(),
-            List::RemoveDirection::kFromTail};
+    return {std::numeric_limits<size_t>::max(), ListEnd::kTail};
   }
-  return {static_cast<size_t>(-count), List::RemoveDirection::kFromTail};
+  return {static_cast<size_t>(-count), ListEnd::kTail};
 }
 
-void HandlePush(Client* const client, Side side) {
+void HandlePush(Client* const client, ListEnd end) {
   const commands::CommandArgs& args = client->Args();
   const auto [object, created, wrong_type] =
       LookupOrCreateTyped(client->Db(), args[0], kList);
@@ -128,7 +123,7 @@ void HandlePush(Client* const client, Side side) {
   List* const list = object->List();
   for (size_t i = 1; i < args.size(); ++i) {
     const bool pushed =
-        side == Side::kLeft ? list->LPush(args[i]) : list->RPush(args[i]);
+        end == ListEnd::kHead ? list->LPush(args[i]) : list->RPush(args[i]);
     if (!pushed) {
       client->AddReply(reply::FromError("ERR list push failed"));
       return;
@@ -139,8 +134,8 @@ void HandlePush(Client* const client, Side side) {
 }
 
 // Redis' popGenericCommand: with a count, pops up to that many elements
-// into an array, from the side popped first.
-void HandlePopCount(Client* const client, Side side) {
+// into an array, from the end popped first.
+void HandlePopCount(Client* const client, ListEnd end) {
   const commands::CommandArgs& args = client->Args();
   const std::optional<int64_t> count = utils::ToInt64(args[1]);
   if (!count.has_value() || *count < 0) {
@@ -168,14 +163,14 @@ void HandlePopCount(Client* const client, Side side) {
     reply::AppendBulkString(value, &encoded);
     return true;
   };
-  if (side == Side::kLeft) {
+  if (end == ListEnd::kHead) {
     list->ForEach(0, popped - 1, append);
   } else {
     list->ForEachReverse(size - popped, size - 1, append);
   }
   if (popped == size) {
     client->Db()->DeleteKey(args[0]);
-  } else if (side == Side::kLeft) {
+  } else if (end == ListEnd::kHead) {
     list->Trim(popped, size - 1);
   } else {
     list->Trim(0, size - popped - 1);
@@ -184,9 +179,9 @@ void HandlePopCount(Client* const client, Side side) {
   client->AddReply(std::move(encoded));
 }
 
-void HandlePop(Client* const client, Side side) {
+void HandlePop(Client* const client, ListEnd end) {
   if (client->Args().size() == 2) {
-    HandlePopCount(client, side);
+    HandlePopCount(client, end);
     return;
   }
   const std::string_view key = client->Args()[0];
@@ -198,25 +193,25 @@ void HandlePop(Client* const client, Side side) {
     client->AddReply(reply::NullView(client->Protocol()));
     return;
   }
-  const std::optional<std::string> value =
-      side == Side::kLeft ? list->LPop() : list->RPop();
+  // Encode the element where it is stored instead of copying it out first.
+  const bool popped = list->Pop(
+      end, [client](std::string_view value) { client->AddBulkReply(value); });
   DeleteIfEmpty(client, key, list);
-  if (!value.has_value()) {
+  if (!popped) {
     client->AddReply(reply::NullView(client->Protocol()));
     return;
   }
   client->MarkModified();
-  client->AddBulkReply(*value);
 }
 }  // namespace
 
-void HandleLPush(Client* const client) { HandlePush(client, Side::kLeft); }
+void HandleLPush(Client* const client) { HandlePush(client, ListEnd::kHead); }
 
-void HandleRPush(Client* const client) { HandlePush(client, Side::kRight); }
+void HandleRPush(Client* const client) { HandlePush(client, ListEnd::kTail); }
 
-void HandleLPop(Client* const client) { HandlePop(client, Side::kLeft); }
+void HandleLPop(Client* const client) { HandlePop(client, ListEnd::kHead); }
 
-void HandleRPop(Client* const client) { HandlePop(client, Side::kRight); }
+void HandleRPop(Client* const client) { HandlePop(client, ListEnd::kTail); }
 
 void HandleLLen(Client* const client) {
   const List* list = nullptr;
@@ -324,8 +319,8 @@ void HandleLRem(Client* const client) {
   }
   size_t removed = 0;
   if (list != nullptr) {
-    const auto [limit, direction] = NormalizeRemoveCount(count);
-    removed = list->Remove(args[2], limit, direction);
+    const auto [limit, from] = NormalizeRemoveCount(count);
+    removed = list->Remove(args[2], limit, from);
     DeleteIfEmpty(client, args[0], list);
   }
   if (removed > 0) {
@@ -355,13 +350,11 @@ void HandleLTrim(Client* const client) {
   const size_t size = list->Size();
   const std::optional<std::pair<size_t, size_t>> range =
       NormalizeRange(start, stop, size);
-  // An empty range trims every element.
-  const bool trimmed = range.has_value()
-                           ? list->Trim(range->first, range->second)
-                           : list->Trim(1, 0);
-  if (!trimmed) {
-    client->AddReply(reply::FromError("ERR list trim failed"));
-    return;
+  if (range.has_value()) {
+    list->Trim(range->first, range->second);
+  } else {
+    // An empty range trims every element.
+    list->Trim(1, 0);
   }
   const size_t removed = size - list->Size();
   DeleteIfEmpty(client, args[0], list);

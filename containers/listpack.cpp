@@ -78,9 +78,9 @@ void StoreLittleEndian(uint64_t value, unsigned char* bytes) {
 }  // namespace
 
 Listpack::Listpack()
-    : listpack_(new unsigned char[kListpackHeaderSize + 1]),
-      capacity_(kListpackHeaderSize + 1) {
-  SetTotalBytes(kListpackHeaderSize + 1);
+    : listpack_(new unsigned char[kEmptyListpackBytes]),
+      capacity_(kEmptyListpackBytes) {
+  SetTotalBytes(kEmptyListpackBytes);
   SetNumOfElements(0);
   listpack_[kListpackHeaderSize] = kListpackEof;
 }
@@ -276,6 +276,54 @@ bool Listpack::BatchInsert(size_t offset,
                      entries.size());
 }
 
+bool Listpack::AppendEntries(const Listpack& other) {
+  RS_CHECK(&other != this);
+  const size_t entry_bytes = other.TotalBytes() - kEmptyListpackBytes;
+  const size_t old_bytes = TotalBytes();
+  if (entry_bytes > std::numeric_limits<uint32_t>::max() - old_bytes) {
+    return false;
+  }
+  if (entry_bytes == 0) {
+    return true;
+  }
+  const uint16_t element_count = ElementCount();
+  const uint16_t other_count = other.ElementCount();
+  // Opens the gap before the terminator, which moves to the new end.
+  const size_t offset = old_bytes - 1;
+  ResizeGap(offset, 0, entry_bytes);
+  std::memcpy(listpack_.get() + offset,
+              other.listpack_.get() + kListpackHeaderSize, entry_bytes);
+  const bool unknown = element_count == kListpackUnknownElementCount ||
+                       other_count == kListpackUnknownElementCount;
+  SetNumOfElements(
+      unknown ? kListpackUnknownElementCount
+              : StoredElementCount(size_t{element_count} + other_count));
+  return true;
+}
+
+Listpack Listpack::SplitOff(size_t index) {
+  const size_t size = Size();
+  if (index >= size) {
+    return {};
+  }
+  const size_t offset = Seek(index, size);
+  // The elements from `offset` up to the terminator.
+  const size_t moved_bytes = TotalBytes() - 1 - offset;
+  const size_t tail_bytes = kEmptyListpackBytes + moved_bytes;
+  const size_t capacity = utils::AllocationSizeClass(tail_bytes);
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): packed byte storage
+  std::unique_ptr<unsigned char[]> storage(new unsigned char[capacity]);
+  // The moved elements and the terminator after them.
+  std::memcpy(storage.get() + kListpackHeaderSize, listpack_.get() + offset,
+              moved_bytes + 1);
+  Listpack tail(std::move(storage), capacity);
+  tail.SetTotalBytes(tail_bytes);
+  tail.SetNumOfElements(StoredElementCount(size - index));
+  ResizeGap(offset, moved_bytes, 0);
+  SetNumOfElements(StoredElementCount(index));
+  return tail;
+}
+
 std::optional<size_t> Listpack::OffsetAt(size_t index) const {
   // Walks from whichever end is closer, as Redis' lpSeek does.
   const size_t size = Size();
@@ -307,45 +355,65 @@ size_t Listpack::DeleteRange(size_t offset, size_t count) {
   return deleted;
 }
 
+// Out of line, like DecodeLongOrIntegerEntry, so that comparing a short
+// string, the common case, stays a few instructions in the caller's loop.
+[[gnu::noinline]] Listpack::EntryMatch Listpack::MatchLongOrIntegerEntry(
+    size_t offset, std::string_view value,
+    const std::optional<int64_t>& value_integer) const {
+  const EncodingType encoding_type = EncodingAt(offset);
+  const size_t encoded_bytes = EncodedBytes(offset, encoding_type);
+  const size_t next = offset + encoded_bytes + BacklenBytes(encoded_bytes);
+  if (IsString(encoding_type)) {
+    size_t length = 0;
+    const unsigned char* const data = StringAt(offset, &length, encoding_type);
+    return {
+        std::string_view(reinterpret_cast<const char*>(data), length) == value,
+        next};
+  }
+  return {value_integer.has_value() &&
+              DecodeInteger(offset, encoding_type) == *value_integer,
+          next};
+}
+
 size_t Listpack::DeleteMatching(std::string_view value, size_t limit,
-                                bool from_tail) {
+                                ListEnd from) {
   const bool limited = limit != 0;
+  // An integer element is the canonical text of its number, so it equals
+  // `value` exactly when `value` parses to that number.
+  const std::optional<int64_t> value_integer = utils::ToInt64(value);
   // Byte spans [first, second) of matching elements, merged when adjacent.
   std::vector<std::pair<size_t, size_t>> spans;
   size_t match_count = 0;
-  const auto add_span = [&spans](size_t begin, size_t end) {
-    if (!spans.empty() && spans.back().second == begin) {
-      spans.back().second = end;
-    } else {
-      spans.emplace_back(begin, end);
-    }
-  };
-  if (from_tail && limited) {
-    std::array<unsigned char, kListpackIntBufferSize> int_buffer{};
+  // Nothing is deleted until the walk is over, so the bytes stay in place.
+  const unsigned char* const bytes = listpack_.get();
+  // Without a limit every match goes, whichever end the walk starts from.
+  if (from == ListEnd::kTail && limited) {
     for (std::optional<size_t> offset = Last();
          offset.has_value() && match_count < limit; offset = Prev(*offset)) {
-      const DecodedEntry entry = DecodeEntry(*offset, int_buffer.data());
-      if (ValueView(entry) == value) {
-        if (!spans.empty() && spans.back().first == entry.next) {
+      const EntryMatch match = MatchEntry(bytes, *offset, value, value_integer);
+      if (match.equal) {
+        if (!spans.empty() && spans.back().first == match.next) {
           spans.back().first = *offset;
         } else {
-          spans.emplace_back(*offset, entry.next);
+          spans.emplace_back(*offset, match.next);
         }
         ++match_count;
       }
     }
     std::ranges::reverse(spans);
   } else {
-    std::array<unsigned char, kListpackIntBufferSize> int_buffer{};
     size_t offset = kListpackHeaderSize;
-    while (listpack_[offset] != kListpackEof &&
-           (!limited || match_count < limit)) {
-      const DecodedEntry entry = DecodeEntry(offset, int_buffer.data());
-      if (ValueView(entry) == value) {
-        add_span(offset, entry.next);
+    while (bytes[offset] != kListpackEof && (!limited || match_count < limit)) {
+      const EntryMatch match = MatchEntry(bytes, offset, value, value_integer);
+      if (match.equal) {
+        if (!spans.empty() && spans.back().second == offset) {
+          spans.back().second = match.next;
+        } else {
+          spans.emplace_back(offset, match.next);
+        }
         ++match_count;
       }
-      offset = entry.next;
+      offset = match.next;
     }
   }
   if (spans.empty()) {
@@ -376,7 +444,7 @@ size_t Listpack::DeleteMatching(std::string_view value, size_t limit,
 
 std::optional<size_t> Listpack::First() const {
   size_t listpack_bytes = TotalBytes();
-  if (listpack_bytes <= Listpack::kListpackHeaderSize + 1) {
+  if (listpack_bytes <= kEmptyListpackBytes) {
     return std::nullopt;
   }
   return Listpack::kListpackHeaderSize;
@@ -384,7 +452,7 @@ std::optional<size_t> Listpack::First() const {
 
 std::optional<size_t> Listpack::Last() const {
   size_t listpack_bytes = TotalBytes();
-  if (listpack_bytes <= Listpack::kListpackHeaderSize + 1) {
+  if (listpack_bytes <= kEmptyListpackBytes) {
     return std::nullopt;
   }
   return Prev(listpack_bytes - 1);
@@ -404,8 +472,7 @@ std::optional<size_t> Listpack::Next(size_t offset) const {
 std::optional<size_t> Listpack::Prev(size_t offset) const {
   size_t listpack_bytes = TotalBytes();
   RS_CHECK(offset >= kListpackHeaderSize && offset < listpack_bytes);
-  if (listpack_bytes <= kListpackHeaderSize + 1 ||
-      offset == kListpackHeaderSize) {
+  if (listpack_bytes <= kEmptyListpackBytes || offset == kListpackHeaderSize) {
     return std::nullopt;
   }
   return PrevUnchecked(offset);

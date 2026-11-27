@@ -12,6 +12,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
+using containers::ListEnd;
 using data_types::List;
 
 void Verify(const List& list, const std::vector<std::string>& model) {
@@ -79,18 +80,17 @@ void RunOperations(FuzzInput* input) {
       }
       case 5: {
         const size_t limit = input->ReadIndex(6);
-        const auto direction = (input->ReadByte() & 1U) == 0
-                                   ? List::RemoveDirection::kFromHead
-                                   : List::RemoveDirection::kFromTail;
-        const bool from_tail = direction == List::RemoveDirection::kFromTail;
+        const bool from_tail = (input->ReadByte() & 1U) != 0;
         const size_t expected =
             RemoveMatchesFromModel(&model, value, limit, from_tail);
-        Require(list->Remove(value, limit, direction) == expected);
+        Require(list->Remove(value, limit,
+                             from_tail ? ListEnd::kTail : ListEnd::kHead) ==
+                expected);
         break;
       }
       case 6: {
         const size_t stop = input->ReadIndex(model.size() + 2);
-        Require(list->Trim(index, stop));
+        list->Trim(index, stop);
         TrimModel(&model, index, stop);
         break;
       }

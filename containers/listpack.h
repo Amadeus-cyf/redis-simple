@@ -14,6 +14,12 @@
 #include <vector>
 
 namespace redis_simple::containers {
+// The end of a list that an operation works from.
+enum class ListEnd : std::uint8_t {
+  kHead,
+  kTail,
+};
+
 // Compact Redis-style sequential encoding. See:
 // https://github.com/antirez/listpack/blob/master/listpack.md
 // Elements are addressed by their byte offset in the buffer; any change to
@@ -28,6 +34,8 @@ class Listpack {
   };
   // Header: 32-bit total bytes followed by 16-bit element count.
   static constexpr int kListpackHeaderSize = 6;
+  // Bytes of a listpack with no elements: the header and the terminator.
+  static constexpr size_t kEmptyListpackBytes = kListpackHeaderSize + 1;
   // Enough space for INT64_MIN plus a null terminator.
   static constexpr int kListpackIntBufferSize = 21;
   // Where ElementAt formats an integer element as text.
@@ -81,6 +89,13 @@ class Listpack {
   bool BatchPrepend(const std::vector<ListpackEntry>& entries);
   bool BatchInsert(size_t offset, const std::vector<ListpackEntry>& entries);
   bool BatchInsert(size_t offset, std::initializer_list<ListpackEntry> entries);
+  // Appends a copy of every element of `other`, another listpack, as bytes,
+  // without decoding them, like Redis' lpMerge. Returns false, changing
+  // nothing, if the result would not fit the 32-bit total size.
+  bool AppendEntries(const Listpack& other);
+  // Moves the elements from `index` to the end into a new listpack, as
+  // bytes, and returns it. It is empty when `index` is past the end.
+  Listpack SplitOff(size_t index);
   // The offset of the element at `index`, or nullopt past the end.
   std::optional<size_t> OffsetAt(size_t index) const;
   // Call `visitor(std::string_view)` for the elements at indexes `start`
@@ -99,9 +114,15 @@ class Listpack {
   // return how many were deleted.
   size_t DeleteRange(size_t offset, size_t count);
   // Delete elements equal to `value`, at most `limit` of them (0 for all),
-  // taken from the tail first if `from_tail`. Returns how many were deleted.
+  // taken from the end `from` first. Returns how many were deleted.
   size_t DeleteMatching(std::string_view value, size_t limit,
-                        bool from_tail = false);
+                        ListEnd from = ListEnd::kHead);
+  // Removes the element at `end` after calling `visitor(std::string_view)`
+  // with it, so a caller can use the value without copying it out first.
+  // The view is valid only during the call. Returns false, calling nothing,
+  // when there are no elements.
+  template <typename Visitor>
+  bool Pop(ListEnd end, Visitor&& visitor);
   std::optional<size_t> First() const;
   std::optional<size_t> Last() const;
   std::optional<size_t> Next(size_t offset) const;
@@ -197,6 +218,30 @@ class Listpack {
   void SetTotalBytes(uint32_t listpack_bytes);
   uint16_t ElementCount() const;
   void SetNumOfElements(uint16_t element_count) const;
+  // The header's element count for `count` elements: the unknown marker
+  // when there are too many for its 16 bits.
+  static uint16_t StoredElementCount(size_t count) {
+    return count < kListpackUnknownElementCount ? static_cast<uint16_t>(count)
+                                                : kListpackUnknownElementCount;
+  }
+  struct EntryMatch {
+    bool equal;
+    // The offset of the first byte past the element.
+    size_t next;
+  };
+  // Compares the element at `offset`, which must not be the EOF byte, with
+  // `value`, whose number is `value_integer` when it is a canonical integer.
+  // Like Redis' lpCompare, an integer element is compared as a number,
+  // without formatting it. `bytes` is listpack_.get(), which a caller's loop
+  // loads once. Always inlined, like DecodeEntry: it runs once per element
+  // DeleteMatching passes.
+  [[gnu::always_inline]] EntryMatch MatchEntry(
+      const unsigned char* bytes, size_t offset, std::string_view value,
+      const std::optional<int64_t>& value_integer) const;
+  // MatchEntry for everything but strings under 64 bytes.
+  EntryMatch MatchLongOrIntegerEntry(
+      size_t offset, std::string_view value,
+      const std::optional<int64_t>& value_integer) const;
   size_t Skip(size_t offset) const;
   EncodingType EncodingAt(size_t offset) const;
   size_t Backlen(size_t offset) const;
@@ -282,6 +327,26 @@ inline Listpack::DecodedEntry Listpack::DecodeEntry(
   return DecodeLongOrIntegerEntry(offset, int_buffer);
 }
 
+inline Listpack::EntryMatch Listpack::MatchEntry(
+    const unsigned char* bytes, size_t offset, std::string_view value,
+    const std::optional<int64_t>& value_integer) const {
+  const unsigned char first = bytes[offset];
+  // Short strings, the common case, need no encoding lookup.
+  if ((first & EncodingTypeMask::kType6BitStrMask) ==
+      EncodingType::k6BitString) {
+    const size_t length = first & 0x3f;
+    // The element is its first byte, which is k6BitString + length, the
+    // string, and a backlen of one byte, as its encoded size is at most 64.
+    // The next offset adds the first byte as loaded, not `length`: in a walk
+    // each offset waits for the one before it, and this leaves only the load
+    // and one addition between them.
+    return {std::string_view(reinterpret_cast<const char*>(bytes + offset + 1),
+                             length) == value,
+            offset + first - (EncodingType::k6BitString - 2)};
+  }
+  return MatchLongOrIntegerEntry(offset, value, value_integer);
+}
+
 template <typename Visitor>
 bool Listpack::ForEach(size_t start, size_t stop, Visitor&& visitor) const {
   const size_t size = Size();
@@ -327,6 +392,18 @@ bool Listpack::ForEachReverse(size_t start, size_t stop,
     offset = Prev(*offset);
     --index;
   }
+  return true;
+}
+
+template <typename Visitor>
+bool Listpack::Pop(ListEnd end, Visitor&& visitor) {
+  const std::optional<size_t> offset = end == ListEnd::kHead ? First() : Last();
+  if (!offset.has_value()) {
+    return false;
+  }
+  std::array<unsigned char, kListpackIntBufferSize> int_buffer{};
+  visitor(ValueView(DecodeEntry(*offset, int_buffer.data())));
+  Delete(*offset);
   return true;
 }
 
