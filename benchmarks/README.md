@@ -14,6 +14,8 @@ Run one group with `--benchmark_filter`, for example
 `--benchmark_filter=ListIndex`. The groups cover:
 
 - `Dict*`, `DynamicBuffer*`, `ReplyBuffer*`: core containers and buffers.
+  The `Dict*WhileRehashing` ones run on a table that is moving to a larger
+  one, where each operation also moves a bucket.
 - `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, counts, and
   ranges by score and by name. `ZSetRangeByScoreWithOffset` reads 10 members
   after a `LIMIT` offset of 5, 100, and 10,000, forward and in reverse.
@@ -23,6 +25,10 @@ Run one group with `--benchmark_filter`, for example
 - `ListIndex`, `ListRange`: quicklist `LINDEX` and `LRANGE` at the head,
   middle, and tail of a 300,000-element list whose items vary in length. The
   middle reads step through about two quicklist nodes' worth of positions.
+- `ListRemove*`: `LREM` that deletes every tenth element, that matches
+  nothing, and, for `ListRemoveFirst`, that deletes the head element with
+  count 1. The last reads one quicklist node, so it should cost the same for
+  10,000 and 300,000 elements.
 - `ParseCompleteRequest`, `ParseSplitRequest`, `FindCommand`: request
   decoding and command lookup.
 - `AppendBulkStrings`, `FormatScore`, `AppendScores`: collection reply and

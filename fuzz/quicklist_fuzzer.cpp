@@ -12,6 +12,7 @@
 
 namespace redis_simple::fuzz {
 namespace {
+using containers::ListEnd;
 using containers::Quicklist;
 
 void Verify(const Quicklist& quicklist, const std::vector<std::string>& model) {
@@ -92,19 +93,17 @@ void RunOperations(FuzzInput* input) {
       }
       case 5: {
         const size_t limit = input->ReadIndex(6);
-        const auto direction = (input->ReadByte() & 1U) == 0
-                                   ? Quicklist::RemoveDirection::kFromHead
-                                   : Quicklist::RemoveDirection::kFromTail;
-        const bool from_tail =
-            direction == Quicklist::RemoveDirection::kFromTail;
+        const bool from_tail = (input->ReadByte() & 1U) != 0;
         const size_t expected =
             RemoveMatchesFromModel(&model, value, limit, from_tail);
-        Require(quicklist.Remove(value, limit, direction) == expected);
+        Require(quicklist.Remove(value, limit,
+                                 from_tail ? ListEnd::kTail : ListEnd::kHead) ==
+                expected);
         break;
       }
       case 6: {
         const size_t stop = input->ReadIndex(model.size() + 2);
-        Require(quicklist.Trim(index, stop));
+        quicklist.Trim(index, stop);
         TrimModel(&model, index, stop);
         break;
       }

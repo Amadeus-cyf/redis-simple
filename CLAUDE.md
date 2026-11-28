@@ -333,14 +333,19 @@ Guidance for AI coding agents working in this repository.
   offset together. Prefer them over `Get` plus `Next` loops on read paths.
   Listpack sorted sets read integer-encoded scores directly instead of
   formatting and reparsing them.
-- Keep `Quicklist` aligned with Redis' quicklist: index seeks walk nodes from
-  the closer end (`Locate`), an `LSET` that overflows its node splits only
-  that node, and `List` converts back to a listpack after pops, `LSET`,
-  `LREM`, and `LTRIM` once one node holds at most half the size limit.
+- Keep `Quicklist` aligned with Redis' quicklist: each node caches its
+  element count, so index seeks walk nodes from the closer end (`Locate`)
+  without reading their bytes; an `LSET` that overflows its node splits only
+  that node; splitting and merging nodes move the encoded bytes
+  (`Listpack::SplitOff`, `AppendEntries`) instead of encoding each element
+  again; and `List` converts back to a listpack after pops, `LSET`, `LREM`,
+  and `LTRIM` once one node holds at most half the size limit.
   One deliberate difference: after pops, `LSET`, `LREM`, and `LTRIM`,
   `Quicklist` merges neighboring nodes that fit together, where Redis leaves
   them. This server is I/O bound, so fewer, fuller nodes are worth the merge
-  cost; keep the merges.
+  cost; keep the merges. Try them only for the nodes the operation changed
+  and their neighbors, never for the whole list: an `LREM` with a count
+  reads no node past its last match.
 - Canonical integer strings are stored as `int64_t`, and other values of at
   most `EmbeddedString::kCapacity` bytes (39 with libstdc++) inside the
   `RedisObject`, like Redis' embstr, so they need no allocation of their own.
@@ -628,15 +633,15 @@ Before committing, run the relevant build and tests.
   hot helpers it inlines within a single file, which made list edits 27%
   slower; `-fopt-info-inline-missed` at link time names them. Mark such a
   helper `[[gnu::always_inline]]` (the request parser's, `SeededHash`,
-  `Listpack::DecodeEntry`, the RDB encoder's `Length` and `Raw`), and
-  compare an LTO build with one without it when adding hot-path code. The
-  attribute goes on a function this repository defines, and what it inlines
-  must not itself call a small helper out of line. A standard library call
-  that a compiler leaves out of line is a different problem: the library's
-  definition cannot carry the attribute. For clang that takes an attribute
-  on the statement that makes the call. GCC has no inlining attribute for a
-  statement, so there the code avoids the call: string-keyed Dicts compare
-  keys with `dict_internal::SameBytes`, not `==`, whose
+  `Listpack::DecodeEntry` and `MatchEntry`, the RDB encoder's `Length` and
+  `Raw`), and compare an LTO build with one without it when adding hot-path
+  code. The attribute goes on a function this repository defines, and what
+  it inlines must not itself call a small helper out of line. A standard
+  library call that a compiler leaves out of line is a different problem:
+  the library's definition cannot carry the attribute. For clang that takes
+  an attribute on the statement that makes the call. GCC has no inlining
+  attribute for a statement, so there the code avoids the call: string-keyed
+  Dicts compare keys with `dict_internal::SameBytes`, not `==`, whose
   `std::string_view::compare` call GCC left out of line in every lookup.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.
