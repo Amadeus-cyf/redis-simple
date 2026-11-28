@@ -16,7 +16,9 @@ Run one group with `--benchmark_filter`, for example
 - `Dict*`, `DynamicBuffer*`, `ReplyBuffer*`: core containers and buffers.
   The `Dict*WhileRehashing` ones run on a table that is moving to a larger
   one, where each operation also moves a bucket.
-- `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, and ranges.
+- `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, counts, and
+  ranges by score and by name. `ZSetRangeByScoreWithOffset` reads 10 members
+  after a `LIMIT` offset of 5, 100, and 10,000, forward and in reverse.
 - `IntsetInsert*`, `Listpack*`, `ZSetListpackInsert`, `HashListpackSet`:
   inserts into the compact encodings (and deletes, for
   `ListpackDeleteFirst`), which reallocate and move the value's bytes.

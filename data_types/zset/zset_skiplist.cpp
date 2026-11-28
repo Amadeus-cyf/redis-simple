@@ -52,13 +52,14 @@ ZSetAddResult ZSetSkiplist::UpdateExisting(std::string_view member,
 }
 
 bool ZSetSkiplist::Delete(std::string_view member) {
-  const double* score = dict_->FindValue(member);
-  if (score == nullptr) {
-    return false;
-  }
-  // The skiplist entry goes first: it views the dict entry's name.
-  skiplist_->Delete(ScoredMember{.score = *score, .member = member});
-  return dict_->Delete(member);
+  // One dict lookup finds the score and removes the entry. The entry is
+  // freed after the callback, which removes the skiplist entry that views
+  // its name.
+  return dict_->DeleteWith(
+      member, [this](zset_skiplist_internal::MemberDict::EntryRef entry) {
+        skiplist_->Delete(
+            ScoredMember{.score = entry.Value(), .member = entry.Key()});
+      });
 }
 
 std::optional<ZSetRank> ZSetSkiplist::RankAndScore(
@@ -103,8 +104,8 @@ bool ZSetSkiplist::OverlapsLexRange(const RangeByLexSpec* spec) const {
   // Redis' zslIsInLexRange: the last member reaches the minimum and the
   // first member the maximum.
   return spec != nullptr && !spec->Empty() && skiplist_->Size() > 0 &&
-         spec->AboveMin((*skiplist_->Last()).Member()) &&
-         spec->BelowMax((*skiplist_->Begin()).Member());
+         spec->AboveMin(skiplist_->Last()->Member()) &&
+         spec->BelowMax(skiplist_->Begin()->Member());
 }
 
 void ZSetSkiplist::ForEachInLexRange(const RangeByLexSpec* spec,
@@ -128,7 +129,7 @@ size_t ZSetSkiplist::LexCount(const RangeByLexSpec* spec) const {
 
 bool ZSetSkiplist::ForEachEntry(const ZSetEntryVisitor& visitor) const {
   for (auto entry = skiplist_->Begin(); entry != skiplist_->End(); ++entry) {
-    if (!visitor((*entry).Member(), (*entry).score)) {
+    if (!visitor(entry->Member(), entry->score)) {
       return false;
     }
   }
@@ -138,7 +139,7 @@ bool ZSetSkiplist::ForEachEntry(const ZSetEntryVisitor& visitor) const {
 bool ZSetSkiplist::ForEachEntryDescending(
     const ZSetEntryVisitor& visitor) const {
   for (auto entry = skiplist_->Last(); entry != skiplist_->End(); --entry) {
-    if (!visitor((*entry).Member(), (*entry).score)) {
+    if (!visitor(entry->Member(), entry->score)) {
       return false;
     }
   }
