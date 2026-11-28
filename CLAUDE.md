@@ -206,10 +206,13 @@ Guidance for AI coding agents working in this repository.
   callback only while output remains unsent. Read once per readable event,
   into all the room the query buffer has, as Redis does: an empty buffer
   keeps up to 64 KiB between requests (`DynamicBuffer::Compact`), so a
-  request that fits arrives in one read. Redis keeps a buffer of any size
-  after a large argument, but under mimalloc one past 64 KiB costs a span
-  of 64 KiB slices per client until the idle sweep, so a larger buffer is
-  freed once it is empty.
+  request that fits arrives in one read. A bulk argument of 32 KiB or more
+  is read into exactly the room it still needs, plus 16 KiB when more
+  arguments follow it (`ReadRoom`), as Redis reads one: rounding that up
+  doubles the buffer and copies the argument to read its last bytes. Redis
+  keeps a buffer of any size after a large argument, but under mimalloc one
+  past 64 KiB costs a span of 64 KiB slices per client until the idle sweep,
+  so a larger buffer is freed once it is empty.
 - An idle client keeps no buffers: `IdleClientSweeper` calls
   `Client::ReleaseIdleBuffers` on each client once a second, from the server
   cron without threaded I/O and otherwise from the client's I/O thread,

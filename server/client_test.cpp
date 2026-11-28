@@ -192,6 +192,12 @@ TEST(ClientTest, ResumesLargeRequestAcrossBufferGrowth) {
     ASSERT_GT(client->ReadQuery(), 0);
     ASSERT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
   }
+  // The read that completes a big argument stops at its end, so the GET may
+  // still be in the socket. The event loop reports the socket as readable
+  // until it is empty.
+  while (client->ReadQuery() > 0) {
+    ASSERT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  }
 
   std::string expected = "+OK\r\n$60000\r\n";
   expected.append(value).append("\r\n");
@@ -212,6 +218,61 @@ TEST(ClientTest, ResumesLargeRequestAcrossBufferGrowth) {
   }
   EXPECT_EQ(response, expected);
   client->Db()->DeleteKey("large-key");
+}
+
+namespace {
+// The bytes written before each read: less than the 8 KiB a macOS socket
+// pair buffers.
+constexpr size_t kPieceBytes = 7000;
+
+// Writes `request` to the peer in pieces and has `client` read and parse
+// after each one, as a readable event does. Returns the client's buffer
+// capacity after each read.
+std::vector<size_t> DeliverInPieces(Client* const client, int peer_fd,
+                                    std::string_view request) {
+  std::vector<size_t> capacities;
+  for (size_t offset = 0; offset < request.size(); offset += kPieceBytes) {
+    const size_t size = std::min(kPieceBytes, request.size() - offset);
+    EXPECT_EQ(write(peer_fd, request.data() + offset, size),
+              static_cast<ssize_t>(size));
+    EXPECT_GT(client->ReadQuery(), 0);
+    capacities.push_back(client->BufferCapacity());
+    EXPECT_EQ(client->ProcessInputBuffer(), ClientStatus::kOk);
+  }
+  return capacities;
+}
+}  // namespace
+
+TEST(ClientTest, ReadsTheEndOfABigArgumentWithoutGrowingTheBuffer) {
+  auto [client, peer] = CreateClient();
+  const std::string value(100000, 'v');
+  const std::string request = EncodeRequest({"SET", "big-key", value});
+
+  // The first read brings the argument's length and the second sizes the
+  // buffer for it. The last pieces arrive when less than a read's usual room
+  // is missing.
+  const std::vector<size_t> capacities =
+      DeliverInPieces(client.get(), peer.Get(), request);
+  ASSERT_GT(capacities.size(), 2);
+  EXPECT_EQ(capacities.back(), capacities[1]);
+  EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), "+OK\r\n");
+  client->Db()->DeleteKey("big-key");
+}
+
+TEST(ClientTest, ReadsArgumentsAfterABigArgumentInTheSameRead) {
+  auto [client, peer] = CreateClient();
+  const std::string value(100000, 'v');
+  const std::string request =
+      EncodeRequest({"SET", "big-key", value, "KEEPTTL"});
+
+  // The last piece holds the end of the value and the option.
+  const std::vector<size_t> capacities =
+      DeliverInPieces(client.get(), peer.Get(), request);
+  ASSERT_GT(capacities.size(), 2);
+  EXPECT_EQ(capacities.back(), capacities[1]);
+  EXPECT_TRUE(client->HasPendingReplies());
+  EXPECT_EQ(SendAndReadReply(client.get(), peer.Get()), "+OK\r\n");
+  client->Db()->DeleteKey("big-key");
 }
 
 TEST(ClientTest, RespRequestsPreserveSpacesAndBinaryData) {

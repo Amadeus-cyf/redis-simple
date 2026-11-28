@@ -43,6 +43,9 @@ Run one group with `--benchmark_filter`, for example
   and back-to-back cycles until 100,000 expired keys are gone.
 - `MultiQueue`: queueing 10 and 10,000 commands inside `MULTI`, with the
   bytes the queue holds before and after the transaction ends.
+- `ClientReadLargeSet`: a client reading and running one `SET` of a 48 KiB,
+  256 KiB, or 1 MiB value that reaches its socket 16 KiB at a time, with the
+  value as the last argument and with an option after it.
 
 Benchmarks that take a 0 or 1 argument compare two ways of doing the same
 work in one run. They are not part of CTest or CI, because timings vary
