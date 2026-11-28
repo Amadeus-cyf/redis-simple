@@ -14,6 +14,8 @@ Run one group with `--benchmark_filter`, for example
 `--benchmark_filter=ListIndex`. The groups cover:
 
 - `Dict*`, `DynamicBuffer*`, `ReplyBuffer*`: core containers and buffers.
+  The `Dict*WhileRehashing` ones run on a table that is moving to a larger
+  one, where each operation also moves a bucket.
 - `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, and ranges.
 - `IntsetInsert*`, `Listpack*`, `ZSetListpackInsert`, `HashListpackSet`:
   inserts into the compact encodings (and deletes, for
