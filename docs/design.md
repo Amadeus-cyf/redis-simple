@@ -177,7 +177,11 @@ until `Server::BeforeSleep` has flushed the AOF, once for every client that
 ran in that iteration, whichever I/O thread it came from. Then it hands the
 clients back, and the I/O thread writes their replies and resumes reading.
 Without an AOF there is nothing to flush, so each handoff's clients go back
-as soon as their requests have run. Each direction moves a whole
+as soon as their requests have run, and those of a large handoff go back 128
+at a time: the I/O thread writes their replies while the main thread runs the
+rest. Redis 8 gives clients back every 16 (`IO_THREAD_MAX_PENDING_CLIENTS`);
+with several I/O threads that wakes each one for a few clients at a time,
+which costs CPU and gains no throughput. Each direction moves a whole
 batch at once: one lock acquisition, and at most one pipe wakeup, however
 many clients the batch holds, as Redis' `sendPendingClientsToIOThreads` and
 `sendPendingClientsToMainThreadIfNeeded` join whole lists.

@@ -207,6 +207,14 @@ void Server::ResumeIoThreads() {
 
 void Server::RunHandedOverClients(
     IoThread* const thread, std::vector<IoThread::Handoff>* const handoffs) {
+  // Without an AOF nothing has to be flushed before the replies go out, so
+  // the clients of a large handoff go back to their I/O thread this many at
+  // a time, and it writes their replies while this thread runs the rest.
+  // Redis' processClientsFromIOThread, which runs the commands of the
+  // clients an I/O thread sent, gives them back every 16. Here that wakes
+  // each of several I/O threads for a few clients at a time, which costs CPU
+  // and gains no throughput.
+  constexpr size_t kClientsPerReturn = 128;
   const size_t returning_before = returning_clients_.size();
   for (const IoThread::Handoff& handoff : *handoffs) {
     if (handoff.closed) {
@@ -216,6 +224,12 @@ void Server::RunHandedOverClients(
     }
     handoff.client->RunParsedQueries();
     returning_clients_.push_back(handoff.client);
+    if (aof_ == nullptr &&
+        returning_clients_.size() - returning_before >= kClientsPerReturn) {
+      thread->Return(std::span<Client* const>(returning_clients_)
+                         .subspan(returning_before));
+      returning_clients_.resize(returning_before);
+    }
   }
   if (const size_t size = returning_clients_.size() - returning_before;
       size > 0) {

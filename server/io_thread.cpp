@@ -21,6 +21,7 @@
 #include "logging/logger.h"
 #include "server/client.h"
 #include "server/client_connection/write_reply.h"
+#include "utils/check.h"
 
 namespace redis_simple {
 namespace {
@@ -287,7 +288,9 @@ bool IoThread::ProcessInbox() {
   for (const Message& message : incoming_) {
     if (message.returning) {
       // Its commands ran: send the replies, then read again unless the
-      // output is too far behind.
+      // output is too far behind. The main thread gives each handoff back
+      // once.
+      RS_CHECK(message.client->HandedToMain());
       message.client->SetHandedToMain(false);
       message.client->SetReadsPaused(message.client->ShouldPauseReads());
       WriteReplies(message.client);

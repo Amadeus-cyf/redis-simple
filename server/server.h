@@ -105,8 +105,9 @@ class Server {
     size_t size;
   };
   // Runs the commands of the clients an I/O thread handed over. They go
-  // back to it, to write the replies, after the AOF flush in BeforeSleep,
-  // or at once when there is no AOF.
+  // back to it, to write the replies, after the AOF flush in BeforeSleep.
+  // Without an AOF they go back as their commands run, a group at a time,
+  // so the I/O thread writes replies while the rest of the handoff runs.
   void RunHandedOverClients(IoThread* thread,
                             std::vector<IoThread::Handoff>* handoffs);
   // Runs each time the event loop is about to wait for events: runs the
