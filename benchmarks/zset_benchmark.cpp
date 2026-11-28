@@ -3,7 +3,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -46,6 +48,21 @@ std::unique_ptr<data_types::ZSet> FilledZSet(
     zset->InsertOrUpdate(name, score(generator));
   }
   return zset;
+}
+
+// A set whose members share one score, which is what the lexicographic
+// commands are defined for.
+std::unique_ptr<data_types::ZSet> FilledZSetWithOneScore(
+    const std::vector<std::string>& names) {
+  auto zset = data_types::ZSet::Create();
+  for (const auto& name : names) {
+    zset->InsertOrUpdate(name, 0);
+  }
+  return zset;
+}
+
+data_types::LexBound LexValue(std::string_view member) {
+  return {.kind = data_types::LexBound::Kind::kValue, .value = member};
 }
 
 // ZADD of new members into an initially empty set.
@@ -170,6 +187,101 @@ void ZSetRangeByScore(benchmark::State& state) {
   }
   state.SetItemsProcessed(state.iterations());
 }
+
+// ZRANGEBYSCORE min +inf LIMIT offset 10 from a random min, or, when the
+// third argument is 1, ZREVRANGEBYSCORE max -inf LIMIT offset 10 from a
+// random max. The bound leaves at least half the set in the range, so the
+// offset is always inside it.
+void ZSetRangeByScoreWithOffset(benchmark::State& state) {
+  const std::vector<std::string> names =
+      MemberNames(static_cast<size_t>(state.range(0)));
+  const data_types::LimitSpec limit(static_cast<size_t>(state.range(1)), 10);
+  const bool reverse = state.range(2) != 0;
+  auto zset = FilledZSet(names);
+  constexpr double kInfinity = std::numeric_limits<double>::infinity();
+  std::mt19937 generator = SeededRng(6);
+  std::uniform_real_distribution<double> edge(0, 500'000);
+  for (auto _ : state) {
+    (void)_;
+    const double bound = edge(generator);
+    const data_types::RangeByScoreSpec spec =
+        reverse ? data_types::RangeByScoreSpec(-kInfinity, 1'000'000 - bound,
+                                               false, false, limit, true)
+                : data_types::RangeByScoreSpec(bound, kInfinity, false, false,
+                                               limit);
+    size_t visited = 0;
+    zset->ForEachInScoreRange(
+        &spec, [&visited](std::string_view, double) { ++visited; });
+    benchmark::DoNotOptimize(visited);
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
+// ZCOUNT of a random window holding about 100 members.
+void ZSetCount(benchmark::State& state) {
+  const auto size = static_cast<size_t>(state.range(0));
+  const std::vector<std::string> names = MemberNames(size);
+  auto zset = FilledZSet(names);
+  const double width = 1'000'000.0 * 100 / static_cast<double>(size);
+  std::mt19937 generator = SeededRng(7);
+  std::uniform_real_distribution<double> start(0, 1'000'000 - width);
+  for (auto _ : state) {
+    (void)_;
+    const double min = start(generator);
+    const data_types::RangeByScoreSpec spec(min, min + width, false, false);
+    benchmark::DoNotOptimize(zset->Count(&spec));
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
+// ZRANGEBYLEX of 100 members from a random one, in a set with one score.
+void ZSetRangeByLex(benchmark::State& state) {
+  constexpr size_t kWindow = 100;
+  const std::vector<std::string> names =
+      MemberNames(static_cast<size_t>(state.range(0)));
+  auto zset = FilledZSetWithOneScore(names);
+  std::mt19937 generator = SeededRng(8);
+  std::uniform_int_distribution<size_t> start(0, names.size() - kWindow);
+  for (auto _ : state) {
+    (void)_;
+    const size_t first = start(generator);
+    const data_types::RangeByLexSpec spec{
+        .min = LexValue(names[first]),
+        .max = LexValue(names[first + kWindow - 1]),
+        .minex = false,
+        .maxex = false,
+        .limit = std::nullopt,
+        .reverse = false};
+    size_t visited = 0;
+    zset->ForEachInLexRange(
+        &spec, [&visited](std::string_view, double) { ++visited; });
+    benchmark::DoNotOptimize(visited);
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
+// ZLEXCOUNT of 100 members from a random one, in a set with one score.
+void ZSetLexCount(benchmark::State& state) {
+  constexpr size_t kWindow = 100;
+  const std::vector<std::string> names =
+      MemberNames(static_cast<size_t>(state.range(0)));
+  auto zset = FilledZSetWithOneScore(names);
+  std::mt19937 generator = SeededRng(9);
+  std::uniform_int_distribution<size_t> start(0, names.size() - kWindow);
+  for (auto _ : state) {
+    (void)_;
+    const size_t first = start(generator);
+    const data_types::RangeByLexSpec spec{
+        .min = LexValue(names[first]),
+        .max = LexValue(names[first + kWindow - 1]),
+        .minex = false,
+        .maxex = false,
+        .limit = std::nullopt,
+        .reverse = false};
+    benchmark::DoNotOptimize(zset->LexCount(&spec));
+  }
+  state.SetItemsProcessed(state.iterations());
+}
 }  // namespace
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
@@ -181,5 +293,15 @@ BENCHMARK(ZSetAddGreaterThan)->Arg(100)->Arg(10'000)->Arg(100'000);
 BENCHMARK(ZSetParseScoreBounds);
 BENCHMARK(ZSetRank)->Arg(10'000)->Arg(100'000);
 BENCHMARK(ZSetRangeByScore)->Arg(10'000)->Arg(100'000);
+BENCHMARK(ZSetRangeByScoreWithOffset)
+    ->Args({100'000, 5, 0})
+    ->Args({100'000, 100, 0})
+    ->Args({100'000, 10'000, 0})
+    ->Args({100'000, 5, 1})
+    ->Args({100'000, 100, 1})
+    ->Args({100'000, 10'000, 1});
+BENCHMARK(ZSetCount)->Arg(10'000)->Arg(100'000);
+BENCHMARK(ZSetRangeByLex)->Arg(10'000)->Arg(100'000);
+BENCHMARK(ZSetLexCount)->Arg(10'000)->Arg(100'000);
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple

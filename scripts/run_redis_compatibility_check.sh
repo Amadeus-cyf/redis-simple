@@ -79,6 +79,19 @@ compare_session() {
   fi
 }
 
+# CI starts the reference server with --daemonize yes, which returns before
+# the server accepts connections, so wait for it as for this server.
+for _ in {1..50}; do
+  if reference PING >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+if ! reference PING >/dev/null 2>&1; then
+  echo "No reference Redis on ${reference_host}:${reference_port}" >&2
+  exit 1
+fi
+
 reference FLUSHDB >/dev/null
 actual FLUSHDB >/dev/null
 

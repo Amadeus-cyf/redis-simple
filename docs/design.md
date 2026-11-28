@@ -60,7 +60,9 @@ like `Dict` it does not shrink while a snapshot child shares its pages.
    server frees a larger one as soon as it is empty, because mimalloc gives
    each allocation past 64 KiB a span of 64 KiB slices: a client that sent
    one 64 KiB value would hold 128 KiB, where Redis' jemalloc holds 80 KiB.
-   A larger request is read as a first 16 KiB and then the rest.
+   A larger request is read as a first 16 KiB and then the rest. An
+   argument of 32 KiB or more is read into exactly the room it still needs,
+   as in Redis, so its last bytes fit the buffer that was sized for it.
 2. **Frame.** `request_parser::Parse` finds one complete request in the
    buffer without copying it: the command name and arguments are
    `std::string_view`s into the buffer (`CommandArgs`). It frames RESP arrays
@@ -416,7 +418,10 @@ checks every element, that keys are distinct (by sorting their views), and
 that scores are numbers, and it is kept only if it also fits this server's
 listpack limits, holds sorted set pairs in (score, member) order, and stores
 each element as `Listpack` would, an integer exactly when its text parses as
-one, which lookups rely on. Any other value, including lists and intsets, is
+one, which lookups rely on. An intset's values are kept as stored as well,
+once its width, its length, and the ascending order of its values are checked
+(Redis' `intsetValidateIntegrity`), and a set with more values than an intset
+holds is converted to a hash table. Any other value, including lists, is
 rebuilt through the data types, so no corrupt structure enters memory. A
 hash, set, or sorted set stored as a hash table and counting more entries
 than a listpack holds starts in that encoding, sized for the count, instead of

@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "containers/listpack.h"
@@ -14,11 +15,12 @@
 
 namespace redis_simple::fuzz {
 namespace {
+using containers::ListEnd;
 using containers::Listpack;
 
 void Verify(const Listpack& listpack, const std::vector<std::string>& model) {
   Require(listpack.Size() == model.size());
-  Require(listpack.TotalBytes() >= Listpack::kListpackHeaderSize + 1);
+  Require(listpack.TotalBytes() >= Listpack::kEmptyListpackBytes);
   Require(listpack.First().has_value() == !model.empty());
   Require(listpack.Last().has_value() == !model.empty());
 
@@ -54,7 +56,7 @@ void RunOperations(FuzzInput* input) {
   std::vector<std::string> model;
   for (size_t operation_count = 0; operation_count < 128 && input->HasData();
        ++operation_count) {
-    const uint8_t operation = input->ReadByte() % 13;
+    const uint8_t operation = input->ReadByte() % 14;
     const std::string value = input->ReadValue(96);
     const size_t index = input->ReadIndex(model.size() + 2);
     const size_t limit = input->ReadIndex(6);
@@ -117,7 +119,9 @@ void RunOperations(FuzzInput* input) {
         const bool from_tail = (input->ReadByte() & 1U) != 0;
         const size_t expected =
             RemoveMatchesFromModel(&model, value, limit, from_tail);
-        Require(listpack.DeleteMatching(value, limit, from_tail) == expected);
+        Require(listpack.DeleteMatching(
+                    value, limit,
+                    from_tail ? ListEnd::kTail : ListEnd::kHead) == expected);
         break;
       }
       case 9: {
@@ -158,6 +162,29 @@ void RunOperations(FuzzInput* input) {
         if (found.has_value()) {
           Require(listpack.Get(found.value()) == value);
         }
+        break;
+      }
+      case 13: {
+        // Split at `index`, which may be past the end, and join the two
+        // parts again in either order. The bytes move as they are, so the
+        // sizes add up.
+        const size_t kept = std::min(index, model.size());
+        const size_t total_bytes = listpack.TotalBytes();
+        Listpack tail = listpack.SplitOff(index);
+        Require(listpack.Size() == kept);
+        Require(tail.Size() == model.size() - kept);
+        Require(size_t{listpack.TotalBytes()} + tail.TotalBytes() ==
+                total_bytes + Listpack::kEmptyListpackBytes);
+        if (limit % 2 == 0) {
+          Require(listpack.AppendEntries(tail));
+        } else {
+          Require(tail.AppendEntries(listpack));
+          listpack = std::move(tail);
+          std::rotate(model.begin(),
+                      model.begin() + static_cast<std::ptrdiff_t>(kept),
+                      model.end());
+        }
+        Require(listpack.TotalBytes() == total_bytes);
         break;
       }
       default:

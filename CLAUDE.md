@@ -177,12 +177,14 @@ Guidance for AI coding agents working in this repository.
   keeps a set, hash, or sorted set listpack's bytes
   (`CreateFromListpack`), but only after one pass proves it is valid, fits
   this server's limits, holds sorted set pairs in order, and encodes each
-  element as `Listpack` would; anything else is rebuilt through the data
-  types. Values over the listpack limits start in their large encoding,
-  sized for their count (`CreateForSize`), as Redis' rdbLoad does. Keep new
-  types on that path. A count used only to pre-size (`RESIZEDB`) is capped
-  by the bytes left too (`Loader::ReserveKeys`); cap any new pre-size hint
-  the same way.
+  element as `Listpack` would. It keeps an intset's values the same way
+  (`Intset::CreateFromRedisBlob`), once the blob's width, its length, and
+  the ascending order of its values are checked. Anything else is rebuilt
+  through the data types. Values over the listpack limits start in their
+  large encoding, sized for their count (`CreateForSize`), as Redis' rdbLoad
+  does. Keep new types on that path. A count used only to pre-size
+  (`RESIZEDB`) is capped by the bytes left too (`Loader::ReserveKeys`); cap
+  any new pre-size hint the same way.
 - Write skiplist sorted sets to RDB from the greatest member down
   (`ForEachSkiplistEntryDescending`), as Redis does, so loading inserts at
   the skiplist's head.
@@ -206,10 +208,13 @@ Guidance for AI coding agents working in this repository.
   callback only while output remains unsent. Read once per readable event,
   into all the room the query buffer has, as Redis does: an empty buffer
   keeps up to 64 KiB between requests (`DynamicBuffer::Compact`), so a
-  request that fits arrives in one read. Redis keeps a buffer of any size
-  after a large argument, but under mimalloc one past 64 KiB costs a span
-  of 64 KiB slices per client until the idle sweep, so a larger buffer is
-  freed once it is empty.
+  request that fits arrives in one read. A bulk argument of 32 KiB or more
+  is read into exactly the room it still needs, plus 16 KiB when more
+  arguments follow it (`ReadRoom`), as Redis reads one: rounding that up
+  doubles the buffer and copies the argument to read its last bytes. Redis
+  keeps a buffer of any size after a large argument, but under mimalloc one
+  past 64 KiB costs a span of 64 KiB slices per client until the idle sweep,
+  so a larger buffer is freed once it is empty.
 - An idle client keeps no buffers: `IdleClientSweeper` calls
   `Client::ReleaseIdleBuffers` on each client once a second, from the server
   cron without threaded I/O and otherwise from the client's I/O thread,
@@ -299,8 +304,10 @@ Guidance for AI coding agents working in this repository.
   sentinel entries, member copies for lookups, or min/max member tracking.
   Each member's name is stored once, in the member dict's entry: skiplist
   entries hold a score and an 8-byte `Dict::EntryRef` to that entry
-  (`FindOrInsertEntry` returns it), so remove a member from the skiplist
-  before the dict.
+  (`FindOrInsertEntry` returns it), so a member leaves the skiplist before
+  its dict entry is freed. `ZSetSkiplist::Delete` does both with one dict
+  lookup, as Redis' `zsetDel` does: `Dict::DeleteWith` finds the entry and
+  its callback removes the skiplist entry.
   Change stored keys through `Skiplist::Update`, which repositions them.
   A node and its levels are one allocation, the levels above the first
   following the node as the `level[]` array does in Redis'
@@ -322,20 +329,28 @@ Guidance for AI coding agents working in this repository.
   vector-returning `RangeByRank`, `RangeByScore`, and `RangeByLex` copy
   entries and are for tests and tools. Do not bring back a result cache
   inside the storage: a listpack sorted set must stay as small after a range
-  read as before it.
+  read as before it. In the skiplist a `LIMIT` offset of 10 or more is
+  reached by rank, as Redis' `zslNthInRange` reaches it
+  (`Skiplist::NodeAfter` and `NodeBefore`); a smaller one is stepped over.
+  Do not go back to visiting every member an offset skips.
 - `Listpack::ForEach`, `ForEachReverse`, and `ForEachPair` decode each
   element once through `DecodeEntry`, which yields its value and the next
   offset together. Prefer them over `Get` plus `Next` loops on read paths.
   Listpack sorted sets read integer-encoded scores directly instead of
   formatting and reparsing them.
-- Keep `Quicklist` aligned with Redis' quicklist: index seeks walk nodes from
-  the closer end (`Locate`), an `LSET` that overflows its node splits only
-  that node, and `List` converts back to a listpack after pops, `LSET`,
-  `LREM`, and `LTRIM` once one node holds at most half the size limit.
+- Keep `Quicklist` aligned with Redis' quicklist: each node caches its
+  element count, so index seeks walk nodes from the closer end (`Locate`)
+  without reading their bytes; an `LSET` that overflows its node splits only
+  that node; splitting and merging nodes move the encoded bytes
+  (`Listpack::SplitOff`, `AppendEntries`) instead of encoding each element
+  again; and `List` converts back to a listpack after pops, `LSET`, `LREM`,
+  and `LTRIM` once one node holds at most half the size limit.
   One deliberate difference: after pops, `LSET`, `LREM`, and `LTRIM`,
   `Quicklist` merges neighboring nodes that fit together, where Redis leaves
   them. This server is I/O bound, so fewer, fuller nodes are worth the merge
-  cost; keep the merges.
+  cost; keep the merges. Try them only for the nodes the operation changed
+  and their neighbors, never for the whole list: an `LREM` with a count
+  reads no node past its last match.
 - Canonical integer strings are stored as `int64_t`, and other values of at
   most `EmbeddedString::kCapacity` bytes (39 with libstdc++) inside the
   `RedisObject`, like Redis' embstr, so they need no allocation of their own.
@@ -623,15 +638,15 @@ Before committing, run the relevant build and tests.
   hot helpers it inlines within a single file, which made list edits 27%
   slower; `-fopt-info-inline-missed` at link time names them. Mark such a
   helper `[[gnu::always_inline]]` (the request parser's, `SeededHash`,
-  `Listpack::DecodeEntry`, the RDB encoder's `Length` and `Raw`), and
-  compare an LTO build with one without it when adding hot-path code. The
-  attribute goes on a function this repository defines, and what it inlines
-  must not itself call a small helper out of line. A standard library call
-  that a compiler leaves out of line is a different problem: the library's
-  definition cannot carry the attribute. For clang that takes an attribute
-  on the statement that makes the call. GCC has no inlining attribute for a
-  statement, so there the code avoids the call: string-keyed Dicts compare
-  keys with `dict_internal::SameBytes`, not `==`, whose
+  `Listpack::DecodeEntry` and `MatchEntry`, the RDB encoder's `Length` and
+  `Raw`), and compare an LTO build with one without it when adding hot-path
+  code. The attribute goes on a function this repository defines, and what
+  it inlines must not itself call a small helper out of line. A standard
+  library call that a compiler leaves out of line is a different problem:
+  the library's definition cannot carry the attribute. For clang that takes
+  an attribute on the statement that makes the call. GCC has no inlining
+  attribute for a statement, so there the code avoids the call: string-keyed
+  Dicts compare keys with `dict_internal::SameBytes`, not `==`, whose
   `std::string_view::compare` call GCC left out of line in every lookup.
 - Keep event-loop pollers platform-selected in `CMakeLists.txt`: `kqueue` for
   macOS and `epoll` for Linux.

@@ -21,6 +21,10 @@ namespace redis_simple {
 namespace {
 // The least room a read asks the query buffer for.
 constexpr size_t kMinReadRoom = size_t{16} * 1024;
+// A bulk argument of at least this size, counted with its length header and
+// line ending, is read into the room it still needs: Redis'
+// PROTO_MBULK_BIG_ARG.
+constexpr size_t kBigBulkBytes = size_t{32} * 1024;
 // The most room one read asks the query buffer for while a large bulk
 // argument arrives. Not a bound on the read itself, which fills whatever
 // room the buffer already has.
@@ -30,6 +34,22 @@ constexpr size_t kMaxQueryBufferSize = size_t{1024} * 1024 * 1024;
 constexpr std::string_view kQueued = "+QUEUED\r\n";
 constexpr std::string_view kExecAbort =
     "-EXECABORT Transaction discarded because of previous errors.\r\n";
+
+// The room a read asks the query buffer for, given the `buffered` bytes of
+// the request that `state` describes.
+size_t ReadRoom(const request_parser::ParseState& state, size_t buffered) {
+  const size_t pending_bulk = state.PendingBulkBytes(buffered);
+  if (pending_bulk == 0 || state.PendingBulkSize() < kBigBulkBytes) {
+    // Large bulk arguments are read in bigger steps to save syscalls.
+    return std::clamp(pending_bulk, kMinReadRoom, kMaxBulkReadRoom);
+  }
+  // A big argument is read into the room it still needs, as Redis reads it
+  // (readQueryFromClient). Rounding that up to kMinReadRoom would double a
+  // buffer that holds the argument, and copy the argument, to read its last
+  // bytes. Arguments that follow it get room to arrive in the same read.
+  const size_t following = state.PendingBulkIsLast() ? 0 : kMinReadRoom;
+  return std::min(pending_bulk + following, kMaxBulkReadRoom);
+}
 
 // Frees a vector's storage, which clear() keeps.
 template <typename T>
@@ -198,12 +218,8 @@ bool Client::CanQueueReply(size_t size) {
 ssize_t Client::ReadQuery() {
   // One read per readable event: level-triggered polling reports any bytes
   // left in the socket again, so a busy client cannot monopolize the loop.
-  // Large bulk arguments are read in bigger steps to save syscalls.
-  const size_t pending_bulk =
-      parse_state_.PendingBulkBytes(query_buffer_.View().size());
-  const size_t min_room =
-      std::clamp(pending_bulk, kMinReadRoom, kMaxBulkReadRoom);
-  char* const tail = query_buffer_.WritableTail(min_room);
+  char* const tail = query_buffer_.WritableTail(
+      ReadRoom(parse_state_, query_buffer_.View().size()));
   // Read into all the room the buffer has, as Redis does to save system
   // calls: after a request of up to 64 KiB the buffer keeps room for the
   // next one (DynamicBuffer::Compact), which then arrives in one read

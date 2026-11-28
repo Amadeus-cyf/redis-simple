@@ -13,7 +13,6 @@
 #include <memory>
 #include <new>
 #include <optional>
-#include <span>
 #include <utility>
 #include <vector>
 
@@ -201,33 +200,57 @@ class Skiplist {
   // Calls `visitor(const Key&)` for each key in the rank range.
   template <std::invocable<const Key&> Visitor>
   void ForEachInRange(const RankRange& range, Visitor&& visitor) const {
+    // Checked first so that an exclusive minimum cannot wrap around.
+    if (range.min >= size_) {
+      return;
+    }
     const size_t first = range.min + (range.min_exclusive ? 1 : 0);
     if (first >= size_ || range.max < first + (range.max_exclusive ? 1 : 0)) {
       return;
     }
     const size_t last =
         std::min(range.max - (range.max_exclusive ? 1 : 0), size_ - 1);
-    size_t remaining = last - first + 1;
-    const Node* const start =
-        NodeAtRank(range.reverse ? size_ - 1 - first : first);
+    const size_t in_range = last - first + 1;
+    const Limit limit = range.limit.value_or(Limit{});
+    if (limit.offset >= in_range) {
+      return;
+    }
+    // The offset is a number of ranks, so one descent reaches the first key
+    // to visit.
+    const size_t rank = first + limit.offset;
     Walk(
-        start, range.reverse, range.limit,
-        [&remaining](const Key&) { return remaining-- > 0; }, visitor);
+        NodeAtRank(range.reverse ? size_ - 1 - rank : rank), range.reverse,
+        std::min(in_range - limit.offset, limit.count.value_or(kNoLimit)),
+        [](const Key& /*key*/) { return true; }, visitor);
   }
 
   // Calls `visitor(const Key&)` for each key in the key range.
+  //
+  // The search for the range's first key also gives its rank, so the key at
+  // the limit's offset is reached by rank, as Redis' zslNthInRange reaches
+  // it, instead of by visiting every key the offset skips. The keys of a
+  // range are consecutive, so when the key reached is in the range, the keys
+  // skipped were too.
   template <typename Probe, std::invocable<const Key&> Visitor>
     requires SkiplistCompareFor<Compare, Key, Probe>
   void ForEachInRange(const KeyRange<Probe>& range, Visitor&& visitor) const {
     const auto below_min = BelowMin(range);
     const auto within_max = WithinMax(range);
+    const Limit limit = range.limit.value_or(Limit{});
+    const size_t count = limit.count.value_or(kNoLimit);
     if (range.reverse) {
+      const Position last = LastWhere(within_max);
+      // The search ends at the head when no key is within the maximum.
+      const Node* const start =
+          last.rank == 0 ? nullptr
+                         : NodeBefore(last.node, last.rank - 1, limit.offset);
       Walk(
-          LastNodeWhere(within_max), /*reverse=*/true, range.limit,
+          start, /*reverse=*/true, count,
           [&](const Key& key) { return !below_min(key); }, visitor);
     } else {
-      Walk(FirstNodeWhereNot(below_min), /*reverse=*/false, range.limit,
-           within_max, visitor);
+      const Position before = LastWhere(below_min);
+      Walk(NodeAfter(before.node->next, before.rank, limit.offset),
+           /*reverse=*/false, count, within_max, visitor);
     }
   }
 
@@ -285,6 +308,10 @@ class Skiplist {
 
  private:
   static constexpr size_t kMaxLevel = 32;
+  // Redis' ZSKIPLIST_MAX_SEARCH: an offset below this is stepped over node by
+  // node, which reads fewer nodes than a second descent from the head.
+  static constexpr size_t kMaxOffsetSteps = 10;
+  static constexpr size_t kNoLimit = std::numeric_limits<size_t>::max();
 
   struct Node;
 
@@ -526,6 +553,30 @@ class Skiplist {
     return nullptr;
   }
 
+  // The node `distance` nodes after `node`, whose 0-based rank is `rank`, or
+  // null if the list ends first. `node` is null when `rank` is the size.
+  const Node* NodeAfter(const Node* node, size_t rank, size_t distance) const {
+    if (distance >= kMaxOffsetSteps) {
+      return distance < size_ - rank ? NodeAtRank(rank + distance) : nullptr;
+    }
+    for (; node != nullptr && distance > 0; --distance) {
+      node = node->next;
+    }
+    return node;
+  }
+
+  // The node `distance` nodes before `node`, whose 0-based rank is `rank`,
+  // or null if the list begins first.
+  const Node* NodeBefore(const Node* node, size_t rank, size_t distance) const {
+    if (distance >= kMaxOffsetSteps) {
+      return distance <= rank ? NodeAtRank(rank - distance) : nullptr;
+    }
+    for (; node != nullptr && distance > 0; --distance) {
+      node = node->prev;
+    }
+    return node;
+  }
+
   // Whether a key falls before the range's lower bound; holds for a prefix.
   template <typename Probe>
   auto BelowMin(const KeyRange<Probe>& range) const {
@@ -544,25 +595,16 @@ class Skiplist {
     };
   }
 
-  // Visits keys from `node` in the given direction while `in_range` holds,
-  // applying the limit's offset and count.
+  // Visits up to `count` keys from `node` in the given direction while
+  // `in_range` holds.
   template <std::predicate<const Key&> InRange,
             std::invocable<const Key&> Visitor>
-  static void Walk(const Node* node, bool reverse,
-                   const std::optional<Limit>& limit, InRange&& in_range,
-                   Visitor& visitor) {
-    size_t skip = limit.has_value() ? limit->offset : 0;
-    size_t remaining = limit.has_value() && limit->count.has_value()
-                           ? *limit->count
-                           : std::numeric_limits<size_t>::max();
-    for (; node != nullptr && remaining > 0 && in_range(node->key);
+  static void Walk(const Node* node, bool reverse, size_t count,
+                   const InRange& in_range, Visitor& visitor) {
+    for (; node != nullptr && count > 0 && in_range(node->key);
          node = reverse ? node->prev : node->next) {
-      if (skip > 0) {
-        --skip;
-        continue;
-      }
       std::invoke(visitor, node->key);
-      --remaining;
+      --count;
     }
   }
 
@@ -598,6 +640,7 @@ class Skiplist<Key, Compare>::Iterator {
     RS_CHECK(node_ != nullptr);
     return node_->key;
   }
+  const Key* operator->() const { return &**this; }
 
  private:
   friend class Skiplist;

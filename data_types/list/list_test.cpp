@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace redis_simple::data_types {
@@ -74,11 +75,11 @@ TEST(ListTest, IndexSetRemoveAndTrimWithListpackEncoding) {
   ASSERT_EQ(list->Range(0, 3),
             (std::vector<std::string>{"one", "changed", "two", "three"}));
 
-  ASSERT_EQ(list->Remove("two", 0, List::RemoveDirection::kFromHead), 1);
+  ASSERT_EQ(list->Remove("two", 0, containers::ListEnd::kHead), 1);
   ASSERT_EQ(list->Range(0, 2),
             (std::vector<std::string>{"one", "changed", "three"}));
 
-  ASSERT_TRUE(list->Trim(1, 2));
+  list->Trim(1, 2);
   ASSERT_EQ(list->Range(0, 1), (std::vector<std::string>{"changed", "three"}));
 }
 
@@ -91,12 +92,12 @@ TEST(ListTest, RemoveFromTailWithListpackEncoding) {
   ASSERT_TRUE(list->RPush("b"));
   ASSERT_TRUE(list->RPush("d"));
 
-  ASSERT_EQ(list->Remove("b", 2, List::RemoveDirection::kFromTail), 2);
+  ASSERT_EQ(list->Remove("b", 2, containers::ListEnd::kTail), 2);
 
   ASSERT_EQ(list->Encoding(), List::Encoding::kListpack);
   ASSERT_EQ(list->Range(0, 3), (std::vector<std::string>{"a", "b", "c", "d"}));
 
-  ASSERT_EQ(list->Remove("b", 0, List::RemoveDirection::kFromTail), 1);
+  ASSERT_EQ(list->Remove("b", 0, containers::ListEnd::kTail), 1);
   ASSERT_EQ(list->Range(0, 2), (std::vector<std::string>{"a", "c", "d"}));
 }
 
@@ -176,8 +177,8 @@ TEST(ListEncodingTest, MutatesQuicklistEncoding) {
 
   ASSERT_EQ(list->At(2), value + "3");
   ASSERT_TRUE(list->Set(2, value + "4"));
-  ASSERT_EQ(list->Remove(value + "2", 1, List::RemoveDirection::kFromTail), 1);
-  ASSERT_TRUE(list->Trim(1, 2));
+  ASSERT_EQ(list->Remove(value + "2", 1, containers::ListEnd::kTail), 1);
+  list->Trim(1, 2);
 
   ASSERT_EQ(list->Range(0, 1),
             (std::vector<std::string>{value + "2", value + "4"}));
@@ -194,7 +195,7 @@ TEST(ListEncodingTest, TrimKeepsQuicklistWhenRangeExceedsListpackLimit) {
   ASSERT_TRUE(list->RPush(value + "5"));
   ASSERT_EQ(list->Encoding(), List::Encoding::kQuicklist);
 
-  ASSERT_TRUE(list->Trim(0, 3));
+  list->Trim(0, 3);
 
   ASSERT_EQ(list->Encoding(), List::Encoding::kQuicklist);
   ASSERT_EQ(list->Range(0, 3),
@@ -213,7 +214,7 @@ TEST(ListEncodingTest, RemoveFromTailKeepsOriginalOrderWithoutRangeCopy) {
   ASSERT_TRUE(list->RPush(value + "4"));
   ASSERT_EQ(list->Encoding(), List::Encoding::kQuicklist);
 
-  ASSERT_EQ(list->Remove(value + "2", 1, List::RemoveDirection::kFromTail), 1);
+  ASSERT_EQ(list->Remove(value + "2", 1, containers::ListEnd::kTail), 1);
 
   ASSERT_EQ(list->Encoding(), List::Encoding::kQuicklist);
   ASSERT_EQ(list->Range(0, 3),
@@ -233,14 +234,14 @@ TEST(ListEncodingTest, ConvertsBackToListpackAfterTrimRemoveOrSet) {
   };
 
   std::unique_ptr<List> trimmed = make_quicklist();
-  ASSERT_TRUE(trimmed->Trim(1, 1));
+  trimmed->Trim(1, 1);
   EXPECT_EQ(trimmed->Encoding(), List::Encoding::kListpack);
   EXPECT_EQ(trimmed->Range(0, 0), std::vector<std::string>{value + "1"});
 
   std::unique_ptr<List> removed = make_quicklist();
   for (int index = 1; index < 4; ++index) {
     ASSERT_EQ(removed->Remove(value + std::to_string(index), 0,
-                              List::RemoveDirection::kFromHead),
+                              containers::ListEnd::kHead),
               1);
   }
   EXPECT_EQ(removed->Encoding(), List::Encoding::kListpack);
@@ -261,7 +262,35 @@ TEST(ListEncodingTest, ConvertsBackToListpackAfterTrimRemoveOrSet) {
 
   // A list still above half the limit stays a quicklist.
   std::unique_ptr<List> kept = make_quicklist();
-  ASSERT_TRUE(kept->Trim(0, 2));
+  kept->Trim(0, 2);
   EXPECT_EQ(kept->Encoding(), List::Encoding::kQuicklist);
+}
+
+TEST(ListEncodingTest, PopPassesTheElementToTheVisitorInEitherEncoding) {
+  auto list = List::Create(96);
+  const std::string value(32, 'p');
+  for (int index = 0; index < 4; ++index) {
+    ASSERT_TRUE(list->RPush(value + std::to_string(index)));
+  }
+  ASSERT_EQ(list->Encoding(), List::Encoding::kQuicklist);
+  std::vector<std::string> popped;
+  const auto collect = [&popped](std::string_view element) {
+    popped.emplace_back(element);
+  };
+
+  EXPECT_TRUE(list->Pop(containers::ListEnd::kHead, collect));
+  EXPECT_TRUE(list->Pop(containers::ListEnd::kTail, collect));
+  EXPECT_TRUE(list->Pop(containers::ListEnd::kTail, collect));
+  // The one element left is back in a listpack.
+  EXPECT_EQ(list->Encoding(), List::Encoding::kListpack);
+  EXPECT_TRUE(list->Pop(containers::ListEnd::kHead, collect));
+  EXPECT_EQ(popped, (std::vector<std::string>{value + "0", value + "3",
+                                              value + "2", value + "1"}));
+
+  // Nothing is called for an empty list.
+  EXPECT_FALSE(list->Pop(containers::ListEnd::kHead, collect));
+  EXPECT_FALSE(list->Pop(containers::ListEnd::kTail, collect));
+  EXPECT_EQ(popped.size(), 4);
+  EXPECT_EQ(list->Size(), 0);
 }
 }  // namespace redis_simple::data_types

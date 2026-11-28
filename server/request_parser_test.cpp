@@ -229,6 +229,42 @@ TEST(RequestParserTest, ReportsPendingBulkBytes) {
   EXPECT_EQ(state.PendingBulkBytes(kRequest.size()), 99);
 }
 
+TEST(RequestParserTest, ReportsThePendingBulkSizeAndWhetherItIsLast) {
+  constexpr std::string_view kLast =
+      "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$100\r\nabc";
+  constexpr std::string_view kNotLast =
+      "*4\r\n$3\r\nSET\r\n$1\r\nk\r\n$100\r\nabc";
+  constexpr std::string_view kNoHeader = "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$10";
+  std::string_view command;
+  commands::CommandArgs args;
+
+  ParseState last;
+  EXPECT_EQ(last.PendingBulkSize(), 0);
+  ASSERT_EQ(Parse(kLast, &last, &command, &args).status,
+            ParseStatus::kIncomplete);
+  // "$100" and its line ending, 100 payload bytes and their line ending.
+  EXPECT_EQ(last.PendingBulkSize(), 108);
+  EXPECT_TRUE(last.PendingBulkIsLast());
+  // More of the payload does not change either.
+  const std::string more = std::string(kLast) + "def";
+  ASSERT_EQ(Parse(more, &last, &command, &args).status,
+            ParseStatus::kIncomplete);
+  EXPECT_EQ(last.PendingBulkSize(), 108);
+  EXPECT_TRUE(last.PendingBulkIsLast());
+
+  ParseState not_last;
+  ASSERT_EQ(Parse(kNotLast, &not_last, &command, &args).status,
+            ParseStatus::kIncomplete);
+  EXPECT_EQ(not_last.PendingBulkSize(), 108);
+  EXPECT_FALSE(not_last.PendingBulkIsLast());
+
+  // No bulk string is pending until its length line is complete.
+  ParseState no_header;
+  ASSERT_EQ(Parse(kNoHeader, &no_header, &command, &args).status,
+            ParseStatus::kIncomplete);
+  EXPECT_EQ(no_header.PendingBulkSize(), 0);
+}
+
 TEST(RequestParserTest, RejectsOverlongHeaderLines) {
   std::string_view command;
   commands::CommandArgs args;

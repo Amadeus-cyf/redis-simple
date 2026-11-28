@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "utils/check.h"
 #include "utils/siphash.h"
 
 namespace redis_simple::containers {
@@ -29,7 +30,7 @@ namespace redis_simple::containers {
 // forked child shares the parent's memory each written page is copied. So
 // the parent avoids it while a child lives, resizing only a table that is
 // badly out of size, and the child, which only reads, never does it.
-enum class DictResizePolicy { kEnabled, kAvoid, kForbidden };
+enum class DictResizePolicy : std::uint8_t { kEnabled, kAvoid, kForbidden };
 
 namespace dict_internal {
 // Only the main thread sets this, and Dicts are used and freed there too
@@ -230,7 +231,6 @@ class Dict {
   static std::unique_ptr<Dict> Create(size_t capacity);
   Dict(const Dict&) = delete;
   Dict& operator=(const Dict&) = delete;
-  std::optional<V> Get(const K& key);
   V* FindValue(const K& key) { return FindValueImpl(key); }
   V* FindValue(std::string_view key) { return FindValueImpl(key); }
   V* FindValue(const char* key) { return FindValue(std::string_view(key)); }
@@ -368,9 +368,8 @@ class Dict {
   }
   void PauseRehashing() const { ++pause_rehash_; }
   void ResumeRehashing() const {
-    if (pause_rehash_ > 0) {
-      --pause_rehash_;
-    }
+    RS_CHECK(pause_rehash_ > 0);
+    --pause_rehash_;
   }
   void ExpandIfNeeded();
   bool Resize(size_t size);
@@ -526,31 +525,35 @@ void Dict<K, V, Hash, KeyEqual>::Iterator::Next() {
   SeekToNextEntry();
 }
 
-// Finds the next non-null entry in the dict.
+// Moves to the next entry: the rest of the chain, then the next bucket with
+// entries, in table 1 after table 0 while a rehash is under way.
 template <typename K, typename V, typename Hash, typename KeyEqual>
 void Dict<K, V, Hash, KeyEqual>::Iterator::SeekToNextEntry() {
-  if (entry_ && entry_->next) {
+  if (entry_ != nullptr && entry_->next != nullptr) {
     entry_ = entry_->next;
     return;
   }
-  index_ = index_.has_value() ? std::optional<size_t>(*index_ + 1) : size_t{0};
-  // Find the next non-empty bucket.
-  while (*index_ < dict_->tables_[table_].size() &&
-         dict_->tables_[table_][*index_] == nullptr) {
-    ++*index_;
+  // A walk starts in table 0 (an unset index), past the buckets a rehash has
+  // emptied, as Redis' dictNext does.
+  size_t index =
+      index_.has_value() ? *index_ + 1 : dict_->rehash_index_.value_or(0);
+  while (true) {
+    const std::vector<DictEntry*>& buckets = dict_->tables_[table_];
+    while (index < buckets.size() && buckets[index] == nullptr) {
+      ++index;
+    }
+    index_ = index;
+    if (index < buckets.size()) {
+      entry_ = buckets[index];
+      return;
+    }
+    if (table_ == 1 || !dict_->IsRehashing()) {
+      entry_ = nullptr;
+      return;
+    }
+    table_ = 1;
+    index = 0;
   }
-  if (*index_ < dict_->tables_[table_].size()) {
-    entry_ = dict_->tables_[table_][*index_];
-    return;
-  }
-  if (table_ == 1 || !dict_->IsRehashing()) {
-    entry_ = nullptr;
-    return;
-  }
-  // Find the next element in the rehashed table.
-  index_ = std::nullopt;
-  table_ = 1;
-  SeekToNextEntry();
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>
@@ -575,15 +578,6 @@ Dict<K, V, Hash, KeyEqual>::Dict() = default;
 template <typename K, typename V, typename Hash, typename KeyEqual>
 Dict<K, V, Hash, KeyEqual>::~Dict() {
   Clear();
-}
-
-template <typename K, typename V, typename Hash, typename KeyEqual>
-std::optional<V> Dict<K, V, Hash, KeyEqual>::Get(const K& key) {
-  const V* const value = FindValue(key);
-  if (value == nullptr) {
-    return std::nullopt;
-  }
-  return *value;
 }
 
 template <typename K, typename V, typename Hash, typename KeyEqual>

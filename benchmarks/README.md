@@ -14,21 +14,36 @@ Run one group with `--benchmark_filter`, for example
 `--benchmark_filter=ListIndex`. The groups cover:
 
 - `Dict*`, `DynamicBuffer*`, `ReplyBuffer*`: core containers and buffers.
-- `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, and ranges.
+  The `Dict*WhileRehashing` ones run on a table that is moving to a larger
+  one, where each operation also moves a bucket.
+- `ZSet*`: skiplist sorted-set inserts, updates, deletes, ranks, counts, and
+  ranges by score and by name. `ZSetRangeByScoreWithOffset` reads 10 members
+  after a `LIMIT` offset of 5, 100, and 10,000, forward and in reverse.
 - `IntsetInsert*`, `Listpack*`, `ZSetListpackInsert`, `HashListpackSet`:
   inserts into the compact encodings (and deletes, for
   `ListpackDeleteFirst`), which reallocate and move the value's bytes.
 - `ListIndex`, `ListRange`: quicklist `LINDEX` and `LRANGE` at the head,
   middle, and tail of a 300,000-element list whose items vary in length. The
   middle reads step through about two quicklist nodes' worth of positions.
+- `ListRemove*`: `LREM` that deletes every tenth element, that matches
+  nothing, and, for `ListRemoveFirst`, that deletes the head element with
+  count 1. The last reads one quicklist node, so it should cost the same for
+  10,000 and 300,000 elements.
 - `ParseCompleteRequest`, `ParseSplitRequest`, `FindCommand`: request
   decoding and command lookup.
 - `AppendBulkStrings`, `FormatScore`, `AppendScores`: collection reply and
   score encoding.
+- `ZSetListpackRangeByRank`: ten members by rank from a 128-member listpack
+  sorted set, as `ZRANGE` and `ZREVRANGE` read them, starting at rank 0, 59,
+  and 118, with scores stored as text and as integers.
 - `SetIntersect`: set intersection with and without reusing stored hashes.
 - `SetIntersectThree`, `SetDifference`: `SINTER` with the large set named
   before or after the one that rules members out, and `SDIFF` by probing,
   by subtracting, and by the algorithm its estimate picks.
+- `RdbLoadIntsets`, `RdbSaveIntsets`: loading and saving an RDB file of
+  65,536 integers in sets of 16 and of 512, the most an intset holds. A load
+  includes creating and destroying the database, and a save drops the bytes
+  it writes.
 - `DbLookup`, `DbOverwriteString`: keyspace lookups with no TTL, with a TTL
   on one key, and with a TTL on every key, and `SET` overwrites in place or
   with a new object.
@@ -43,6 +58,9 @@ Run one group with `--benchmark_filter`, for example
   and back-to-back cycles until 100,000 expired keys are gone.
 - `MultiQueue`: queueing 10 and 10,000 commands inside `MULTI`, with the
   bytes the queue holds before and after the transaction ends.
+- `ClientReadLargeSet`: a client reading and running one `SET` of a 48 KiB,
+  256 KiB, or 1 MiB value that reaches its socket 16 KiB at a time, with the
+  value as the last argument and with an option after it.
 - `AofLoad`: loading an AOF at startup. `AofLoadLargeCommand` loads one
   `RPUSH` of 1,000 to 1,000,000 values, which the loader reads in 1 to 214
   parts; `AofLoadSmallCommands` loads 100,000 short `SET` commands.

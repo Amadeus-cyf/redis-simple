@@ -40,11 +40,11 @@ similar names, so the table gives the layer.
 | `set_fuzzer` | data type | `Set` across its encodings |
 | `hash_fuzzer` | data type | `Hash`, including scanning |
 | `zset_fuzzer` | data type | `ZSet` scores, ranks, and ranges |
-| `listpack_fuzzer` | container | `Listpack` edits against a vector, and widening the short backlens Redis 8.8 to 8.10 wrote |
+| `listpack_fuzzer` | container | `Listpack` edits, splits, and joins against a vector, and widening the short backlens Redis 8.8 to 8.10 wrote |
 | `quicklist_fuzzer` | container | `Quicklist` with a fuzzed node size against a vector |
 | `dict_fuzzer` | container | `Dict` scan, stepwise clear, resize policy, and rehash |
 | `skiplist_fuzzer` | container | `Skiplist` ranks, ranges, and updates |
-| `intset_fuzzer` | container | `Intset` against `std::set` |
+| `intset_fuzzer` | container | `Intset` against `std::set`, starting from a blob in Redis' layout that may be invalid, and a blob round trip after each operation |
 | `handle_set_fuzzer` | container | `HandleSet`, the table behind the TTL index, under heavy hash collisions |
 | `dynamic_buffer_fuzzer` | container | `DynamicBuffer` append, consume, compact, and read line |
 | `reply_buffer_fuzzer` | container | `ReplyBuffer` append, consume, and block filling |

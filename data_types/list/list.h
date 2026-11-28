@@ -22,10 +22,6 @@ class List {
     kListpack,
     kQuicklist,
   };
-  enum class RemoveDirection {
-    kFromHead,
-    kFromTail,
-  };
 
   static constexpr size_t kDefaultListMaxListpackBytes =
       containers::Quicklist::kDefaultNodeMaxBytes;
@@ -39,15 +35,20 @@ class List {
   bool RPush(std::string_view value);
   std::optional<std::string> RPop();
   std::optional<std::string> LPop();
+  // Removes the element at `end` after calling `visitor(std::string_view)`
+  // with it, so a caller can use the value without copying it out first.
+  // The view is valid only during the call. Returns false, calling nothing,
+  // when the list is empty.
+  template <typename Visitor>
+  bool Pop(containers::ListEnd end, Visitor&& visitor);
   std::optional<std::string> At(size_t index) const;
   bool Set(size_t index, std::string_view value);
   // Removes elements equal to `value`, at most `limit` of them unless it is
-  // zero, starting from the given end. Returns how many were removed.
-  size_t Remove(std::string_view value, size_t limit,
-                RemoveDirection direction);
+  // zero, starting from the end `from`. Returns how many were removed.
+  size_t Remove(std::string_view value, size_t limit, containers::ListEnd from);
   // Keeps the elements at indexes `start` to `stop`, both included, and
   // removes the rest; an empty or out-of-range interval empties the list.
-  bool Trim(size_t start, size_t stop);
+  void Trim(size_t start, size_t stop);
   size_t Size() const;
   // The number of quicklist nodes, 0 for a listpack encoding.
   size_t NodeCount() const;
@@ -75,11 +76,11 @@ class List {
 
  private:
   explicit List(size_t list_max_listpack_bytes);
-  bool Push(std::string_view value, bool head);
-  std::optional<std::string> Pop(bool head);
+  bool Push(std::string_view value, containers::ListEnd end);
+  std::optional<std::string> PopValue(containers::ListEnd end);
   void TrimListpack(size_t start, size_t stop);
   bool WouldExceedListpackLimit(std::string_view value) const;
-  bool ConvertListpackToQuicklist();
+  void ConvertListpackToQuicklist();
   void TryConvertQuicklistToListpack();
 
   // The listpack of a listpack-encoded value. Aborts for another encoding,
@@ -101,6 +102,17 @@ class List {
   std::unique_ptr<containers::Quicklist> quicklist_;
   size_t list_max_listpack_bytes_;
 };
+
+template <typename Visitor>
+bool List::Pop(containers::ListEnd end, Visitor&& visitor) {
+  if (listpack_.Allocated()) {
+    return listpack_.Pop(end, visitor);
+  }
+  const bool popped = quicklist_->Pop(end, visitor);
+  // With one element fewer the list may fit a listpack again.
+  TryConvertQuicklistToListpack();
+  return popped;
+}
 
 template <typename Visitor>
 bool List::ForEach(size_t start, size_t stop, Visitor&& visitor) const {

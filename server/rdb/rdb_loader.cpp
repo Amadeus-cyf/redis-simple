@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 
+#include "containers/intset.h"
 #include "containers/listpack.h"
 #include "containers/listpack_reader.h"
 #include "data_types/hash/hash.h"
@@ -449,7 +450,6 @@ class Loader {
   bool ReadListpack(std::string* blob);
   bool InsertZSetEntry(std::string_view member, double score,
                        data_types::ZSet* zset);
-  bool ReadIntset(const std::string& blob, data_types::Set* set);
   // Calls `visit(first, second)` for each pair of elements in a listpack of
   // `kind` ("hash", "sorted set"), with the first as text. Returns false,
   // after logging, if the listpack is corrupt or ends with half a pair, or
@@ -664,43 +664,6 @@ ValueStatus Loader::ReadList(int type, db::RedisObjectPtr* const out) {
   return ValueStatus::kRead;
 }
 
-// Redis' intsetValidateIntegrity with deep validation: a known width, a
-// length matching the blob, and values in strictly ascending order.
-bool Loader::ReadIntset(const std::string& blob, data_types::Set* const set) {
-  const auto* bytes = reinterpret_cast<const unsigned char*>(blob.data());
-  const auto load = [bytes](size_t offset, size_t width) {
-    uint64_t value = 0;
-    for (size_t i = 0; i < width; ++i) {
-      value |= static_cast<uint64_t>(bytes[offset + i]) << (8 * i);
-    }
-    return value;
-  };
-  if (blob.size() < 8) {
-    return Corrupt("an intset shorter than its header");
-  }
-  const auto width = static_cast<size_t>(load(0, 4));
-  const uint64_t length = load(4, 4);
-  if ((width != 2 && width != 4 && width != 8) ||
-      length != (blob.size() - 8) / width || (blob.size() - 8) % width != 0) {
-    return Corrupt("an intset failed its integrity check");
-  }
-  std::optional<int64_t> previous;
-  const unsigned shift = 64 - (8 * static_cast<unsigned>(width));
-  std::array<char, 21> text{};
-  for (uint64_t index = 0; index < length; ++index) {
-    const int64_t value =
-        static_cast<int64_t>(load(8 + (index * width), width) << shift) >>
-        shift;
-    if (previous.has_value() && value <= *previous) {
-      return Corrupt("an intset that is not in ascending order");
-    }
-    previous = value;
-    const int text_length = utils::Int64ToString(text, value);
-    set->Add(std::string_view(text.data(), static_cast<size_t>(text_length)));
-  }
-  return true;
-}
-
 ValueStatus Loader::ReadSet(int type, db::RedisObjectPtr* const out) {
   std::unique_ptr<data_types::Set> set = data_types::Set::Create();
   std::string element;
@@ -720,9 +683,18 @@ ValueStatus Loader::ReadSet(int type, db::RedisObjectPtr* const out) {
       }
     }
   } else if (type == kTypeSetIntset) {
-    if (!ReadString(&element) || !ReadIntset(element, set.get())) {
+    if (!ReadString(&element)) {
       return ValueStatus::kFailed;
     }
+    // The set adopts the blob's values as they are, as a set that Redis
+    // loads does.
+    std::unique_ptr<containers::Intset> intset =
+        containers::Intset::CreateFromRedisBlob(element);
+    if (intset == nullptr) {
+      Corrupt("an intset failed its integrity check");
+      return ValueStatus::kFailed;
+    }
+    set = data_types::Set::CreateFromIntset(std::move(intset));
   } else {
     if (!ReadListpack(&element)) {
       return ValueStatus::kFailed;

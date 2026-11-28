@@ -57,6 +57,16 @@ struct ParseState {
   size_t PendingBulkBytes(size_t buffered) const {
     return pending_bulk_end > buffered ? pending_bulk_end - buffered : 0;
   }
+  // The size of that bulk string with its length header and line ending.
+  // Zero when no bulk string is pending.
+  size_t PendingBulkSize() const {
+    return pending_bulk_end > offset ? pending_bulk_end - offset : 0;
+  }
+  // Whether that bulk string is the request's last element. Meaningful only
+  // while a bulk string is pending.
+  bool PendingBulkIsLast() const {
+    return elements.size() + 1 == element_count;
+  }
   // Frees the unescaped inline arguments, once nothing views them.
   void ReleaseUnescaped() { unescaped.clear(); }
 
