@@ -14,6 +14,44 @@
 #include "utils/floats.h"
 
 namespace redis_simple::data_types {
+namespace {
+// The ranks a rank range visits: `first` up to, but not including, `end`.
+struct VisitedRanks {
+  size_t first;
+  size_t end;
+};
+
+// The ranks that `spec`, a normalized and valid rank range, visits in a
+// sorted set of `size` members, with its exclusive ends and its limit
+// applied. Nullopt when it visits none.
+std::optional<VisitedRanks> RanksToVisit(const RangeByRankSpec& spec,
+                                         size_t size) {
+  const auto min_rank = static_cast<size_t>(spec.min);
+  const auto max_rank = static_cast<size_t>(spec.max);
+  const size_t start = min_rank + (spec.minex ? 1 : 0);
+  size_t end = std::min(max_rank, size);
+  if (!spec.maxex && max_rank < size) {
+    end = max_rank + 1;
+  }
+  const size_t limit_offset = spec.limit ? spec.limit->offset : 0;
+  const std::optional<size_t> limit_count =
+      spec.limit ? spec.limit->count : std::nullopt;
+  // The offset and the count are compared with the ranks that are left,
+  // since either may be too large to add to a rank.
+  if (start >= end || limit_offset >= end - start) {
+    return std::nullopt;
+  }
+  const size_t first = start + limit_offset;
+  if (limit_count.has_value()) {
+    end = first + std::min(*limit_count, end - first);
+  }
+  if (first >= end) {
+    return std::nullopt;
+  }
+  return VisitedRanks{.first = first, .end = end};
+}
+}  // namespace
+
 ZSetListpack::ZSetListpack() = default;
 
 ZSetAddResult ZSetListpack::Add(std::string_view member, double score,
@@ -71,15 +109,29 @@ std::optional<size_t> ZSetListpack::FirstMemberAfter(std::string_view member,
   containers::Listpack::IntBuffer member_buffer;
   std::optional<size_t> offset = listpack_.First();
   while (offset.has_value()) {
-    const std::optional<EntryView> entry = EntryAt(*offset, &member_buffer);
-    if (!entry.has_value()) {
+    const std::optional<size_t> score_offset = listpack_.Next(*offset);
+    if (!score_offset.has_value()) {
       break;
     }
-    if (score < entry->score ||
-        (score == entry->score && member < entry->member)) {
+    const std::optional<double> entry_score = ScoreAt(*score_offset);
+    if (!entry_score.has_value()) {
+      break;
+    }
+    if (score < *entry_score) {
       return offset;
     }
-    offset = NextMemberAfterScore(entry->score_offset);
+    // As in Redis' zzlInsert, a member is read only when the scores tie.
+    if (score == *entry_score) {
+      const std::optional<std::string_view> entry_member =
+          ValueAt(*offset, &member_buffer);
+      if (!entry_member.has_value()) {
+        break;
+      }
+      if (member < *entry_member) {
+        return offset;
+      }
+    }
+    offset = NextMemberAfterScore(*score_offset);
   }
   return std::nullopt;
 }
@@ -363,97 +415,46 @@ std::optional<double> ZSetListpack::ScoreAt(size_t offset) const {
 
 void ZSetListpack::VisitRankRange(const RangeByRankSpec* spec,
                                   const ZSetMemberVisitor& visitor) const {
+  const std::optional<VisitedRanks> ranks = RanksToVisit(*spec, Size());
+  if (!ranks.has_value()) {
+    return;
+  }
   containers::Listpack::IntBuffer member_buffer;
-  const std::optional<size_t> count =
-      spec->limit ? spec->limit->count : std::nullopt;
-  if (count.has_value() && *count == 0) {
-    return;
-  }
-  std::optional<size_t> offset = listpack_.First();
-  size_t visited = 0;
-  size_t rank = 0;
-  const size_t size = Size();
-  if (size == 0) {
-    return;
-  }
-  const auto min_rank = static_cast<size_t>(spec->min);
-  const auto max_rank = static_cast<size_t>(spec->max);
-  const size_t start = min_rank + (spec->minex ? 1 : 0);
-  size_t end = std::min(max_rank, size);
-  if (!spec->maxex && max_rank < size) {
-    end = max_rank + 1;
-  }
-  const size_t limit_offset = spec->limit ? spec->limit->offset : 0;
-  if (start >= size) {
-    return;
-  }
-  while (offset.has_value() && rank < end) {
+  // Seeks to the range's first member, as Redis' ZRANGE does with lpSeek,
+  // so the members before it are stepped over without reading their scores.
+  // A member and its score are two elements.
+  std::optional<size_t> offset = listpack_.OffsetAt(2 * ranks->first);
+  for (size_t rank = ranks->first; rank < ranks->end && offset.has_value();
+       ++rank) {
     const std::optional<EntryView> entry = EntryAt(*offset, &member_buffer);
     if (!entry.has_value()) {
       break;
     }
-    if (rank >= start) {
-      if (rank - start >= limit_offset) {
-        visitor(entry->member, entry->score);
-        ++visited;
-        if (count.has_value() && visited >= *count) {
-          break;
-        }
-      }
-    }
+    visitor(entry->member, entry->score);
     offset = NextMemberAfterScore(entry->score_offset);
-    ++rank;
   }
 }
 
 void ZSetListpack::VisitRankRangeReversed(
     const RangeByRankSpec* spec, const ZSetMemberVisitor& visitor) const {
-  containers::Listpack::IntBuffer member_buffer;
-  const std::optional<size_t> count =
-      spec->limit ? spec->limit->count : std::nullopt;
-  if (count.has_value() && *count == 0) {
-    return;
-  }
-  std::optional<size_t> offset = listpack_.Last();
-  size_t visited = 0;
-  // Ranks count from the last entry here, the one with the greatest score.
-  size_t rank = 0;
   const size_t size = Size();
-  if (size == 0) {
+  // Ranks count from the last member here, the one with the greatest score.
+  const std::optional<VisitedRanks> ranks = RanksToVisit(*spec, size);
+  if (!ranks.has_value()) {
     return;
   }
-  const auto min_rank = static_cast<size_t>(spec->min);
-  const auto max_rank = static_cast<size_t>(spec->max);
-  const size_t start = min_rank + (spec->minex ? 1 : 0);
-  size_t end = std::min(max_rank, size);
-  if (!spec->maxex && max_rank < size) {
-    end = max_rank + 1;
-  }
-  const size_t limit_offset = spec->limit ? spec->limit->offset : 0;
-  if (start >= size) {
-    return;
-  }
-  while (offset.has_value() && rank < end) {
-    const std::optional<size_t> member_offset = listpack_.Prev(*offset);
-    if (!member_offset.has_value()) {
-      break;
-    }
-    const std::optional<EntryView> entry =
-        EntryAt(*member_offset, &member_buffer);
+  containers::Listpack::IntBuffer member_buffer;
+  // Seeks as VisitRankRange does. `ranks->first` is less than `size`.
+  std::optional<size_t> offset =
+      listpack_.OffsetAt(2 * (size - 1 - ranks->first));
+  for (size_t rank = ranks->first; rank < ranks->end && offset.has_value();
+       ++rank) {
+    const std::optional<EntryView> entry = EntryAt(*offset, &member_buffer);
     if (!entry.has_value()) {
       break;
     }
-    if (rank >= start) {
-      if (rank - start >= limit_offset) {
-        visitor(entry->member, entry->score);
-        ++visited;
-        if (count.has_value() && visited >= *count) {
-          break;
-        }
-      }
-    }
-    offset = PrevScoreBeforeMember(entry->member_offset);
-    ++rank;
+    visitor(entry->member, entry->score);
+    offset = PrevMemberBeforeMember(entry->member_offset);
   }
 }
 
