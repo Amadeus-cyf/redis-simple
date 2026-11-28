@@ -416,7 +416,10 @@ checks every element, that keys are distinct (by sorting their views), and
 that scores are numbers, and it is kept only if it also fits this server's
 listpack limits, holds sorted set pairs in (score, member) order, and stores
 each element as `Listpack` would, an integer exactly when its text parses as
-one, which lookups rely on. Any other value, including lists and intsets, is
+one, which lookups rely on. An intset's values are kept as stored as well,
+once its width, its length, and the ascending order of its values are checked
+(Redis' `intsetValidateIntegrity`), and a set with more values than an intset
+holds is converted to a hash table. Any other value, including lists, is
 rebuilt through the data types, so no corrupt structure enters memory. A
 hash, set, or sorted set stored as a hash table and counting more entries
 than a listpack holds starts in that encoding, sized for the count, instead of

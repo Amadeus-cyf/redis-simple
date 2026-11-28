@@ -7,7 +7,10 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
+
+#include "containers/intset.h"
 
 namespace redis_simple::data_types {
 TEST(SetTest, ClearsALargeSetInSteps) {
@@ -213,5 +216,72 @@ TEST(SetTest, ScanDictVisitsEveryMemberOnce) {
     }
   }
   EXPECT_EQ(seen.size(), 300);
+}
+
+TEST(SetTest, CreateFromIntsetKeepsTheIntset) {
+  auto intset = std::make_unique<containers::Intset>();
+  for (const int64_t value : {5, -3, 70000}) {
+    intset->Add(value);
+  }
+  std::string blob;
+  intset->AppendRedisBlob(&blob);
+
+  const std::unique_ptr<Set> set = Set::CreateFromIntset(std::move(intset));
+  EXPECT_EQ(set->Encoding(), Set::Encoding::kIntset);
+  EXPECT_EQ(set->Size(), 3);
+  EXPECT_TRUE(set->HasMember("-3"));
+  EXPECT_TRUE(set->HasMember("5"));
+  EXPECT_TRUE(set->HasMember("70000"));
+  EXPECT_FALSE(set->HasMember("4"));
+  std::string written;
+  set->AppendIntsetBlob(&written);
+  EXPECT_EQ(written, blob);
+
+  // The set goes on as one built by adding does.
+  EXPECT_TRUE(set->Add("6"));
+  EXPECT_FALSE(set->Add("5"));
+  EXPECT_TRUE(set->Delete("-3"));
+  EXPECT_TRUE(set->Add("x"));
+  EXPECT_EQ(set->Encoding(), Set::Encoding::kListpack);
+  EXPECT_EQ(set->Size(), 4);
+  EXPECT_TRUE(set->HasMember("70000"));
+}
+
+TEST(SetTest, CreateFromIntsetAcceptsAnEmptyIntset) {
+  const std::unique_ptr<Set> set =
+      Set::CreateFromIntset(std::make_unique<containers::Intset>());
+  EXPECT_EQ(set->Encoding(), Set::Encoding::kIntset);
+  EXPECT_EQ(set->Size(), 0);
+  EXPECT_FALSE(set->HasMember("0"));
+  EXPECT_TRUE(set->Add("0"));
+  EXPECT_EQ(set->Size(), 1);
+}
+
+// An intset may hold kIntsetMaxEntries values. A file written under a higher
+// set-max-intset-entries holds more, and the set becomes a dict.
+TEST(SetTest, CreateFromIntsetConvertsALargeIntsetToADict) {
+  for (const size_t count :
+       {Set::kIntsetMaxEntries, Set::kIntsetMaxEntries + 1}) {
+    auto intset = std::make_unique<containers::Intset>();
+    for (size_t i = 0; i < count; ++i) {
+      intset->Add(static_cast<int64_t>(i) - 100);
+    }
+    const std::unique_ptr<Set> set = Set::CreateFromIntset(std::move(intset));
+    EXPECT_EQ(set->Encoding(), count > Set::kIntsetMaxEntries
+                                   ? Set::Encoding::kDict
+                                   : Set::Encoding::kIntset);
+    ASSERT_EQ(set->Size(), count);
+    for (size_t i = 0; i < count; ++i) {
+      ASSERT_TRUE(
+          set->HasMember(std::to_string(static_cast<int64_t>(i) - 100)));
+    }
+    EXPECT_FALSE(set->HasMember(std::to_string(count)));
+    EXPECT_TRUE(set->Add(std::to_string(count)));
+    EXPECT_EQ(set->Size(), count + 1);
+  }
+}
+
+TEST(SetDeathTest, CreateFromIntsetRejectsNull) {
+  EXPECT_DEATH(Set::CreateFromIntset(nullptr), "Check failed");
 }
 }  // namespace redis_simple::data_types

@@ -24,6 +24,7 @@
 #include <utility>
 #include <vector>
 
+#include "containers/intset_test_util.h"
 #include "containers/listpack.h"
 #include "containers/listpack_test_util.h"
 #include "data_types/hash/hash.h"
@@ -519,6 +520,7 @@ std::string FileWithValue(uint8_t type, const std::string& blob) {
   return file + std::string(8, '\0');
 }
 
+constexpr uint8_t kSetIntsetType = 11;
 constexpr uint8_t kHashListpackType = 16;
 constexpr uint8_t kZSetListpackType = 17;
 constexpr uint8_t kSetListpackType = 20;
@@ -611,6 +613,103 @@ TEST_F(RdbTest, RejectsInvalidCompactValues) {
     auto db = db::RedisDb::Create();
     EXPECT_FALSE(Load(db.get())) << static_cast<int>(type);
   }
+}
+
+// A set of integers is the intset the file holds, at the width the file
+// gives it. Redis never narrows an intset, so small values can come at a wide
+// width, and a save writes them as they were read.
+TEST_F(RdbTest, KeepsTheBytesOfAnIntset) {
+  using containers::intset_test::Blob;
+  const std::vector<std::string> blobs = {
+      Blob(2, {-2, 1, 300}),
+      Blob(4, {-2, 1, 300}),
+      Blob(8, {-2, 1, 300}),
+      Blob(8, {INT64_MIN, -2, 1, INT64_MAX}),
+  };
+  for (const std::string& blob : blobs) {
+    WriteFile(FileWithValue(kSetIntsetType, blob));
+    auto db = db::RedisDb::Create();
+    ASSERT_TRUE(Load(db.get()));
+    data_types::Set* set = db->MutableLookupKey("k")->Set();
+    ASSERT_NE(set, nullptr);
+    EXPECT_EQ(set->Encoding(), data_types::Set::Encoding::kIntset);
+    std::string kept;
+    set->AppendIntsetBlob(&kept);
+    EXPECT_EQ(kept, blob);
+
+    // The file a save writes holds the same blob, and loads as the same set.
+    // Without compression, so that the blob can be found in it.
+    WriteOptions options;
+    options.compression = false;
+    ASSERT_EQ(Write(db.get(), options), WriteStatus::kWritten);
+    EXPECT_NE(ReadFile().find(blob), std::string::npos);
+    auto reloaded = db::RedisDb::Create();
+    ASSERT_TRUE(Load(reloaded.get()));
+    EXPECT_EQ(DescribeAll(reloaded.get()), DescribeAll(db.get()));
+
+    EXPECT_FALSE(set->Add("1"));
+    EXPECT_TRUE(set->Add("2"));
+    EXPECT_TRUE(set->HasMember("-2"));
+  }
+  auto db = db::RedisDb::Create();
+  WriteFile(FileWithValue(kSetIntsetType, blobs.front()));
+  ASSERT_TRUE(Load(db.get()));
+  EXPECT_EQ(Describe(db.get(), "k", *db->MutableLookupKey("k")),
+            "set(0):-2,1,300,");
+}
+
+// A file written under a higher set-max-intset-entries holds an intset with
+// more values than this server's intsets do.
+TEST_F(RdbTest, LoadsAnIntsetOverTheLimitAsADict) {
+  std::vector<int64_t> values;
+  values.reserve(data_types::Set::kIntsetMaxEntries + 1);
+  for (size_t i = 0; i <= data_types::Set::kIntsetMaxEntries; ++i) {
+    values.push_back(static_cast<int64_t>(i) * 1000);
+  }
+  WriteFile(
+      FileWithValue(kSetIntsetType, containers::intset_test::Blob(4, values)));
+  auto db = db::RedisDb::Create();
+  ASSERT_TRUE(Load(db.get()));
+  const data_types::Set* set = db->MutableLookupKey("k")->Set();
+  ASSERT_NE(set, nullptr);
+  EXPECT_EQ(set->Encoding(), data_types::Set::Encoding::kDict);
+  ASSERT_EQ(set->Size(), values.size());
+  for (const int64_t value : values) {
+    ASSERT_TRUE(set->HasMember(std::to_string(value)));
+  }
+  EXPECT_FALSE(set->HasMember("1"));
+}
+
+TEST_F(RdbTest, RejectsInvalidIntsets) {
+  using containers::intset_test::Blob;
+  using containers::intset_test::RawBlob;
+  const std::string valid = Blob(4, {1, 2, 3});
+  const std::vector<std::pair<std::string, std::string>> cases = {
+      {"a header cut short", valid.substr(0, 7)},
+      {"a width of 3", RawBlob(3, 2, std::string(6, '\x01'))},
+      {"a length above the values", RawBlob(4, 4, valid.substr(8))},
+      {"a last value cut short", valid.substr(0, valid.size() - 1)},
+      {"values out of order", Blob(4, {1, 3, 2})},
+      {"a value twice", Blob(2, {7, 7})},
+  };
+  for (const auto& [name, blob] : cases) {
+    WriteFile(FileWithValue(kSetIntsetType, blob));
+    auto db = db::RedisDb::Create();
+    EXPECT_FALSE(Load(db.get())) << name;
+  }
+}
+
+// Redis calls an intset without values corrupt. This server skips the key, as
+// it does every value without elements.
+TEST_F(RdbTest, SkipsAnIntsetWithoutValues) {
+  WriteFile(
+      FileWithValue(kSetIntsetType, containers::intset_test::Blob(2, {})));
+  auto db = db::RedisDb::Create();
+  LoadStats stats;
+  ASSERT_TRUE(Load(db.get(), {}, &stats));
+  EXPECT_EQ(stats.keys_loaded, 0);
+  EXPECT_EQ(stats.empty_keys_skipped, 1);
+  EXPECT_EQ(db->MutableLookupKey("k"), nullptr);
 }
 
 // Earlier builds of this server wrote the short backlens Redis 8.8 to 8.10

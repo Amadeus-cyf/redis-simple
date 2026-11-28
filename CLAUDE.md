@@ -177,12 +177,14 @@ Guidance for AI coding agents working in this repository.
   keeps a set, hash, or sorted set listpack's bytes
   (`CreateFromListpack`), but only after one pass proves it is valid, fits
   this server's limits, holds sorted set pairs in order, and encodes each
-  element as `Listpack` would; anything else is rebuilt through the data
-  types. Values over the listpack limits start in their large encoding,
-  sized for their count (`CreateForSize`), as Redis' rdbLoad does. Keep new
-  types on that path. A count used only to pre-size (`RESIZEDB`) is capped
-  by the bytes left too (`Loader::ReserveKeys`); cap any new pre-size hint
-  the same way.
+  element as `Listpack` would. It keeps an intset's values the same way
+  (`Intset::CreateFromRedisBlob`), once the blob's width, its length, and
+  the ascending order of its values are checked. Anything else is rebuilt
+  through the data types. Values over the listpack limits start in their
+  large encoding, sized for their count (`CreateForSize`), as Redis' rdbLoad
+  does. Keep new types on that path. A count used only to pre-size
+  (`RESIZEDB`) is capped by the bytes left too (`Loader::ReserveKeys`); cap
+  any new pre-size hint the same way.
 - Write skiplist sorted sets to RDB from the greatest member down
   (`ForEachSkiplistEntryDescending`), as Redis does, so loading inserts at
   the skiplist's head.

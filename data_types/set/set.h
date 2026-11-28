@@ -48,6 +48,10 @@ class Set {
   // kListpackMaxElementLength, as the RDB loader checks.
   static std::unique_ptr<Set> CreateFromListpack(
       std::unique_ptr<containers::Listpack> listpack);
+  // A set holding `intset`'s values, as the RDB loader reads them: the intset
+  // itself, or a dict when it has more than kIntsetMaxEntries values.
+  static std::unique_ptr<Set> CreateFromIntset(
+      std::unique_ptr<containers::Intset> intset);
   // Returns true when `value` was added, false when it was already a member.
   bool Add(std::string_view value);
   bool HasMember(std::string_view value) const;
