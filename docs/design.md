@@ -60,7 +60,9 @@ like `Dict` it does not shrink while a snapshot child shares its pages.
    server frees a larger one as soon as it is empty, because mimalloc gives
    each allocation past 64 KiB a span of 64 KiB slices: a client that sent
    one 64 KiB value would hold 128 KiB, where Redis' jemalloc holds 80 KiB.
-   A larger request is read as a first 16 KiB and then the rest.
+   A larger request is read as a first 16 KiB and then the rest. An
+   argument of 32 KiB or more is read into exactly the room it still needs,
+   as in Redis, so its last bytes fit the buffer that was sized for it.
 2. **Frame.** `request_parser::Parse` finds one complete request in the
    buffer without copying it: the command name and arguments are
    `std::string_view`s into the buffer (`CommandArgs`). It frames RESP arrays
