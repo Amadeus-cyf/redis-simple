@@ -299,8 +299,10 @@ Guidance for AI coding agents working in this repository.
   sentinel entries, member copies for lookups, or min/max member tracking.
   Each member's name is stored once, in the member dict's entry: skiplist
   entries hold a score and an 8-byte `Dict::EntryRef` to that entry
-  (`FindOrInsertEntry` returns it), so remove a member from the skiplist
-  before the dict.
+  (`FindOrInsertEntry` returns it), so a member leaves the skiplist before
+  its dict entry is freed. `ZSetSkiplist::Delete` does both with one dict
+  lookup, as Redis' `zsetDel` does: `Dict::DeleteWith` finds the entry and
+  its callback removes the skiplist entry.
   Change stored keys through `Skiplist::Update`, which repositions them.
   A node and its levels are one allocation, the levels above the first
   following the node as the `level[]` array does in Redis'
@@ -322,7 +324,10 @@ Guidance for AI coding agents working in this repository.
   vector-returning `RangeByRank`, `RangeByScore`, and `RangeByLex` copy
   entries and are for tests and tools. Do not bring back a result cache
   inside the storage: a listpack sorted set must stay as small after a range
-  read as before it.
+  read as before it. In the skiplist a `LIMIT` offset of 10 or more is
+  reached by rank, as Redis' `zslNthInRange` reaches it
+  (`Skiplist::NodeAfter` and `NodeBefore`); a smaller one is stepped over.
+  Do not go back to visiting every member an offset skips.
 - `Listpack::ForEach`, `ForEachReverse`, and `ForEachPair` decode each
   element once through `DecodeEntry`, which yields its value and the next
   offset together. Prefer them over `Get` plus `Next` loops on read paths.

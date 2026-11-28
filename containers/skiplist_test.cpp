@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <climits>
 #include <compare>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -497,6 +499,181 @@ TEST(CustomSkiplistTest, OrdersByComparator) {
   EXPECT_EQ(skiplist.FindKeyByRank(0), "key2");
   EXPECT_EQ(skiplist.FindKeyByRank(1), "key1");
   EXPECT_EQ(skiplist.FindKeyByRank(2), "key0");
+}
+
+namespace {
+using IntSkiplist = Skiplist<int>;
+
+constexpr int kIntKeyCount = 200;
+constexpr size_t kMaxSize = std::numeric_limits<size_t>::max();
+
+// The even numbers from 0 to 398, inserted out of order.
+std::unique_ptr<IntSkiplist> MakeIntSkiplist() {
+  auto skiplist = std::make_unique<IntSkiplist>();
+  for (int i = 0; i < kIntKeyCount; ++i) {
+    skiplist->Insert(2 * ((i * 37) % kIntKeyCount));
+  }
+  return skiplist;
+}
+
+// Offsets on both sides of the one from which a range reaches its first key
+// by rank instead of by stepping, and past the end of the list.
+std::vector<IntSkiplist::Limit> Limits() {
+  std::vector<IntSkiplist::Limit> limits;
+  for (const size_t offset :
+       std::vector<size_t>{0, 1, 9, 10, 11, 57, 199, 200, 201, kMaxSize}) {
+    for (const std::optional<size_t> count : std::vector<std::optional<size_t>>{
+             std::nullopt, 0U, 1U, 7U, kMaxSize}) {
+      limits.push_back({.offset = offset, .count = count});
+    }
+  }
+  return limits;
+}
+
+// What `limit` selects from `keys`, a range's keys in the order visited.
+std::vector<int> Limited(const std::vector<int>& keys,
+                         const IntSkiplist::Limit& limit) {
+  if (limit.offset >= keys.size()) {
+    return {};
+  }
+  const size_t count =
+      std::min(limit.count.value_or(keys.size()), keys.size() - limit.offset);
+  const auto first = keys.begin() + static_cast<std::ptrdiff_t>(limit.offset);
+  return {first, first + static_cast<std::ptrdiff_t>(count)};
+}
+
+std::string Describe(const IntSkiplist::Limit& limit) {
+  return "offset " + std::to_string(limit.offset) + ", count " +
+         (limit.count.has_value() ? std::to_string(*limit.count) : "none");
+}
+}  // namespace
+
+TEST(SkiplistTest, KeyRangeLimitsSelectTheKeysAfterTheOffset) {
+  const auto skiplist = MakeIntSkiplist();
+  const std::vector<std::pair<int, int>> bounds{
+      {-5, 500},   {0, 398},    {41, 101}, {40, 40},   {41, 41}, {300, 100},
+      {398, 1000}, {399, 1000}, {-10, -1}, {100, 140}, {0, 16}};
+  for (const auto& [min, max] : bounds) {
+    for (const bool min_exclusive : {false, true}) {
+      for (const bool max_exclusive : {false, true}) {
+        for (const bool reverse : {false, true}) {
+          std::vector<int> keys;
+          for (int key = 0; key < 2 * kIntKeyCount; key += 2) {
+            if ((min_exclusive ? key > min : key >= min) &&
+                (max_exclusive ? key < max : key <= max)) {
+              keys.push_back(key);
+            }
+          }
+          if (reverse) {
+            std::ranges::reverse(keys);
+          }
+          IntSkiplist::KeyRange<int> range{.min = min,
+                                           .max = max,
+                                           .min_exclusive = min_exclusive,
+                                           .max_exclusive = max_exclusive,
+                                           .limit = std::nullopt,
+                                           .reverse = reverse};
+          SCOPED_TRACE(testing::Message()
+                       << (min_exclusive ? "(" : "[") << min << ", " << max
+                       << (max_exclusive ? ")" : "]")
+                       << (reverse ? ", reversed" : ""));
+          EXPECT_EQ(skiplist->RangeByKey(range), keys);
+          EXPECT_EQ(skiplist->Count(range), keys.size());
+          for (const IntSkiplist::Limit& limit : Limits()) {
+            SCOPED_TRACE(Describe(limit));
+            range.limit = limit;
+            EXPECT_EQ(skiplist->RangeByKey(range), Limited(keys, limit));
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST(SkiplistTest, RankRangeLimitsSelectTheKeysAfterTheOffset) {
+  const auto skiplist = MakeIntSkiplist();
+  const std::vector<std::pair<size_t, size_t>> bounds{{0, 199},
+                                                      {0, 1000},
+                                                      {5, 5},
+                                                      {10, 150},
+                                                      {150, 10},
+                                                      {199, 199},
+                                                      {199, 200},
+                                                      {0, 0},
+                                                      {190, kMaxSize},
+                                                      {200, 300},
+                                                      {kMaxSize, kMaxSize}};
+  for (const auto& [min, max] : bounds) {
+    for (const bool min_exclusive : {false, true}) {
+      for (const bool max_exclusive : {false, true}) {
+        for (const bool reverse : {false, true}) {
+          // A reversed range counts its ranks from the last key.
+          std::vector<int> keys;
+          for (size_t rank = 0; rank < skiplist->Size(); ++rank) {
+            if ((min_exclusive ? rank > min : rank >= min) &&
+                (max_exclusive ? rank < max : rank <= max)) {
+              const size_t index = reverse ? skiplist->Size() - 1 - rank : rank;
+              keys.push_back(2 * static_cast<int>(index));
+            }
+          }
+          IntSkiplist::RankRange range{.min = min,
+                                       .max = max,
+                                       .min_exclusive = min_exclusive,
+                                       .max_exclusive = max_exclusive,
+                                       .limit = std::nullopt,
+                                       .reverse = reverse};
+          SCOPED_TRACE(testing::Message()
+                       << (min_exclusive ? "(" : "[") << min << ", " << max
+                       << (max_exclusive ? ")" : "]")
+                       << (reverse ? ", reversed" : ""));
+          EXPECT_EQ(skiplist->RangeByRank(range), keys);
+          for (const IntSkiplist::Limit& limit : Limits()) {
+            SCOPED_TRACE(Describe(limit));
+            range.limit = limit;
+            EXPECT_EQ(skiplist->RangeByRank(range), Limited(keys, limit));
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST(SkiplistTest, RangesOfAnEmptyListAreEmpty) {
+  const IntSkiplist skiplist;
+  for (const bool reverse : {false, true}) {
+    for (const IntSkiplist::Limit& limit : Limits()) {
+      SCOPED_TRACE(Describe(limit));
+      EXPECT_TRUE(
+          skiplist
+              .RangeByKey(IntSkiplist::KeyRange<int>{.min = 0,
+                                                     .max = 100,
+                                                     .min_exclusive = false,
+                                                     .max_exclusive = false,
+                                                     .limit = limit,
+                                                     .reverse = reverse})
+              .empty());
+      EXPECT_TRUE(skiplist
+                      .RangeByRank({.min = 0,
+                                    .max = 100,
+                                    .min_exclusive = false,
+                                    .max_exclusive = false,
+                                    .limit = limit,
+                                    .reverse = reverse})
+                      .empty());
+    }
+  }
+}
+
+TEST(SkiplistTest, IteratorArrowReachesTheKey) {
+  const auto skiplist = MakeRankedSkiplist();
+  EXPECT_EQ(skiplist->Begin()->size(), 4);
+  EXPECT_EQ(skiplist->Last()->back(), '5');
+}
+
+TEST(SkiplistDeathTest, RejectsDereferencingTheEnd) {
+  const auto skiplist = MakeRankedSkiplist();
+  EXPECT_DEATH((void)*skiplist->End(), "Check failed");
+  EXPECT_DEATH((void)skiplist->End()->size(), "Check failed");
 }
 
 TEST(SkiplistDeathTest, RejectsOutOfRangeRanks) {

@@ -78,6 +78,50 @@ void Verify(const IntSkiplist& skiplist, const std::set<int64_t>& model) {
   Require(skiplist.RangeByKey(keys).size() == interior);
 }
 
+// What a limit selects from `keys`, a range's keys in the order visited.
+std::vector<int64_t> Limited(const std::vector<int64_t>& keys, size_t offset,
+                             size_t count) {
+  if (offset >= keys.size()) {
+    return {};
+  }
+  const auto first = keys.begin() + static_cast<std::ptrdiff_t>(offset);
+  return {first, first + static_cast<std::ptrdiff_t>(
+                             std::min(count, keys.size() - offset))};
+}
+
+// Checks the key range and the rank range that cover every key, forward and
+// reversed, with a limit. An offset of 10 or more is reached by rank, a
+// smaller one by stepping, so `offset` should take values on both sides.
+void VerifyLimit(const IntSkiplist& skiplist, const std::set<int64_t>& model,
+                 size_t offset, size_t count) {
+  if (model.empty()) {
+    return;
+  }
+  const std::vector<int64_t> keys(model.begin(), model.end());
+  const std::vector<int64_t> reversed(model.rbegin(), model.rend());
+  const IntSkiplist::Limit limit{.offset = offset, .count = count};
+
+  IntSkiplist::KeyRange<int64_t> by_key{.min = keys.front(),
+                                        .max = keys.back(),
+                                        .min_exclusive = false,
+                                        .max_exclusive = false,
+                                        .limit = limit,
+                                        .reverse = false};
+  Require(skiplist.RangeByKey(by_key) == Limited(keys, offset, count));
+  by_key.reverse = true;
+  Require(skiplist.RangeByKey(by_key) == Limited(reversed, offset, count));
+
+  IntSkiplist::RankRange by_rank{.min = 0,
+                                 .max = keys.size() - 1,
+                                 .min_exclusive = false,
+                                 .max_exclusive = false,
+                                 .limit = limit,
+                                 .reverse = false};
+  Require(skiplist.RangeByRank(by_rank) == Limited(keys, offset, count));
+  by_rank.reverse = true;
+  Require(skiplist.RangeByRank(by_rank) == Limited(reversed, offset, count));
+}
+
 void RunOperations(FuzzInput* input) {
   IntSkiplist skiplist;
   std::set<int64_t> model;
@@ -121,6 +165,9 @@ void RunOperations(FuzzInput* input) {
         break;
     }
     Verify(skiplist, model);
+    // The operation's value picks the limit: offsets up to 31, counts up to 7.
+    const auto bits = static_cast<uint64_t>(value);
+    VerifyLimit(skiplist, model, bits % 32, (bits >> 5U) % 8);
   }
 }
 }  // namespace
