@@ -565,7 +565,11 @@ Before committing, run the relevant build and tests.
 - Unit tests stay colocated with implementation files as `*_test.cpp`.
 - Register unit tests in CTest by GoogleTest suite through
   `redis_simple_add_gtest_suite`, so failures identify the affected suite while
-  preserving same-suite fixture behavior.
+  preserving same-suite fixture behavior. ctest and CI skip a suite that is
+  not registered; the `pre-pr-check` skill has a command that lists them.
+- In tests, compare a time with one read of the clock: pin it
+  (`RedisDb::PinCommandTime`) or allow a tolerance. Sanitizer builds in CI
+  are slow enough that two reads can differ.
 - Integration tests live under `integration/`. Helpers more than one of
   them needs (`Case`, `ExpectReply`, `NonEmptyLines`, `ScanAll`) live in
   `integration/client_helpers.h`; add shared ones there instead of copying

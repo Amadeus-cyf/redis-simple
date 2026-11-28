@@ -11,6 +11,15 @@ unrelated pull request. Fix that in a pull request of its own.
 
 ## 1. Reproduce
 
+First confirm the release is the cause: the latest runs on `main` fail the
+same way (`gh run list --branch main --workflow ci --limit 3`), and
+`scripts/build_latest_redis.sh --print-version` names a release newer than
+the one the code follows (`CLAUDE.md` and `docs/design.md` name it). A
+failure while building Redis is not always the release (see section 6 of
+the `pre-pr-check` skill). Redis 8.12 showed up as "Error reading the RDB
+base file" in "Check AOF interoperability": Redis wrote the AOF base in an
+RDB version the loader did not accept yet (see section 3).
+
 ```sh
 scripts/build_latest_redis.sh --print-version
 PATH="$(scripts/build_latest_redis.sh build/reference-redis):${PATH}"
