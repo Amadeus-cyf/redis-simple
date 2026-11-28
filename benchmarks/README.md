@@ -37,6 +37,10 @@ Run one group with `--benchmark_filter`, for example
 - `SetIntersectThree`, `SetDifference`: `SINTER` with the large set named
   before or after the one that rules members out, and `SDIFF` by probing,
   by subtracting, and by the algorithm its estimate picks.
+- `RdbLoadIntsets`, `RdbSaveIntsets`: loading and saving an RDB file of
+  65,536 integers in sets of 16 and of 512, the most an intset holds. A load
+  includes creating and destroying the database, and a save drops the bytes
+  it writes.
 - `DbLookup`, `DbOverwriteString`: keyspace lookups with no TTL, with a TTL
   on one key, and with a TTL on every key, and `SET` overwrites in place or
   with a new object.

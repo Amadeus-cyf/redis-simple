@@ -44,7 +44,7 @@ similar names, so the table gives the layer.
 | `quicklist_fuzzer` | container | `Quicklist` with a fuzzed node size against a vector |
 | `dict_fuzzer` | container | `Dict` scan, stepwise clear, resize policy, and rehash |
 | `skiplist_fuzzer` | container | `Skiplist` ranks, ranges, and updates |
-| `intset_fuzzer` | container | `Intset` against `std::set` |
+| `intset_fuzzer` | container | `Intset` against `std::set`, starting from a blob in Redis' layout that may be invalid, and a blob round trip after each operation |
 | `handle_set_fuzzer` | container | `HandleSet`, the table behind the TTL index, under heavy hash collisions |
 | `dynamic_buffer_fuzzer` | container | `DynamicBuffer` append, consume, compact, and read line |
 | `reply_buffer_fuzzer` | container | `ReplyBuffer` append, consume, and block filling |

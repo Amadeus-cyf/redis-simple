@@ -37,6 +37,15 @@ std::unique_ptr<Set> Set::CreateFromListpack(
   return set;
 }
 
+std::unique_ptr<Set> Set::CreateFromIntset(
+    std::unique_ptr<containers::Intset> intset) {
+  RS_CHECK(intset != nullptr);
+  std::unique_ptr<Set> set(new Set());
+  set->intset_ = std::move(intset);
+  set->MaybeConvertIntsetToDict();
+  return set;
+}
+
 bool Set::Add(std::string_view value) {
   if (Encoding() == Encoding::kIntset) {
     return IntsetAddAndMaybeConvert(value);

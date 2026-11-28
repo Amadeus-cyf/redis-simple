@@ -1,11 +1,16 @@
 #include "containers/intset.h"
 
+#include <algorithm>
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "utils/check.h"
@@ -20,12 +25,81 @@ std::unique_ptr<unsigned char[]> AllocateContents(size_t bytes) {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays): compact byte storage
   return std::make_unique_for_overwrite<unsigned char[]>(bytes);
 }
+
+// A Redis blob starts with the width of its values and their count, each a
+// 32-bit integer.
+constexpr size_t kBlobHeaderBytes = 2 * sizeof(uint32_t);
+
+// The 32-bit integer `bytes` starts with.
+uint32_t LoadLittleEndian32(std::string_view bytes) {
+  uint32_t word = 0;
+  std::memcpy(&word, bytes.data(), sizeof(word));
+  if constexpr (std::endian::native == std::endian::big) {
+    word = std::byteswap(word);
+  }
+  return word;
+}
+
+void AppendLittleEndian32(uint32_t word, std::string* const out) {
+  if constexpr (std::endian::native == std::endian::big) {
+    word = std::byteswap(word);
+  }
+  std::array<char, sizeof(word)> bytes{};
+  std::memcpy(bytes.data(), &word, sizeof(word));
+  out->append(bytes.data(), bytes.size());
+}
+
+// Converts `values`, integers of `width` bytes each, between the host's byte
+// order and a blob's little-endian one. The two are the same on a
+// little-endian host, where the values of a set and of its blob are the same
+// bytes.
+void SwapBetweenHostAndLittleEndian(std::span<char> values, size_t width) {
+  if constexpr (std::endian::native == std::endian::big) {
+    for (size_t offset = 0; offset < values.size(); offset += width) {
+      std::ranges::reverse(values.subspan(offset, width));
+    }
+  }
+}
 }  // namespace
 
-Intset::Intset()
-    : contents_(AllocateContents(CapacityBytes(0, kInt16))),
-      length_(0),
-      encoding_(kInt16) {}
+Intset::Intset() : Intset(0, kInt16) {}
+
+Intset::Intset(uint32_t length, EncodingType encoding)
+    : contents_(AllocateContents(CapacityBytes(length, encoding))),
+      length_(length),
+      encoding_(encoding) {}
+
+std::unique_ptr<Intset> Intset::CreateFromRedisBlob(std::string_view blob) {
+  if (blob.size() < kBlobHeaderBytes) {
+    return nullptr;
+  }
+  const uint32_t width = LoadLittleEndian32(blob);
+  const uint32_t length = LoadLittleEndian32(blob.substr(sizeof(uint32_t)));
+  if (width != sizeof(int16_t) && width != sizeof(int32_t) &&
+      width != sizeof(int64_t)) {
+    return nullptr;
+  }
+  const std::string_view values = blob.substr(kBlobHeaderBytes);
+  if (values.size() % width != 0 || values.size() / width != length) {
+    return nullptr;
+  }
+  const auto encoding = static_cast<EncodingType>(width);
+  // Not make_unique, which cannot reach the private constructor.
+  std::unique_ptr<Intset> intset(new Intset(length, encoding));
+  unsigned char* const contents = intset->contents_.get();
+  std::memcpy(contents, values.data(), values.size());
+  SwapBetweenHostAndLittleEndian(
+      {reinterpret_cast<char*>(contents), values.size()}, width);
+  int64_t previous = 0;
+  for (uint32_t index = 0; index < length; ++index) {
+    const int64_t value = DecodeAt(contents, index, encoding);
+    if (index > 0 && value <= previous) {
+      return nullptr;
+    }
+    previous = value;
+  }
+  return intset;
+}
 
 bool Intset::Add(int64_t value) {
   if (ValueEncoding(value) > encoding_) {
@@ -173,18 +247,15 @@ bool Intset::Search(int64_t value, uint32_t* const index) const {
 }
 
 void Intset::AppendRedisBlob(std::string* const out) const {
-  const auto append = [out](uint64_t value, size_t width) {
-    for (size_t i = 0; i < width; ++i) {
-      out->push_back(static_cast<char>((value >> (8 * i)) & 0xff));
-    }
-  };
-  const auto width = static_cast<size_t>(encoding_);
-  out->reserve(out->size() + 8 + (width * length_));
-  append(width, 4);
-  append(length_, 4);
-  for (uint32_t index = 0; index < length_; ++index) {
-    append(static_cast<uint64_t>(EncodedValue(index, encoding_)), width);
-  }
+  const auto width = static_cast<uint32_t>(encoding_);
+  const size_t value_bytes = static_cast<size_t>(length_) * width;
+  out->reserve(out->size() + kBlobHeaderBytes + value_bytes);
+  AppendLittleEndian32(width, out);
+  AppendLittleEndian32(length_, out);
+  const size_t values_offset = out->size();
+  out->append(reinterpret_cast<const char*>(contents_.get()), value_bytes);
+  SwapBetweenHostAndLittleEndian(std::span<char>(*out).subspan(values_offset),
+                                 width);
 }
 
 int64_t Intset::EncodedValue(uint32_t index, EncodingType encoding) const {

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace redis_simple::containers {
 // An in-memory set storing integers in ascending order. As in Redis' intset,
@@ -14,6 +15,13 @@ class Intset {
  public:
   class Iterator;
   Intset();
+  // The set stored in `blob`, which is in the layout AppendRedisBlob writes.
+  // Null unless the blob passes the checks Redis makes of an intset it loads
+  // (intsetValidateIntegrity): a width of 2, 4 or 8 bytes, a size that
+  // matches its length, and values in ascending order without duplicates. An
+  // empty set is accepted as well. The set keeps the blob's width, as Redis
+  // does, even when its values fit a narrower one.
+  static std::unique_ptr<Intset> CreateFromRedisBlob(std::string_view blob);
   Intset(const Intset&) = delete;
   Intset& operator=(const Intset&) = delete;
   bool Add(int64_t value);
@@ -35,6 +43,8 @@ class Intset {
     kInt32 = sizeof(int32_t),
     kInt64 = sizeof(int64_t),
   };
+  // A set of `length` values of `encoding`, none of them written yet.
+  Intset(uint32_t length, EncodingType encoding);
   static EncodingType ValueEncoding(int64_t value);
   // The bytes allocated for `length` values of `encoding`. contents_ always
   // holds exactly this many for the current length and encoding, so the
