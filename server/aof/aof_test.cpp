@@ -18,6 +18,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -237,6 +238,42 @@ std::string Encode(std::string_view command,
   return encoded;
 }
 
+// The loader reads a file this many bytes at a time, so a longer command
+// reaches it in parts.
+constexpr size_t kLoadReadBytes = size_t{64} * 1024;
+
+// `count` list values, each different from the others.
+std::vector<std::string> ListValues(size_t count) {
+  std::vector<std::string> values;
+  values.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    values.push_back("value" + std::to_string(index));
+  }
+  return values;
+}
+
+// One RPUSH of `values` to the list at `key`.
+std::string EncodePush(std::string_view key,
+                       const std::vector<std::string>& values) {
+  std::vector<std::string_view> args;
+  args.reserve(values.size() + 1);
+  args.push_back(key);
+  args.insert(args.end(), values.begin(), values.end());
+  return Encode("RPUSH", args);
+}
+
+// A value of `size` bytes in which no stretch repeats at another offset, so
+// bytes that end up in the wrong place show.
+std::string PatternedValue(size_t size) {
+  std::string value;
+  value.reserve(size + 20);
+  while (value.size() < size) {
+    value.append(std::to_string(value.size())).push_back(' ');
+  }
+  value.resize(size);
+  return value;
+}
+
 // Redis selects the database before the first command of each file.
 constexpr std::string_view kSelect = "*2\r\n$6\r\nSELECT\r\n$1\r\n0\r\n";
 
@@ -372,6 +409,215 @@ TEST(AofTest, RejectsCorruptInput) {
   auto database = db::RedisDb::Create();
 
   EXPECT_EQ(Aof::Open(Always(file), database.get()), nullptr);
+}
+
+TEST(AofTest, LoadsACommandThatTakesManyReads) {
+  TemporaryAof file;
+  const std::vector<std::string> values = ListValues(40'000);
+  std::string commands = Encode("SET", {"before", "1"});
+  commands.append(EncodePush("list", values));
+  commands.append(Encode("SET", {"after", "2"}));
+  ASSERT_GT(commands.size(), 8 * kLoadReadBytes);
+  ASSERT_TRUE(file.Append(commands));
+
+  auto restored = db::RedisDb::Create();
+  auto aof = Aof::Open(Always(file), restored.get());
+
+  ASSERT_NE(aof, nullptr);
+  EXPECT_EQ(file.Size(), static_cast<off_t>(commands.size()));
+  ASSERT_NE(restored->LookupKey("before"), nullptr);
+  EXPECT_EQ(restored->LookupKey("before")->String(), "1");
+  ASSERT_NE(restored->LookupKey("list"), nullptr);
+  EXPECT_EQ(restored->LookupKey("list")->List()->Range(0, values.size() - 1),
+            values);
+  ASSERT_NE(restored->LookupKey("after"), nullptr);
+  EXPECT_EQ(restored->LookupKey("after")->String(), "2");
+}
+
+TEST(AofTest, LoadsAValueThatTakesManyReads) {
+  TemporaryAof file;
+  const std::string value = PatternedValue((5 * kLoadReadBytes) + 123);
+  std::string commands = Encode("SET", {"big", value});
+  commands.append(Encode("APPEND", {"big", "-tail"}));
+  commands.append(Encode("SET", {"after", "2"}));
+  ASSERT_TRUE(file.Append(commands));
+
+  auto restored = db::RedisDb::Create();
+  auto aof = Aof::Open(Always(file), restored.get());
+
+  ASSERT_NE(aof, nullptr);
+  EXPECT_EQ(file.Size(), static_cast<off_t>(commands.size()));
+  ASSERT_NE(restored->LookupKey("big"), nullptr);
+  EXPECT_EQ(restored->LookupKey("big")->String(), value + "-tail");
+  ASSERT_NE(restored->LookupKey("after"), nullptr);
+  EXPECT_EQ(restored->LookupKey("after")->String(), "2");
+}
+
+TEST(AofTest, TruncatesACommandCutOffAfterManyReads) {
+  const std::string complete = Encode("SET", {"before", "1"});
+  const std::string push = EncodePush("list", ListValues(40'000));
+  // The file ends before the last line ending, before both of its bytes,
+  // inside the last value, inside that value's length, halfway through the
+  // command, and where a read ends.
+  for (const size_t kept :
+       {push.size() - 1, push.size() - 2, push.size() - 9, push.size() - 15,
+        push.size() / 2, (3 * kLoadReadBytes) - complete.size(),
+        kLoadReadBytes - complete.size()}) {
+    TemporaryAof file;
+    ASSERT_TRUE(file.Append(complete + push.substr(0, kept)));
+
+    auto restored = db::RedisDb::Create();
+    auto aof = Aof::Open(Always(file), restored.get());
+
+    ASSERT_NE(aof, nullptr) << kept;
+    EXPECT_EQ(file.Size(), static_cast<off_t>(complete.size())) << kept;
+    EXPECT_NE(restored->LookupKey("before"), nullptr) << kept;
+    EXPECT_EQ(restored->LookupKey("list"), nullptr) << kept;
+  }
+}
+
+TEST(AofTest, RejectsDamageInACommandThatTakesManyReads) {
+  const std::string push = EncodePush("list", ListValues(40'000));
+  // The '$' that starts a value's length, and the first digit of that
+  // length, several reads into the command.
+  const size_t length_start = push.find('$', 5 * kLoadReadBytes);
+  ASSERT_NE(length_start, std::string::npos);
+  for (const size_t damaged_byte : {length_start, length_start + 1}) {
+    std::string damaged = push;
+    damaged[damaged_byte] = 'x';
+    TemporaryAof file;
+    ASSERT_TRUE(file.Append(Encode("SET", {"before", "1"}) + damaged));
+    auto database = db::RedisDb::Create();
+
+    EXPECT_EQ(Aof::Open(Always(file), database.get()), nullptr) << damaged_byte;
+  }
+}
+
+TEST(AofTest, AppliesALargeCommandOfATransactionAtExec) {
+  const std::vector<std::string> values = ListValues(40'000);
+  const std::string complete = Encode("SET", {"before", "1"});
+  std::string transaction = Encode("MULTI", {});
+  transaction.append(EncodePush("list", values));
+  transaction.append(Encode("SET", {"inside", "2"}));
+  for (const bool has_exec : {true, false}) {
+    TemporaryAof file;
+    std::string commands = complete + transaction;
+    if (has_exec) {
+      commands.append(Encode("EXEC", {}));
+    }
+    ASSERT_TRUE(file.Append(commands));
+
+    auto restored = db::RedisDb::Create();
+    auto aof = Aof::Open(Always(file), restored.get());
+
+    ASSERT_NE(aof, nullptr) << has_exec;
+    EXPECT_NE(restored->LookupKey("before"), nullptr) << has_exec;
+    if (!has_exec) {
+      // The transaction never completed, so the file is cut back to where
+      // it starts.
+      EXPECT_EQ(file.Size(), static_cast<off_t>(complete.size()));
+      EXPECT_EQ(restored->LookupKey("list"), nullptr);
+      EXPECT_EQ(restored->LookupKey("inside"), nullptr);
+      continue;
+    }
+    EXPECT_EQ(file.Size(), static_cast<off_t>(commands.size()));
+    ASSERT_NE(restored->LookupKey("list"), nullptr);
+    EXPECT_EQ(restored->LookupKey("list")->List()->Range(0, values.size() - 1),
+              values);
+    ASSERT_NE(restored->LookupKey("inside"), nullptr);
+    EXPECT_EQ(restored->LookupKey("inside")->String(), "2");
+  }
+}
+
+TEST(AofTest, LoadsWhatACutLeavesOfCommandsOfVariedSizes) {
+  // A command of the file: a SET of a value, or an RPUSH of several.
+  struct Written {
+    bool is_list;
+    // The value's bytes, or how many values the list has.
+    size_t size;
+    // Where the command ends in the file.
+    size_t end;
+  };
+  // A fixed seed keeps failures reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
+  std::mt19937 rng(7);
+  const auto draw = [&rng](size_t low, size_t high) {
+    return std::uniform_int_distribution<size_t>(low, high)(rng);
+  };
+  // A size for a command: small for half of them, and for a quarter each
+  // one of the middle sizes or one of the large sizes.
+  const auto draw_size = [&draw](size_t small, size_t middle, size_t large_low,
+                                 size_t large_high) {
+    const size_t scale = draw(0, 3);
+    if (scale < 2) {
+      return draw(1, small);
+    }
+    if (scale == 2) {
+      return draw(1, middle);
+    }
+    return draw(large_low, large_high);
+  };
+  // Half of the commands are a few bytes long, and the largest take up to
+  // three reads, so commands start and end at varied places in a read.
+  std::string commands;
+  std::vector<Written> written;
+  constexpr size_t kCommands = 40;
+  written.reserve(kCommands);
+  for (size_t index = 0; index < kCommands; ++index) {
+    const bool is_list = draw(0, 1) == 1;
+    const std::string key = "key" + std::to_string(index);
+    size_t size = 0;
+    if (is_list) {
+      size = draw_size(3, 2'000, 4'000, 12'000);
+      commands.append(EncodePush(key, ListValues(size)));
+    } else {
+      size = draw_size(64, 20'000, 60'000, 200'000);
+      commands.append(Encode("SET", {key, PatternedValue(size)}));
+    }
+    written.push_back(
+        {.is_list = is_list, .size = size, .end = commands.size()});
+  }
+  ASSERT_GT(commands.size(), 8 * kLoadReadBytes);
+
+  // The whole file, and files cut at 24 other places.
+  constexpr size_t kCuts = 24;
+  std::vector<size_t> cuts;
+  cuts.reserve(kCuts + 1);
+  cuts.push_back(commands.size());
+  for (size_t index = 0; index < kCuts; ++index) {
+    cuts.push_back(draw(1, commands.size() - 1));
+  }
+  for (const size_t cut : cuts) {
+    TemporaryAof file;
+    ASSERT_TRUE(file.Append(commands.substr(0, cut)));
+
+    auto restored = db::RedisDb::Create();
+    auto aof = Aof::Open(Always(file), restored.get());
+
+    ASSERT_NE(aof, nullptr) << cut;
+    // The commands that end at or before the cut are kept, and loaded.
+    size_t kept_bytes = 0;
+    for (size_t index = 0; index < kCommands; ++index) {
+      const Written& command = written[index];
+      const std::string key = "key" + std::to_string(index);
+      const db::RedisObject* const object = restored->LookupKey(key);
+      if (command.end > cut) {
+        EXPECT_EQ(object, nullptr) << cut << " " << key;
+        continue;
+      }
+      kept_bytes = command.end;
+      ASSERT_NE(object, nullptr) << cut << " " << key;
+      if (command.is_list) {
+        EXPECT_EQ(object->List()->Range(0, command.size - 1),
+                  ListValues(command.size))
+            << cut << " " << key;
+      } else {
+        EXPECT_EQ(object->String(), PatternedValue(command.size))
+            << cut << " " << key;
+      }
+    }
+    EXPECT_EQ(file.Size(), static_cast<off_t>(kept_bytes)) << cut;
+  }
 }
 
 TEST(AofTest, FlushesThePendingBatchOnShutdown) {

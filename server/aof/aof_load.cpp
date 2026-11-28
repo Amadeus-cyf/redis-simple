@@ -242,6 +242,10 @@ class FileReplayer {
   Client client_;
   const Limits* const limits_;
   containers::DynamicBuffer input_;
+  // Where the parser stopped in a command that the last read cut off. The
+  // next read goes on from there, so a command that takes many reads is
+  // parsed once, not once for every read.
+  request_parser::ParseState parse_state_;
   commands::CommandArgs args_;
   size_t complete_bytes_{};
   // Records between MULTI and EXEC are copied out of `input_` and applied
@@ -292,7 +296,7 @@ FileReplayer::Step FileReplayer::ApplyNext(bool reached_end) {
   }
   std::string_view name;
   const request_parser::ParseResult parsed =
-      request_parser::Parse(remaining, &name, &args_);
+      request_parser::Parse(remaining, &parse_state_, &name, &args_);
   if (parsed.status == request_parser::ParseStatus::kIncomplete) {
     return Step::kNeedMoreInput;
   }

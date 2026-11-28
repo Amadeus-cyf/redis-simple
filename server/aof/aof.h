@@ -98,7 +98,7 @@ struct AofState {
   bool rewrite_in_progress{};
   // aof_rewrite_scheduled: a BGREWRITEAOF waiting for the cron.
   bool rewrite_scheduled{};
-  // aof_last_bgrewrite_status.
+  // aof_last_bgrewrite_status: whether the last rewrite to end succeeded.
   bool last_rewrite_ok{true};
   // aof_last_rewrite_time_sec and aof_current_rewrite_time_sec; -1 if none.
   int64_t last_rewrite_seconds{-1};
@@ -113,7 +113,9 @@ struct AofState {
   size_t base_size{};
   // aof_buffer_length: encoded mutations not yet written.
   size_t buffer_length{};
-  // aof_pending_bio_fsync and aof_delayed_fsync.
+  // aof_pending_bio_fsync: background syncs queued or running.
+  // aof_delayed_fsync: writes that waited two seconds for a background sync
+  // and then went ahead without it.
   size_t pending_fsyncs{};
   size_t delayed_fsyncs{};
 };
@@ -314,16 +316,23 @@ class Aof {
   // Whether a SELECT was written since startup or the last rewrite started,
   // as Redis' aof_selected_db.
   bool database_selected_{false};
-  // Redis' aof_cur_timestamp, for timestamp annotations.
+  // The second the last timestamp annotation was written in, so that a
+  // second gets one annotation (Redis' aof_cur_timestamp).
   int64_t current_timestamp_{};
   int64_t replayed_changes_{};
-  // Redis' aof_current_size, aof_rewrite_base_size, aof_last_incr_size, and
-  // aof_last_incr_fsync_offset.
+  // The bytes of the base and incremental files together, that size after
+  // the last rewrite (the base file's at startup), the bytes of the open
+  // incremental file, and how many of those a sync has been run or queued
+  // for: Redis' aof_current_size, aof_rewrite_base_size, aof_last_incr_size,
+  // and aof_last_incr_fsync_offset.
   size_t current_size_{};
   size_t base_size_{};
   size_t increment_size_{};
   size_t increment_fsync_offset_{};
-  // Redis' aof_last_fsync, aof_flush_postponed_start, and aof_delayed_fsync.
+  // When a sync was last run or queued, since when a write has been
+  // waiting for a background sync to end, and how many writes went ahead
+  // after two seconds of waiting: Redis' aof_last_fsync,
+  // aof_flush_postponed_start, and aof_delayed_fsync.
   std::chrono::steady_clock::time_point last_fsync_{};
   std::optional<std::chrono::steady_clock::time_point> flush_postponed_start_;
   size_t delayed_fsyncs_{};
