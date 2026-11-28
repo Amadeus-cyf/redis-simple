@@ -148,7 +148,9 @@ void ClientReadLargeSet(benchmark::State& state) {
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 BENCHMARK(ClientReadLargeSet)
-    ->ArgsProduct({{48 * 1024, 256 * 1024, 1024 * 1024}, {0, 1}})
+    ->ArgsProduct({{int64_t{48} * 1024, int64_t{256} * 1024,
+                    int64_t{1024} * 1024},
+                   {0, 1}})
     ->ArgNames({"bytes", "option"});
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple
