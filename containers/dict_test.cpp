@@ -8,8 +8,10 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -341,18 +343,18 @@ TEST(DictStringTest, Insert) {
   ASSERT_EQ(string_dict->Size(), 1);
 
   // Insert a new key.
-  const auto opt1 = string_dict->Get("key");
-  ASSERT_TRUE(opt1.has_value());
-  ASSERT_EQ(opt1.value_or(""), "val");
+  const std::string* const inserted = string_dict->FindValue("key");
+  ASSERT_NE(inserted, nullptr);
+  ASSERT_EQ(*inserted, "val");
   ASSERT_EQ(string_dict->Size(), 1);
 
   // Update the key.
   string_dict->Set("key", "val_update");
   ASSERT_EQ(string_dict->Size(), 1);
 
-  const auto opt2 = string_dict->Get("key");
-  ASSERT_TRUE(opt2.has_value());
-  ASSERT_EQ(opt2.value_or(""), "val_update");
+  const std::string* const updated = string_dict->FindValue("key");
+  ASSERT_NE(updated, nullptr);
+  ASSERT_EQ(*updated, "val_update");
   ASSERT_EQ(string_dict->Size(), 1);
 }
 
@@ -362,9 +364,9 @@ TEST(DictStringTest, InsertDuplicate) {
   ASSERT_FALSE(string_dict->Insert("key", "new_val"));
   ASSERT_EQ(string_dict->Size(), 1);
 
-  const auto result = string_dict->Get("key");
-  ASSERT_TRUE(result.has_value());
-  ASSERT_EQ(result.value_or(""), "val");
+  const std::string* const value = string_dict->FindValue("key");
+  ASSERT_NE(value, nullptr);
+  ASSERT_EQ(*value, "val");
 }
 
 TEST(DictStringTest, FindValueSupportsNonOwningLookup) {
@@ -387,9 +389,7 @@ TEST(DictStringTest, Delete) {
   ASSERT_TRUE(status);
   ASSERT_EQ(string_dict->Size(), 0);
 
-  const auto result = string_dict->Get("key");
-  ASSERT_FALSE(result.has_value());
-  ASSERT_EQ(result, std::nullopt);
+  ASSERT_EQ(string_dict->FindValue("key"), nullptr);
   ASSERT_EQ(string_dict->Size(), 0);
 }
 
@@ -425,9 +425,9 @@ TEST(DictIntTest, Basics) {
 TEST(DictIntTest, BatchInsert) {
   auto int_dict = MakeIntDictWithEntries();
   ASSERT_EQ(int_dict->Size(), 129);
-  const std::optional<int> result = int_dict->Get(96);
-  ASSERT_TRUE(result.has_value());
-  ASSERT_EQ(result.value_or(0), 96);
+  const int* const value = int_dict->FindValue(96);
+  ASSERT_NE(value, nullptr);
+  ASSERT_EQ(*value, 96);
 }
 
 TEST(DictIntTest, Iterator) {
@@ -454,13 +454,13 @@ TEST(DictIntTest, Clear) {
   int_dict->Clear();
   ASSERT_EQ(int_dict->Size(), 0);
 
-  const std::optional<int> result = int_dict->Get(96);
-  ASSERT_FALSE(result.has_value());
-  ASSERT_EQ(result, std::nullopt);
+  ASSERT_EQ(int_dict->FindValue(96), nullptr);
 
   ASSERT_TRUE(int_dict->Insert(1, 10));
   ASSERT_EQ(int_dict->Size(), 1);
-  ASSERT_EQ(int_dict->Get(1), 10);
+  const int* const value = int_dict->FindValue(1);
+  ASSERT_NE(value, nullptr);
+  ASSERT_EQ(*value, 10);
 }
 
 TEST(DictStringTest, ScanStepVisitsCountElementsPerStep) {
@@ -704,5 +704,310 @@ TEST(DictRehashSomeTest, ShrinkIfNeededRetriesAShrinkThePolicyHeldBack) {
   // A table that is full enough is left alone.
   dict->ShrinkIfNeeded();
   EXPECT_FALSE(dict->IsRehashing());
+}
+
+namespace {
+// Hashes a key to itself, so key k is in bucket k of a table with more than
+// k buckets, and a test knows which bucket holds each key.
+struct IdentityHash {
+  size_t operator()(int key) const { return static_cast<size_t>(key); }
+};
+
+using BucketDict = Dict<int, int, IdentityHash>;
+
+// Keys 0 to 64 in a table of 64 buckets that has begun to rehash into 128.
+// The last insert also took the rehash's first step, which moved bucket 0,
+// so keys 0 and 64 are in the new table and keys 1 to 63 in buckets 1 to 63
+// of the old one.
+std::unique_ptr<BucketDict> MakeRehashingDict() {
+  auto dict = BucketDict::Create(64);
+  for (int key = 0; key < 65; ++key) {
+    dict->Insert(key, key);
+  }
+  return dict;
+}
+
+// The keys in the order an iterator visits them: the old table's buckets in
+// order, then the new table's. It shows which table holds each key.
+std::vector<int> IterationOrder(const BucketDict& dict) {
+  std::vector<int> keys;
+  auto it = BucketDict::Iterator(&dict);
+  for (it.SeekToFirst(); it.Valid(); it.Next()) {
+    keys.push_back(it.Key());
+  }
+  return keys;
+}
+
+// The keys from `first` to `last`, in order.
+std::vector<int> KeyRange(int first, int last) {
+  std::vector<int> keys;
+  for (int key = first; key <= last; ++key) {
+    keys.push_back(key);
+  }
+  return keys;
+}
+
+std::vector<int> Concat(std::vector<int> keys, const std::vector<int>& more) {
+  keys.insert(keys.end(), more.begin(), more.end());
+  return keys;
+}
+
+void ExpectHoldsKeys(BucketDict* dict, const std::vector<int>& keys) {
+  ASSERT_EQ(dict->Size(), keys.size());
+  for (const int key : keys) {
+    const int* const value = dict->FindValue(key);
+    ASSERT_NE(value, nullptr) << key;
+    EXPECT_EQ(*value, key);
+  }
+}
+}  // namespace
+
+TEST(DictRehashStepTest, EachOperationMovesTheNextBucketInTableOrder) {
+  auto dict = MakeRehashingDict();
+  ASSERT_TRUE(dict->IsRehashing());
+  ASSERT_EQ(IterationOrder(*dict), Concat(KeyRange(1, 63), {0, 64}));
+
+  // A lookup moves one bucket, the next in table order, whichever bucket its
+  // own key is in.
+  ASSERT_NE(dict->FindValue(40), nullptr);
+  EXPECT_EQ(IterationOrder(*dict), Concat(KeyRange(2, 63), {0, 1, 64}));
+  // So do a lookup and a delete that find nothing, and an insert.
+  EXPECT_EQ(dict->FindValue(105), nullptr);
+  EXPECT_FALSE(dict->Delete(106));
+  EXPECT_TRUE(dict->Insert(107, 107));
+  EXPECT_EQ(IterationOrder(*dict),
+            Concat(KeyRange(5, 63), {0, 1, 2, 3, 4, 64, 107}));
+  EXPECT_TRUE(dict->IsRehashing());
+  ExpectHoldsKeys(dict.get(), Concat(KeyRange(0, 64), {107}));
+}
+
+TEST(DictRehashStepTest, FinishesTheRehashWithTheLastBucket) {
+  auto dict = MakeRehashingDict();
+  // Buckets 1 to 63 are left to move, one for each lookup.
+  for (int step = 1; step <= 62; ++step) {
+    ASSERT_NE(dict->FindValue(0), nullptr);
+    ASSERT_TRUE(dict->IsRehashing()) << step;
+  }
+  EXPECT_EQ(IterationOrder(*dict), Concat({63}, Concat(KeyRange(0, 62), {64})));
+  ASSERT_NE(dict->FindValue(0), nullptr);
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(IterationOrder(*dict), KeyRange(0, 64));
+  ExpectHoldsKeys(dict.get(), KeyRange(0, 64));
+}
+
+TEST(DictRehashStepTest, PassesTenEmptyBucketsForEachBucketItMayMove) {
+  auto dict = MakeRehashingDict();
+  {
+    // With the rehash held back, the deletes leave buckets 1 to 20 of the
+    // old table empty and move nothing.
+    const ScopedResizePolicy forbidden(DictResizePolicy::kForbidden);
+    for (int key = 1; key <= 20; ++key) {
+      ASSERT_TRUE(dict->Delete(key)) << key;
+    }
+  }
+  const std::vector<int> left = Concat({0}, KeyRange(21, 64));
+  ASSERT_EQ(IterationOrder(*dict), Concat(KeyRange(21, 63), {0, 64}));
+  // A step passes at most ten empty buckets, so two steps move nothing: a
+  // lookup's and one of RehashSome's.
+  ASSERT_NE(dict->FindValue(0), nullptr);
+  EXPECT_TRUE(dict->RehashSome(1));
+  EXPECT_EQ(IterationOrder(*dict), Concat(KeyRange(21, 63), {0, 64}));
+  // The third reaches bucket 21.
+  EXPECT_TRUE(dict->RehashSome(1));
+  EXPECT_EQ(IterationOrder(*dict), Concat(KeyRange(22, 63), {0, 21, 64}));
+  EXPECT_FALSE(dict->RehashSome(100));
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(IterationOrder(*dict), left);
+  ExpectHoldsKeys(dict.get(), left);
+}
+
+TEST(DictRehashStepTest, WaitsForIteratorsAndTheResizePolicy) {
+  auto dict = MakeRehashingDict();
+  const std::vector<int> before = IterationOrder(*dict);
+  {
+    // An iterator needs every entry to stay in its table.
+    auto it = BucketDict::Iterator(dict.get());
+    it.SeekToFirst();
+    ASSERT_NE(dict->FindValue(40), nullptr);
+    EXPECT_TRUE(dict->Insert(107, 107));
+    EXPECT_TRUE(dict->Delete(107));
+  }
+  EXPECT_EQ(IterationOrder(*dict), before);
+  {
+    const ScopedResizePolicy forbidden(DictResizePolicy::kForbidden);
+    ASSERT_NE(dict->FindValue(40), nullptr);
+    EXPECT_EQ(IterationOrder(*dict), before);
+  }
+  {
+    // 128 buckets are not four times 64, so this rehash waits for the child.
+    const ScopedResizePolicy avoid(DictResizePolicy::kAvoid);
+    ASSERT_NE(dict->FindValue(40), nullptr);
+    EXPECT_EQ(IterationOrder(*dict), before);
+  }
+  ASSERT_NE(dict->FindValue(40), nullptr);
+  EXPECT_EQ(IterationOrder(*dict), Concat(KeyRange(2, 63), {0, 1, 64}));
+}
+
+TEST(DictRehashStepTest, DeletesFindKeysInEitherTable) {
+  auto dict = MakeRehashingDict();
+  {
+    // With the rehash held back, keys 42 and 43 are deleted from the old
+    // table and keys 0 and 64 from the new one.
+    const ScopedResizePolicy forbidden(DictResizePolicy::kForbidden);
+    EXPECT_TRUE(dict->Delete(42));
+    EXPECT_TRUE(dict->Delete(0));
+    EXPECT_FALSE(dict->Delete(42));
+    EXPECT_FALSE(dict->Delete(0));
+    EXPECT_EQ(dict->Extract(43), std::optional<int>(43));
+    EXPECT_EQ(dict->Extract(64), std::optional<int>(64));
+    EXPECT_EQ(dict->Extract(64), std::nullopt);
+    EXPECT_EQ(IterationOrder(*dict), Concat(KeyRange(1, 41), KeyRange(44, 63)));
+  }
+  // With the rehash running again, a delete first moves bucket 1 and then
+  // finds key 40 in the old table.
+  EXPECT_TRUE(dict->Delete(40));
+  EXPECT_EQ(IterationOrder(*dict), Concat(Concat(KeyRange(2, 39), {41}),
+                                          Concat(KeyRange(44, 63), {1})));
+  // Key 1 is in the new table by now. Its delete moves bucket 2.
+  EXPECT_TRUE(dict->Delete(1));
+  EXPECT_FALSE(dict->Delete(1));
+  const std::vector<int> left =
+      Concat(Concat(KeyRange(2, 39), {41}), KeyRange(44, 63));
+  EXPECT_EQ(IterationOrder(*dict), Concat(Concat(KeyRange(4, 39), {41}),
+                                          Concat(KeyRange(44, 63), {2, 3})));
+  ExpectHoldsKeys(dict.get(), left);
+}
+
+TEST(DictRehashStepTest, ClearEndsARehash) {
+  auto dict = MakeRehashingDict();
+  ASSERT_NE(dict->FindValue(40), nullptr);
+  dict->Clear();
+  EXPECT_EQ(dict->Size(), 0);
+  EXPECT_FALSE(dict->IsRehashing());
+  EXPECT_EQ(dict->FindValue(40), nullptr);
+  EXPECT_FALSE(dict->Delete(40));
+  EXPECT_TRUE(IterationOrder(*dict).empty());
+
+  EXPECT_TRUE(dict->Insert(40, 40));
+  ExpectHoldsKeys(dict.get(), {40});
+}
+
+namespace {
+// Checks that `dict` holds exactly the model's keys and values, through an
+// iterator and through a full scan.
+void ExpectMatchesModel(Dict<int, int>* dict,
+                        const std::unordered_map<int, int>& model) {
+  ASSERT_EQ(dict->Size(), model.size());
+  size_t iterated = 0;
+  auto it = Dict<int, int>::Iterator(dict);
+  for (it.SeekToFirst(); it.Valid(); it.Next()) {
+    const auto entry = model.find(it.Key());
+    ASSERT_NE(entry, model.end()) << it.Key();
+    ASSERT_EQ(it.Value(), entry->second) << it.Key();
+    ++iterated;
+  }
+  // Every key once: no more entries than the model has, and none missing.
+  ASSERT_EQ(iterated, model.size());
+
+  size_t scanned = 0;
+  std::optional<size_t> cursor = 0;
+  while (cursor.has_value()) {
+    cursor = dict->Scan(cursor.value_or(0),
+                        [&scanned, &model](const int& key, const int& value) {
+                          const auto entry = model.find(key);
+                          ASSERT_NE(entry, model.end()) << key;
+                          ASSERT_EQ(value, entry->second) << key;
+                          ++scanned;
+                        });
+  }
+  ASSERT_EQ(scanned, model.size());
+}
+}  // namespace
+
+TEST(DictRehashStepTest, RandomOperationsMatchAModel) {
+  // Fills and drains the dict in turns, so its table grows and shrinks many
+  // times. Every second rehash stands still for a while, as one does while a
+  // child process shares the tables, so operations also run on a table that
+  // is partly moved.
+  constexpr int kKeys = 1024;
+  constexpr int kSteps = 48'000;
+  constexpr int kStepsPerPhase = 8'000;
+  constexpr int kHeldSteps = 200;
+  const ScopedResizePolicy restore_policy(DictResizePolicy::kEnabled);
+  // A fixed seed keeps failures reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
+  std::mt19937 rng(7);
+  std::uniform_int_distribution<int> any_key(0, kKeys - 1);
+  std::uniform_int_distribution<int> percent(0, 99);
+  auto dict = Dict<int, int>::Create();
+  std::unordered_map<int, int> model;
+  int rehashes = 0;
+  int held_steps = 0;
+  for (int step = 0; step < kSteps; ++step) {
+    const bool was_rehashing = dict->IsRehashing();
+    const bool filling = (step / kStepsPerPhase) % 2 == 0;
+    const int key = any_key(rng);
+    const int roll = percent(rng);
+    const bool present = model.contains(key);
+    // 60 of 100 steps go with the phase and 5 against it, which leaves about
+    // 950 keys after a fill and 80 after a drain. The rest read.
+    const int add_below = filling ? 60 : 5;
+    const int remove_below = add_below + (filling ? 5 : 60);
+    if (roll < add_below) {
+      switch (roll % 3) {
+        case 0:
+          ASSERT_EQ(dict->Insert(key, step), !present) << step;
+          model.try_emplace(key, step);
+          break;
+        case 1:
+          dict->Set(key, step);
+          model[key] = step;
+          break;
+        default: {
+          const auto [value, inserted] = dict->FindOrInsert(key);
+          ASSERT_EQ(inserted, !present) << step;
+          *value = step;
+          model[key] = step;
+          break;
+        }
+      }
+    } else if (roll < remove_below) {
+      if (roll % 2 == 0) {
+        ASSERT_EQ(dict->Delete(key), present) << step;
+      } else {
+        const std::optional<int> value = dict->Extract(key);
+        ASSERT_EQ(value.has_value(), present) << step;
+        if (present) {
+          ASSERT_EQ(value, std::optional<int>(model[key])) << step;
+        }
+      }
+      model.erase(key);
+    } else if (roll < 90) {
+      const int* const value = dict->FindValue(key);
+      ASSERT_EQ(value != nullptr, present) << step;
+      if (present) {
+        ASSERT_EQ(*value, model[key]) << step;
+      }
+    } else {
+      dict->RehashSome(1);
+    }
+    ASSERT_EQ(dict->Size(), model.size()) << step;
+    if (!was_rehashing && dict->IsRehashing()) {
+      ++rehashes;
+      if (rehashes % 2 == 0) {
+        SetDictResizePolicy(DictResizePolicy::kForbidden);
+        held_steps = kHeldSteps;
+      }
+    } else if (held_steps > 0 && --held_steps == 0) {
+      SetDictResizePolicy(DictResizePolicy::kEnabled);
+    }
+    if (step % 250 == 0) {
+      ASSERT_NO_FATAL_FAILURE(ExpectMatchesModel(dict.get(), model)) << step;
+    }
+  }
+  ASSERT_NO_FATAL_FAILURE(ExpectMatchesModel(dict.get(), model));
+  // Each fill grows the table to 1024 buckets in several rehashes, the later
+  // ones from the 128 buckets that each drain shrinks it to.
+  EXPECT_GE(rehashes, 12);
 }
 }  // namespace redis_simple::containers
