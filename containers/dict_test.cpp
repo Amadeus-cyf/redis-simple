@@ -998,8 +998,11 @@ TEST(DictRehashStepTest, RandomOperationsMatchAModel) {
         SetDictResizePolicy(DictResizePolicy::kForbidden);
         held_steps = kHeldSteps;
       }
-    } else if (held_steps > 0 && --held_steps == 0) {
-      SetDictResizePolicy(DictResizePolicy::kEnabled);
+    } else if (held_steps > 0) {
+      --held_steps;
+      if (held_steps == 0) {
+        SetDictResizePolicy(DictResizePolicy::kEnabled);
+      }
     }
     if (step % 250 == 0) {
       ASSERT_NO_FATAL_FAILURE(ExpectMatchesModel(dict.get(), model)) << step;
