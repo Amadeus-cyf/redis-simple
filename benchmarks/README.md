@@ -21,6 +21,10 @@ Run one group with `--benchmark_filter`, for example
 - `ListIndex`, `ListRange`: quicklist `LINDEX` and `LRANGE` at the head,
   middle, and tail of a 300,000-element list whose items vary in length. The
   middle reads step through about two quicklist nodes' worth of positions.
+- `ListRemove*`: `LREM` that deletes every tenth element, that matches
+  nothing, and, for `ListRemoveFirst`, that deletes the head element with
+  count 1. The last reads one quicklist node, so it should cost the same for
+  10,000 and 300,000 elements.
 - `ParseCompleteRequest`, `ParseSplitRequest`, `FindCommand`: request
   decoding and command lookup.
 - `AppendBulkStrings`, `FormatScore`, `AppendScores`: collection reply and

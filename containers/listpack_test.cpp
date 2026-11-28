@@ -73,6 +73,24 @@ size_t Advance(const Listpack& listpack, size_t offset, size_t steps) {
   return offset;
 }
 
+// The elements in order. Reads them forward and backward, which must agree,
+// so that every element's encoding and backlen is used.
+std::vector<std::string> Values(const Listpack& listpack) {
+  std::vector<std::string> forward;
+  for (std::optional<size_t> index = listpack.First(); index.has_value();
+       index = listpack.Next(*index)) {
+    forward.push_back(listpack.Get(*index).value_or("<missing>"));
+  }
+  std::vector<std::string> backward;
+  for (std::optional<size_t> index = listpack.Last(); index.has_value();
+       index = listpack.Prev(*index)) {
+    backward.push_back(listpack.Get(*index).value_or("<missing>"));
+  }
+  std::ranges::reverse(backward);
+  EXPECT_EQ(forward, backward);
+  return forward;
+}
+
 std::vector<Listpack::ListpackEntry> MakeBatchAppendEntries(
     std::string_view s0, std::string_view s1, std::string_view s2) {
   return {
@@ -982,7 +1000,7 @@ TEST(ListpackTest, DeleteMatchingHonorsDirectionAndLimit) {
     ASSERT_TRUE(listpack.Append(value));
   }
 
-  EXPECT_EQ(listpack.DeleteMatching("x", 2, true), 2);
+  EXPECT_EQ(listpack.DeleteMatching("x", 2, ListEnd::kTail), 2);
   EXPECT_EQ(listpack.Size(), 4);
   std::vector<std::string> values;
   ASSERT_TRUE(listpack.ForEach(0, listpack.Size() - 1,
@@ -995,6 +1013,7 @@ TEST(ListpackTest, DeleteMatchingHonorsDirectionAndLimit) {
   EXPECT_EQ(listpack.DeleteMatching("x", 0), 2);
   EXPECT_EQ(listpack.Size(), 2);
 }
+
 TEST(ListpackTest, DeleteMatchingMatchesModelForEveryEncoding) {
   // Integers and strings of every length class, so matches and kept runs
   // cover each encoding and backlen width.
@@ -1042,23 +1061,12 @@ TEST(ListpackTest, DeleteMatchingMatchesModelForEveryEncoding) {
         }
       }
     }
-    ASSERT_EQ(listpack.DeleteMatching(target, limit, from_tail), expected);
+    ASSERT_EQ(listpack.DeleteMatching(
+                  target, limit, from_tail ? ListEnd::kTail : ListEnd::kHead),
+              expected);
     ASSERT_EQ(listpack.Size(), model.size());
 
-    // Walk both ways so every moved element's encoding and backlen is used.
-    std::vector<std::string> forward;
-    for (std::optional<size_t> index = listpack.First(); index.has_value();
-         index = listpack.Next(*index)) {
-      forward.push_back(listpack.Get(*index).value_or("<missing>"));
-    }
-    EXPECT_EQ(forward, model) << round;
-    std::vector<std::string> backward;
-    for (std::optional<size_t> index = listpack.Last(); index.has_value();
-         index = listpack.Prev(*index)) {
-      backward.push_back(listpack.Get(*index).value_or("<missing>"));
-    }
-    std::ranges::reverse(backward);
-    EXPECT_EQ(backward, model) << round;
+    EXPECT_EQ(Values(listpack), model) << round;
     // The listpack stays appendable after compaction.
     ASSERT_TRUE(listpack.Append("tail"));
     EXPECT_EQ(listpack.Get(RequireIndex(listpack.Last())), "tail");
@@ -1073,8 +1081,173 @@ TEST(ListpackTest, DeleteMatchingKeepsSaturatedCount) {
   }
   EXPECT_EQ(listpack.DeleteMatching("x", 0), kSize / 10);
   EXPECT_EQ(listpack.Size(), kSize - (kSize / 10));
-  EXPECT_EQ(listpack.DeleteMatching("y", 3, true), 3);
+  EXPECT_EQ(listpack.DeleteMatching("y", 3, ListEnd::kTail), 3);
   EXPECT_EQ(listpack.Size(), kSize - (kSize / 10) - 3);
+}
+
+TEST(ListpackTest, DeleteMatchingComparesIntegerElementsAsNumbers) {
+  // "123" and "-5" are stored as integers. The other spellings are stored
+  // as strings and equal only themselves.
+  Listpack listpack;
+  for (std::string_view value :
+       {"123", "0123", "+123", "123", "-5", "123 ", "-5"}) {
+    ASSERT_TRUE(listpack.Append(value));
+  }
+  ASSERT_TRUE(listpack.Append(int64_t{123}));
+
+  EXPECT_EQ(listpack.DeleteMatching("0123", 0), 1);
+  EXPECT_EQ(listpack.DeleteMatching("123", 2, ListEnd::kTail), 2);
+  EXPECT_EQ(Values(listpack),
+            (std::vector<std::string>{"123", "+123", "-5", "123 ", "-5"}));
+  EXPECT_EQ(listpack.DeleteMatching("-5", 0), 2);
+  EXPECT_EQ(listpack.DeleteMatching("123", 0), 1);
+  EXPECT_EQ(listpack.DeleteMatching("12", 0), 0);
+  EXPECT_EQ(Values(listpack), (std::vector<std::string>{"+123", "123 "}));
+}
+
+TEST(ListpackTest, PopPassesTheElementToTheVisitorAndRemovesIt) {
+  Listpack listpack;
+  for (std::string_view value : {"head", "-42", "middle", "tail"}) {
+    ASSERT_TRUE(listpack.Append(value));
+  }
+  std::vector<std::string> popped;
+  const auto collect = [&popped](std::string_view value) {
+    popped.emplace_back(value);
+  };
+
+  EXPECT_TRUE(listpack.Pop(ListEnd::kHead, collect));
+  EXPECT_TRUE(listpack.Pop(ListEnd::kTail, collect));
+  EXPECT_TRUE(listpack.Pop(ListEnd::kHead, collect));
+  EXPECT_EQ(popped, (std::vector<std::string>{"head", "tail", "-42"}));
+  EXPECT_EQ(Values(listpack), std::vector<std::string>{"middle"});
+
+  EXPECT_TRUE(listpack.Pop(ListEnd::kTail, collect));
+  EXPECT_EQ(listpack.Size(), 0);
+  // Nothing is called for a listpack with no elements.
+  EXPECT_FALSE(listpack.Pop(ListEnd::kHead, collect));
+  EXPECT_FALSE(listpack.Pop(ListEnd::kTail, collect));
+  EXPECT_EQ(popped.size(), 4);
+}
+
+TEST(ListpackTest, AppendEntriesCopiesEveryEncoding) {
+  const std::vector<std::string> left_values = {"a", "-129",
+                                                std::string(70, 'm')};
+  const std::vector<std::string> right_values = {"12345678901", "",
+                                                 std::string(5000, 'l'), "z"};
+  Listpack left;
+  for (const std::string& value : left_values) {
+    ASSERT_TRUE(left.Append(value));
+  }
+  Listpack right;
+  for (const std::string& value : right_values) {
+    ASSERT_TRUE(right.Append(value));
+  }
+  const size_t left_bytes = left.TotalBytes();
+  const size_t right_bytes = right.TotalBytes();
+
+  ASSERT_TRUE(left.AppendEntries(right));
+
+  std::vector<std::string> expected = left_values;
+  expected.insert(expected.end(), right_values.begin(), right_values.end());
+  EXPECT_EQ(Values(left), expected);
+  EXPECT_EQ(left.Size(), expected.size());
+  EXPECT_EQ(left.TotalBytes(),
+            left_bytes + right_bytes - Listpack::kEmptyListpackBytes);
+  // The source keeps its elements.
+  EXPECT_EQ(Values(right), right_values);
+  EXPECT_EQ(right.TotalBytes(), right_bytes);
+  // The result stays appendable.
+  ASSERT_TRUE(left.Append("tail"));
+  EXPECT_EQ(left.Get(RequireIndex(left.Last())), "tail");
+}
+
+TEST(ListpackTest, AppendEntriesHandlesListpacksWithNoElements) {
+  Listpack empty;
+  Listpack listpack;
+  ASSERT_TRUE(listpack.Append("a"));
+  ASSERT_TRUE(listpack.Append("7"));
+
+  ASSERT_TRUE(listpack.AppendEntries(empty));
+  EXPECT_EQ(Values(listpack), (std::vector<std::string>{"a", "7"}));
+
+  ASSERT_TRUE(empty.AppendEntries(listpack));
+  EXPECT_EQ(Values(empty), (std::vector<std::string>{"a", "7"}));
+  EXPECT_EQ(empty.TotalBytes(), listpack.TotalBytes());
+}
+
+TEST(ListpackTest, SplitOffMovesTheElementsFromAnIndex) {
+  const std::vector<std::string> values = {
+      "a", "-129", std::string(70, 'm'),   "12345678901",
+      "",  "z",    std::string(5000, 'l'), "9"};
+  // The last two indexes are at and past the end, where nothing moves.
+  for (size_t index = 0; index <= values.size() + 1; ++index) {
+    Listpack listpack;
+    for (const std::string& value : values) {
+      ASSERT_TRUE(listpack.Append(value));
+    }
+    const size_t total_bytes = listpack.TotalBytes();
+
+    Listpack tail = listpack.SplitOff(index);
+
+    const auto middle = values.begin() + static_cast<std::ptrdiff_t>(
+                                             std::min(index, values.size()));
+    EXPECT_EQ(Values(listpack),
+              std::vector<std::string>(values.begin(), middle))
+        << index;
+    EXPECT_EQ(Values(tail), std::vector<std::string>(middle, values.end()))
+        << index;
+    EXPECT_EQ(listpack.Size() + tail.Size(), values.size()) << index;
+    // The bytes moved as they were: the two listpacks hold what the one
+    // did, and a second header and terminator.
+    EXPECT_EQ(size_t{listpack.TotalBytes()} + tail.TotalBytes(),
+              total_bytes + Listpack::kEmptyListpackBytes)
+        << index;
+
+    // Joining the two gives the original back.
+    ASSERT_TRUE(listpack.AppendEntries(tail));
+    EXPECT_EQ(Values(listpack), values) << index;
+    EXPECT_EQ(listpack.TotalBytes(), total_bytes) << index;
+    // The moved part stays usable at both ends.
+    ASSERT_TRUE(tail.Prepend("first"));
+    ASSERT_TRUE(tail.Append("last"));
+    EXPECT_EQ(tail.Get(RequireIndex(tail.First())), "first");
+    EXPECT_EQ(tail.Get(RequireIndex(tail.Last())), "last");
+  }
+}
+
+TEST(ListpackTest, AppendEntriesAndSplitOffKeepCountPastTheHeaderLimit) {
+  // The header counts up to 65,534 elements. Past that, Size() walks them.
+  constexpr size_t kHalf = 40'000;
+  constexpr size_t kSize = 2 * kHalf;
+  Listpack listpack;
+  Listpack other;
+  for (size_t i = 0; i < kHalf; ++i) {
+    ASSERT_TRUE(listpack.Append(static_cast<int64_t>(i)));
+    ASSERT_TRUE(other.Append(static_cast<int64_t>(kHalf + i)));
+  }
+
+  ASSERT_TRUE(listpack.AppendEntries(other));
+  EXPECT_EQ(listpack.Size(), kSize);
+  EXPECT_EQ(listpack.Get(RequireIndex(listpack.Last())),
+            std::to_string(kSize - 1));
+
+  // The 100 elements kept are a count the header holds again. The rest are
+  // not.
+  Listpack tail = listpack.SplitOff(100);
+  EXPECT_EQ(listpack.Size(), 100);
+  EXPECT_EQ(Values(listpack).size(), 100);
+  EXPECT_EQ(listpack.Get(RequireIndex(listpack.Last())), "99");
+  EXPECT_EQ(tail.Size(), kSize - 100);
+  EXPECT_EQ(tail.Get(RequireIndex(tail.First())), "100");
+
+  // The other way around: the part kept is past the limit, the part moved
+  // is not.
+  Listpack last = tail.SplitOff(kSize - 150);
+  EXPECT_EQ(tail.Size(), kSize - 150);
+  EXPECT_EQ(tail.Get(RequireIndex(tail.Last())), std::to_string(kSize - 51));
+  EXPECT_EQ(last.Size(), 50);
+  EXPECT_EQ(Values(last).size(), 50);
+  EXPECT_EQ(last.Get(RequireIndex(last.First())), std::to_string(kSize - 50));
 }
 
 TEST(ListpackDeathTest, RejectsOutOfBoundsIndexes) {

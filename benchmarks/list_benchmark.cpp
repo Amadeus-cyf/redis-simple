@@ -109,7 +109,7 @@ void ListRemove(benchmark::State& state) {
     }
     state.ResumeTiming();
     benchmark::DoNotOptimize(
-        list->Remove("match", 0, data_types::List::RemoveDirection::kFromHead));
+        list->Remove("match", 0, containers::ListEnd::kHead));
   }
   state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(size));
 }
@@ -120,10 +120,26 @@ void ListRemoveMissing(benchmark::State& state) {
   const auto list = FilledList(size);
   for (auto _ : state) {
     (void)_;
-    benchmark::DoNotOptimize(list->Remove(
-        "missing", 0, data_types::List::RemoveDirection::kFromHead));
+    benchmark::DoNotOptimize(
+        list->Remove("missing", 0, containers::ListEnd::kHead));
   }
   state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(size));
+}
+
+// LREM with count 1 of the head element, which is pushed back after each
+// call. The call reads only the first node, so its cost should not grow with
+// the list.
+void ListRemoveFirst(benchmark::State& state) {
+  const auto size = static_cast<size_t>(state.range(0));
+  const auto list = FilledList(size);
+  const std::string value = Item(0);
+  for (auto _ : state) {
+    (void)_;
+    benchmark::DoNotOptimize(
+        list->Remove(value, 1, containers::ListEnd::kHead));
+    benchmark::DoNotOptimize(list->LPush(value));
+  }
+  state.SetItemsProcessed(state.iterations());
 }
 
 // The push that grows a full listpack past its size limit and converts the
@@ -161,6 +177,7 @@ BENCHMARK(ListRange)
 // 100 elements fit in one listpack; 10,000 use a quicklist.
 BENCHMARK(ListRemove)->Arg(100)->Arg(10'000)->ArgName("size");
 BENCHMARK(ListRemoveMissing)->Arg(100)->Arg(10'000)->ArgName("size");
+BENCHMARK(ListRemoveFirst)->Arg(10'000)->Arg(300'000)->ArgName("size");
 BENCHMARK(ListConvertToQuicklist);
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple

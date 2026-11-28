@@ -10,7 +10,7 @@
 
 namespace redis_simple::fuzz {
 // Reference models of list operations on a vector, which the list harnesses
-// compare the real containers against.
+// and unit tests compare the real containers against.
 
 // Keeps the elements at [start, stop], both inclusive, as LTRIM does;
 // a `stop` past the end means the last element.
