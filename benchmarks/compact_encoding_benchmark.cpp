@@ -1,9 +1,11 @@
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -13,12 +15,14 @@
 #include "containers/listpack.h"
 #include "data_types/hash/hash.h"
 #include "data_types/zset/zset.h"
+#include "data_types/zset/zset_range_spec.h"
 
 // Inserts into the compact encodings (intset and listpack), where each insert
 // may reallocate the whole value and moves the bytes after it;
 // ListpackDeleteFirst measures the same for a delete. Sizes stay within the
 // encodings' limits, except that 700 elements make a listpack of about 9 KB,
-// slightly more than one 8 KiB quicklist node.
+// slightly more than one 8 KiB quicklist node. ZSetListpackRangeByRank reads
+// a range from a listpack, which has to be walked to the range's first member.
 namespace redis_simple {
 namespace {
 // Fixed seeds keep runs comparable, which is the point of these benchmarks.
@@ -133,6 +137,40 @@ void ZSetListpackInsert(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * state.range(0));
 }
 
+// ZRANGE by rank of ten members from a listpack-encoded sorted set of 128,
+// the most a listpack holds, starting at rank `start`. `reverse` reads them
+// as ZREVRANGE does, where ranks count from the greatest score. `integral`
+// gives the members whole-number scores, which a listpack stores as integers
+// and not as text.
+void ZSetListpackRangeByRank(benchmark::State& state) {
+  constexpr int64_t kRangeSize = 10;
+  const int64_t start = state.range(0);
+  const bool reverse = state.range(1) != 0;
+  const bool integral = state.range(2) != 0;
+  const auto members = Names("member:", data_types::ZSet::kListpackMaxEntries);
+  std::mt19937 generator = SeededRng(2);
+  std::uniform_real_distribution<double> distribution(0, 1'000'000);
+  auto zset = data_types::ZSet::Create();
+  for (const std::string& member : members) {
+    const double score = distribution(generator);
+    zset->InsertOrUpdate(member, integral ? std::floor(score) : score);
+  }
+  if (zset->Encoding() != data_types::ZSet::Encoding::kListpack) {
+    state.SkipWithError("the sorted set is not listpack-encoded");
+    return;
+  }
+  const data_types::RangeByRankSpec spec(start, start + kRangeSize - 1, false,
+                                         false, std::nullopt, reverse);
+  for (auto _ : state) {
+    (void)_;
+    size_t visited = 0;
+    zset->ForEachInRankRange(
+        &spec, [&visited](std::string_view, double) { ++visited; });
+    benchmark::DoNotOptimize(visited);
+  }
+  state.SetItemsProcessed(state.iterations() * kRangeSize);
+}
+
 // HSET of new fields into a listpack-encoded hash.
 void HashListpackSet(benchmark::State& state) {
   const auto fields = Names("field:", static_cast<size_t>(state.range(0)));
@@ -156,6 +194,16 @@ BENCHMARK(ListpackAppend)->Arg(16)->Arg(128)->Arg(700);
 BENCHMARK(ListpackPrepend)->Arg(16)->Arg(128)->Arg(700);
 BENCHMARK(ListpackDeleteFirst)->Arg(128)->Arg(700);
 BENCHMARK(ZSetListpackInsert)->Arg(16)->Arg(128);
+BENCHMARK(ZSetListpackRangeByRank)
+    ->ArgNames({"start", "reverse", "integral"})
+    ->Args({0, 0, 0})
+    ->Args({59, 0, 0})
+    ->Args({118, 0, 0})
+    ->Args({0, 1, 0})
+    ->Args({59, 1, 0})
+    ->Args({118, 1, 0})
+    ->Args({118, 0, 1})
+    ->Args({118, 1, 1});
 BENCHMARK(HashListpackSet)->Arg(16)->Arg(128)->Arg(512);
 // NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables,bugprone-throwing-static-initialization)
 }  // namespace redis_simple

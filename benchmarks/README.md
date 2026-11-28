@@ -33,6 +33,9 @@ Run one group with `--benchmark_filter`, for example
   decoding and command lookup.
 - `AppendBulkStrings`, `FormatScore`, `AppendScores`: collection reply and
   score encoding.
+- `ZSetListpackRangeByRank`: ten members by rank from a 128-member listpack
+  sorted set, as `ZRANGE` and `ZREVRANGE` read them, starting at rank 0, 59,
+  and 118, with scores stored as text and as integers.
 - `SetIntersect`: set intersection with and without reusing stored hashes.
 - `SetIntersectThree`, `SetDifference`: `SINTER` with the large set named
   before or after the one that rules members out, and `SDIFF` by probing,
