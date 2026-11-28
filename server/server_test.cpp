@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -35,7 +36,15 @@
 namespace redis_simple {
 namespace {
 constexpr std::chrono::seconds kTimeout{10};
+// Long enough for requests sent to reach the server, and for replies it
+// sends to arrive.
+constexpr std::chrono::milliseconds kArrivalTime{300};
 constexpr std::string_view kOkReply = "+OK\r\n";
+// More clients than the main thread runs, without an AOF, before it gives
+// some back to their I/O thread.
+constexpr size_t kLargeHandoff = 160;
+// Enough for both ends of that many connections and the server's own files.
+constexpr rlim_t kOpenFiles = 1024;
 
 // The real file operations, with a sync the test can hold or fail.
 class GatedFileOps final : public aof::FileOps {
@@ -121,6 +130,18 @@ int UnusedPort() {
   return ntohs(address.sin_port);
 }
 
+// Raises the limit on open files to `count`, or to the hard limit if that is
+// lower: the test and the server hold both ends of each connection in this
+// process.
+void AllowOpenFiles(rlim_t count) {
+  rlimit limit{};
+  RS_CHECK(getrlimit(RLIMIT_NOFILE, &limit) == 0);
+  if (limit.rlim_cur < count) {
+    limit.rlim_cur = std::min(count, limit.rlim_max);
+    RS_CHECK(setrlimit(RLIMIT_NOFILE, &limit) == 0);
+  }
+}
+
 // A blocking client socket whose reads give up after kTimeout.
 class TestClient {
  public:
@@ -183,27 +204,24 @@ class TestClient {
   int fd_{-1};
 };
 
-// A server with `appendfsync always`, running on its own thread.
+// A server running on its own thread, with `appendfsync always` unless a
+// test starts it without an AOF.
 class ServerTest : public testing::Test {
  protected:
   void StartServer(int io_threads) {
-    constexpr std::string_view kTemplate = "/tmp/redis_simple_server_XXXXXX";
-    std::array<char, kTemplate.size() + 1> path{};
-    std::ranges::copy(kTemplate, path.begin());
-    RS_CHECK(mkdtemp(path.data()) != nullptr);
-    root_ = path.data();
-    ServerOptions options;
-    options.port = UnusedPort();
+    ServerOptions options = BaseOptions(io_threads);
     options.append_only = true;
-    // No RDB file is saved at shutdown.
-    options.rdb_options.save_points.clear();
     options.aof_options.directory = root_ + "/appendonlydir";
     options.aof_options.fsync = aof::FsyncPolicy::kAlways;
     options.aof_options.file_ops = file_ops_;
-    options.io_threads = io_threads;
-    port_ = options.port;
-    thread_ = std::thread(
-        [this, options] { run_succeeded_ = server_->Run(options); });
+    Run(options);
+  }
+
+  void StartServerWithoutAof(int io_threads) {
+    ServerOptions options = BaseOptions(io_threads);
+    // The server loads the RDB file at start, and none is there.
+    options.rdb_options.file_name = root_ + "/dump.rdb";
+    Run(options);
   }
 
   // Connected clients the server has already answered once, so each is
@@ -237,6 +255,10 @@ class ServerTest : public testing::Test {
     return run_succeeded_;
   }
 
+  void HoldNextSync() { file_ops_->HoldNextSync(); }
+  // False if no sync was held in time.
+  [[nodiscard]] bool WaitForHeldSync() { return file_ops_->WaitForHeldSync(); }
+  void ReleaseSync() { file_ops_->ReleaseSync(); }
   void FailSyncs() { file_ops_->FailSyncs(); }
   [[nodiscard]] bool JoinedServerSucceeded() const { return run_succeeded_; }
 
@@ -252,7 +274,6 @@ class ServerTest : public testing::Test {
   // the next sync.
   void ExpectOneSyncForClientsOfOneIteration() {
     constexpr size_t kLateClients = 4;
-    constexpr std::chrono::milliseconds kArrivalTime{300};
     const TestClient first = std::move(ConnectClients(1).front());
     const std::vector<TestClient> late = ConnectClients(kLateClients);
     const int syncs_before = file_ops_->SyncCalls();
@@ -278,6 +299,27 @@ class ServerTest : public testing::Test {
   }
 
  private:
+  // Options both servers share, with a new directory for their files.
+  ServerOptions BaseOptions(int io_threads) {
+    constexpr std::string_view kTemplate = "/tmp/redis_simple_server_XXXXXX";
+    std::array<char, kTemplate.size() + 1> path{};
+    std::ranges::copy(kTemplate, path.begin());
+    RS_CHECK(mkdtemp(path.data()) != nullptr);
+    root_ = path.data();
+    ServerOptions options;
+    options.port = UnusedPort();
+    // No RDB file is saved at shutdown.
+    options.rdb_options.save_points.clear();
+    options.io_threads = io_threads;
+    return options;
+  }
+
+  void Run(const ServerOptions& options) {
+    port_ = options.port;
+    thread_ = std::thread(
+        [this, options] { run_succeeded_ = server_->Run(options); });
+  }
+
   std::shared_ptr<GatedFileOps> file_ops_{std::make_shared<GatedFileOps>()};
   std::unique_ptr<Server> server_{Server::Create()};
   std::string root_;
@@ -317,6 +359,97 @@ TEST_F(ServerTest, NeverRepliesThroughAnIoThreadToAWriteTheAofCouldNotSync) {
   client.Send("SET key value\r\n");
   EXPECT_EQ(client.Receive(kOkReply.size()), "");
   EXPECT_TRUE(JoinServer());
+}
+
+TEST_F(ServerTest, HoldsRepliesOfALargeHandoffUntilTheAofSyncs) {
+  AllowOpenFiles(kOpenFiles);
+  // One I/O thread, so that the late clients come in one handoff.
+  StartServer(2);
+  const TestClient first = std::move(ConnectClients(1).front());
+  const std::vector<TestClient> late = ConnectClients(kLargeHandoff);
+
+  HoldNextSync();
+  first.Send("SET first 1\r\n");
+  ASSERT_TRUE(WaitForHeldSync());
+  for (const TestClient& client : late) {
+    client.Send("SET late 1\r\n");
+  }
+  std::this_thread::sleep_for(kArrivalTime);
+  // The late clients' writes run after this sync, and the next one
+  // persists them.
+  HoldNextSync();
+  ReleaseSync();
+  EXPECT_EQ(first.Receive(kOkReply.size()), kOkReply);
+  ASSERT_TRUE(WaitForHeldSync());
+  std::this_thread::sleep_for(kArrivalTime);
+  EXPECT_EQ(
+      std::ranges::count_if(
+          late, [](const TestClient& client) { return client.HasReply(); }),
+      0);
+  ReleaseSync();
+  // Stops at the first client without a reply rather than wait for each.
+  for (const TestClient& client : late) {
+    ASSERT_EQ(client.Receive(kOkReply.size()), kOkReply);
+  }
+  StopServer();
+  EXPECT_TRUE(JoinedServerSucceeded());
+}
+
+TEST_F(ServerTest, RepliesToEveryClientOfALargeHandoffWithoutAnAof) {
+  constexpr size_t kPushes = 100;
+  constexpr size_t kValuesPerPush = 1000;
+  constexpr size_t kScans = 200;
+  AllowOpenFiles(kOpenFiles);
+  // One I/O thread, so that the clients come in one handoff.
+  StartServerWithoutAof(2);
+  const TestClient busy = std::move(ConnectClients(1).front());
+  const std::vector<TestClient> clients = ConnectClients(kLargeHandoff);
+
+  // A long list, so that each LREM below takes a while to scan it.
+  std::string push = "RPUSH list";
+  for (size_t value = 0; value < kValuesPerPush; ++value) {
+    push += " x";
+  }
+  push += "\r\n";
+  std::string pushes;
+  std::string pushed;
+  for (size_t index = 1; index <= kPushes; ++index) {
+    pushes += push;
+    pushed += ":" + std::to_string(index * kValuesPerPush) + "\r\n";
+  }
+  busy.Send(pushes);
+  ASSERT_EQ(busy.Receive(pushed.size()), pushed);
+
+  // Each client sets a key of its own and reads it back.
+  const auto request = [](size_t index) {
+    const std::string value = std::to_string(index);
+    return "SET key" + value + " " + value + "\r\nGET key" + value + "\r\n";
+  };
+  const auto reply = [](size_t index) {
+    const std::string value = std::to_string(index);
+    return std::string(kOkReply) + "$" + std::to_string(value.size()) + "\r\n" +
+           value + "\r\n";
+  };
+  // The main thread runs the scans while the clients' requests reach the I/O
+  // thread, which hands them over together once the scans are done.
+  std::string scans;
+  std::string scanned;
+  for (size_t index = 0; index < kScans; ++index) {
+    scans += "LREM list 0 absent\r\n";
+    scanned += ":0\r\n";
+  }
+  busy.Send(scans);
+  for (size_t index = 0; index < clients.size(); ++index) {
+    clients[index].Send(request(index));
+  }
+  // Stops at the first client without a reply rather than wait for each.
+  for (size_t index = 0; index < clients.size(); ++index) {
+    const std::string expected = reply(index);
+    ASSERT_EQ(clients[index].Receive(expected.size()), expected);
+  }
+  EXPECT_EQ(busy.Receive(scanned.size()), scanned);
+  StopServer();
+  EXPECT_TRUE(JoinedServerSucceeded());
 }
 }  // namespace
 }  // namespace redis_simple
