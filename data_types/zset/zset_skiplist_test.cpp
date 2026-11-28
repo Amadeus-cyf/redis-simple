@@ -24,6 +24,7 @@ constexpr size_t kMemberCount = 40;
 // with `one_score`, which is what a lexicographic range needs.
 std::vector<MemberScorePair> Members(bool one_score) {
   std::vector<MemberScorePair> members;
+  members.reserve(kMemberCount);
   for (size_t i = 0; i < kMemberCount; ++i) {
     members.emplace_back((i < 10 ? "m0" : "m") + std::to_string(i),
                          one_score ? 0.0 : static_cast<double>(i));
