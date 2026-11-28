@@ -43,6 +43,9 @@ Run one group with `--benchmark_filter`, for example
   and back-to-back cycles until 100,000 expired keys are gone.
 - `MultiQueue`: queueing 10 and 10,000 commands inside `MULTI`, with the
   bytes the queue holds before and after the transaction ends.
+- `AofLoad`: loading an AOF at startup. `AofLoadLargeCommand` loads one
+  `RPUSH` of 1,000 to 1,000,000 values, which the loader reads in 1 to 214
+  parts; `AofLoadSmallCommands` loads 100,000 short `SET` commands.
 
 Benchmarks that take a 0 or 1 argument compare two ways of doing the same
 work in one run. They are not part of CTest or CI, because timings vary

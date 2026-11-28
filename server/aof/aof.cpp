@@ -55,7 +55,7 @@ std::string_view ErrorName(AofError error) {
     case AofError::kSnapshot:
       return "snapshot";
   }
-  return "unknown";
+  utils::Unreachable();
 }
 
 std::unique_ptr<Aof> Aof::Open(const Options& options, db::RedisDb* const db) {
